@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chloroalkali Cell Viewer</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Animations */
+        .bubble-rise { animation: rise 3s infinite linear; }
+        @keyframes rise { 0% { transform: translateY(0) scale(0.5); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(-100px) scale(1.2); opacity: 0; } }
+        
+        .ion-move-right { animation: moveRight 2s infinite linear; }
+        .ion-move-left { animation: moveLeft 2s infinite linear; }
+        /* New: Ion moving down for Mercury Cell */
+        .ion-move-down { animation: moveDown 3s infinite linear; }
+        
+        @keyframes moveRight { 0% { transform: translateX(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(50px); opacity: 0; } }
+        @keyframes moveLeft { 0% { transform: translateX(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateX(-50px); opacity: 0; } }
+        @keyframes moveDown { 0% { transform: translateY(0); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(40px); opacity: 0; } }
+
+        .mercury-flow { animation: mercuryFlow 10s infinite linear; }
+        @keyframes mercuryFlow { 0% { background-position: 0 0; } 100% { background-position: 100% 0; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Safe Icon Component
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        try {
+                            const svgElement = window.lucide.createElement(iconData);
+                            svgElement.setAttribute('class', className);
+                            svgElement.setAttribute('width', size);
+                            svgElement.setAttribute('height', size);
+                            setSvgHtml(svgElement.outerHTML);
+                        } catch (e) { console.error(e); }
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CELL DATA (Translated) ---
+        const CELLS = {
+            mercury: {
+                name: 'Mercury Cell',
+                desc: 'Uses flowing mercury as cathode. Produces very pure NaOH but causes severe mercury pollution. Being phased out globally.',
+                anode: 'Titanium',
+                cathode: 'Flowing Mercury',
+                separator: 'None',
+                productPurity: 'High',
+                energy: 'High',
+                pollution: 'Severe (Hg)',
+                anodeEq: '2Cl⁻(aq) → Cl₂(g) + 2e⁻',
+                cathodeEq: 'Na⁺(aq) + e⁻ + Hg(l) → Na/Hg(l)',
+                overall: '2NaCl(aq) + 2H₂O(l) → 2NaOH(aq) + Cl₂(g) + H₂(g)'
+            },
+            diaphragm: {
+                name: 'Diaphragm Cell',
+                desc: 'Uses an asbestos diaphragm to separate anode and cathode compartments. Prevents gases mixing but allows brine to mix with NaOH, leading to impure product.',
+                anode: 'Titanium',
+                cathode: 'Steel',
+                separator: 'Asbestos Diaphragm',
+                productPurity: 'Low (contains NaCl)',
+                energy: 'Moderate',
+                pollution: 'High (Asbestos)',
+                anodeEq: '2Cl⁻(aq) → Cl₂(g) + 2e⁻',
+                cathodeEq: '2H₂O(l) + 2e⁻ → H₂(g) + 2OH⁻(aq)',
+                overall: '2NaCl(aq) + 2H₂O(l) → 2NaOH(aq) + Cl₂(g) + H₂(g)'
+            },
+            membrane: {
+                name: 'Membrane Cell',
+                desc: 'Uses a selective cation-exchange membrane that only allows Na⁺ to pass. Produces high purity NaOH with low environmental impact. The modern industry standard.',
+                anode: 'Titanium',
+                cathode: 'Nickel',
+                separator: 'Cation Exchange Membrane',
+                productPurity: 'High',
+                energy: 'Low',
+                pollution: 'Low',
+                anodeEq: '2Cl⁻(aq) → Cl₂(g) + 2e⁻',
+                cathodeEq: '2H₂O(l) + 2e⁻ → H₂(g) + 2OH⁻(aq)',
+                overall: '2NaCl(aq) + 2H₂O(l) → 2NaOH(aq) + Cl₂(g) + H₂(g)'
+            }
+        };
+
+        // --- ANIMATION COMPONENTS ---
+
+        const Bubbles = ({ x, color }) => (
+            <div className="absolute bottom-10 w-4 h-full pointer-events-none" style={{ left: x }}>
+                {[...Array(5)].map((_, i) => (
+                    <div key={i} className="bubble-rise absolute bg-white/50 rounded-full w-2 h-2" style={{ animationDelay: `${i * 0.5}s`, left: Math.random() * 10 }} />
+                ))}
+            </div>
+        );
+
+        const Ion = ({ type, x, y }) => {
+            const isPos = type === 'Na' || type === 'H';
+            const color = type === 'Na' ? 'bg-purple-500' : type === 'Cl' ? 'bg-green-500' : type === 'OH' ? 'bg-blue-500' : 'bg-white';
+            const label = type === 'Na' ? 'Na⁺' : type === 'Cl' ? 'Cl⁻' : type === 'OH' ? 'OH⁻' : 'H⁺';
+            
+            return (
+                <div className={`absolute w-6 h-6 rounded-full ${color} flex items-center justify-center text-[8px] font-bold text-white shadow-md border border-white/20`} style={{ left: x, top: y }}>
+                    {label}
+                </div>
+            );
+        };
+
+        const MembraneView = ({ type }) => {
+            // Visualization of the cell interior
+            return (
+                <div className="relative w-full h-64 bg-blue-900/20 rounded-xl border border-blue-500/30 overflow-hidden">
+                    {/* Electrolyte Background */}
+                    <div className="absolute inset-0 flex">
+                        <div className={`h-full flex items-center justify-center ${type === 'mercury' ? 'w-full bg-green-900/10' : 'w-1/2 bg-green-900/10 border-r border-dashed border-white/20'}`}>
+                            <span className="text-green-400/20 font-bold text-4xl">Brine</span>
+                        </div>
+                        {type !== 'mercury' && (
+                            <div className="w-1/2 h-full bg-blue-900/10 flex items-center justify-center">
+                                <span className="text-blue-400/20 font-bold text-4xl">NaOH</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Electrodes */}
+                    <div className="absolute top-10 left-4 w-4 h-40 bg-slate-400 rounded border border-white/20 shadow-lg flex flex-col items-center justify-center">
+                        <span className="text-[10px] text-black font-bold rotate-90 whitespace-nowrap">Anode (+)</span>
+                    </div>
+                    
+                    {type === 'mercury' ? (
+                        // Mercury Cathode (Flowing at bottom)
+                        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-r from-slate-400 to-slate-600 border-t-2 border-slate-300 mercury-flow flex items-center justify-center z-20">
+                             <span className="text-xs text-black font-bold">Flowing Mercury Cathode (-)</span>
+                             <span className="text-blue-900/30 font-bold text-2xl absolute right-10">Amalgam</span>
+                        </div>
+                    ) : (
+                        // Standard Cathode
+                        <div className="absolute top-10 right-4 w-4 h-40 bg-slate-600 rounded border border-white/20 shadow-lg flex flex-col items-center justify-center">
+                            <span className="text-[10px] text-white font-bold rotate-90 whitespace-nowrap">Cathode (-)</span>
+                        </div>
+                    )}
+
+                    {/* Separator */}
+                    {type === 'membrane' && (
+                        <div className="absolute top-0 bottom-0 left-1/2 w-2 -ml-1 bg-yellow-400/50 backdrop-blur border-x border-yellow-300/50 shadow-[0_0_15px_rgba(250,204,21,0.3)] z-10 flex flex-col justify-center items-center">
+                            <span className="text-[8px] font-bold text-yellow-200 -rotate-90 whitespace-nowrap">Membrane</span>
+                        </div>
+                    )}
+                    {type === 'diaphragm' && (
+                        <div className="absolute top-0 bottom-0 left-1/2 w-4 -ml-2 bg-slate-400/50 backdrop-blur border-x border-slate-300/50 pattern-dots z-10 flex flex-col justify-center items-center">
+                             <span className="text-[8px] font-bold text-white -rotate-90 whitespace-nowrap">Diaphragm</span>
+                        </div>
+                    )}
+
+                    {/* Ions & Bubbles */}
+                    <Bubbles x="8%" color="green" /> {/* Cl2 at Anode */}
+                    {type !== 'mercury' && <Bubbles x="92%" color="white" />} {/* H2 at Cathode */}
+
+                    {/* Static Ions for Visual */}
+                    <Ion type="Cl" x="20%" y="30%" />
+                    <Ion type="Cl" x="30%" y="60%" />
+                    <Ion type="Na" x="25%" y="45%" />
+                    
+                    {/* Moving Ion (Na+) Animation Logic */}
+                    {type === 'mercury' ? (
+                        // Mercury Cell: Na+ moves DOWN to the mercury cathode
+                        <div className="absolute top-1/2 left-1/2 transition-transform duration-[3000ms] linear ion-move-down">
+                             <Ion type="Na" x="-12px" y="-30px" />
+                        </div>
+                    ) : (
+                        // Other Cells: Na+ moves RIGHT to the cathode compartment
+                        <div className="absolute top-1/2 left-1/2 transition-transform duration-[3000ms] linear ion-move-right">
+                             <Ion type="Na" x="-12px" y="-12px" />
+                        </div>
+                    )}
+
+                    {/* Right Side Ions (Only for non-mercury) */}
+                    {type !== 'mercury' && (
+                        <>
+                            <Ion type="OH" x="70%" y="30%" />
+                            <Ion type="Na" x="80%" y="60%" />
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('membrane');
+            const currentCell = CELLS[activeTab];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="factory" className="text-emerald-400" /> Cell Viewer
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Chloroalkali Industry</p>
+                        </div>
+
+                        <div className="p-4 space-y-2">
+                            {Object.entries(CELLS).map(([key, cell]) => (
+                                <button 
+                                    key={key}
+                                    onClick={() => setActiveTab(key)}
+                                    className={`w-full text-left p-4 rounded-xl border transition-all group relative overflow-hidden
+                                        ${activeTab === key 
+                                            ? 'bg-slate-800 border-emerald-500 ring-1 ring-emerald-500/50' 
+                                            : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
+                                    `}
+                                >
+                                    <div className="relative z-10">
+                                        <div className={`text-sm font-bold ${activeTab === key ? 'text-white' : 'text-slate-300'}`}>
+                                            {cell.name.split(' (')[0]}
+                                        </div>
+                                    </div>
+                                    {activeTab === key && (
+                                        <div className="absolute right-0 top-0 bottom-0 w-1 bg-emerald-500"></div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Quick Stats */}
+                        <div className="mt-auto p-6 border-t border-slate-800 bg-slate-900">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-3">Quick Comparison</div>
+                            <div className="space-y-3 text-xs">
+                                <div className="flex justify-between">
+                                    <span className="text-slate-400">Purity</span>
+                                    <span className={`font-bold ${currentCell.productPurity.includes('High') ? 'text-emerald-400' : 'text-orange-400'}`}>{currentCell.productPurity}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-400">Energy</span>
+                                    <span className={`font-bold ${currentCell.energy === 'Low' ? 'text-emerald-400' : 'text-red-400'}`}>{currentCell.energy}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-400">Pollution</span>
+                                    <span className={`font-bold ${currentCell.pollution === 'Low' ? 'text-emerald-400' : 'text-red-400'}`}>{currentCell.pollution}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 bg-slate-900/50 p-6 md:p-12 overflow-y-auto">
+                        <div className="max-w-4xl mx-auto space-y-8">
+                            
+                            {/* Header */}
+                            <div>
+                                <h2 className="text-3xl font-black text-white mb-2">{currentCell.name}</h2>
+                                <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">{currentCell.desc}</p>
+                            </div>
+
+                            {/* Visualizer */}
+                            <MembraneView type={activeTab} />
+
+                            {/* Reaction Cards */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
+                                    <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-red-500"></div> Anode Reaction (+)
+                                    </h3>
+                                    <div className="font-mono text-lg text-white bg-slate-900 p-3 rounded-lg border border-slate-600">
+                                        {currentCell.anodeEq}
+                                    </div>
+                                    <div className="mt-2 text-xs text-slate-500 flex items-center gap-1">
+                                        <Icon name="upload" size={12}/> Oxidation: Loss of electrons
+                                    </div>
+                                </div>
+
+                                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
+                                    <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-blue-500"></div> Cathode Reaction (-)
+                                    </h3>
+                                    <div className="font-mono text-lg text-white bg-slate-900 p-3 rounded-lg border border-slate-600">
+                                        {currentCell.cathodeEq}
+                                    </div>
+                                    <div className="mt-2 text-xs text-slate-500 flex items-center gap-1">
+                                        <Icon name="download" size={12}/> Reduction: Gain of electrons
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Key Features Table */}
+                            <div className="bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden">
+                                <div className="grid grid-cols-3 divide-x divide-slate-700 border-b border-slate-700 bg-slate-900/50">
+                                    <div className="p-4 text-center text-xs font-bold text-slate-500 uppercase">Separator</div>
+                                    <div className="p-4 text-center text-xs font-bold text-slate-500 uppercase">Anode Material</div>
+                                    <div className="p-4 text-center text-xs font-bold text-slate-500 uppercase">Cathode Material</div>
+                                </div>
+                                <div className="grid grid-cols-3 divide-x divide-slate-700">
+                                    <div className="p-4 text-center text-sm font-bold text-yellow-400">{currentCell.separator}</div>
+                                    <div className="p-4 text-center text-sm text-white">{currentCell.anode}</div>
+                                    <div className="p-4 text-center text-sm text-white">{currentCell.cathode}</div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
