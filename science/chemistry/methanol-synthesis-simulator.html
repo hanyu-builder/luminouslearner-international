@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Methanol Synthesis Simulator</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Gauge Animation */
+        .gauge-needle { transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1); transform-origin: bottom center; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #10B981; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION LOGIC ---
+        // Reaction: CO + 2H2 <-> CH3OH  (Exothermic, Volume decreases)
+        // Forward reaction favored by: Low Temp, High Pressure
+        // Rate favored by: High Temp, High Pressure, Catalyst
+        
+        const App = () => {
+            // Inputs
+            const [temp, setTemp] = useState(250); // °C
+            const [pressure, setPressure] = useState(50); // atm
+            const [catalyst, setCatalyst] = useState(true); // Cu/ZnO/Al2O3
+
+            // Outputs (Calculated)
+            const [yieldPercent, setYieldPercent] = useState(0);
+            const [rate, setRate] = useState(0);
+            const [profit, setProfit] = useState(0);
+
+            useEffect(() => {
+                // 1. Calculate Yield (Thermodynamics)
+                // Exothermic: Temp up -> Yield down
+                // 1:3 moles -> 1 mole: Pressure up -> Yield up
+                
+                // Base yield at 200C, 50atm = ~80% (Simplified model)
+                // Temp factor: -0.3% per °C above 200
+                // Pressure factor: +0.4% per atm above 50
+                
+                let baseYield = 60;
+                let tempEffect = (temp - 200) * -0.25; 
+                let pressEffect = (pressure - 50) * 0.5;
+                
+                let calcYield = baseYield + tempEffect + pressEffect;
+                calcYield = Math.max(5, Math.min(98, calcYield)); // Clamp 5-98%
+
+                // 2. Calculate Rate (Kinetics)
+                // Temp up -> Rate up (Arrhenius)
+                // Pressure up -> Rate up (Concentration)
+                // Catalyst -> Rate up (Lower Ea)
+                
+                let baseRate = 10; 
+                let tempRate = Math.pow((temp / 200), 4) * 10; // Exponential growth
+                let pressRate = (pressure / 50) * 5;
+                let catFactor = catalyst ? 10 : 1;
+
+                let calcRate = (tempRate + pressRate) * catFactor;
+                // Normalize to 0-100 scale for display
+                calcRate = Math.min(100, calcRate);
+
+                // 3. Calculate Profit/Efficiency
+                // Revenue ~ Rate * Yield
+                // Cost ~ Temp (Fuel) + Pressure (Compressor) + Catalyst
+                
+                let revenue = (calcRate * calcYield) / 10; 
+                let cost = (temp * 0.1) + (pressure * 0.2) + (catalyst ? 10 : 0);
+                let calcProfit = revenue - cost;
+                // Normalize 0-100
+                calcProfit = Math.max(0, Math.min(100, 50 + calcProfit));
+
+                setYieldPercent(calcYield);
+                setRate(calcRate);
+                setProfit(calcProfit);
+
+            }, [temp, pressure, catalyst]);
+
+            // Visualizer: Reactants (CO, H2) -> Product (CH3OH)
+            // Animation speed depends on Rate
+            const [particles, setParticles] = useState([]);
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                // Particle System
+                const createParticles = () => {
+                    const count = Math.floor(rate / 5) + 2; // More rate = more particles
+                    const newParticles = [];
+                    for(let i=0; i<count; i++) {
+                        newParticles.push({
+                            x: Math.random() * canvas.width,
+                            y: Math.random() * canvas.height,
+                            vx: (Math.random() - 0.5) * (temp/100), // Temp affects speed
+                            vy: (Math.random() - 0.5) * (temp/100),
+                            type: Math.random() > 0.3 ? 'H2' : 'CO', // Reactants
+                            timer: 0
+                        });
+                    }
+                    return newParticles;
+                };
+                
+                let currentParticles = createParticles();
+
+                const render = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Draw Catalyst Bed
+                    if (catalyst) {
+                        ctx.fillStyle = '#334155';
+                        for(let i=0; i<canvas.width; i+=40) {
+                            ctx.beginPath();
+                            ctx.arc(i+20, canvas.height-10, 15, 0, Math.PI, true);
+                            ctx.fill();
+                        }
+                        ctx.fillStyle = '#94a3b8';
+                        ctx.font = '10px Arial';
+                        ctx.fillText("Cu/ZnO Catalyst Surface", 10, canvas.height-5);
+                    }
+
+                    // Update & Draw Particles
+                    currentParticles.forEach(p => {
+                        p.x += p.vx;
+                        p.y += p.vy;
+
+                        // Bounce
+                        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+                        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+                        // Draw
+                        if (p.type === 'CO') {
+                            ctx.fillStyle = '#ef4444'; // Red O
+                            ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI*2); ctx.fill();
+                            ctx.fillStyle = '#333'; // Black C
+                            ctx.beginPath(); ctx.arc(p.x+8, p.y, 6, 0, Math.PI*2); ctx.fill();
+                        } else if (p.type === 'H2') {
+                            ctx.fillStyle = '#fff'; 
+                            ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill();
+                            ctx.beginPath(); ctx.arc(p.x+5, p.y, 4, 0, Math.PI*2); ctx.fill();
+                        } else {
+                            // Product CH3OH
+                            ctx.fillStyle = '#10b981'; // Green glow for product
+                            ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI*2); ctx.fill();
+                        }
+
+                        // Random Reaction logic
+                        // If catalyst is present and near bottom, or high temp/pressure, turn into product
+                        if (p.type !== 'CH3OH' && Math.random() < (yieldPercent/1000)) {
+                            p.type = 'CH3OH';
+                            p.vx *= 0.5; // Heavier
+                            p.vy *= 0.5;
+                        }
+                        
+                        // Reset product
+                        if (p.type === 'CH3OH') {
+                            p.timer++;
+                            if (p.timer > 50) {
+                                p.type = Math.random() > 0.3 ? 'H2' : 'CO';
+                                p.timer = 0;
+                            }
+                        }
+                    });
+
+                    animationId = requestAnimationFrame(render);
+                };
+                
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [rate, temp, yieldPercent, catalyst]);
+
+
+            // Gauge Component
+            const Gauge = ({ value, label, color, unit }) => {
+                const angle = (value / 100) * 180 - 90; // -90 to 90
+                return (
+                    <div className="flex flex-col items-center">
+                        <div className="relative w-32 h-16 overflow-hidden mb-2">
+                            <div className="absolute top-0 left-0 w-32 h-32 rounded-full border-[12px] border-slate-700"></div>
+                            <div 
+                                className={`absolute top-0 left-0 w-32 h-32 rounded-full border-[12px] border-transparent border-t-${color}-500 border-l-${color}-500 origin-center transition-transform duration-500`}
+                                style={{ transform: `rotate(${angle}deg)` }} // Simplified visual representation
+                            ></div>
+                            {/* Needle */}
+                            <div className="absolute bottom-0 left-1/2 w-1 h-14 bg-white origin-bottom gauge-needle" style={{ transform: `translateX(-50%) rotate(${angle}deg)` }}></div>
+                            <div className="absolute bottom-0 left-1/2 w-4 h-4 bg-slate-300 rounded-full transform -translate-x-1/2 translate-y-1/2"></div>
+                        </div>
+                        <div className={`text-2xl font-bold text-${color}-400 font-mono`}>
+                            {value.toFixed(0)}{unit}
+                        </div>
+                        <div className="text-xs text-slate-400 font-bold uppercase tracking-wider">{label}</div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Left Control Panel */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="factory" className="text-emerald-400" /> Methanol Plant
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Syngas Conversion Process</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* Temperature Control */}
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center gap-2">
+                                        <Icon name="thermometer" size={14}/> Temperature
+                                    </label>
+                                    <span className="font-mono text-red-300">{temp}°C</span>
+                                </div>
+                                <input 
+                                    type="range" min="200" max="400" step="10" 
+                                    value={temp} 
+                                    onChange={(e) => setTemp(parseInt(e.target.value))}
+                                    className="accent-red-500"
+                                />
+                                <p className="text-[10px] text-slate-500">
+                                    Higher T = Faster Rate but Lower Equilibrium Yield (Exothermic)
+                                </p>
+                            </div>
+
+                            {/* Pressure Control */}
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+                                        <Icon name="gauge" size={14}/> Pressure
+                                    </label>
+                                    <span className="font-mono text-blue-300">{pressure} atm</span>
+                                </div>
+                                <input 
+                                    type="range" min="50" max="100" step="5" 
+                                    value={pressure} 
+                                    onChange={(e) => setPressure(parseInt(e.target.value))}
+                                    className="accent-blue-500"
+                                />
+                                <p className="text-[10px] text-slate-500">
+                                    Higher P = Higher Yield (3 mol gas → 1 mol gas)
+                                </p>
+                            </div>
+
+                            {/* Catalyst Toggle */}
+                            <div className="p-4 bg-slate-800 rounded-xl border border-slate-700">
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                                        <Icon name="zap" size={14}/> Catalyst
+                                    </label>
+                                    <div 
+                                        onClick={() => setCatalyst(!catalyst)}
+                                        className={`w-10 h-5 rounded-full relative cursor-pointer transition-colors ${catalyst ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                                    >
+                                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${catalyst ? 'left-6' : 'left-1'}`}></div>
+                                    </div>
+                                </div>
+                                <div className="text-sm text-white font-bold mb-1">{catalyst ? 'Cu / ZnO / Al₂O₃' : 'None'}</div>
+                                <p className="text-[10px] text-slate-500">Lowers Ea, allows reaction at lower T.</p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Dashboard */}
+                    <div className="flex-1 bg-slate-900/50 p-6 md:p-12 flex flex-col gap-8 relative overflow-hidden">
+                        {/* Background Effect */}
+                        <div className="absolute inset-0 opacity-5 pointer-events-none" 
+                            style={{backgroundImage: 'radial-gradient(#cbd5e1 2px, transparent 2px)', backgroundSize: '30px 30px'}}>
+                        </div>
+
+                        {/* Reaction Equation */}
+                        <div className="bg-slate-800/80 backdrop-blur p-6 rounded-3xl border border-slate-700 shadow-xl text-center z-10">
+                            <div className="text-xs text-slate-500 font-bold uppercase mb-2">Main Reaction (Exothermic)</div>
+                            <div className="text-2xl md:text-4xl font-black text-white font-mono">
+                                CO(g) + 2H₂(g) ⇌ CH₃OH(g)
+                            </div>
+                            <div className="text-sm text-red-400 mt-2 font-bold">ΔH = -92 kJ mol⁻¹</div>
+                        </div>
+
+                        {/* Gauges */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 z-10">
+                            <div className="bg-slate-800/80 backdrop-blur p-6 rounded-2xl border border-slate-700 shadow-lg">
+                                <Gauge value={yieldPercent} label="Equilibrium Yield" color="emerald" unit="%" />
+                            </div>
+                            <div className="bg-slate-800/80 backdrop-blur p-6 rounded-2xl border border-slate-700 shadow-lg">
+                                <Gauge value={rate} label="Reaction Rate" color="blue" unit="" />
+                            </div>
+                            <div className="bg-slate-800/80 backdrop-blur p-6 rounded-2xl border border-slate-700 shadow-lg">
+                                <Gauge value={profit} label="Cost Efficiency" color="yellow" unit="" />
+                            </div>
+                        </div>
+
+                        {/* Micro View */}
+                        <div className="flex-1 bg-slate-800 rounded-3xl border border-slate-700 overflow-hidden relative shadow-2xl z-10 flex flex-col">
+                            <div className="absolute top-4 left-4 right-4 z-10 flex justify-between items-start pointer-events-none">
+                                <div className="bg-black/30 px-3 py-1 rounded-full text-xs font-bold text-white border border-white/10 backdrop-blur">
+                                    Microscopic View
+                                </div>
+                                
+                                {/* Legend */}
+                                <div className="bg-black/40 px-3 py-2 rounded-xl border border-white/10 backdrop-blur flex gap-4 pointer-events-auto">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-red-500 border border-white/20"></div>
+                                        <span className="text-[10px] text-slate-300 font-bold">CO</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-white border border-white/20"></div>
+                                        <span className="text-[10px] text-slate-300 font-bold">H₂</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-3 h-3 rounded-full bg-emerald-500 border border-white/20 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></div>
+                                        <span className="text-[10px] text-emerald-300 font-bold">CH₃OH</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <canvas ref={canvasRef} width={800} height={300} className="w-full h-full object-cover"></canvas>
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
