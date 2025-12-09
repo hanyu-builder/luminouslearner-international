@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electrolysis Predictor - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Ion Movement Animation */
+        @keyframes move-to-cathode {
+            0% { transform: translate(0, 0); opacity: 0; }
+            10% { opacity: 1; }
+            90% { transform: translate(-80px, 0); opacity: 1; }
+            100% { transform: translate(-80px, 0); opacity: 0; }
+        }
+        @keyframes move-to-anode {
+            0% { transform: translate(0, 0); opacity: 0; }
+            10% { opacity: 1; }
+            90% { transform: translate(80px, 0); opacity: 1; }
+            100% { transform: translate(80px, 0); opacity: 0; }
+        }
+
+        .cation-anim { animation: move-to-cathode 2s infinite ease-in-out; }
+        .anion-anim { animation: move-to-anode 2s infinite ease-in-out; }
+
+        /* Bubbles */
+        @keyframes bubble-rise {
+            0% { bottom: 0; opacity: 0; }
+            50% { opacity: 1; }
+            100% { bottom: 100%; opacity: 0; }
+        }
+        .bubble {
+            position: absolute;
+            background: rgba(255,255,255,0.6);
+            border-radius: 50%;
+            animation: bubble-rise 1.5s infinite linear;
+        }
+
+        /* Electrode Erosion */
+        .eroding {
+            border-style: dashed !important;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Chemistry Logic ---
+
+        // Reactivity Series (Discharge ease: Bottom > Top for Cations)
+        // K, Na, Ca, Mg, Al, Zn, Fe, Pb, H, Cu, Ag
+        const CationEase = ['K', 'Na', 'Ca', 'Mg', 'Al', 'Zn', 'Fe', 'Pb', 'H', 'Cu', 'Ag'];
+
+        // Anion Discharge Ease (OH- > I- > Br- > Cl- > SO4/NO3)
+        // Note: For concentration effect, Halides > OH-
+        const AnionEase = ['NO3', 'SO4', 'F', 'Cl', 'Br', 'I', 'OH'];
+
+        const Electrolytes = [
+            { id: 'molten_NaCl', name: 'Molten Sodium Chloride (l)', state: 'molten', ions: { cat: 'Na', an: 'Cl' } },
+            { id: 'dilute_NaCl', name: 'Dilute Sodium Chloride (aq)', state: 'dilute', ions: { cat: 'Na', an: 'Cl' } },
+            { id: 'conc_NaCl', name: 'Conc. Sodium Chloride (Brine)', state: 'conc', ions: { cat: 'Na', an: 'Cl' } },
+            { id: 'dilute_H2SO4', name: 'Dilute Sulfuric Acid (aq)', state: 'dilute', ions: { cat: 'H', an: 'SO4' } },
+            { id: 'CuSO4', name: 'Copper(II) Sulfate (aq)', state: 'dilute', ions: { cat: 'Cu', an: 'SO4' } },
+            { id: 'molten_PbBr2', name: 'Molten Lead(II) Bromide (l)', state: 'molten', ions: { cat: 'Pb', an: 'Br' } }
+        ];
+
+        const Electrodes = [
+            { id: 'inert', name: 'Inert (Carbon/Platinum)', active: false },
+            { id: 'copper', name: 'Copper (Active Electrode)', active: true, metal: 'Cu' }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [electrolyte, setElectrolyte] = useState(Electrolytes[1]); // Dilute NaCl
+            const [electrode, setElectrode] = useState(Electrodes[0]); // Inert
+            const [isRunning, setIsRunning] = useState(false);
+            const [result, setResult] = useState(null);
+
+            // Prediction Logic
+            useEffect(() => {
+                if (!isRunning) {
+                    setResult(null);
+                    return;
+                }
+
+                const { cat, an } = electrolyte.ions;
+                const state = electrolyte.state;
+
+                // Cathode (Reduction)
+                let cathodeProduct = '';
+                let cathodeEq = '';
+                
+                if (state === 'molten') {
+                    cathodeProduct = `${cat} Metal`;
+                    cathodeEq = `${cat}⁺ + e⁻ → ${cat}`; 
+                } else {
+                    // Aqueous Solution
+                    const metalIndex = CationEase.indexOf(cat);
+                    const hIndex = CationEase.indexOf('H');
+
+                    // If metal is MORE reactive than H (lower index), H+ discharges
+                    if (metalIndex < hIndex) { 
+                        cathodeProduct = 'Hydrogen Gas (H₂)';
+                        cathodeEq = '2H⁺(aq) + 2e⁻ → H₂(g)';
+                    } else {
+                        // Less reactive metals (Cu, Ag) discharge
+                         cathodeProduct = `${cat} Metal Deposit`;
+                         cathodeEq = `${cat}²⁺(aq) + 2e⁻ → ${cat}(s)`;
+                    }
+                }
+
+                // Anode (Oxidation)
+                let anodeProduct = '';
+                let anodeEq = '';
+
+                if (electrode.active && electrode.metal) {
+                    // Active Electrode takes part
+                    anodeProduct = `${electrode.metal} Electrode Dissolves`;
+                    anodeEq = `${electrode.metal}(s) → ${electrode.metal}²⁺(aq) + 2e⁻`;
+                } else {
+                    // Inert Electrode
+                    if (state === 'molten') {
+                        anodeProduct = `${an} Gas`;
+                        anodeEq = `2${an}⁻ → ${an}₂ + 2e⁻`;
+                    } else {
+                        const anIndex = AnionEase.indexOf(an);
+                        const ohIndex = AnionEase.indexOf('OH');
+                        
+                        // Concentration Effect: Conc Cl- discharges over OH-
+                        if (state === 'conc' && an === 'Cl') {
+                            anodeProduct = 'Chlorine Gas (Cl₂)';
+                            anodeEq = '2Cl⁻(aq) → Cl₂(g) + 2e⁻';
+                        } else if (anIndex < ohIndex) {
+                            // SO4, NO3 don't discharge, OH- does
+                            anodeProduct = 'Oxygen Gas (O₂)';
+                            anodeEq = '4OH⁻(aq) → O₂(g) + 2H₂O(l) + 4e⁻';
+                        } else {
+                            // Halides discharge
+                             anodeProduct = `${an === 'Cl' ? 'Chlorine' : an === 'Br' ? 'Bromine' : 'Iodine'} Gas/Vapour`;
+                             anodeEq = `2${an}⁻(aq) → ${an}₂ + 2e⁻`;
+                        }
+                    }
+                }
+
+                setResult({
+                    cathode: { product: cathodeProduct, eq: cathodeEq },
+                    anode: { product: anodeProduct, eq: anodeEq }
+                });
+
+            }, [isRunning, electrolyte, electrode]);
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
+                                <Icon name="Zap" /> Electrolysis Predictor
+                            </h1>
+                            <p className="text-slate-500 text-sm">Predict Products at Cathode & Anode</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="Settings2" size={16}/> Setup Experiment
+                                </h3>
+                                
+                                <div className="mb-4">
+                                    <label className="text-xs font-bold text-slate-500 block mb-1">Electrolyte</label>
+                                    <select 
+                                        value={electrolyte.id}
+                                        onChange={(e) => { setElectrolyte(Electrolytes.find(el => el.id === e.target.value)); setIsRunning(false); }}
+                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-blue-300 outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        {Electrolytes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                                    </select>
+                                </div>
+
+                                <div className="mb-6">
+                                    <label className="text-xs font-bold text-slate-500 block mb-1">Electrodes</label>
+                                    <select 
+                                        value={electrode.id}
+                                        onChange={(e) => { setElectrode(Electrodes.find(el => el.id === e.target.value)); setIsRunning(false); }}
+                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-slate-300 outline-none focus:ring-2 focus:ring-slate-500"
+                                    >
+                                        {Electrodes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                                    </select>
+                                </div>
+
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2
+                                        ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}
+                                    `}
+                                >
+                                    {isRunning ? <Icon name="Square" size={18} /> : <Icon name="Play" size={18} />}
+                                    {isRunning ? 'Stop Electrolysis' : 'Start Electrolysis'}
+                                </button>
+                            </div>
+
+                            {/* Principles Box */}
+                            <div className="bg-slate-900 p-5 rounded-2xl text-white shadow-lg border-l-4 border-yellow-500">
+                                <h3 className="text-sm font-bold text-yellow-400 uppercase mb-2 flex items-center gap-2">
+                                    <Icon name="Info" size={16}/> Discharge Rules
+                                </h3>
+                                <div className="text-xs space-y-2 text-slate-400">
+                                    <p><strong className="text-white">Cathode (-):</strong> Least reactive cation discharges (Ag {'>'} Cu {'>'} H {'>'} Pb...).</p>
+                                    <p><strong className="text-white">Anode (+):</strong> 
+                                        <br/>1. Active electrodes dissolve.
+                                        <br/>2. Conc. Halides (Cl⁻) > OH⁻.
+                                        <br/>3. OH⁻ > SO₄²⁻/NO₃⁻ (OH⁻ forms O₂).
+                                    </p>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Center: Visualization */}
+                        <div className="w-full lg:w-2/3 flex flex-col gap-6 items-center justify-center bg-slate-900/50 rounded-3xl border border-slate-800 relative overflow-hidden min-h-[500px] p-8">
+                            
+                            <div className="relative w-full max-w-lg h-96 flex justify-center items-end mt-8">
+                                
+                                {/* Beaker */}
+                                <div className="w-64 h-56 border-x-4 border-b-4 border-slate-600 bg-white/5 backdrop-blur-sm rounded-b-3xl relative overflow-hidden">
+                                    {/* Liquid */}
+                                    <div className={`absolute bottom-0 w-full h-5/6 ${electrolyte.id.includes('Cu') ? 'bg-blue-500/30' : 'bg-cyan-100/10'} transition-colors duration-500`}></div>
+
+                                    {/* Moving Ions Animation */}
+                                    {isRunning && (
+                                        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                                            {/* Cations moving left to Cathode */}
+                                            <div className="absolute top-1/2 left-1/2 cation-anim text-red-400 font-bold text-xl">+</div>
+                                            <div className="absolute top-1/3 left-2/3 cation-anim text-red-400 font-bold text-lg" style={{animationDelay: '0.5s'}}>+</div>
+                                            
+                                            {/* Anions moving right to Anode */}
+                                            <div className="absolute top-1/2 left-1/2 anion-anim text-blue-400 font-bold text-xl">-</div>
+                                            <div className="absolute top-2/3 left-1/3 anion-anim text-blue-400 font-bold text-lg" style={{animationDelay: '0.8s'}}>-</div>
+                                        </div>
+                                    )}
+
+                                    {/* Bubbles @ Anode */}
+                                    {isRunning && result?.anode.product.includes('Gas') && (
+                                        <div className="absolute right-6 bottom-0 w-8 h-full overflow-hidden">
+                                            {[...Array(5)].map((_, i) => <div key={i} className="bubble" style={{left: `${Math.random()*20}px`, width: '6px', height: '6px', animationDelay: `${i*0.3}s`}}></div>)}
+                                        </div>
+                                    )}
+
+                                    {/* Bubbles @ Cathode */}
+                                    {isRunning && result?.cathode.product.includes('Gas') && (
+                                        <div className="absolute left-6 bottom-0 w-8 h-full overflow-hidden">
+                                            {[...Array(5)].map((_, i) => <div key={i} className="bubble" style={{left: `${Math.random()*20}px`, width: '6px', height: '6px', animationDelay: `${i*0.3}s`}}></div>)}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Cathode (Left, -) */}
+                                <div className="absolute left-16 top-10 h-64 flex flex-col items-center z-10">
+                                    {/* Rod */}
+                                    <div className="w-8 h-56 bg-slate-600 rounded-b-md border-2 border-slate-700 shadow-xl relative">
+                                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 font-bold text-slate-400 text-2xl">-</div>
+                                        {isRunning && result?.cathode.product.includes('Metal') && (
+                                            <div className="absolute bottom-0 w-full h-1/3 bg-orange-400 opacity-80 rounded-b-md animate-pulse"></div>
+                                        )}
+                                    </div>
+                                    {/* Label Box */}
+                                    <div className="mt-2 bg-slate-800 text-slate-300 px-3 py-1 rounded shadow-md text-xs font-bold border border-slate-700">
+                                        Cathode (-)
+                                    </div>
+                                </div>
+
+                                {/* Anode (Right, +) */}
+                                <div className="absolute right-16 top-10 h-64 flex flex-col items-center z-10">
+                                    {/* Rod */}
+                                    <div className={`w-8 h-56 ${electrode.active ? 'bg-orange-700' : 'bg-slate-700'} rounded-b-md border-2 border-slate-800 shadow-xl relative ${isRunning && result?.anode.product.includes('Dissolves') ? 'eroding' : ''}`}>
+                                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 font-bold text-slate-400 text-2xl">+</div>
+                                    </div>
+                                    {/* Label Box */}
+                                    <div className="mt-2 bg-slate-800 text-slate-300 px-3 py-1 rounded shadow-md text-xs font-bold border border-slate-700">
+                                        Anode (+)
+                                    </div>
+                                </div>
+
+                                {/* Power Source */}
+                                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-32 h-16 bg-slate-900 rounded-lg border-4 border-slate-700 flex flex-col items-center justify-center shadow-lg z-20">
+                                    <div className="text-emerald-400 font-mono font-bold text-lg">DC Power</div>
+                                </div>
+                                
+                                {/* Wires */}
+                                <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none" style={{top: '-80px'}}>
+                                    <path d="M 200 80 V 40 H 112 V 120" fill="none" stroke="#475569" strokeWidth="4" strokeLinecap="round" />
+                                    <path d="M 312 80 V 40 H 400 V 120" fill="none" stroke="#475569" strokeWidth="4" strokeLinecap="round" />
+                                </svg>
+
+                            </div>
+
+                            {/* Result Panel */}
+                            {result ? (
+                                <div className="grid grid-cols-2 gap-4 w-full mt-8 animate-in slide-in-from-bottom-4">
+                                    <div className="bg-blue-900/30 p-4 rounded-xl border-l-4 border-blue-500 shadow-sm">
+                                        <h4 className="font-bold text-blue-400 text-xs uppercase mb-1">Cathode (-) Reduction</h4>
+                                        <div className="text-lg font-bold text-white mb-2">{result.cathode.product}</div>
+                                        <div className="font-mono text-xs bg-slate-900/50 p-2 rounded border border-blue-500/30 text-blue-200">{result.cathode.eq}</div>
+                                    </div>
+                                    <div className="bg-red-900/30 p-4 rounded-xl border-l-4 border-red-500 shadow-sm">
+                                        <h4 className="font-bold text-red-400 text-xs uppercase mb-1">Anode (+) Oxidation</h4>
+                                        <div className="text-lg font-bold text-white mb-2">{result.anode.product}</div>
+                                        <div className="font-mono text-xs bg-slate-900/50 p-2 rounded border border-red-500/30 text-red-200">{result.anode.eq}</div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-center text-slate-500 py-8 mt-8 italic">
+                                    Select electrolyte and electrodes, then click "Start Electrolysis"...
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
