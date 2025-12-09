@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collision Theory Animator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        #simulation-canvas {
+            background-color: #1e293b; /* Darker slate background for animation */
+            border-radius: 1rem;
+            border: 2px solid #334155;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .stat-card { transition: all 0.3s ease; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
+
+        /* Dark Mode Slider Thumbs */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            border: 3px solid currentColor;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        }
+        #temp-slider::-webkit-slider-thumb { border-color: #f87171; }
+        #conc-slider::-webkit-slider-thumb { border-color: #60a5fa; }
+        #ea-slider::-webkit-slider-thumb { border-color: #facc15; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons[name]) {
+                    const iconNode = window.lucide.icons[name];
+                    const iconSvg = window.lucide.createElement(iconNode);
+                    iconSvg.setAttribute('width', size);
+                    iconSvg.setAttribute('height', size);
+                    iconSvg.setAttribute('class', className);
+                    setSvg(iconSvg.outerHTML);
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            // Settings
+            const [temperature, setTemperature] = useState(300); // Kelvin (approx range 200-600)
+            const [concentration, setConcentration] = useState(40); // Number of particles (20-300)
+            const [isRunning, setIsRunning] = useState(true);
+            const [activationEnergy, setActivationEnergy] = useState(50); // Arbitrary unit (scaled: 20-100)
+
+            // Stats
+            const [totalCollisions, setTotalCollisions] = useState(0);
+            const [effectiveCollisions, setEffectiveCollisions] = useState(0);
+            const [reactionRate, setReactionRate] = useState(0);
+
+            // Refs for Canvas Animation
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]);
+            const requestRef = useRef();
+            const statsRef = useRef({ total: 0, effective: 0, lastTime: Date.now(), rate: 0 });
+            const particleCount = concentration * 2;
+
+            // Initialize Particles
+            useEffect(() => {
+                const initParticles = () => {
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    const width = canvas.width;
+                    const height = canvas.height;
+
+                    const newParticles = [];
+                    // Create A (Red) and B (Blue) particles
+                    for (let i = 0; i < particleCount; i++) {
+                        const type = i % 2 === 0 ? 'A' : 'B';
+                        newParticles.push(createParticle(width, height, type));
+                    }
+                    particlesRef.current = newParticles;
+                };
+
+                initParticles();
+                
+                // Reset Stats
+                statsRef.current = { total: 0, effective: 0, lastTime: Date.now(), rate: 0 };
+                setTotalCollisions(0);
+                setEffectiveCollisions(0);
+                setReactionRate(0);
+
+            }, [concentration]); // Re-init when concentration changes
+
+            const createParticle = (w, h, type) => {
+                const baseSpeed = 1.5;
+                const randomAngle = Math.random() * 2 * Math.PI;
+                const baseEnergy = (Math.random() * 200) + 100; // Base energy between 100 and 300
+                
+                return {
+                    x: Math.random() * w,
+                    y: Math.random() * h,
+                    // Use random angle for velocity direction
+                    vx: Math.cos(randomAngle) * baseSpeed, 
+                    vy: Math.sin(randomAngle) * baseSpeed,
+                    type: type,
+                    radius: 4,
+                    color: type === 'A' ? '#f87171' : '#60a5fa', // Red/Blue
+                    energy: baseEnergy
+                };
+            };
+
+            // Main Animation Loop
+            const animate = () => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const width = canvas.width;
+                const height = canvas.height;
+
+                ctx.clearRect(0, 0, width, height);
+                ctx.fillStyle = '#1e293b'; // Dark background
+                ctx.fillRect(0, 0, width, height);
+
+                // Speed multiplier based on Temperature (T)
+                const speedFactor = Math.sqrt(temperature / 300) * 1; // 300K is baseline 1x speed
+
+                // Activation Energy Threshold (Scaled to match typical particle energy distribution, e.g., 5x Ea slider value)
+                const EaThreshold = activationEnergy * 5; 
+
+                // Update & Draw Particles
+                const particles = particlesRef.current;
+                
+                for (let i = 0; i < particles.length; i++) {
+                    let p1 = particles[i];
+                    
+                    // 1. Move
+                    p1.x += p1.vx * speedFactor;
+                    p1.y += p1.vy * speedFactor;
+
+                    // 2. Boundary Bounce
+                    if (p1.x < p1.radius || p1.x > width - p1.radius) p1.vx *= -1;
+                    if (p1.y < p1.radius || p1.y > height - p1.radius) p1.vy *= -1;
+
+                    p1.x = Math.max(p1.radius, Math.min(width - p1.radius, p1.x));
+                    p1.y = Math.max(p1.radius, Math.min(height - p1.radius, p1.y));
+                    
+                    // 3. Draw
+                    ctx.beginPath();
+                    ctx.arc(p1.x, p1.y, p1.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = p1.color;
+                    ctx.fill();
+                    
+                    // 4. Collision Detection & Reaction Check
+                    for (let j = i + 1; j < particles.length; j++) {
+                        let p2 = particles[j];
+                        const dx = p1.x - p2.x;
+                        const dy = p1.y - p2.y;
+                        const distSq = dx*dx + dy*dy;
+                        const minDist = (p1.radius + p2.radius);
+
+                        if (distSq < minDist * minDist) {
+                            
+                            // Prevent sticking & resolve overlap (Simplified)
+                            const dist = Math.sqrt(distSq);
+                            const overlap = minDist - dist;
+                            p1.x += dx / dist * overlap / 2;
+                            p1.y += dy / dist * overlap / 2;
+                            p2.x -= dx / dist * overlap / 2;
+                            p2.y -= dy / dist * overlap / 2;
+
+                            // Simple elastic collision (Angle reflection/velocity swap)
+                            const tempVx = p1.vx; const tempVy = p1.vy;
+                            p1.vx = p2.vx; p1.vy = p2.vy;
+                            p2.vx = tempVx; p2.vy = tempVy;
+
+                            // Check Reaction (A + B)
+                            if (p1.type !== p2.type) {
+                                statsRef.current.total++;
+                                
+                                // Energy Check (Energy > Ea?)
+                                // Combined Kinetic Energy (simplified using speed and temperature factor)
+                                const combinedEnergy = (p1.energy * speedFactor + p2.energy * speedFactor);
+                                
+                                if (combinedEnergy > EaThreshold) {
+                                    statsRef.current.effective++;
+                                    
+                                    // Visual Flash for Effective Collision
+                                    ctx.beginPath();
+                                    ctx.arc((p1.x+p2.x)/2, (p1.y+p2.y)/2, 8, 0, Math.PI * 2);
+                                    ctx.fillStyle = "rgba(255, 255, 0, 0.7)";
+                                    ctx.fill();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Update React Stats (Throttled)
+                const now = Date.now();
+                if (now - statsRef.current.lastTime > 500) { // Every 0.5s
+                    const totalPeriod = (now - statsRef.current.lastTime) / 1000; // seconds
+                    
+                    setTotalCollisions(prev => prev + statsRef.current.total);
+                    setEffectiveCollisions(prev => prev + statsRef.current.effective);
+                    
+                    // Rate is Effective Collisions per unit Time
+                    const currentRate = statsRef.current.effective / totalPeriod;
+
+                    // Smoothen the rate display slightly
+                    statsRef.current.rate = statsRef.current.rate * 0.8 + currentRate * 0.2;
+                    setReactionRate(statsRef.current.rate.toFixed(1)); 
+
+                    statsRef.current.total = 0;
+                    statsRef.current.effective = 0;
+                    statsRef.current.lastTime = now;
+                }
+
+                if (isRunning) {
+                    requestRef.current = requestAnimationFrame(animate);
+                }
+            };
+
+            useEffect(() => {
+                // Ensure canvas sizing is correct initially
+                const canvas = canvasRef.current;
+                if (canvas) {
+                    const container = canvas.parentElement;
+                    canvas.width = container.clientWidth;
+                    canvas.height = container.clientHeight;
+                }
+                
+                if (isRunning) {
+                    requestRef.current = requestAnimationFrame(animate);
+                }
+                return () => cancelAnimationFrame(requestRef.current);
+            }, [isRunning, temperature, concentration, activationEnergy]);
+
+            const Icon = ({ name, size = 20, className = "" }) => {
+                const [svg, setSvg] = useState('');
+                useEffect(() => {
+                    if (window.lucide && window.lucide.icons[name]) {
+                        const iconNode = window.lucide.icons[name];
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+                , [name, size, className]);
+                return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+            };
+
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Activity" /> Collision Theory Animator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Visualizing Rate Factors (A + B → Products)</p>
+                        </div>
+                        <button 
+                            onClick={() => setIsRunning(!isRunning)}
+                            className={`px-6 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors shadow-lg
+                                ${isRunning ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-emerald-600 text-white hover:bg-emerald-500'}
+                            `}
+                        >
+                            <Icon name={isRunning ? "Pause" : "Play"} size={16}/>
+                            {isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            {/* Stats */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 border-b border-slate-700 pb-2">
+                                    Reaction Statistics
+                                </h3>
+                                
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 stat-card">
+                                        <div className="text-xs font-bold text-slate-500">Total Collisions</div>
+                                        <div className="text-2xl font-mono font-black text-white">{totalCollisions}</div>
+                                    </div>
+                                    <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 stat-card">
+                                        <div className="text-xs font-bold text-slate-500">Effective Collisions</div>
+                                        <div className="text-2xl font-mono font-black text-emerald-400">{effectiveCollisions}</div>
+                                    </div>
+                                </div>
+                                <div className="mt-4 p-3 bg-slate-800 rounded-xl border border-slate-700">
+                                    <div className="text-xs font-bold text-slate-500">Effective Rate</div>
+                                    <div className="text-3xl font-mono font-black text-indigo-400 mt-1">{reactionRate}</div>
+                                </div>
+                            </div>
+                            
+                            {/* Temperature Control */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border-l-8 border-red-500/50">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-slate-400 flex items-center gap-2">
+                                        <Icon name="Thermometer" className="text-red-400"/> Temperature (T)
+                                    </h3>
+                                    <span className="font-mono font-bold text-red-400 text-2xl">{temperature} K</span>
+                                </div>
+                                <input 
+                                    type="range" min="200" max="600" step="10"
+                                    value={temperature}
+                                    onChange={(e) => setTemperature(Number(e.target.value))}
+                                    id="temp-slider"
+                                    className="w-full h-2 bg-red-900/50 rounded-lg appearance-none cursor-pointer accent-red-500"
+                                />
+                                <p className="text-xs text-slate-500 mt-3">↑ T increases particle speed, boosting collision frequency and energy.</p>
+                            </div>
+
+                            {/* Concentration Control */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border-l-8 border-blue-500/50">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-slate-400 flex items-center gap-2">
+                                        <Icon name="Users" className="text-blue-400"/> Concentration (Particles)
+                                    </h3>
+                                    <span className="font-mono font-bold text-blue-400 text-2xl">{concentration * 2}</span>
+                                </div>
+                                <input 
+                                    type="range" min="10" max="150" step="10"
+                                    value={concentration}
+                                    onChange={(e) => setConcentration(parseInt(e.target.value))}
+                                    id="conc-slider"
+                                    className="w-full h-2 bg-blue-900/50 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                                <p className="text-xs text-slate-500 mt-3">↑ Particle count directly increases collision frequency.</p>
+                            </div>
+
+                            {/* Activation Energy Control */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border-l-8 border-amber-500/50">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-slate-400 flex items-center gap-2">
+                                        <Icon name="Zap" className="text-amber-400"/> Activation Energy (Ea)
+                                    </h3>
+                                    <span className="font-mono font-bold text-amber-400 text-2xl">{activationEnergy} kJ</span>
+                                </div>
+                                <input 
+                                    type="range" min="20" max="100" step="5"
+                                    value={activationEnergy}
+                                    onChange={(e) => setActivationEnergy(parseInt(e.target.value))}
+                                    id="ea-slider"
+                                    className="w-full h-2 bg-amber-900/50 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                                />
+                                <p className="text-xs text-slate-500 mt-3">Sets the minimum energy required for an effective collision.</p>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Simulation */}
+                        <div className="w-full lg:w-2/3 flex flex-col">
+                            <div className="bg-slate-950 rounded-3xl border-4 border-slate-800 p-4 shadow-xl flex-grow relative min-h-[500px]">
+                                <canvas ref={canvasRef} id="simulation-canvas" className="w-full h-full"></canvas>
+
+                                {/* Legend */}
+                                <div className="absolute bottom-4 left-4 bg-slate-800/80 p-3 rounded-xl border border-slate-700 text-xs font-bold text-slate-400 flex gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-red-400"></div> <span>Reactant A</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-blue-400"></div> <span>Reactant B</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-yellow-400 shadow-[0_0_8px_yellow]"></div> <span>Effective Reaction</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-6">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
