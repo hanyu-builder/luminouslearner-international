@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paper Chromatography Simulator</title>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Paper Texture */
+        .filter-paper {
+            background-color: #f8fafc;
+            background-image: url("data:image/svg+xml,%3Csvg width='4' height='4' viewBox='0 0 4 4' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 3h1v1H1V3zm2-2h1v1H3V1z' fill='%23e2e8f0' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E");
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* Smooth Transition for movements driven by JS state */
+        .smooth-move {
+            transition: bottom 0.1s linear, opacity 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const MIXTURES = {
+            ink: {
+                name: 'Black Ink',
+                spots: [
+                    // Polarity: 0 (Non-polar) -> 1 (Polar)
+                    { color: 'bg-blue-600', polarity: 0.9, name: 'Blue Component (Polar)' }, 
+                    { color: 'bg-red-500', polarity: 0.5, name: 'Red Component (Semi-polar)' },
+                    { color: 'bg-yellow-400', polarity: 0.2, name: 'Yellow Component (Non-polar)' }
+                ]
+            },
+            plant: {
+                name: 'Plant Pigments',
+                spots: [
+                    // Real-world analogy for biology curriculums
+                    { color: 'bg-green-600', polarity: 0.8, name: 'Chlorophyll b' }, 
+                    { color: 'bg-green-400', polarity: 0.6, name: 'Chlorophyll a' },
+                    { color: 'bg-yellow-500', polarity: 0.3, name: 'Xanthophyll' },
+                    { color: 'bg-orange-500', polarity: 0.1, name: 'Carotene' }
+                ]
+            },
+            amino: {
+                name: 'Amino Acids',
+                spots: [
+                    { color: 'bg-purple-400', polarity: 0.7, name: 'Lysine (Polar)' }, 
+                    { color: 'bg-purple-600', polarity: 0.2, name: 'Leucine (Non-polar)' }
+                ],
+                note: 'Visualized using Ninhydrin'
+            }
+        };
+
+        const SOLVENTS = {
+            water: { name: 'Water (Polar)', polarity: 1.0, color: 'bg-blue-100/50' },
+            ethanol: { name: 'Ethanol (Semi-polar)', polarity: 0.6, color: 'bg-slate-100/50' },
+            acetone: { name: 'Acetone (Non-polar)', polarity: 0.2, color: 'bg-white/30' }
+        };
+
+        // --- APP COMPONENT ---
+        const App = () => {
+            const [mixId, setMixId] = useState('ink');
+            const [solId, setSolId] = useState('water');
+            const [isRunning, setIsRunning] = useState(false);
+            const [progress, setProgress] = useState(0); // 0 to 100% of run
+            const [isFinished, setIsFinished] = useState(false);
+            
+            // Measurement Tool
+            const [rulerY, setRulerY] = useState(20); // Percentage from bottom
+            const [solventFront, setSolventFront] = useState(0); // Final solvent position in px or %
+            
+            const currentMix = MIXTURES[mixId];
+            const currentSol = SOLVENTS[solId];
+
+            // Simulation Loop
+            useEffect(() => {
+                let interval;
+                if (isRunning) {
+                    interval = setInterval(() => {
+                        setProgress(p => {
+                            if (p >= 100) {
+                                setIsRunning(false);
+                                setIsFinished(true);
+                                return 100;
+                            }
+                            return p + 0.2; // Slowed down slightly for better observation
+                        });
+                    }, 20); // 50fps for smoother animation
+                }
+                return () => clearInterval(interval);
+            }, [isRunning]);
+
+            const handleStart = () => {
+                setProgress(0);
+                setIsFinished(false);
+                setIsRunning(true);
+            };
+
+            const handleReset = () => {
+                setProgress(0);
+                setIsRunning(false);
+                setIsFinished(false);
+            };
+
+            // Calculate Spot Position
+            // The distance traveled depends on the match between spot polarity and solvent polarity
+            // "Like dissolves like": Similar polarity = travels further (higher Rf)
+            const getSpotPos = (spot) => {
+                const diff = Math.abs(spot.polarity - currentSol.polarity);
+                // Max travel = 90% of solvent front. 
+                // If diff is 0 (perfect match), travels max. If diff is 1, travels min (0).
+                const rf = 0.9 - (diff * 0.8); 
+                return Math.max(0.05, rf) * progress; // Current position %
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="flask-conical" className="text-emerald-400" /> Chromatography
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Separation Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* Mixture Select */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Mixture</label>
+                                {Object.entries(MIXTURES).map(([id, m]) => (
+                                    <button 
+                                        key={id}
+                                        onClick={() => { setMixId(id); handleReset(); }}
+                                        className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between
+                                            ${mixId === id ? 'bg-slate-800 border-emerald-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                        `}
+                                    >
+                                        <span className="text-sm font-bold">{m.name}</span>
+                                        {mixId === id && <Icon name="check-circle" size={16} className="text-emerald-400"/>}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Solvent Select */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Mobile Phase (Solvent)</label>
+                                {Object.entries(SOLVENTS).map(([id, s]) => (
+                                    <button 
+                                        key={id}
+                                        onClick={() => { setSolId(id); handleReset(); }}
+                                        className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between
+                                            ${solId === id ? 'bg-slate-800 border-blue-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                        `}
+                                    >
+                                        <span className="text-sm font-bold">{s.name}</span>
+                                        {solId === id && <Icon name="check-circle" size={16} className="text-blue-400"/>}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Instructions */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <div className="flex items-center gap-2 mb-2 text-yellow-400 font-bold text-xs uppercase">
+                                    <Icon name="lightbulb" size={14} /> Concept Tip
+                                </div>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    The <strong>Mobile Phase</strong> moves up the <strong>Stationary Phase</strong> (paper). Components with polarity similar to the solvent will travel further (Higher R<sub>f</sub>).
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] overflow-hidden flex flex-col items-center justify-center p-8">
+                        
+                        {/* The Tank */}
+                        <div className="relative w-full max-w-lg h-[600px] bg-white/5 rounded-xl border-2 border-slate-600 backdrop-blur-sm overflow-hidden shadow-2xl">
+                            
+                            {/* Lid */}
+                            <div className="absolute top-0 left-0 w-full h-4 bg-slate-500 z-20"></div>
+
+                            {/* Paper */}
+                            <div className="absolute top-4 bottom-4 left-1/2 -translate-x-1/2 w-48 filter-paper shadow-lg z-10 flex flex-col items-center">
+                                {/* Base Line (Pencil Line) */}
+                                <div className="absolute bottom-[15%] w-full h-px bg-slate-400"></div>
+                                <div className="absolute bottom-[15%] -left-12 text-xs text-slate-500 font-mono font-bold">Origin</div>
+
+                                {/* Solvent Front Line */}
+                                {progress > 0 && (
+                                    <>
+                                        <div className="absolute w-full h-px border-t border-dashed border-blue-300 transition-all duration-100 linear" style={{ bottom: `${15 + progress * 0.75}%` }}></div>
+                                        <div className="absolute -right-12 text-xs text-blue-400 font-mono transition-all duration-100 linear" style={{ bottom: `${15 + progress * 0.75}%` }}>Front</div>
+                                    </>
+                                )}
+
+                                {/* Initial Spot (Fade out logic) */}
+                                <div 
+                                    className="absolute bottom-[14%] w-4 h-4 rounded-full bg-black blur-[2px] transition-opacity duration-500"
+                                    style={{ opacity: Math.max(0, 1 - progress / 15) }} // Fades out over first 15%
+                                ></div>
+
+                                {/* Separated Spots (Fade in logic) */}
+                                {currentMix.spots.map((spot, i) => (
+                                    <div 
+                                        key={i}
+                                        className="absolute left-1/2 -translate-x-1/2 w-4 h-4 smooth-move flex items-center justify-center"
+                                        style={{ 
+                                            bottom: `${15 + getSpotPos(spot) * 0.75}%`,
+                                            opacity: Math.min(1, progress / 10), // Fades in over first 10%
+                                            zIndex: 10
+                                        }}
+                                    >
+                                        {/* Spot Visual */}
+                                        <div className={`absolute w-4 h-4 rounded-full ${spot.color} blur-[3px] mix-blend-multiply`}></div>
+                                        
+                                        {/* Real-time Label */}
+                                        <div 
+                                            className={`absolute left-6 text-[10px] font-bold text-slate-500 bg-white/90 px-1.5 py-0.5 rounded whitespace-nowrap backdrop-blur-sm transition-opacity duration-500 shadow-sm ${progress > 15 ? 'opacity-100' : 'opacity-0'}`}
+                                        >
+                                            {spot.name}
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* Wet Paper Effect */}
+                                <div className="absolute bottom-0 w-full bg-black/5 transition-all duration-100 linear" style={{ height: `${15 + progress * 0.75}%` }}></div>
+                            </div>
+
+                            {/* Solvent Liquid at bottom */}
+                            <div className={`absolute bottom-0 w-full h-[15%] ${currentSol.color} backdrop-blur border-t border-white/10`}></div>
+
+                            {/* Ruler Overlay (Only when finished) */}
+                            {isFinished && (
+                                <div className="absolute inset-y-0 right-4 w-12 flex flex-col justify-end pointer-events-auto">
+                                    <div className="relative h-full">
+                                        {/* Ruler Track */}
+                                        <div className="absolute right-0 top-0 bottom-0 w-8 border-l border-slate-500 flex flex-col justify-between py-4">
+                                            {[...Array(11)].map((_, i) => (
+                                                <div key={i} className="w-full border-t border-slate-600 relative">
+                                                    <span className="absolute right-1 -top-2 text-[10px] text-slate-500">{10-i}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        
+                                        {/* Movable Marker */}
+                                        <div className="absolute left-0 w-full border-b-2 border-red-500 cursor-ns-resize z-50 flex items-center" 
+                                             style={{ bottom: `${rulerY}%` }}>
+                                            <input 
+                                                type="range" min="0" max="100" step="0.1"
+                                                value={rulerY}
+                                                onChange={(e) => setRulerY(parseFloat(e.target.value))}
+                                                className="absolute w-full h-4 opacity-0 cursor-pointer"
+                                            />
+                                            <div className="bg-red-500 text-white text-[10px] px-1 rounded ml-[-45px]">
+                                                d = {(rulerY - 15).toFixed(1)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+
+                        {/* Controls */}
+                        <div className="mt-8 flex gap-4 z-20">
+                            <button 
+                                onClick={isRunning ? () => setIsRunning(false) : handleStart}
+                                disabled={isFinished}
+                                className="px-8 py-3 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                <Icon name={isRunning ? "pause" : "play"} fill="currentColor" />
+                                {isRunning ? 'Pause' : 'Start Run'}
+                            </button>
+
+                            <button 
+                                onClick={handleReset}
+                                className="p-3 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-300 transition-all"
+                                title="Reset"
+                            >
+                                <Icon name="rotate-ccw" />
+                            </button>
+                        </div>
+
+                        {/* Results Display */}
+                        {isFinished && (
+                            <div className="mt-6 bg-slate-800 p-4 rounded-xl border border-slate-700 flex items-center gap-6 animate-in">
+                                <div>
+                                    <div className="text-xs text-slate-500 font-bold uppercase">Solvent Front</div>
+                                    <div className="text-xl font-mono text-blue-400 font-bold">75.0 <span className="text-sm">units</span></div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-slate-500 font-bold uppercase">Your Measurement</div>
+                                    <div className="text-xl font-mono text-red-400 font-bold">{(rulerY - 15).toFixed(1)} <span className="text-sm">units</span></div>
+                                </div>
+                                <div className="pl-6 border-l border-slate-600">
+                                    <div className="text-xs text-slate-500 font-bold uppercase">Calculated R<sub>f</sub></div>
+                                    <div className="text-2xl font-mono text-white font-bold">
+                                        {((rulerY - 15) / 75).toFixed(2)}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
