@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rate of Reaction Lab Simulator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Disappearing Cross Animations */
+        .cloudy-layer {
+            transition: background-color 0.2s;
+        }
+        
+        /* Syringe Animation */
+        .plunger {
+            transition: width 0.1s linear;
+        }
+
+        /* Bubbles */
+        @keyframes bubble-rise {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
+        }
+        .bubble {
+            position: absolute;
+            background: rgba(255,255,255,0.6);
+            border-radius: 50%;
+            animation: bubble-rise 1s infinite linear;
+        }
+
+        /* Slider Thumb */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: 2px solid currentColor;
+            margin-top: -6px;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #334155; /* Slate 700 for Dark Mode */
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState('cross'); // 'cross' or 'gas'
+            
+            // Common State
+            const [isRunning, setIsRunning] = useState(false);
+            const [time, setTime] = useState(0);
+            const [concentration, setConcentration] = useState(1.0); // M
+            const [temperature, setTemperature] = useState(25); // Celsius
+            
+            // Cross Experiment State
+            const [opacity, setOpacity] = useState(0); // 0 (clear) to 1 (opaque/disappeared)
+            const [crossResults, setCrossResults] = useState([]);
+            
+            // Gas Experiment State
+            const [volume, setVolume] = useState(0);
+            const [surfaceArea, setSurfaceArea] = useState('chips'); // chips or powder
+            const [gasDataPoints, setGasDataPoints] = useState([{x:0, y:0}]);
+
+            // Chart Ref
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            // --- Logic: Disappearing Cross ---
+            useEffect(() => {
+                let interval;
+                if (mode === 'cross' && isRunning) {
+                    const tempFactor = Math.pow(2, (temperature - 25) / 10);
+                    const rate = 0.02 * concentration * tempFactor; 
+                    
+                    interval = setInterval(() => {
+                        setTime(t => t + 0.1);
+                        setOpacity(prev => {
+                            const next = prev + rate;
+                            if (next >= 1) {
+                                setIsRunning(false);
+                                recordResult(1);
+                                return 1;
+                            }
+                            return next;
+                        });
+                    }, 100);
+                }
+                return () => clearInterval(interval);
+            }, [mode, isRunning, concentration, temperature]);
+
+            // --- Logic: Gas Collection ---
+            useEffect(() => {
+                let interval;
+                if (mode === 'gas' && isRunning) {
+                    const tempFactor = Math.pow(1.5, (temperature - 25) / 10);
+                    const surfaceFactor = surfaceArea === 'powder' ? 3 : 1;
+                    const maxVolume = 100;
+                    // k is the reaction constant (initial rate dependence)
+                    const k = 0.01 * concentration * tempFactor * surfaceFactor; 
+
+                    interval = setInterval(() => {
+                        setTime(prevTime => {
+                            const newTime = prevTime + 0.1;
+                            setVolume(prevVol => {
+                                // Simplified first-order decay simulation (rate slows as reactants are consumed)
+                                const instantaneousRate = k * (maxVolume - prevVol);
+                                const newVol = Math.min(maxVolume, prevVol + instantaneousRate);
+                                
+                                // Record point every 0.5s
+                                if (Math.floor(newTime * 10) % 5 === 0) { 
+                                    setGasDataPoints(current => [...current, {x: parseFloat(newTime.toFixed(1)), y: parseFloat(newVol.toFixed(1))}]);
+                                }
+                                
+                                if (newVol >= 99.5) {
+                                    setIsRunning(false);
+                                    return 100;
+                                }
+                                return newVol;
+                            });
+                            return newTime;
+                        });
+                    }, 100);
+                }
+                return () => clearInterval(interval);
+            }, [mode, isRunning, concentration, temperature, surfaceArea]);
+
+            // Chart Effect
+            useEffect(() => {
+                if (mode === 'gas' && chartRef.current) {
+                    if (chartInstance.current) chartInstance.current.destroy();
+                    
+                    const ctx = chartRef.current.getContext('2d');
+
+                    // Dark Mode Chart Overrides
+                    const colorPrimary = '#e2e8f0'; // Text/Axis color
+                    const gridColor = '#334155';
+                    const fontStyle = 'Inter';
+
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            datasets: [{
+                                label: 'Volume of Gas (cm³)',
+                                data: gasDataPoints,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                borderWidth: 2,
+                                pointRadius: 2,
+                                pointBackgroundColor: '#3b82f6',
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: false,
+                            scales: {
+                                x: { 
+                                    type: 'linear', 
+                                    title: { display: true, text: 'Time (s)', font: { color: colorPrimary, family: fontStyle } }, 
+                                    min: 0,
+                                    ticks: { color: colorPrimary, font: { family: fontStyle } },
+                                    grid: { color: gridColor }
+                                },
+                                y: { 
+                                    title: { display: true, text: 'Volume (cm³)', font: { color: colorPrimary, family: fontStyle } }, 
+                                    min: 0, max: 100,
+                                    ticks: { color: colorPrimary, font: { family: fontStyle } },
+                                    grid: { color: gridColor }
+                                }
+                            },
+                            plugins: {
+                                legend: { 
+                                    labels: { color: colorPrimary, font: { family: fontStyle } }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Gas Volume vs. Time Graph',
+                                    color: colorPrimary,
+                                    font: { family: fontStyle }
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [mode, gasDataPoints]);
+
+            const reset = () => {
+                setIsRunning(false);
+                setTime(0);
+                setOpacity(0);
+                setVolume(0);
+                setGasDataPoints([{x:0, y:0}]);
+                if (chartInstance.current) chartInstance.current.destroy();
+            };
+
+            const recordResult = (finalOpacity) => {
+                if (mode === 'cross' && finalOpacity >= 1) {
+                    setCrossResults([...crossResults, { 
+                        conc: concentration, temp: temperature, time: time.toFixed(1) 
+                    }]);
+                }
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Timer" /> Rate of Reaction Lab Simulator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Investigating Kinetic Factors</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                
+                                {/* 1. Mode Selection */}
+                                <div className="mb-6">
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Select Experiment Mode</h3>
+                                    <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
+                                        <button 
+                                            onClick={() => { setMode('cross'); reset(); }}
+                                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'cross' ? 'bg-slate-950 text-indigo-400 shadow-sm ring-1 ring-indigo-900/50' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            <Icon name="X" size={16}/> Disappearing Cross
+                                        </button>
+                                        <button 
+                                            onClick={() => { setMode('gas'); reset(); }}
+                                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'gas' ? 'bg-slate-950 text-blue-400 shadow-sm ring-1 ring-blue-900/50' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            <Icon name="Syringe" size={16}/> Gas Collection
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <h3 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center gap-2 pt-4 border-t border-slate-800">
+                                    <Icon name="Sliders" size={16}/> Experiment Parameters
+                                </h3>
+
+                                {/* Concentration */}
+                                <div className="mb-4">
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-xs font-bold text-blue-400">Concentration</label>
+                                        <span className="text-xs font-mono font-bold bg-slate-800 text-blue-300 px-2 rounded border border-slate-700">{concentration} M</span>
+                                    </div>
+                                    <input type="range" min="0.1" max="2.0" step="0.1" value={concentration} onChange={(e) => setConcentration(Number(e.target.value))} disabled={isRunning} className="w-full h-2 bg-blue-900/50 rounded-lg appearance-none cursor-pointer accent-blue-500" style={{'--tw-ring-color': '#3b82f6'}}/>
+                                </div>
+
+                                {/* Temperature */}
+                                <div className="mb-4">
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-xs font-bold text-red-400">Temperature</label>
+                                        <span className="text-xs font-mono font-bold bg-slate-800 text-red-300 px-2 rounded border border-slate-700">{temperature} °C</span>
+                                    </div>
+                                    <input type="range" min="20" max="60" step="5" value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} disabled={isRunning} className="w-full h-2 bg-red-900/50 rounded-lg appearance-none cursor-pointer accent-red-500" style={{'--tw-ring-color': '#ef4444'}}/>
+                                </div>
+
+                                {/* Surface Area (Gas Mode Only) */}
+                                {mode === 'gas' && (
+                                    <div className="mb-6">
+                                        <label className="text-xs font-bold text-slate-500 block mb-2">Solid Form (Surface Area)</label>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setSurfaceArea('chips')} className={`flex-1 py-2 text-xs font-bold rounded border transition-all ${surfaceArea === 'chips' ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} disabled={isRunning}>
+                                                Chips (Low S.A.)
+                                            </button>
+                                            <button onClick={() => setSurfaceArea('powder')} className={`flex-1 py-2 text-xs font-bold rounded border transition-all ${surfaceArea === 'powder' ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} disabled={isRunning}>
+                                                Powder (High S.A.)
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Start Button */}
+                                <button 
+                                    onClick={() => { setIsRunning(!isRunning); if (!isRunning) { if (mode === 'gas') setGasDataPoints([{x:0, y:0}]); } }}
+                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 mt-2 ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                                >
+                                    {isRunning ? <Icon name="Square" size={18} /> : <Icon name="Play" size={18} />}
+                                    {isRunning ? 'Stop Timer' : 'Start Experiment'}
+                                </button>
+
+                                {/* Reset Button */}
+                                <button 
+                                    onClick={reset} 
+                                    className="w-full mt-3 py-2 bg-slate-800 text-slate-400 font-bold rounded-xl hover:bg-slate-700 transition-all flex items-center justify-center gap-2 text-sm border border-slate-700"
+                                >
+                                    <Icon name="RotateCcw" size={14}/> Reset
+                                </button>
+                            </div>
+
+                            {/* Result Table (Cross Mode Only) */}
+                            {mode === 'cross' && crossResults.length > 0 && (
+                                <div className="bg-slate-900 p-4 rounded-2xl shadow-xl border border-slate-800 flex-grow">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Experiment Log (Cross Method)</h4>
+                                    <div className="overflow-y-auto max-h-40 text-xs text-slate-300">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-slate-800 text-slate-500">
+                                                <tr>
+                                                    <th className="p-2">Conc. (M)</th>
+                                                    <th className="p-2">Temp. (°C)</th>
+                                                    <th className="p-2">Time (s)</th>
+                                                    <th className="p-2">Rate (1/t)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {crossResults.map((r, i) => (
+                                                    <tr key={i} className="border-b border-slate-700 hover:bg-slate-800">
+                                                        <td className="p-2 font-mono">{r.conc}</td>
+                                                        <td className="p-2 font-mono">{r.temp}</td>
+                                                        <td className="p-2 font-mono text-emerald-400 font-bold">{r.time}</td>
+                                                        <td className="p-2 font-mono">{(1/r.time).toFixed(3)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: Visualization */}
+                        <div className="w-full lg:w-2/3 flex flex-col gap-6">
+                            
+                            <div className="bg-slate-900 rounded-3xl border-4 border-slate-800 relative overflow-hidden min-h-[400px] flex flex-col items-center justify-center p-8 shadow-inner">
+                                
+                                {/* Timer Display */}
+                                <div className="absolute top-4 right-4 font-mono text-4xl font-black text-white bg-slate-800/90 px-4 py-2 rounded-xl shadow-lg border border-slate-700 z-10">
+                                    {time.toFixed(1)} <span className="text-base font-sans text-slate-400 font-bold">s</span>
+                                </div>
+
+                                {mode === 'cross' ? (
+                                    /* Disappearing Cross Visual */
+                                    <div className="relative flex flex-col items-center">
+                                        {/* Top View (Beaker) */}
+                                        <div className="w-64 h-64 rounded-full border-8 border-slate-600 bg-slate-950 shadow-2xl relative overflow-hidden flex items-center justify-center mb-8">
+                                            {/* The Cross */}
+                                            <div className="absolute text-slate-300 font-black text-9xl opacity-80 select-none">+</div>
+                                            {/* Solution (Cloudy Layer) */}
+                                            <div 
+                                                className="absolute inset-0 bg-yellow-900/30 cloudy-layer backdrop-blur-sm transition-opacity duration-100"
+                                                style={{ opacity: opacity }}
+                                            ></div>
+                                            {/* Bubbles (SO2) */}
+                                            {isRunning && opacity < 1 && (
+                                                <div className="absolute inset-0 pointer-events-none">
+                                                    {[...Array(6)].map((_,i) => <div key={i} className="bubble" style={{left: `${20+Math.random()*60}%`, width:'8px', height:'8px', animationDelay: `${Math.random()}s`}}></div>)}
+                                                </div>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="text-slate-500 text-sm mt-4 text-center font-bold">
+                                            Top View: The reaction is complete when the '+' is obscured.
+                                        </div>
+                                    </div>
+                                ) : (
+                                    /* Gas Collection Visual and Chart */
+                                    <div className="w-full h-full flex flex-col items-center justify-between">
+                                        
+                                        <div className="flex items-center justify-center gap-8 w-full mt-12">
+                                            {/* Flask and Metal*/}
+                                            <div className="relative w-28 h-40">
+                                                <div className="absolute bottom-0 w-full h-28 bg-slate-800/80 border-4 border-slate-600 rounded-b-2xl backdrop-blur-sm overflow-hidden shadow-md">
+                                                    <div className="absolute bottom-0 w-full h-1/2 bg-slate-700"></div>
+                                                    {isRunning && (
+                                                        <div className="absolute bottom-0 w-full h-full pointer-events-none">
+                                                            {[...Array(10)].map((_,i) => <div key={i} className="bubble" style={{left: `${Math.random()*80+10}%`, width:'6px', height:'6px', animationDelay: `${Math.random()}s`}}></div>)}
+                                                        </div>
+                                                    )}
+                                                    {/* Metal */}
+                                                    <div className={`absolute bottom-2 left-1/2 -translate-x-1/2 bg-gray-400 w-16 h-4 rounded-full ${surfaceArea === 'powder' ? 'h-6' : 'h-2'}`}></div>
+                                                </div>
+                                                <div className="absolute top-10 w-4 h-32 bg-transparent border-r-4 border-t-4 border-slate-600 right-[-4px] rounded-tr-xl"></div> {/* Tube */}
+                                            </div>
+
+                                            {/* Syringe */}
+                                            <div className="relative w-72 h-20 bg-slate-800/90 border-4 border-slate-600 rounded-lg flex items-center px-2 shadow-lg">
+                                                <div className="absolute bottom-0 w-full h-3 flex justify-between px-6 z-10">
+                                                    {[...Array(11)].map((_,i) => <div key={i} className="w-px h-3 bg-slate-600"></div>)}
+                                                </div>
+                                                {/* Plunger */}
+                                                <div 
+                                                    className="h-12 bg-blue-700 rounded plunger relative shadow-inner"
+                                                    style={{ width: '12px', marginLeft: `${volume}%` }}
+                                                >
+                                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full w-full bg-blue-400/50 h-full border-r-4 border-slate-500" style={{width: `${volume*2.8}px`}}></div>
+                                                </div>
+                                                <div className="absolute right-4 top-2 font-mono text-2xl font-black text-blue-400">{volume.toFixed(1)}</div>
+                                                <div className="absolute right-4 bottom-2 text-[10px] font-bold text-slate-500">cm³</div>
+                                            </div>
+                                        </div>
+
+                                        {/* Chart */}
+                                        <div className="w-full h-56 bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-md">
+                                            <canvas ref={chartRef}></canvas>
+                                        </div>
+                                    </div>
+                                )}
+
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
