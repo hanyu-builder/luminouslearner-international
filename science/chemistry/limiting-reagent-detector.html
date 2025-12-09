@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Limiting Reagent Detector - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .result-card { transition: all 0.3s ease; }
+        .result-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
+
+        /* Progress Bar Animation */
+        @keyframes fill-bar {
+            from { width: 0; }
+            to { width: var(--target-width); }
+        }
+        .progress-bar-fill {
+            animation: fill-bar 1.5s ease-out forwards;
+        }
+
+        .input-focus-ring:focus-within {
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+            border-color: #6366f1;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const AtomicMasses = {
+            H: 1.0, He: 4.0, Li: 6.9, Be: 9.0, B: 10.8, C: 12.0, N: 14.0, O: 16.0, F: 19.0, Ne: 20.2,
+            Na: 23.0, Mg: 24.3, Al: 27.0, Si: 28.1, P: 31.0, S: 32.1, Cl: 35.5, K: 39.1, Ar: 39.9, Ca: 40.1,
+            Fe: 55.8, Cu: 63.5, Zn: 65.4, Br: 79.9, Ag: 107.9, I: 126.9, Ba: 137.3, Pb: 207.2,
+            Mn: 54.9, Cr: 52.0
+        };
+
+        const ExampleCategories = [
+            {
+                name: 'Combustion',
+                items: [
+                    { name: 'Mg + O₂', a: { f: 'Mg', c: 2, m: 10.0 }, b: { f: 'O2', c: 1, m: 5.0 }, p: { f: 'MgO', c: 2 } },
+                    { name: 'Fe + S', a: { f: 'Fe', c: 1, m: 5.6 }, b: { f: 'S', c: 1, m: 4.0 }, p: { f: 'FeS', c: 1 } }
+                ]
+            },
+            {
+                name: 'Acid + Metal',
+                items: [
+                    { name: 'Mg + HCl', a: { f: 'Mg', c: 1, m: 2.43 }, b: { f: 'HCl', c: 2, m: 10.0 }, p: { f: 'H2', c: 1 } },
+                    { name: 'Zn + HCl', a: { f: 'Zn', c: 1, m: 10.0 }, b: { f: 'HCl', c: 2, m: 5.0 }, p: { f: 'H2', c: 1 } }
+                ]
+            },
+            {
+                name: 'Precipitation',
+                items: [
+                    { name: 'Pb(NO₃)₂ + KI', a: { f: 'Pb(NO3)2', c: 1, m: 33.1 }, b: { f: 'KI', c: 2, m: 16.6 }, p: { f: 'PbI2', c: 1 } }
+                ]
+            }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            // Inputs
+            const [reactantA, setReactantA] = useState({ formula: 'Mg', coeff: 2, mass: '' });
+            const [reactantB, setReactantB] = useState({ formula: 'O2', coeff: 1, mass: '' });
+            const [product, setProduct] = useState({ formula: 'MgO', coeff: 2 });
+            const [activeCategory, setActiveCategory] = useState(0);
+
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState('');
+
+            // Basic Formula Parser
+            const calculateMolarMass = (formula) => {
+                if (!formula) return 0;
+                let mass = 0;
+                try {
+                    const stack = [{ atoms: {} }];
+                    let i = 0;
+                    const len = formula.length;
+
+                    while (i < len) {
+                        const char = formula[i];
+                        if (char === '(') { stack.push({ atoms: {} }); i++; }
+                        else if (char === ')') {
+                            if (stack.length === 1) throw new Error("Unmatched brackets");
+                            const group = stack.pop();
+                            i++;
+                            let numStr = '';
+                            while (i < len && /\d/.test(formula[i])) { numStr += formula[i]; i++; }
+                            const multiplier = numStr ? parseInt(numStr) : 1;
+                            const parent = stack[stack.length - 1];
+                            for (const [el, count] of Object.entries(group.atoms)) {
+                                parent.atoms[el] = (parent.atoms[el] || 0) + count * multiplier;
+                            }
+                        } else if (/[A-Z]/.test(char)) {
+                            let element = char;
+                            i++;
+                            if (i < len && /[a-z]/.test(formula[i])) { element += formula[i]; i++; }
+                            let numStr = '';
+                            while (i < len && /\d/.test(formula[i])) { numStr += formula[i]; i++; }
+                            const count = numStr ? parseInt(numStr) : 1;
+                            const current = stack[stack.length - 1];
+                            current.atoms[element] = (current.atoms[element] || 0) + count;
+                        } else { i++; }
+                    }
+                    
+                    for (const [el, count] of Object.entries(stack[0].atoms)) {
+                         let elKey = el;
+                         if (!AtomicMasses[elKey]) {
+                             const match = Object.keys(AtomicMasses).find(k => k.toLowerCase() === el.toLowerCase());
+                             if (match) elKey = match;
+                         }
+
+                         if (AtomicMasses[elKey]) {
+                             mass += AtomicMasses[elKey] * count;
+                         } else {
+                             throw new Error(`Unknown element: ${el}`);
+                         }
+                    }
+                } catch (e) {
+                    throw e;
+                }
+                return mass;
+            };
+
+            const handleCalculate = () => {
+                setError('');
+                setResult(null);
+
+                try {
+                    const mmA = calculateMolarMass(reactantA.formula.trim());
+                    const mmB = calculateMolarMass(reactantB.formula.trim());
+                    const mmP = calculateMolarMass(product.formula.trim());
+
+                    if (mmA === 0 || mmB === 0 || mmP === 0) throw new Error('Invalid Formula');
+
+                    const massA = parseFloat(reactantA.mass);
+                    const massB = parseFloat(reactantB.mass);
+                    const coeffA = parseFloat(reactantA.coeff);
+                    const coeffB = parseFloat(reactantB.coeff);
+                    const coeffP = parseFloat(product.coeff);
+
+                    if (isNaN(massA) || massA <= 0 || isNaN(massB) || massB <= 0) throw new Error('Mass must be positive');
+
+                    // 1. Calculate Moles
+                    const moleA = massA / mmA;
+                    const moleB = massB / mmB;
+
+                    // 2. Determine Limiting Reagent
+                    // Compare (mole / coeff) ratio
+                    const ratioA = moleA / coeffA;
+                    const ratioB = moleB / coeffB;
+
+                    let limiting, excess, limitingRatio;
+                    
+                    if (ratioA < ratioB) {
+                        limiting = 'A';
+                        excess = 'B';
+                        limitingRatio = ratioA;
+                    } else if (ratioB < ratioA) {
+                        limiting = 'B';
+                        excess = 'A';
+                        limitingRatio = ratioB;
+                    } else {
+                        limiting = 'None'; // Stoichiometric
+                        limitingRatio = ratioA;
+                    }
+
+                    // 3. Calculate Product Mass
+                    const moleP = limitingRatio * coeffP;
+                    const massP = moleP * mmP;
+
+                    // 4. Calculate Excess Remaining
+                    let remainingMass = 0;
+                    let excessName = '';
+                    
+                    if (limiting === 'A') {
+                        const moleB_reacted = moleA * (coeffB / coeffA);
+                        const moleB_remain = moleB - moleB_reacted;
+                        remainingMass = moleB_remain * mmB;
+                        excessName = reactantB.formula;
+                    } else if (limiting === 'B') {
+                        const moleA_reacted = moleB * (coeffA / coeffB);
+                        const moleA_remain = moleA - moleA_reacted;
+                        remainingMass = moleA_remain * mmA;
+                        excessName = reactantA.formula;
+                    }
+
+                    setResult({
+                        moleA, moleB,
+                        ratioA, ratioB,
+                        limiting,
+                        massP,
+                        remainingMass, excessName,
+                        mmA, mmB
+                    });
+
+                } catch (e) {
+                    setError(e.message);
+                }
+            };
+
+            const loadExampleData = (ex) => {
+                setReactantA({ formula: ex.a.f, coeff: ex.a.c, mass: ex.a.m.toString() });
+                setReactantB({ formula: ex.b.f, coeff: ex.b.c, mass: ex.b.m.toString() });
+                setProduct({ formula: ex.p.f, coeff: ex.p.c });
+                setError('');
+                setResult(null);
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-rose-400 flex items-center gap-2">
+                                <Icon name="AlertCircle" /> Limiting Reagent Detector
+                            </h1>
+                            <p className="text-slate-500 text-sm">Stoichiometry Calculation Tool</p>
+                        </div>
+                        <button onClick={() => { setReactantA({...reactantA, mass: ''}); setReactantB({...reactantB, mass: ''}); setResult(null); }} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Reset
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Input */}
+                        <div className="w-full lg:w-5/12 flex flex-col gap-6">
+                            
+                            {/* Examples */}
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl">
+                                <div className="flex justify-between items-center mb-3">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
+                                        <Icon name="Zap" size={14} /> Quick Load Preset
+                                    </h4>
+                                </div>
+                                
+                                <div className="relative mb-3">
+                                    <select 
+                                        value={activeCategory}
+                                        onChange={(e) => setActiveCategory(Number(e.target.value))}
+                                        className="w-full p-2 pl-3 pr-8 bg-slate-800 border border-slate-700 rounded-lg text-rose-400 font-bold text-sm appearance-none cursor-pointer focus:ring-2 focus:ring-rose-500/50 outline-none transition-all"
+                                    >
+                                        {ExampleCategories.map((cat, idx) => (
+                                            <option key={idx} value={idx}>{cat.name}</option>
+                                        ))}
+                                    </select>
+                                    <div className="absolute right-3 top-1/2 -translate-x-1/2 pointer-events-none text-rose-500">
+                                        <Icon name="ChevronDown" size={16} />
+                                    </div>
+                                </div>
+                                
+                                <div className="flex gap-2 flex-wrap">
+                                    {ExampleCategories[activeCategory].items.map((item, idx) => (
+                                        <button 
+                                            key={idx} 
+                                            onClick={() => loadExampleData(item)}
+                                            className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-rose-900/30 hover:text-rose-400 hover:border-rose-500/50 text-xs font-bold transition-all shadow-sm"
+                                        >
+                                            {item.name.split(' ')[0]}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Input Form */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-rose-900/30">
+                                <h3 className="text-lg font-bold mb-4 text-slate-300 flex items-center gap-2">
+                                    <Icon name="Beaker" size={18} className="text-rose-500"/> Input Data
+                                </h3>
+
+                                {/* Reactant A */}
+                                <div className="p-3 bg-blue-900/10 rounded-xl border border-blue-500/30 mb-3 relative input-focus-ring transition-all">
+                                    <div className="absolute -top-2.5 left-3 bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase">Reactant A</div>
+                                    <div className="grid grid-cols-12 gap-2 mt-2">
+                                        <div className="col-span-3"><input type="number" value={reactantA.coeff} onChange={(e) => setReactantA({...reactantA, coeff: e.target.value})} className="w-full p-2 rounded text-center font-bold border border-slate-600 bg-slate-800 text-white placeholder-slate-500" placeholder="n"/></div>
+                                        <div className="col-span-9"><input type="text" value={reactantA.formula} onChange={(e) => setReactantA({...reactantA, formula: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-mono placeholder-slate-500" placeholder="Formula"/></div>
+                                        <div className="col-span-12"><input type="number" value={reactantA.mass} onChange={(e) => setReactantA({...reactantA, mass: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-bold placeholder-slate-500" placeholder="Mass (g)"/></div>
+                                    </div>
+                                </div>
+
+                                {/* Reactant B */}
+                                <div className="p-3 bg-purple-900/10 rounded-xl border border-purple-500/30 mb-3 relative input-focus-ring transition-all">
+                                    <div className="absolute -top-2.5 left-3 bg-purple-600 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase">Reactant B</div>
+                                    <div className="grid grid-cols-12 gap-2 mt-2">
+                                        <div className="col-span-3"><input type="number" value={reactantB.coeff} onChange={(e) => setReactantB({...reactantB, coeff: e.target.value})} className="w-full p-2 rounded text-center font-bold border border-slate-600 bg-slate-800 text-white placeholder-slate-500" placeholder="n"/></div>
+                                        <div className="col-span-9"><input type="text" value={reactantB.formula} onChange={(e) => setReactantB({...reactantB, formula: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-mono placeholder-slate-500" placeholder="Formula"/></div>
+                                        <div className="col-span-12"><input type="number" value={reactantB.mass} onChange={(e) => setReactantB({...reactantB, mass: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-bold placeholder-slate-500" placeholder="Mass (g)"/></div>
+                                    </div>
+                                </div>
+
+                                {/* Product */}
+                                <div className="p-3 bg-green-900/10 rounded-xl border border-green-500/30 mb-4 relative input-focus-ring transition-all">
+                                    <div className="absolute -top-2.5 left-3 bg-green-600 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase">Product</div>
+                                    <div className="grid grid-cols-12 gap-2 mt-2">
+                                        <div className="col-span-3"><input type="number" value={product.coeff} onChange={(e) => setProduct({...product, coeff: e.target.value})} className="w-full p-2 rounded text-center font-bold border border-slate-600 bg-slate-800 text-white placeholder-slate-500" placeholder="n"/></div>
+                                        <div className="col-span-9"><input type="text" value={product.formula} onChange={(e) => setProduct({...product, formula: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-mono placeholder-slate-500" placeholder="Formula"/></div>
+                                    </div>
+                                </div>
+
+                                {error && <div className="text-red-400 text-xs font-bold mb-2">{error}</div>}
+
+                                <button onClick={handleCalculate} className="w-full py-3 bg-rose-600 text-white font-bold rounded-xl shadow-lg hover:bg-rose-500 transition-all active:scale-95">
+                                    Detect Limiting Reagent
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Result */}
+                        <div className="w-full lg:w-7/12 flex flex-col gap-6">
+                            
+                            {result ? (
+                                <div className="animate-in slide-in-from-right duration-500 h-full flex flex-col">
+                                    
+                                    {/* Verdict Card */}
+                                    <div className="bg-slate-800 rounded-2xl p-6 shadow-lg text-white mb-6 border border-slate-700 relative overflow-hidden">
+                                        <div className="relative z-10 grid grid-cols-2 gap-8">
+                                            <div>
+                                                <div className="text-xs text-rose-400 font-bold uppercase mb-1">Limiting Reagent</div>
+                                                <div className="text-3xl font-bold text-white">
+                                                    {result.limiting === 'A' ? reactantA.formula : result.limiting === 'B' ? reactantB.formula : 'None (Stoichiometric)'}
+                                                </div>
+                                                {result.limiting !== 'None' && <div className="text-xs text-rose-300 mt-1">Used up completely</div>}
+                                            </div>
+                                            <div className="border-l border-slate-600 pl-8">
+                                                <div className="text-xs text-green-400 font-bold uppercase mb-1">Max Product ({product.formula})</div>
+                                                <div className="text-3xl font-mono font-bold text-white">{result.massP.toFixed(2)} g</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Analysis Bars */}
+                                    <div className="bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-700 flex-grow">
+                                        <h4 className="font-bold text-slate-300 mb-4 flex items-center gap-2">
+                                            <Icon name="BarChart2" size={18} /> Mole Ratio Analysis
+                                        </h4>
+                                        
+                                        {/* Reactant A Analysis */}
+                                        <div className="mb-6">
+                                            <div className="flex justify-between text-sm mb-1">
+                                                <span className="font-bold text-blue-400">{reactantA.formula}</span>
+                                                <span className="font-mono text-slate-500">{result.moleA.toFixed(4)} mol / {reactantA.coeff} = <strong>{result.ratioA.toFixed(4)}</strong></span>
+                                            </div>
+                                            <div className="w-full bg-slate-700 h-4 rounded-full overflow-hidden relative">
+                                                <div className={`h-full ${result.limiting === 'A' ? 'bg-rose-500' : 'bg-blue-400'} transition-all duration-1000`} style={{width: '100%'}}></div>
+                                                {result.limiting === 'A' && (
+                                                    <div className="absolute right-2 top-0 text-[10px] text-white font-bold leading-4">LIMITING</div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Reactant B Analysis */}
+                                        <div className="mb-6">
+                                            <div className="flex justify-between text-sm mb-1">
+                                                <span className="font-bold text-purple-400">{reactantB.formula}</span>
+                                                <span className="font-mono text-slate-500">{result.moleB.toFixed(4)} mol / {reactantB.coeff} = <strong>{result.ratioB.toFixed(4)}</strong></span>
+                                            </div>
+                                            <div className="w-full bg-slate-700 h-4 rounded-full overflow-hidden relative">
+                                                <div className={`h-full ${result.limiting === 'B' ? 'bg-rose-500' : 'bg-purple-400'} transition-all duration-1000`} 
+                                                     style={{width: `${Math.min(100, (result.ratioB / result.ratioA) * 100)}%`}}></div> 
+                                                 {result.limiting === 'B' && (
+                                                    <div className="absolute left-2 top-0 text-[10px] text-white font-bold leading-4">LIMITING</div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Excess Info */}
+                                        {result.limiting !== 'None' && (
+                                            <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-xl text-sm text-yellow-200">
+                                                <strong>Excess Reagent:</strong> {result.excessName}
+                                                <br/>
+                                                Mass Remaining: <span className="font-mono font-bold">{result.remainingMass.toFixed(2)} g</span>
+                                            </div>
+                                        )}
+
+                                    </div>
+
+                                </div>
+                            ) : (
+                                <div className="flex-grow flex flex-col items-center justify-center text-slate-500 border-4 border-dashed border-slate-700 rounded-3xl bg-slate-800/30 p-12 min-h-[400px]">
+                                    <Icon name="Scale" size={64} className="mb-6 opacity-30" />
+                                    <p className="text-xl text-center font-medium mb-2">Waiting for Data...</p>
+                                    <p className="text-sm text-center opacity-50">Enter reactant masses to detect limiting reagent.</p>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
