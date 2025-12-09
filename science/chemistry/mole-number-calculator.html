@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Mole Calculator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Path Animation */
+        @keyframes flow {
+            0% { stroke-dashoffset: 20; }
+            100% { stroke-dashoffset: 0; }
+        }
+        .path-flow {
+            stroke-dasharray: 10;
+            animation: flow 1s linear infinite;
+        }
+
+        /* Input Focus */
+        .input-focus-ring:focus-within {
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+            border-color: #6366f1;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Constants
+        const AVOGADRO = 6.02e23;
+
+        // Atomic Masses for auto-calculation
+        const AtomicMasses = {
+            H: 1.0, He: 4.0, Li: 6.9, Be: 9.0, B: 10.8, C: 12.0, N: 14.0, O: 16.0, F: 19.0, Ne: 20.2,
+            Na: 23.0, Mg: 24.3, Al: 27.0, Si: 28.1, P: 31.0, S: 32.1, Cl: 35.5, K: 39.1, Ar: 39.9, Ca: 40.1,
+            Fe: 55.8, Cu: 63.5, Zn: 65.4, Br: 79.9, Ag: 107.9, I: 126.9, Ba: 137.3, Pb: 207.2
+        };
+
+        // Common Presets (Internationalized)
+        const Presets = [
+            { formula: 'H2O', mass: 18.0 },
+            { formula: 'CO2', mass: 44.0 },
+            { formula: 'NaCl', mass: 58.5 },
+            { formula: 'CaCO3', mass: 100.1 },
+            { formula: 'Cu', mass: 63.5 }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            // Inputs
+            const [mass, setMass] = useState('');
+            const [mole, setMole] = useState('');
+            const [particles, setParticles] = useState('');
+            
+            // Settings (Molar Mass)
+            const [molarMassInput, setMolarMassInput] = useState('18.0'); // Can be formula or number
+            const [molarMass, setMolarMass] = useState(18.0); // The actual number used for calc
+            const [mmError, setMmError] = useState('');
+            
+            // Focus State for visualization
+            const [activeField, setActiveField] = useState(null); // 'mass', 'mole', 'particles'
+
+            // --- Molar Mass Parser Logic ---
+            const parseFormulaMass = (input) => {
+                if (!input) return null;
+                // If it's a direct number
+                if (!isNaN(parseFloat(input)) && isFinite(input)) {
+                    return parseFloat(input);
+                }
+                
+                // Otherwise try to parse as chemical formula
+                try {
+                    let formulaStr = input.trim();
+                    const stack = [{ atoms: {} }];
+                    let i = 0;
+                    const len = formulaStr.length;
+
+                    while (i < len) {
+                        const char = formulaStr[i];
+                        if (char === '(') { stack.push({ atoms: {} }); i++; }
+                        else if (char === ')') {
+                            if (stack.length === 1) throw new Error("Unmatched brackets");
+                            const group = stack.pop();
+                            i++;
+                            let numStr = '';
+                            while (i < len && /\d/.test(formulaStr[i])) { numStr += formulaStr[i]; i++; }
+                            const multiplier = numStr ? parseInt(numStr) : 1;
+                            const parent = stack[stack.length - 1];
+                            for (const [el, count] of Object.entries(group.atoms)) {
+                                parent.atoms[el] = (parent.atoms[el] || 0) + count * multiplier;
+                            }
+                        } else if (/[A-Z]/.test(char)) {
+                            let element = char;
+                            i++;
+                            if (i < len && /[a-z]/.test(formulaStr[i])) { element += formulaStr[i]; i++; }
+                            let numStr = '';
+                            while (i < len && /\d/.test(formulaStr[i])) { numStr += formulaStr[i]; i++; }
+                            const count = numStr ? parseInt(numStr) : 1;
+                            const current = stack[stack.length - 1];
+                            current.atoms[element] = (current.atoms[element] || 0) + count;
+                        } else { i++; }
+                    }
+                    
+                    let mass = 0;
+                    for (const [el, count] of Object.entries(stack[0].atoms)) {
+                        const atomicMass = AtomicMasses[el];
+                        if (!atomicMass) return null; // Unknown element
+                        mass += atomicMass * count;
+                    }
+                    return mass > 0 ? parseFloat(mass.toFixed(1)) : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+            
+            // Handle Molar Mass Input Change
+            useEffect(() => {
+                const calculated = parseFormulaMass(molarMassInput);
+                if (calculated) {
+                    setMolarMass(calculated);
+                    setMmError('');
+                    // Recalculate based on last active field
+                    if (activeField === 'mass' && mass) handleMassChange(mass, calculated);
+                    else if (activeField === 'mole' && mole) handleMoleChange(mole, calculated);
+                    else if (activeField === 'particles' && particles) handleParticlesChange(particles, calculated);
+                } else {
+                    // Only show error if input is not empty and not a partial formula
+                    if (molarMassInput && !molarMassInput.match(/^[A-Z]/)) {
+                        // setMmError('Invalid'); // Optional
+                    }
+                }
+            }, [molarMassInput]);
+
+            // Helper: Format scientific notation
+            const formatSci = (input) => {
+                if (input === '' || input === null || input === undefined) return '';
+                const num = parseFloat(input);
+                if (isNaN(num)) return '';
+                if (num === 0) return '0';
+                if (Math.abs(num) < 10000 && Math.abs(num) > 0.001) return parseFloat(num.toFixed(3));
+                return num.toExponential(3).replace('e+', ' × 10^');
+            };
+
+            // Calculation Handlers (Accepting mm as arg to avoid stale state)
+            const handleMassChange = (val, mm = molarMass) => {
+                setMass(val);
+                setActiveField('mass');
+                if (val && !isNaN(val)) {
+                    const m = parseFloat(val);
+                    const n = m / mm;
+                    const p = n * AVOGADRO;
+                    setMole(n);
+                    setParticles(p);
+                } else {
+                    setMole('');
+                    setParticles('');
+                }
+            };
+
+            const handleMoleChange = (val, mm = molarMass) => {
+                setMole(val);
+                setActiveField('mole');
+                if (val && !isNaN(val)) {
+                    const n = parseFloat(val);
+                    const m = n * mm;
+                    const p = n * AVOGADRO;
+                    setMass(m);
+                    setParticles(p);
+                } else {
+                    setMass('');
+                    setParticles('');
+                }
+            };
+
+            const handleParticlesChange = (val, mm = molarMass) => {
+                setParticles(val);
+                setActiveField('particles');
+                if (val && !isNaN(val)) {
+                    const p = parseFloat(val);
+                    const n = p / AVOGADRO;
+                    const m = n * mm;
+                    setMass(m);
+                    setMole(n);
+                } else {
+                    setMass('');
+                    setMole('');
+                }
+            };
+
+            const applyPreset = (p) => {
+                setMolarMassInput(p.formula);
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Calculator" /> The Mole Calculator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Convert Mass ↔ Mole ↔ Particles</p>
+                        </div>
+                        <button onClick={() => { setMass(''); setMole(''); setParticles(''); }} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Clear
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Y-Map Visualization */}
+                        <div className="w-full lg:w-1/2 bg-slate-900 rounded-2xl shadow-xl border border-slate-800 p-6 relative min-h-[400px] flex items-center justify-center">
+                            <svg viewBox="0 0 400 400" className="w-full h-full max-w-[400px]">
+                                <defs>
+                                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                                        <path d="M0,0 L0,6 L9,3 z" fill="#64748b" />
+                                    </marker>
+                                </defs>
+                                {/* Center: MOLE */}
+                                <circle cx="200" cy="200" r="50" fill={activeField === 'mole' ? '#312e81' : '#1e293b'} stroke={activeField === 'mole' ? '#6366f1' : '#475569'} strokeWidth="3" />
+                                <text x="200" y="195" textAnchor="middle" className="font-bold fill-indigo-400 text-sm">MOLE (n)</text>
+                                <text x="200" y="215" textAnchor="middle" className="font-mono text-xs fill-slate-300">{formatSci(mole) || '?'}</text>
+                                
+                                {/* Top: MASS */}
+                                <g transform="translate(200, 60)">
+                                    <rect x="-60" y="-30" width="120" height="60" rx="10" fill={activeField === 'mass' ? '#1e3a8a' : '#1e293b'} stroke={activeField === 'mass' ? '#3b82f6' : '#475569'} strokeWidth="3" />
+                                    <text x="0" y="-5" textAnchor="middle" className="font-bold fill-blue-400 text-sm">MASS (m)</text>
+                                    <text x="0" y="15" textAnchor="middle" className="font-mono text-xs fill-slate-300">{formatSci(mass) || '?'} g</text>
+                                </g>
+                                
+                                {/* Bottom Right: PARTICLES */}
+                                <g transform="translate(320, 320)">
+                                    <rect x="-70" y="-30" width="140" height="60" rx="10" fill={activeField === 'particles' ? '#14532d' : '#1e293b'} stroke={activeField === 'particles' ? '#22c55e' : '#475569'} strokeWidth="3" />
+                                    <text x="0" y="-5" textAnchor="middle" className="font-bold fill-green-400 text-sm">PARTICLES (N)</text>
+                                    <text x="0" y="15" textAnchor="middle" className="font-mono text-xs fill-slate-300">{formatSci(particles) || '?'}</text>
+                                </g>
+                                
+                                {/* Paths */}
+                                <path d="M200 90 L200 150" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
+                                <text x="210" y="120" className="text-[10px] fill-slate-500">÷ M</text>
+                                <text x="170" y="120" className="text-[10px] fill-slate-500">× M</text>
+                                <path d="M235 235 L280 280" stroke="#64748b" strokeWidth="2" markerEnd="url(#arrow)" />
+                                <text x="270" y="240" className="text-[10px] fill-slate-500">× L</text>
+                                <text x="240" y="270" className="text-[10px] fill-slate-500">÷ L</text>
+                                <text x="320" y="365" textAnchor="middle" className="text-[8px] fill-slate-500">L = 6.02 × 10²³</text>
+                                <text x="200" y="30" textAnchor="middle" className="text-[8px] fill-slate-500">M = Molar Mass ({molarMass})</text>
+                            </svg>
+                        </div>
+
+                        {/* Right: Input Controls */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                            
+                            {/* Molar Mass Setting */}
+                            <div className="bg-indigo-900/20 p-4 rounded-xl border border-indigo-500/30 shadow-sm">
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+                                        <Icon name="FlaskConical" size={16}/> Set Molar Mass (M)
+                                    </label>
+                                    <span className="text-xs font-mono bg-indigo-950 px-2 py-1 rounded text-indigo-400 border border-indigo-800">
+                                        Current: {molarMass} g/mol
+                                    </span>
+                                </div>
+                                
+                                <div className="flex gap-2 mb-3 flex-wrap">
+                                    {Presets.map(p => (
+                                        <button 
+                                            key={p.formula} 
+                                            onClick={() => applyPreset(p)}
+                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition-all
+                                                ${molarMassInput === p.formula 
+                                                    ? 'bg-indigo-600 text-white border-indigo-500' 
+                                                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-indigo-500 hover:text-indigo-300'}
+                                            `}
+                                        >
+                                            {p.formula}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="relative">
+                                    <input 
+                                        type="text" 
+                                        value={molarMassInput}
+                                        onChange={(e) => setMolarMassInput(e.target.value)}
+                                        placeholder="Enter Value (e.g. 18) or Formula (e.g. H2SO4)"
+                                        className="w-full p-3 rounded-lg border border-indigo-500/30 bg-slate-900 text-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none font-mono font-bold placeholder-slate-600"
+                                    />
+                                    <div className="absolute right-3 top-3 text-xs text-slate-500 font-bold pointer-events-none">g/mol</div>
+                                </div>
+                                <p className="text-xs text-slate-500 mt-2 ml-1">
+                                    💡 Supports chemical formulas! The calculator will sum atomic masses automatically.
+                                </p>
+                            </div>
+
+                            {/* Mass Input */}
+                            <div className={`p-6 rounded-2xl border-2 transition-all ${activeField === 'mass' ? 'bg-blue-900/20 border-blue-500 shadow-md' : 'bg-slate-900 border-slate-800'}`}>
+                                <label className="block text-sm font-bold text-blue-400 mb-2 flex justify-between">
+                                    <span>Mass (m)</span>
+                                    <span className="text-xs font-normal bg-blue-900/50 text-blue-300 px-2 rounded border border-blue-800">Input</span>
+                                </label>
+                                <input 
+                                    type="number" 
+                                    value={mass}
+                                    onChange={(e) => handleMassChange(e.target.value)}
+                                    placeholder="e.g. 18.0"
+                                    className="w-full text-2xl font-mono font-bold bg-transparent outline-none text-white placeholder-slate-600 border-b border-blue-500/50 focus:border-blue-400 transition-colors"
+                                />
+                            </div>
+
+                            {/* Mole Input */}
+                            <div className={`p-6 rounded-2xl border-2 transition-all ${activeField === 'mole' ? 'bg-indigo-900/20 border-indigo-500 shadow-md' : 'bg-slate-900 border-slate-800'}`}>
+                                <label className="block text-sm font-bold text-indigo-400 mb-2 flex justify-between">
+                                    <span>Mole (n)</span>
+                                    <span className="text-xs font-normal bg-indigo-900/50 text-indigo-300 px-2 rounded border border-indigo-800">Center</span>
+                                </label>
+                                <input 
+                                    type="number" 
+                                    value={mole}
+                                    onChange={(e) => handleMoleChange(e.target.value)}
+                                    placeholder="e.g. 1.0"
+                                    className="w-full text-2xl font-mono font-bold bg-transparent outline-none text-white placeholder-slate-600 border-b border-indigo-500/50 focus:border-indigo-400 transition-colors"
+                                />
+                            </div>
+
+                            {/* Particles Input */}
+                            <div className={`p-6 rounded-2xl border-2 transition-all ${activeField === 'particles' ? 'bg-green-900/20 border-green-500 shadow-md' : 'bg-slate-900 border-slate-800'}`}>
+                                <label className="block text-sm font-bold text-green-400 mb-2 flex justify-between">
+                                    <span>No. of Particles (N)</span>
+                                    <span className="text-xs font-normal bg-green-900/50 text-green-300 px-2 rounded border border-green-800">Count</span>
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <input 
+                                        type="number" 
+                                        value={particles}
+                                        onChange={(e) => handleParticlesChange(e.target.value)}
+                                        placeholder="e.g. 6.02e23"
+                                        className="w-full text-xl font-mono font-bold bg-transparent outline-none text-white placeholder-slate-600 border-b border-green-500/50 focus:border-green-400 transition-colors"
+                                    />
+                                </div>
+                                <p className="text-xs text-slate-500 mt-2">Tip: Use 'e' for scientific notation (e.g. 6.02e23)</p>
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
