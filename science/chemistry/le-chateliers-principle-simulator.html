@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Le Chatelier's Principle Simulator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Container transition for Volume change */
+        .reaction-container {
+            transition: width 0.5s ease-in-out, background-color 0.5s;
+        }
+        
+        /* Piston */
+        .piston {
+            transition: left 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Systems = [
+            {
+                id: 'N2O4',
+                name: 'N₂O₄ ⇌ 2NO₂',
+                type: 'gas',
+                equation: 'N₂O₄(g) ⇌ 2NO₂(g)',
+                left: { name: 'N₂O₄', color: '#cbd5e1', size: 20, label: 'Colorless' }, // Light Slate
+                right: { name: 'NO₂', color: '#9a3412', size: 12, label: 'Brown' }, // Brown
+                deltaH: +57, // Endothermic
+                kc: 4.0, // Equilibrium constant (ratio target)
+                stoichiometry: { L: 1, R: 2 } // 1 L becomes 2 R
+            },
+            {
+                id: 'Co',
+                name: 'Cobalt Complex',
+                type: 'solution',
+                equation: 'Co(H₂O)₆²⁺ + 4Cl⁻ ⇌ CoCl₄²⁻ + 6H₂O',
+                left: { name: 'Pink', color: '#f472b6', size: 16, label: 'Pink' },
+                right: { name: 'Blue', color: '#3b82f6', size: 16, label: 'Blue' },
+                deltaH: +100, // Endothermic
+                kc: 1.0,
+                stoichiometry: { L: 1, R: 1 } // Simplified visual 1:1
+            }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [system, setSystem] = useState(Systems[0]);
+            
+            // UI State (Synced from Ref)
+            const [uiCounts, setUiCounts] = useState({ L: 10, R: 20 });
+            
+            // Simulation Parameters
+            const [temperature, setTemperature] = useState(298); // K
+            const [volume, setVolume] = useState(1.0); // Relative Volume
+            
+            // Refs for Physics Engine (Mutable state without re-render)
+            const particlesRef = useRef([]);
+            const requestRef = useRef();
+            const containerRef = useRef(null);
+
+            // Initialize / Reset
+            useEffect(() => {
+                // Initial population
+                const newParticles = [];
+                // Start with equilibrium-ish ratio
+                const initL = 10;
+                const initR = 20;
+                
+                for(let i=0; i<initL; i++) newParticles.push(createParticle('L'));
+                for(let i=0; i<initR; i++) newParticles.push(createParticle('R'));
+                
+                particlesRef.current = newParticles;
+                setUiCounts({ L: initL, R: initR });
+
+            }, [system]);
+
+            const createParticle = (type) => {
+                return {
+                    id: Math.random(),
+                    type: type, // 'L' or 'R'
+                    x: Math.random() * 90 + 5, // %
+                    y: Math.random() * 90 + 5, // %
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: (Math.random() - 0.5) * 0.5,
+                    targetSize: type === 'L' ? system.left.size : system.right.size,
+                    currentSize: type === 'L' ? system.left.size : system.right.size,
+                    color: type === 'L' ? system.left.color : system.right.color
+                };
+            };
+
+            // Physics Loop
+            useEffect(() => {
+                const animate = () => {
+                    const particles = particlesRef.current;
+                    
+                    // 1. Calculate Equilibrium Constant (K) based on Temp
+                    // Van 't Hoff equation approximation: ln(K2/K1) = -dH/R * (1/T2 - 1/T1)
+                    // If Endo (dH > 0), T increases -> K increases (Shift Right)
+                    // If Exo (dH < 0), T increases -> K decreases (Shift Left)
+                    
+                    let K_eq = system.kc;
+                    if (system.deltaH > 0) {
+                        K_eq = system.kc * Math.pow(1.02, (temperature - 298)/5);
+                    } else {
+                        K_eq = system.kc * Math.pow(0.98, (temperature - 298)/5);
+                    }
+
+                    // 2. Calculate Reaction Quotient (Q)
+                    // Count particles
+                    let countL = 0;
+                    let countR = 0;
+                    particles.forEach(p => { if(p.type === 'L') countL++; else countR++; });
+
+                    // Conc = N / V
+                    const concL = countL / volume;
+                    const concR = countR / volume;
+                    
+                    // Q calculation (simplified for visual)
+                    let Q = 0;
+                    if (system.id === 'N2O4') {
+                        Q = (concR * concR) / (concL + 0.1); // Avoid div by 0
+                    } else {
+                        Q = concR / (concL + 0.1);
+                    }
+
+                    // 3. Determine Shift Probability
+                    // If Q < K, shift Right (L -> R). Speed depends on difference.
+                    // If Q > K, shift Left (R -> L).
+                    
+                    let probForward = 0;
+                    let probReverse = 0;
+                    const rateConst = 0.05 * (temperature / 298); // Reaction speed increases with T
+
+                    if (Q < K_eq) {
+                        // Need more products
+                        probForward = rateConst * (1 - Q/K_eq); 
+                        probForward = Math.min(0.1, Math.max(0.001, probForward)); // Clamp
+                        probReverse = 0.001; // Small back reaction always exists
+                    } else {
+                        // Need more reactants
+                        probReverse = rateConst * (Q/K_eq - 1);
+                        probReverse = Math.min(0.1, Math.max(0.001, probReverse));
+                        probForward = 0.001;
+                    }
+
+                    // 4. Update Particles
+                    const newParticles = [];
+                    
+                    // Speed factor from temp
+                    const speed = temperature / 298;
+
+                    for (let i = 0; i < particles.length; i++) {
+                        let p = particles[i];
+                        
+                        // Move
+                        p.x += p.vx * speed;
+                        p.y += p.vy * speed;
+                        
+                        // Bounce
+                        if (p.x <= 0 || p.x >= 100) p.vx *= -1;
+                        if (p.y <= 0 || p.y >= 100) p.vy *= -1;
+                        p.x = Math.max(0, Math.min(100, p.x));
+                        p.y = Math.max(0, Math.min(100, p.y));
+
+                        // Animate Size/Color transition
+                        p.currentSize = p.currentSize * 0.9 + p.targetSize * 0.1;
+
+                        // Reaction Logic
+                        let reacted = false;
+
+                        if (p.type === 'L' && Math.random() < probForward) {
+                            // React: L -> n*R
+                            reacted = true;
+                            const n = system.stoichiometry.R; 
+                            // Convert this particle to R
+                            p.type = 'R';
+                            p.targetSize = system.right.size;
+                            p.color = system.right.color;
+                            newParticles.push(p);
+                            
+                            // Create (n-1) extra R particles if needed
+                            for(let k=1; k<n; k++) {
+                                const extra = createParticle('R');
+                                extra.x = p.x; extra.y = p.y; // Spawn at same location
+                                newParticles.push(extra);
+                            }
+
+                        } else if (p.type === 'R' && Math.random() < probReverse) {
+                            // React: n*R -> L
+                            // Simplification for visual model: 
+                            // If N2O4, try to find neighbor R. If found, fuse.
+                            // If simple 1:1, just convert.
+                            
+                            if (system.id === 'N2O4') {
+                                let partnerIdx = -1;
+                                for(let j=0; j<particles.length; j++) {
+                                    if(i!==j && particles[j].type === 'R') {
+                                        const dx = p.x - particles[j].x;
+                                        const dy = p.y - particles[j].y;
+                                        if (dx*dx + dy*dy < 25) { // Close enough
+                                            partnerIdx = j;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if (partnerIdx !== -1) {
+                                    // Found partner, Fuse!
+                                    reacted = true;
+                                    p.type = 'L';
+                                    p.targetSize = system.left.size;
+                                    p.color = system.left.color;
+                                    newParticles.push(p);
+                                    // Mark partner for deletion
+                                    particles[partnerIdx].dead = true; 
+                                } else {
+                                    // No partner, no reaction
+                                    newParticles.push(p);
+                                }
+
+                            } else {
+                                // 1:1 reaction
+                                reacted = true;
+                                p.type = 'L';
+                                p.targetSize = system.left.size;
+                                p.color = system.left.color;
+                                newParticles.push(p);
+                            }
+
+                        } else {
+                            // No reaction
+                            if (!p.dead) newParticles.push(p);
+                        }
+                    }
+                    
+                    particlesRef.current = newParticles;
+                    
+                    // Sync UI counts
+                    let finalL = 0; 
+                    let finalR = 0;
+                    newParticles.forEach(p => p.type === 'L' ? finalL++ : finalR++);
+                    setUiCounts({ L: finalL, R: finalR });
+
+                    requestRef.current = requestAnimationFrame(animate);
+                };
+                
+                requestRef.current = requestAnimationFrame(animate);
+                return () => cancelAnimationFrame(requestRef.current);
+            }, [temperature, volume, system]);
+
+            // Manual Controls
+            const addParticle = (type) => {
+                const p = createParticle(type);
+                particlesRef.current.push(p);
+            };
+
+            // Color Calculation
+            const getBgColor = () => {
+                const total = uiCounts.L + uiCounts.R;
+                if (total === 0) return '#fff';
+                
+                if (system.id === 'N2O4') {
+                    // White to Brown
+                    const ratio = uiCounts.R / (total || 1); // More R (NO2) = Brown
+                    // NO2 is Brown (154, 52, 18). N2O4 is Colorless
+                    return `rgba(154, 52, 18, ${ratio * 0.5})`;
+                } else {
+                    // Pink to Blue
+                    const ratio = uiCounts.R / (total || 1); 
+                    const r = 244 + (59 - 244) * ratio;
+                    const g = 114 + (130 - 114) * ratio;
+                    const b = 182 + (246 - 182) * ratio;
+                    return `rgba(${r}, ${g}, ${b}, 0.5)`;
+                }
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Scale" /> Le Chatelier's Simulator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Predicting Equilibrium Shifts</p>
+                        </div>
+                        
+                        <div className="flex bg-slate-800 p-1 rounded-xl">
+                            {Systems.map(s => (
+                                <button
+                                    key={s.id}
+                                    onClick={() => { setSystem(s); setTemperature(298); setVolume(1.0); }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${system.id === s.id ? 'bg-slate-700 text-indigo-400 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+                                >
+                                    {s.name.split(' ')[0]}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow items-start">
+                        
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            <div className="bg-slate-900 p-4 rounded-2xl border border-indigo-500/30 text-center shadow-lg">
+                                <div className="text-xs text-slate-400 font-bold uppercase mb-2">Equilibrium Equation</div>
+                                <div className="text-lg font-mono font-bold text-slate-200">{system.equation}</div>
+                                <div className={`text-xs font-bold mt-1 ${system.deltaH > 0 ? 'text-red-400' : 'text-blue-400'}`}>
+                                    ΔH = {system.deltaH > 0 ? '+' : ''}{system.deltaH} kJ (Endothermic)
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="Sliders" size={16}/> Disturb Equilibrium
+                                </h3>
+
+                                {/* Concentration */}
+                                <div className="mb-6">
+                                    <label className="text-xs font-bold text-slate-500 block mb-2">Concentration (Add Particles)</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button onClick={() => addParticle('L')} className="p-2 bg-slate-800 rounded hover:bg-indigo-900/30 text-indigo-400 text-xs font-bold flex items-center justify-center gap-1 transition-colors border border-slate-700">
+                                            + {system.left.name}
+                                        </button>
+                                        <button onClick={() => addParticle('R')} className="p-2 bg-slate-800 rounded hover:bg-orange-900/30 text-orange-400 text-xs font-bold flex items-center justify-center gap-1 transition-colors border border-slate-700">
+                                            + {system.right.name}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Temperature */}
+                                <div className="mb-6">
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-xs font-bold text-red-400">Temperature</label>
+                                        <span className="text-xs font-mono font-bold text-slate-300">{temperature} K</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="273" max="373" step="1" 
+                                        value={temperature} 
+                                        onChange={(e) => setTemperature(Number(e.target.value))}
+                                        className="w-full h-2 bg-gradient-to-r from-blue-500 to-red-500 rounded-lg appearance-none cursor-pointer"
+                                    />
+                                </div>
+
+                                {/* Volume */}
+                                {system.type === 'gas' && (
+                                    <div className="mb-2">
+                                        <div className="flex justify-between mb-1">
+                                            <label className="text-xs font-bold text-blue-400">Volume (Pressure)</label>
+                                            <span className="text-xs font-mono font-bold text-slate-300">{volume.toFixed(1)}x</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="0.5" max="2.0" step="0.1" 
+                                            value={volume} 
+                                            onChange={(e) => setVolume(Number(e.target.value))}
+                                            className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Stats */}
+                            <div className="bg-slate-900 text-white p-4 rounded-xl shadow-lg text-center border border-slate-800">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <div className="text-3xl font-mono font-black text-slate-200">{uiCounts.L}</div>
+                                        <div className="text-[10px] text-slate-500 uppercase">Reactants (Left)</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-3xl font-mono font-black text-slate-200">{uiCounts.R}</div>
+                                        <div className="text-[10px] text-slate-500 uppercase">Products (Right)</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Visualization */}
+                        <div className="w-full lg:w-2/3 bg-slate-900 rounded-3xl border-4 border-slate-800 p-8 shadow-xl min-h-[500px] flex flex-col items-center justify-center relative overflow-hidden">
+                            
+                            {/* Container */}
+                            <div 
+                                className="reaction-container relative border-4 border-slate-600 rounded-xl overflow-hidden shadow-inner"
+                                style={{
+                                    width: system.type === 'gas' ? `${volume * 50}%` : '60%',
+                                    height: '320px',
+                                    backgroundColor: getBgColor()
+                                }}
+                            >
+                                {/* Render Particles */}
+                                {particlesRef.current.map((p) => (
+                                    <div 
+                                        key={p.id}
+                                        className="absolute rounded-full shadow-sm transition-colors duration-300"
+                                        style={{
+                                            left: `${p.x}%`,
+                                            top: `${p.y}%`,
+                                            width: `${p.currentSize}px`,
+                                            height: `${p.currentSize}px`,
+                                            backgroundColor: p.color,
+                                            transform: 'translate(-50%, -50%)'
+                                        }}
+                                    ></div>
+                                ))}
+                            </div>
+
+                            {/* Piston Visual */}
+                            {system.type === 'gas' && (
+                                <div 
+                                    className="absolute h-[340px] w-6 bg-slate-700 rounded-l piston shadow-xl flex items-center justify-center border-y-4 border-l-4 border-slate-600"
+                                    style={{ 
+                                        left: `calc(50% + ${volume * 25}% + 6px)`, 
+                                        top: '50%', transform: 'translateY(-50%)'
+                                    }}
+                                >
+                                    <div className="w-1 h-12 bg-slate-500 rounded"></div>
+                                </div>
+                            )}
+                            
+                            {/* Legend */}
+                            <div className="flex gap-8 mt-8">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full" style={{backgroundColor: system.left.color}}></div>
+                                    <div className="text-xs font-bold text-slate-400">{system.left.name}</div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-4 h-4 rounded-full" style={{backgroundColor: system.right.color}}></div>
+                                    <div className="text-xs font-bold text-slate-400">{system.right.name}</div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
