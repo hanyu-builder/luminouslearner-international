@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equilibrium Concentration Solver - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* ICE Table Styling for Dark Mode */
+        .ice-table th, .ice-table td {
+            border: 1px solid #334155;
+            padding: 12px;
+            text-align: center;
+        }
+        .ice-table th { background-color: #1e293b; color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .ice-table td { font-family: 'JetBrains Mono', monospace; color: #e2e8f0; }
+        
+        .step-box {
+            transition: all 0.3s ease;
+            border-left-width: 4px;
+        }
+        .step-box:hover {
+            transform: translateX(4px);
+            background-color: rgba(30, 41, 59, 0.8);
+        }
+        
+        /* Custom inputs */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Reaction Types Logic
+        const ReactionTypes = [
+            { 
+                id: 'type1', 
+                name: 'A + B ⇌ C + D', 
+                equation: 'A + B \\rightleftharpoons C + D',
+                desc: 'Coefficients are all 1 (e.g., Esterification)',
+                coeffs: [1, 1, 1, 1],
+                solve: (Kc, init) => {
+                    // Kc = (C+x)(D+x) / (A-x)(B-x)
+                    // Let A, B, C, D be initial concentrations
+                    const [A, B, C, D] = init;
+                    // Expand: Kc(AB - Ax - Bx + x^2) = CD + Cx + Dx + x^2
+                    // Kc*AB - Kc(A+B)x + Kc*x^2 = CD + (C+D)x + x^2
+                    // (Kc - 1)x^2 - (Kc(A+B) + (C+D))x + (Kc*AB - CD) = 0
+                    
+                    const a = Kc - 1;
+                    const b = -(Kc * (A + B) + (C + D));
+                    const c_term = (Kc * A * B) - (C * D);
+                    
+                    return { a, b, c: c_term };
+                }
+            },
+            { 
+                id: 'type2', 
+                name: 'A + B ⇌ 2C', 
+                equation: 'H_2 + I_2 \\rightleftharpoons 2HI',
+                desc: 'Product coefficient is 2 (e.g., Formation of HI)',
+                coeffs: [1, 1, 2],
+                solve: (Kc, init) => {
+                    // Kc = (C+2x)^2 / (A-x)(B-x)
+                    // Kc(AB - Ax - Bx + x^2) = C^2 + 4Cx + 4x^2
+                    // Kc*x^2 - Kc(A+B)x + Kc*AB = 4x^2 + 4Cx + C^2
+                    // (Kc - 4)x^2 - (Kc(A+B) + 4C)x + (Kc*AB - C^2) = 0
+                    
+                    const [A, B, C] = init;
+                    const a = Kc - 4;
+                    const b = -(Kc * (A + B) + 4 * C);
+                    const c_term = (Kc * A * B) - (C * C);
+                    
+                    return { a, b, c: c_term };
+                }
+            }
+        ];
+
+        const Presets = [
+            { name: 'Formation of HI', type: 'type2', kc: 54.3, init: [0.5, 0.5, 0], labels: ['H₂', 'I₂', 'HI'] },
+            { name: 'Esterification', type: 'type1', kc: 4.0, init: [1.0, 1.0, 0, 0], labels: ['Acid', 'Alc', 'Ester', 'Water'] },
+            { name: 'Decomposition of PCl5', type: 'type1', kc: 0.04, init: [0.2, 0, 0, 0], labels: ['PCl₅', 'Empty', 'PCl₃', 'Cl₂'] } // Hacky fit to Type 1 by ignoring 'B'
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [selectedType, setSelectedType] = useState(ReactionTypes[1]); // Default HI type
+            const [kc, setKc] = useState(54.3);
+            const [initials, setInitials] = useState([0.5, 0.5, 0]); // Array of concentrations
+            const [labels, setLabels] = useState(['H₂', 'I₂', 'HI']);
+            
+            const [result, setResult] = useState(null);
+            const [steps, setSteps] = useState(null);
+
+            // MathJax Render
+            useEffect(() => {
+                if (window.MathJax) {
+                    window.MathJax.typesetPromise && window.MathJax.typesetPromise();
+                }
+            }, [result, selectedType]);
+
+            const handlePreset = (p) => {
+                const type = ReactionTypes.find(t => t.id === p.type);
+                setSelectedType(type);
+                setKc(p.kc);
+                setInitials(p.init);
+                setLabels(p.labels);
+                setResult(null);
+            };
+
+            const handleTypeChange = (typeId) => {
+                const type = ReactionTypes.find(t => t.id === typeId);
+                setSelectedType(type);
+                setResult(null);
+                // Reset inputs based on new type
+                if (typeId === 'type1') {
+                    setInitials([1, 1, 0, 0]);
+                    setLabels(['A', 'B', 'C', 'D']);
+                } else {
+                    setInitials([0.5, 0.5, 0]);
+                    setLabels(['A', 'B', 'C']);
+                }
+            };
+
+            const calculate = () => {
+                // 1. Get Coefficients for ax^2 + bx + c = 0
+                const { a, b, c } = selectedType.solve(kc, initials);
+                
+                // 2. Solve Quadratic Formula
+                const discriminant = b * b - 4 * a * c;
+                
+                if (discriminant < 0) {
+                    setResult({ error: "No real roots (Discriminant < 0). Please check your input values." });
+                    return;
+                }
+
+                const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+                const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+
+                // 3. Determine Valid Root
+                // x represents "change". 
+                // Equilibrium conc cannot be negative.
+                // For reactant A: eq = A - x >= 0  => x <= A
+                // For product C: eq = C + x >= 0 => x >= -C (usually C=0 so x>0)
+                
+                const isValid = (x) => {
+                    // Check all species
+                    if (selectedType.id === 'type1') {
+                        return (initials[0]-x >= 0) && (initials[1]-x >= 0) && (initials[2]+x >= 0) && (initials[3]+x >= 0);
+                    } else {
+                        return (initials[0]-x >= 0) && (initials[1]-x >= 0) && (initials[2]+2*x >= 0);
+                    }
+                };
+
+                let validX = null;
+                let reason = "";
+
+                if (isValid(x1) && !isValid(x2)) {
+                    validX = x1;
+                    reason = `x = ${x2.toFixed(4)} rejected because it results in negative concentration.`;
+                } else if (!isValid(x1) && isValid(x2)) {
+                    validX = x2;
+                    reason = `x = ${x1.toFixed(4)} rejected because it results in negative concentration.`;
+                } else if (isValid(x1) && isValid(x2)) {
+                      // Both valid mathematically? Pick the one that makes sense physically (usually smaller magnitude or closer to 0?)
+                      // For A+B<->C+D starting 0 prod, x must be positive.
+                      // Usually only one is positive.
+                      if(x1 > 0 && x2 < 0) validX = x1;
+                      else if(x2 > 0 && x1 < 0) validX = x2;
+                      else validX = Math.abs(x1) < Math.abs(x2) ? x1 : x2; // Heuristic fallback
+                      reason = "Both roots mathematically valid. Selected the physically meaningful one.";
+                } else {
+                    setResult({ error: "No valid x found (All roots result in negative concentrations)." });
+                    return;
+                }
+
+                // 4. Calculate Final Concentrations
+                let finals = [];
+                if (selectedType.id === 'type1') {
+                    finals = [initials[0]-validX, initials[1]-validX, initials[2]+validX, initials[3]+validX];
+                } else {
+                    finals = [initials[0]-validX, initials[1]-validX, initials[2]+2*validX];
+                }
+
+                setResult({ x: validX, finals, reason, quad: { a, b, c, x1, x2 } });
+                
+                // Prepare steps for display
+                setSteps({
+                    eqStr: `${a.toFixed(2)}x^2 + (${b.toFixed(2)})x + (${c.toFixed(2)}) = 0`
+                });
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="FunctionSquare" /> Equilibrium Concentration Solver
+                            </h1>
+                            <p className="text-slate-500 text-sm">ICE Table & Quadratic Equation Calculator</p>
+                        </div>
+                        
+                        {/* Presets */}
+                        <div className="flex gap-2">
+                            {Presets.map((p, i) => (
+                                <button 
+                                    key={i} onClick={() => handlePreset(p)}
+                                    className="px-3 py-1 bg-slate-800 hover:bg-indigo-900/30 text-slate-400 hover:text-indigo-400 rounded text-xs font-bold transition-all border border-slate-700"
+                                >
+                                    {p.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow items-start">
+                        
+                        {/* Left: Inputs */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="Settings2" size={16}/> Problem Setup
+                                </h3>
+
+                                {/* Reaction Type */}
+                                <div className="mb-4">
+                                    <label className="text-xs font-bold text-indigo-400 block mb-2">Reaction Type</label>
+                                    <div className="flex gap-2">
+                                        {ReactionTypes.map(t => (
+                                            <button 
+                                                key={t.id} 
+                                                onClick={() => handleTypeChange(t.id)}
+                                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${selectedType.id === t.id ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700'}`}
+                                            >
+                                                {t.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 mt-1 text-center">{selectedType.desc}</p>
+                                </div>
+
+                                {/* Kc Input */}
+                                <div className="mb-6">
+                                    <label className="text-xs font-bold text-indigo-400 block mb-1">Equilibrium Constant (Kc)</label>
+                                    <input 
+                                        type="number" value={kc} onChange={(e) => setKc(Number(e.target.value))}
+                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-mono font-bold text-lg text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
+
+                                {/* Initial Concentrations */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 block mb-2">Initial Concentration (M)</label>
+                                    <div className="space-y-2">
+                                        {initials.map((val, idx) => (
+                                            <div key={idx} className="flex items-center gap-2">
+                                                <div className="w-20 bg-slate-800 p-2 rounded text-center text-xs font-bold text-slate-400 border border-slate-700">
+                                                    <input 
+                                                        type="text" value={labels[idx]} 
+                                                        onChange={(e) => {
+                                                            const newL = [...labels]; newL[idx] = e.target.value; setLabels(newL);
+                                                        }}
+                                                        className="w-full bg-transparent text-center outline-none"
+                                                    />
+                                                </div>
+                                                <input 
+                                                    type="number" value={val} 
+                                                    onChange={(e) => {
+                                                        const newInit = [...initials]; newInit[idx] = Number(e.target.value); setInitials(newInit);
+                                                    }}
+                                                    className="flex-grow p-2 bg-slate-800 border border-slate-700 rounded font-mono text-sm text-white outline-none focus:border-indigo-500"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={calculate}
+                                    className="mt-6 w-full py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-500 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="Calculator" size={18}/> Calculate (Solve x)
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Right: ICE Table & Solution */}
+                        <div className="w-full lg:w-2/3 flex flex-col gap-6">
+                            
+                            {/* ICE Table Visualization */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
+                                <h3 className="text-lg font-bold text-slate-300 mb-4">ICE Table</h3>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full ice-table text-sm">
+                                        <thead>
+                                            <tr>
+                                                <th className="w-24 bg-slate-800 border-slate-700">Equation</th>
+                                                {labels.map((l, i) => (
+                                                    <th key={i} className="min-w-[100px] text-base text-indigo-400 font-black border-slate-700">
+                                                        {selectedType.id === 'type2' && i === 2 ? '2' : ''}{l}
+                                                    </th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td className="font-bold text-slate-500 border-slate-700">Initial (I)</td>
+                                                {initials.map((val, i) => <td key={i} className="border-slate-700">{val}</td>)}
+                                            </tr>
+                                            <tr className="bg-slate-800/50">
+                                                <td className="font-bold text-slate-500 border-slate-700">Change (C)</td>
+                                                {initials.map((_, i) => {
+                                                    // Determine sign and coeff based on type
+                                                    // Type 1: -x, -x, +x, +x
+                                                    // Type 2: -x, -x, +2x
+                                                    let sign = i < 2 ? '-' : '+';
+                                                    let coeff = (selectedType.id === 'type2' && i === 2) ? '2' : '';
+                                                    return <td key={i} className="text-blue-400 font-bold border-slate-700">{sign}{coeff}x</td>;
+                                                })}
+                                            </tr>
+                                            <tr>
+                                                <td className="font-bold text-slate-500 border-slate-700">Eqm (E)</td>
+                                                {initials.map((val, i) => {
+                                                    let sign = i < 2 ? '-' : '+';
+                                                    let coeff = (selectedType.id === 'type2' && i === 2) ? '2' : '';
+                                                    return <td key={i} className="font-bold border-slate-700">{val} {sign} {coeff}x</td>;
+                                                })}
+                                            </tr>
+                                            {/* Final Values Row (if calculated) */}
+                                            {result && !result.error && (
+                                                <tr className="bg-emerald-900/20 border-t-2 border-emerald-500/30">
+                                                    <td className="font-bold text-emerald-400 border-slate-700">Final (M)</td>
+                                                    {result.finals.map((val, i) => (
+                                                        <td key={i} className="font-mono font-bold text-emerald-400 border-slate-700">{val.toFixed(4)}</td>
+                                                    ))}
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* Calculation Steps */}
+                            {result && !result.error && (
+                                <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 animate-in slide-in-from-bottom-4 fade-in">
+                                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="FunctionSquare" size={16}/> Step-by-Step Solution
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="step-box border-l-indigo-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
+                                            <p className="text-xs font-bold text-indigo-400 uppercase mb-1">Step 1: Set up Kc Expression</p>
+                                            <p className="font-mono text-sm text-slate-300 bg-slate-950 p-2 rounded border border-slate-700">
+                                                {`\\[ K_c = ${selectedType.id === 'type2' ? '\\frac{[C]^2}{[A][B]}' : '\\frac{[C][D]}{[A][B]}'} = ${kc} \\]`}
+                                            </p>
+                                        </div>
+
+                                        <div className="step-box border-l-purple-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
+                                            <p className="text-xs font-bold text-purple-400 uppercase mb-1">Step 2: Rearrange to Quadratic ($ax^2 + bx + c = 0$)</p>
+                                            <p className="font-mono text-lg text-slate-200 font-bold">
+                                                {`\\[ ${steps.eqStr} \\]`}
+                                            </p>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                (a = {result.quad.a.toFixed(2)}, b = {result.quad.b.toFixed(2)}, c = {result.quad.c.toFixed(2)})
+                                            </p>
+                                        </div>
+
+                                        <div className="step-box border-l-emerald-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
+                                            <p className="text-xs font-bold text-emerald-400 uppercase mb-1">Step 3: Solve for x</p>
+                                            <div className="flex gap-4 text-sm font-mono text-slate-400 mb-2">
+                                                <span>x₁ = {result.quad.x1.toFixed(4)}</span>
+                                                <span>x₂ = {result.quad.x2.toFixed(4)}</span>
+                                            </div>
+                                            <p className="text-sm text-emerald-300 bg-emerald-900/30 p-2 rounded font-bold border border-emerald-500/30">
+                                                ✅ Select x = {result.x.toFixed(4)}
+                                            </p>
+                                            <p className="text-xs text-slate-500 mt-1 italic">{result.reason}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {result && result.error && (
+                                <div className="bg-red-900/20 p-6 rounded-2xl border border-red-500/50 text-center text-red-400 font-bold">
+                                    {result.error}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
