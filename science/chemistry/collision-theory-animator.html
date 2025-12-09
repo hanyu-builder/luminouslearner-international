@@ -9,8 +9,6 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.0.2"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
@@ -20,10 +18,9 @@
         .canvas-container {
             position: relative;
             width: 100%;
-            /* 調整高度，使其維持在一個較矮的比例 (例如 3:4 寬高比) */
-            padding-top: 75%; 
+            padding-top: 100%; /* 1:1 Aspect Ratio (Placeholder for height) */
             height: 0;
-            min-height: 300px;
+            min-height: 350px; /* Minimum height fallback */
         }
         
         #simulation-canvas {
@@ -32,7 +29,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background-color: #1e293b; 
+            background-color: #1e293b; /* Darker slate background for animation */
             border-radius: 1rem;
             border: 2px solid #334155;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
@@ -57,24 +54,6 @@
         #temp-slider::-webkit-slider-thumb { border-color: #f87171; }
         #conc-slider::-webkit-slider-thumb { border-color: #60a5fa; }
         #ea-slider::-webkit-slider-thumb { border-color: #facc15; }
-
-        /* Chart Styling */
-        #mb-chart {
-             background-color: #1e293b !important;
-             border-radius: 1rem;
-        }
-
-        /* 確保左右兩側高度一致 */
-        .control-panel-group {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
-        .right-panel-group {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -91,7 +70,7 @@
                     const iconNode = window.lucide.icons[name];
                     const iconSvg = window.lucide.createElement(iconNode);
                     iconSvg.setAttribute('width', size);
-                    iconSvg.setAttribute('height', size); 
+                    iconSvg.setAttribute('height', size);
                     iconSvg.setAttribute('class', className);
                     setSvg(iconSvg.outerHTML);
                 }
@@ -110,21 +89,41 @@
             const [totalCollisions, setTotalCollisions] = useState(0);
             const [effectiveCollisions, setEffectiveCollisions] = useState(0);
             const [reactionRate, setReactionRate] = useState(0);
-            const [effectiveFraction, setEffectiveFraction] = useState(0); // MB fraction
 
             // Refs for Canvas Animation
             const canvasRef = useRef(null);
-            const containerRef = useRef(null);
+            const containerRef = useRef(null); // Ref to the new container for dynamic sizing
             const particlesRef = useRef([]);
             const requestRef = useRef();
             const statsRef = useRef({ total: 0, effective: 0, lastTime: Date.now(), rate: 0 });
             const particleCount = concentration * 2;
 
-            // Chart Ref for MB Distribution
-            const mbChartRef = useRef(null);
-            const mbChartInstance = useRef(null);
+            // Initialize Particles
+            useEffect(() => {
+                const initParticles = () => {
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    const width = canvas.width;
+                    const height = canvas.height;
 
-            // --- Utility Functions ---
+                    const newParticles = [];
+                    // Create A (Red) and B (Blue) particles
+                    for (let i = 0; i < particleCount; i++) {
+                        const type = i % 2 === 0 ? 'A' : 'B';
+                        newParticles.push(createParticle(width, height, type));
+                    }
+                    particlesRef.current = newParticles;
+                };
+
+                initParticles();
+                
+                // Reset Stats
+                statsRef.current = { total: 0, effective: 0, lastTime: Date.now(), rate: 0 };
+                setTotalCollisions(0);
+                setEffectiveCollisions(0);
+                setReactionRate(0);
+
+            }, [concentration]); // Re-init when concentration changes
 
             const createParticle = (w, h, type) => {
                 const baseSpeed = 1.5;
@@ -134,6 +133,7 @@
                 return {
                     x: Math.random() * w,
                     y: Math.random() * h,
+                    // Use random angle for velocity direction
                     vx: Math.cos(randomAngle) * baseSpeed, 
                     vy: Math.sin(randomAngle) * baseSpeed,
                     type: type,
@@ -142,23 +142,8 @@
                     energy: baseEnergy
                 };
             };
-            
-            // Maxwell-Boltzmann Distribution Function Approximation
-            const calculateMB = (temp) => {
-                const data = [];
-                const labels = [];
-                const T = temp / 20; // Scaled temperature
-                
-                for (let x = 0; x <= 120; x += 1) {
-                    const y = 1000 * Math.sqrt(x) * Math.exp(-x / T) / Math.pow(T, 1.5);
-                    data.push(y);
-                    labels.push(x);
-                }
-                return { labels, data };
-            };
 
-            // --- Animation & Simulation Logic ---
-
+            // Main Animation Loop
             const animate = () => {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
@@ -170,33 +155,36 @@
                 ctx.fillStyle = '#1e293b'; // Dark background
                 ctx.fillRect(0, 0, width, height);
 
-                const speedFactor = Math.sqrt(temperature / 300) * 1;
-                // FIXED: Simplified Ea threshold logic for better reaction visibility
-                // Ea slider (20-100) * 5 is the energy threshold for reaction.
+                // Speed multiplier based on Temperature (T)
+                const speedFactor = Math.sqrt(temperature / 300) * 1; // 300K is baseline 1x speed
+
+                // Activation Energy Threshold (Scaled to match typical particle energy distribution, e.g., 5x Ea slider value)
                 const EaThreshold = activationEnergy * 5; 
 
+                // Update & Draw Particles
                 const particles = particlesRef.current;
                 
                 for (let i = 0; i < particles.length; i++) {
                     let p1 = particles[i];
                     
-                    // 1. Move & Boundary Bounce
+                    // 1. Move
                     p1.x += p1.vx * speedFactor;
                     p1.y += p1.vy * speedFactor;
 
+                    // 2. Boundary Bounce
                     if (p1.x < p1.radius || p1.x > width - p1.radius) p1.vx *= -1;
                     if (p1.y < p1.radius || p1.y > height - p1.radius) p1.vy *= -1;
 
                     p1.x = Math.max(p1.radius, Math.min(width - p1.radius, p1.x));
                     p1.y = Math.max(p1.radius, Math.min(height - p1.radius, p1.y));
                     
-                    // 2. Draw
+                    // 3. Draw
                     ctx.beginPath();
                     ctx.arc(p1.x, p1.y, p1.radius, 0, Math.PI * 2);
                     ctx.fillStyle = p1.color;
                     ctx.fill();
                     
-                    // 3. Collision Detection & Reaction Check
+                    // 4. Collision Detection & Reaction Check
                     for (let j = i + 1; j < particles.length; j++) {
                         let p2 = particles[j];
                         const dx = p1.x - p2.x;
@@ -206,7 +194,7 @@
 
                         if (distSq < minDist * minDist) {
                             
-                            // Simple collision resolution (velocity swap + position adjust)
+                            // Prevent sticking & resolve overlap (Simplified)
                             const dist = Math.sqrt(distSq);
                             const overlap = minDist - dist;
                             p1.x += dx / dist * overlap / 2;
@@ -214,6 +202,7 @@
                             p2.x -= dx / dist * overlap / 2;
                             p2.y -= dy / dist * overlap / 2;
 
+                            // Simple elastic collision (Angle reflection/velocity swap)
                             const tempVx = p1.vx; const tempVy = p1.vy;
                             p1.vx = p2.vx; p1.vy = p2.vy;
                             p2.vx = tempVx; p2.vy = tempVy;
@@ -222,16 +211,14 @@
                             if (p1.type !== p2.type) {
                                 statsRef.current.total++;
                                 
-                                // FIXED: Energy Check using average speed squared for simplified KE proxy
-                                const v1Sq = p1.vx * p1.vx + p1.vy * p1.vy;
-                                const v2Sq = p2.vx * p2.vx + p2.vy * p2.vy;
-                                const collisionEnergy = (v1Sq + v2Sq) * temperature; 
+                                // Energy Check (Energy > Ea?)
+                                // Combined Kinetic Energy (simplified using speed and temperature factor)
+                                const combinedEnergy = (p1.energy * speedFactor + p2.energy * speedFactor);
                                 
-                                // Simplified Check: Collision Energy > Ea scaled by a factor
-                                if (collisionEnergy > EaThreshold * 150) { // Factor 150 to make it proportional to slider/temp effect
+                                if (combinedEnergy > EaThreshold) {
                                     statsRef.current.effective++;
                                     
-                                    // Visual Flash
+                                    // Visual Flash for Effective Collision
                                     ctx.beginPath();
                                     ctx.arc((p1.x+p2.x)/2, (p1.y+p2.y)/2, 8, 0, Math.PI * 2);
                                     ctx.fillStyle = "rgba(255, 255, 0, 0.7)";
@@ -244,14 +231,16 @@
 
                 // Update React Stats (Throttled)
                 const now = Date.now();
-                if (now - statsRef.current.lastTime > 500) { 
-                    const totalPeriod = (now - statsRef.current.lastTime) / 1000;
+                if (now - statsRef.current.lastTime > 500) { // Every 0.5s
+                    const totalPeriod = (now - statsRef.current.lastTime) / 1000; // seconds
                     
                     setTotalCollisions(prev => prev + statsRef.current.total);
                     setEffectiveCollisions(prev => prev + statsRef.current.effective);
                     
+                    // Rate is Effective Collisions per unit Time
                     const currentRate = statsRef.current.effective / totalPeriod;
 
+                    // Smoothen the rate display slightly
                     statsRef.current.rate = statsRef.current.rate * 0.8 + currentRate * 0.2;
                     setReactionRate(statsRef.current.rate.toFixed(1)); 
 
@@ -269,6 +258,7 @@
                 const canvas = canvasRef.current;
                 const container = containerRef.current;
                 if (canvas && container) {
+                    // Set canvas size based on container size
                     canvas.width = container.clientWidth;
                     canvas.height = container.clientHeight;
                     // Re-initialize particles on resize to prevent clustering
@@ -279,106 +269,7 @@
                     }));
                 }
             };
-            
-            // --- Chart Rendering ---
-            useEffect(() => {
-                if (!mbChartRef.current) return;
 
-                const { labels, data } = calculateMB(temperature);
-                
-                let totalArea = 0;
-                let effectiveArea = 0;
-                data.forEach((y, x) => {
-                    totalArea += y;
-                    if (x >= activationEnergy) effectiveArea += y;
-                });
-                
-                const percent = totalArea > 0 ? (effectiveArea / totalArea) * 100 : 0;
-                setEffectiveFraction(percent.toFixed(2));
-
-                const backgroundColors = labels.map(x => x >= activationEnergy ? 'rgba(16, 185, 129, 0.6)' : 'rgba(99, 102, 241, 0.2)');
-                const borderColors = labels.map(x => x >= activationEnergy ? '#059669' : '#4f46e5');
-
-                const ctx = mbChartRef.current.getContext('2d');
-
-                const colorPrimary = '#e2e8f0'; 
-                const gridColor = '#334155';
-                const fontStyle = 'Inter';
-
-
-                if (mbChartInstance.current) {
-                    mbChartInstance.current.data.labels = labels;
-                    mbChartInstance.current.data.datasets[0].data = data;
-                    mbChartInstance.current.data.datasets[0].backgroundColor = backgroundColors;
-                    mbChartInstance.current.data.datasets[0].borderColor = borderColors;
-                    
-                    // Update Ea line position
-                    mbChartInstance.current.options.plugins.annotation.annotations[0].value = activationEnergy;
-                    
-                    mbChartInstance.current.update();
-                } else {
-                    mbChartInstance.current = new Chart(ctx, {
-                        type: 'bar', // Bar chart to easily color segments
-                        data: {
-                            labels: labels,
-                            datasets: [{
-                                label: 'Fraction of Molecules',
-                                data: data,
-                                backgroundColor: backgroundColors,
-                                borderColor: borderColors,
-                                borderWidth: 1,
-                                barPercentage: 1.0,
-                                categoryPercentage: 1.0,
-                                pointRadius: 0
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            animation: { duration: 0 }, 
-                            plugins: {
-                                legend: { display: false },
-                                tooltip: { enabled: false },
-                                annotation: {
-                                    annotations: [{
-                                        type: 'line',
-                                        mode: 'vertical',
-                                        scaleID: 'x',
-                                        value: activationEnergy,
-                                        borderColor: '#ef4444',
-                                        borderWidth: 2,
-                                        borderDash: [6, 6],
-                                        label: {
-                                            content: 'Ea',
-                                            enabled: true,
-                                            position: 'top',
-                                            font: { family: fontStyle, weight: 'bold', size: 14, color: '#ef4444' }
-                                        }
-                                    }]
-                                }
-                            },
-                            scales: {
-                                x: { 
-                                    type: 'linear',
-                                    title: { display: true, text: 'Kinetic Energy (E)', font: { weight: 'bold', size: 14, color: colorPrimary } },
-                                    min: 0, max: 120,
-                                    grid: { display: false },
-                                    ticks: { display: false }
-                                },
-                                y: { 
-                                    title: { display: true, text: 'Fraction of Molecules (N/Ntotal)', font: { weight: 'bold', size: 14, color: colorPrimary } },
-                                    display: true,
-                                    min: 0,
-                                    ticks: { display: false },
-                                    grid: { color: gridColor, borderDash: [5, 5] }
-                                }
-                            },
-                        },
-                    });
-                }
-            }, [temperature, activationEnergy]);
-
-            // --- General Effects ---
             useEffect(() => {
                 // Initial setup and listener attachment
                 window.addEventListener('resize', handleResize);
@@ -392,6 +283,22 @@
                     window.removeEventListener('resize', handleResize);
                 };
             }, [isRunning, temperature, concentration, activationEnergy]);
+
+            const Icon = ({ name, size = 20, className = "" }) => {
+                const [svg, setSvg] = useState('');
+                useEffect(() => {
+                    if (window.lucide && window.lucide.icons[name]) {
+                        const iconNode = window.lucide.icons[name];
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+                , [name, size, className]);
+                return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+            };
 
 
             return (
@@ -418,8 +325,8 @@
 
                     <div className="flex flex-col lg:flex-row gap-8 flex-grow">
                         
-                        {/* Left: Controls (Group 1) */}
-                        <div className="w-full lg:w-1/3 flex flex-col gap-6 control-panel-group">
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
                             
                             {/* Stats */}
                             <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
@@ -499,11 +406,10 @@
 
                         </div>
 
-                        {/* Right: Simulation & Chart (Group 2) */}
-                        <div className="w-full lg:w-2/3 flex flex-col gap-6 right-panel-group">
-                            
-                            {/* 1. Canvas Simulation Area */}
-                            <div ref={containerRef} className="bg-slate-950 rounded-3xl border-4 border-slate-800 p-4 shadow-xl relative canvas-container">
+                        {/* Right: Simulation */}
+                        <div className="w-full lg:w-2/3 flex flex-col">
+                            {/* 修正：將 Canvas 移入具有固定高度和寬度設置的容器中 */}
+                            <div ref={containerRef} className="bg-slate-950 rounded-3xl border-4 border-slate-800 p-4 shadow-xl flex-grow relative canvas-container">
                                 <canvas ref={canvasRef} id="simulation-canvas"></canvas>
 
                                 {/* Legend */}
@@ -519,25 +425,11 @@
                                     </div>
                                 </div>
                             </div>
-
-                            {/* 2. Maxwell-Boltzmann Distribution Chart */}
-                            <div className="bg-slate-900 rounded-3xl border-4 border-slate-800 p-4 shadow-xl">
-                                <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2">
-                                    <Icon name="BarChart2" className="text-emerald-400"/> Energy Distribution Curve (Maxwell-Boltzmann)
-                                </h3>
-                                <div className="relative h-64 w-full">
-                                    <canvas ref={mbChartRef} id="mb-chart"></canvas>
-                                </div>
-                                <div className="text-center text-xs font-bold mt-3">
-                                    <span className="text-emerald-400">{effectiveFraction}%</span> 
-                                    <span className="text-slate-500"> of particles have energy &ge; Ea.</span>
-                                </div>
-                            </div>
                         </div>
 
                     </div>
                     
-                    <div className="text-center text-slate-600 text-xs mt-12 border-t border-slate-800 pt-6 pb-6">
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-6">
                         Luminous Learner International | IB/A-Level Chemistry
                     </div>
                 </div>
