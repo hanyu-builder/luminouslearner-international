@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Titration Simulator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Liquid Color Transition */
+        .flask-liquid { transition: background-color 0.5s ease, height 0.2s ease; }
+        
+        /* Drop Animation */
+        @keyframes drop-fall {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(120px) scale(0.5); opacity: 0; }
+        }
+        .anim-drop { animation: drop-fall 0.4s linear infinite; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        // --- Chemistry Data (Internationalized) ---
+        
+        const Chemicals = {
+            acids: [
+                { name: 'Hydrochloric Acid (HCl)', type: 'strong', formula: 'HCl' },
+                { name: 'Ethanoic Acid (CH₃COOH)', type: 'weak', formula: 'CH3COOH', pKa: 4.76 }
+            ],
+            alkalis: [
+                { name: 'Sodium Hydroxide (NaOH)', type: 'strong', formula: 'NaOH' },
+                { name: 'Ammonia (NH₃)', type: 'weak', formula: 'NH3', pKb: 4.75 }
+            ]
+        };
+
+        const Indicators = [
+            { 
+                name: 'Methyl Orange', 
+                range: [3.1, 4.4], 
+                colors: { low: '#ef4444', high: '#eab308' }, // Red -> Yellow
+                desc: 'Suitable for Strong Acid + Weak Base'
+            },
+            { 
+                name: 'Phenolphthalein', 
+                range: [8.3, 10.0], 
+                colors: { low: '#ffffff', high: '#ec4899' }, // Colorless -> Pink
+                desc: 'Suitable for Weak Acid + Strong Base'
+            },
+            {
+                name: 'Universal Indicator',
+                range: [0, 14],
+                isUniversal: true,
+                desc: 'Shows full pH range colors'
+            }
+        ];
+
+        // Calculation Constants
+        const CONC = 0.1; // 0.1 M for simplicity
+        const VOL_ANALYTE = 25; // 25 mL
+
+        const App = () => {
+            // Setup State
+            const [acid, setAcid] = useState(Chemicals.acids[0]);
+            const [alkali, setAlkali] = useState(Chemicals.alkalis[0]);
+            const [titrantType, setTitrantType] = useState('alkali'); // 'acid' or 'alkali' in burette
+            const [indicator, setIndicator] = useState(Indicators[2]); // Default Universal
+            
+            // Simulation State
+            const [volAdded, setVolAdded] = useState(0);
+            const [currentPH, setCurrentPH] = useState(7);
+            const [isDripping, setIsDripping] = useState(false);
+            const [dataPoints, setDataPoints] = useState([]);
+
+            // Refs
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            // --- Calculation Logic ---
+            const calculatePH = (v) => {
+                // v is volume of titrant added
+                let ph = 7;
+                
+                // Identify setup
+                // const titrant = titrantType === 'alkali' ? alkali : acid;
+                // const analyte = titrantType === 'alkali' ? acid : alkali;
+
+                // Case 1: Strong Acid + Strong Base
+                if (acid.type === 'strong' && alkali.type === 'strong') {
+                    if (titrantType === 'alkali') { // Acid in flask
+                        if (v < 25) {
+                            // Excess Acid
+                            const molesH = (25 * CONC) - (v * CONC);
+                            const totalV = 25 + v;
+                            ph = -Math.log10(molesH / totalV);
+                        } else if (v === 25) {
+                            ph = 7.0;
+                        } else {
+                            // Excess Base
+                            const molesOH = (v * CONC) - (25 * CONC);
+                            const totalV = 25 + v;
+                            const pOH = -Math.log10(molesOH / totalV);
+                            ph = 14 - pOH;
+                        }
+                    } else {
+                        // Base in flask (Reverse logic)
+                         if (v < 25) { // Excess Base
+                            const molesOH = (25 * CONC) - (v * CONC);
+                            const totalV = 25 + v;
+                            ph = 14 + Math.log10(molesOH / totalV);
+                        } else if (v === 25) ph = 7.0;
+                        else {
+                            const molesH = (v * CONC) - (25 * CONC);
+                            const totalV = 25 + v;
+                            ph = -Math.log10(molesH / totalV);
+                        }
+                    }
+                } 
+                // Case 2: Weak Acid + Strong Base (Titrant = Base)
+                else if (acid.type === 'weak' && alkali.type === 'strong' && titrantType === 'alkali') {
+                    const pKa = acid.pKa;
+                    if (v === 0) {
+                        ph = 0.5 * (pKa - Math.log10(CONC));
+                    } else if (v < 25) {
+                        // Buffer Region
+                        ph = pKa + Math.log10(v / (25 - v));
+                    } else if (v === 25) {
+                        // Salt Hydrolysis (Basic)
+                        const saltConc = (25 * CONC) / 50;
+                        const pKb = 14 - pKa; // Approx
+                        const pOH = 0.5 * (pKb - Math.log10(saltConc));
+                        ph = 14 - pOH;
+                    } else {
+                        // Excess Strong Base
+                        const molesOH = (v * CONC) - (25 * CONC);
+                        ph = 14 + Math.log10(molesOH / (25 + v));
+                    }
+                }
+                // Case 3: Strong Acid + Weak Base (Titrant = Acid)
+                // ... Simplified logic for other cases to keep code manageable but realistic visual
+                else {
+                    // Fallback simple sigmoid simulation for other cases to ensure smooth visual
+                    // Real calculation is complex, using approximation for visual demo
+                    let startPH, endPH, equivalencePH;
+                    
+                    if (titrantType === 'alkali') { // Adding Base to Acid
+                        startPH = acid.type === 'strong' ? 1 : 3;
+                        endPH = alkali.type === 'strong' ? 13 : 11;
+                        equivalencePH = (acid.type === 'strong' && alkali.type === 'strong') ? 7 : (acid.type === 'weak' ? 9 : 5);
+                        if(acid.type ==='weak' && alkali.type === 'weak') equivalencePH = 7; // approx
+                    } else { // Adding Acid to Base
+                        startPH = alkali.type === 'strong' ? 13 : 11;
+                        endPH = acid.type === 'strong' ? 1 : 3;
+                        equivalencePH = (acid.type === 'strong' && alkali.type === 'strong') ? 7 : (alkali.type === 'weak' ? 5 : 9);
+                         if(acid.type ==='weak' && alkali.type === 'weak') equivalencePH = 7;
+                    }
+
+                    // Sigmoid function centered at 25
+                    const k = 0.5; // steepness
+                    const sigmoid = 1 / (1 + Math.exp(-k * (v - 25)));
+                    
+                    if (titrantType === 'alkali') {
+                        ph = startPH + (endPH - startPH) * sigmoid;
+                    } else {
+                        ph = startPH - (startPH - endPH) * sigmoid;
+                    }
+                }
+
+                return Math.max(0, Math.min(14, ph));
+            };
+
+            // Helper: Color Mixer
+            const getIndicatorColor = (ph) => {
+                if (indicator.isUniversal) {
+                    // Simplified Universal Indicator Spectrum
+                    if (ph < 3) return '#ef4444'; // Red
+                    if (ph < 6) return '#eab308'; // Orange/Yellow
+                    if (ph < 8) return '#22c55e'; // Green
+                    if (ph < 11) return '#3b82f6'; // Blue
+                    return '#a855f7'; // Purple
+                }
+
+                // Specific Indicators
+                if (ph <= indicator.range[0]) return indicator.colors.low;
+                if (ph >= indicator.range[1]) return indicator.colors.high;
+                
+                // Transition (Blend - simplified to average or mid color)
+                return '#fb923c'; // Orange-ish for transition
+            };
+
+            // --- Effects ---
+
+            // Reset on chemical change
+            useEffect(() => {
+                setVolAdded(0);
+                setDataPoints([]);
+                setIsDripping(false);
+                const initPH = calculatePH(0);
+                setCurrentPH(initPH);
+                if (chartInstance.current) {
+                    chartInstance.current.data.datasets[0].data = [{x:0, y:initPH}];
+                    chartInstance.current.update();
+                }
+            }, [acid, alkali, titrantType]);
+
+            // Main Simulation Loop
+            useEffect(() => {
+                let interval;
+                if (isDripping && volAdded < 50) {
+                    interval = setInterval(() => {
+                        setVolAdded(prev => {
+                            const next = Math.min(50, prev + 0.5);
+                            const newPH = calculatePH(next);
+                            setCurrentPH(newPH);
+                            
+                            // Update Chart
+                            if (chartInstance.current) {
+                                const data = chartInstance.current.data.datasets[0].data;
+                                // Optimize: don't push every single point if too close, but here we want smooth
+                                data.push({ x: next, y: newPH });
+                                chartInstance.current.update('none'); // efficient update
+                            }
+                            
+                            if (next >= 50) setIsDripping(false);
+                            return next;
+                        });
+                    }, 50); // Speed
+                }
+                return () => clearInterval(interval);
+            }, [isDripping, volAdded]);
+
+            // Chart Init
+            useEffect(() => {
+                const ctx = chartRef.current.getContext('2d');
+                
+                // Dark Mode Chart Colors
+                const colorPrimary = '#e2e8f0'; 
+                const gridColor = '#334155';
+
+                chartInstance.current = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'pH Curve',
+                            data: [{x: 0, y: calculatePH(0)}],
+                            borderColor: '#6366f1', // Indigo-500
+                            borderWidth: 3,
+                            pointRadius: 0,
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                min: 0, max: 50,
+                                title: { display: true, text: 'Volume Added (cm³)', font: { weight: 'bold', color: colorPrimary } },
+                                grid: { color: gridColor },
+                                ticks: { color: colorPrimary }
+                            },
+                            y: {
+                                min: 0, max: 14,
+                                title: { display: true, text: 'pH', font: { weight: 'bold', color: colorPrimary } },
+                                grid: { color: gridColor },
+                                ticks: { stepSize: 1, color: colorPrimary }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                enabled: true,
+                                mode: 'nearest',
+                                intersect: false,
+                                callbacks: {
+                                    label: (ctx) => `pH: ${ctx.raw.y.toFixed(2)}`
+                                },
+                                backgroundColor: 'rgba(30, 41, 59, 0.9)',
+                                titleColor: '#fff',
+                                bodyColor: '#cbd5e1'
+                            },
+                            annotation: {
+                                // Can add equivalence line later
+                            }
+                        },
+                        animation: false
+                    }
+                });
+
+                return () => {
+                    if(chartInstance.current) chartInstance.current.destroy();
+                }
+            }, []); // Init once, then update via other effects
+
+            const resetSim = () => {
+                setVolAdded(0);
+                const initPH = calculatePH(0);
+                setCurrentPH(initPH);
+                setDataPoints([{x:0, y:initPH}]);
+                if (chartInstance.current) {
+                    chartInstance.current.data.datasets[0].data = [{x:0, y:initPH}];
+                    chartInstance.current.update();
+                }
+                setIsDripping(false);
+            };
+
+            const addVolume = (amount) => {
+                const next = Math.min(50, volAdded + amount);
+                const newPH = calculatePH(next);
+                setVolAdded(next);
+                setCurrentPH(newPH);
+                if (chartInstance.current) {
+                    chartInstance.current.data.datasets[0].data.push({ x: next, y: newPH });
+                    chartInstance.current.data.datasets[0].data.sort((a,b) => a.x - b.x); // Ensure order
+                    chartInstance.current.update();
+                }
+            };
+
+            // Dynamic Indicator Color
+            const currentColor = getIndicatorColor(currentPH);
+            // Apply opacity for phenolphthalein colorless
+            const colorStyle = (indicator.name.includes('Phenol') && currentPH <= 8.3) 
+                ? { backgroundColor: '#ffffff', opacity: 0.1 } // Clear/Transparent
+                : { backgroundColor: currentColor, opacity: 0.8 };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="FlaskConical" /> Titration Simulator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Acid-Base Titration (pH Curves & Indicators)</p>
+                        </div>
+                        <button onClick={resetSim} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Reset
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Setup Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-4">
+                            
+                            <div className="bg-slate-900 p-5 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-3">Experiment Setup</h3>
+                                
+                                {/* Burette Content */}
+                                <div className="mb-4">
+                                    <label className="text-xs font-bold text-indigo-400 block mb-1">Burette Content</label>
+                                    <div className="flex bg-slate-800 p-1 rounded-lg mb-2 border border-slate-700">
+                                        <button onClick={() => setTitrantType('acid')} className={`flex-1 py-1 text-xs font-bold rounded ${titrantType === 'acid' ? 'bg-slate-700 shadow text-red-400' : 'text-slate-500 hover:text-slate-300'}`}>Acid</button>
+                                        <button onClick={() => setTitrantType('alkali')} className={`flex-1 py-1 text-xs font-bold rounded ${titrantType === 'alkali' ? 'bg-slate-700 shadow text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}>Alkali</button>
+                                    </div>
+                                    <select 
+                                        value={titrantType === 'acid' ? acid.formula : alkali.formula}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (titrantType === 'acid') setAcid(Chemicals.acids.find(x => x.formula === val));
+                                            else setAlkali(Chemicals.alkalis.find(x => x.formula === val));
+                                            resetSim();
+                                        }}
+                                        className="w-full p-2 border rounded font-mono text-sm bg-slate-800 text-slate-300 border-slate-700 outline-none focus:border-indigo-500"
+                                    >
+                                        {(titrantType === 'acid' ? Chemicals.acids : Chemicals.alkalis).map(c => (
+                                            <option key={c.formula} value={c.formula}>{c.name} ({c.type})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Flask Content (Opposite) */}
+                                <div className="mb-4">
+                                    <label className="text-xs font-bold text-indigo-400 block mb-1">Conical Flask (25.0 cm³)</label>
+                                    <select 
+                                        value={titrantType === 'acid' ? alkali.formula : acid.formula}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (titrantType === 'acid') setAlkali(Chemicals.alkalis.find(x => x.formula === val));
+                                            else setAcid(Chemicals.acids.find(x => x.formula === val));
+                                            resetSim();
+                                        }}
+                                        className="w-full p-2 border rounded font-mono text-sm bg-slate-800 text-slate-300 border-slate-700 outline-none focus:border-indigo-500"
+                                    >
+                                        {(titrantType === 'acid' ? Chemicals.alkalis : Chemicals.acids).map(c => (
+                                            <option key={c.formula} value={c.formula}>{c.name} ({c.type})</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Indicator */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 block mb-1">Indicator</label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {Indicators.map((ind, idx) => (
+                                            <button
+                                                key={idx}
+                                                onClick={() => setIndicator(ind)}
+                                                className={`p-2 rounded-lg border text-left text-xs transition-all flex justify-between items-center
+                                                    ${indicator.name === ind.name ? 'border-indigo-500 bg-indigo-900/30 text-indigo-400' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}
+                                                `}
+                                            >
+                                                <span className="font-bold">{ind.name}</span>
+                                                <span className="text-[10px] bg-slate-900 px-1 rounded border border-slate-700">{ind.range[0]}-{ind.range[1]}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 mt-2">{indicator.desc}</p>
+                                </div>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="bg-slate-900 p-5 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-sm font-bold text-slate-500 uppercase mb-3">Controls</h3>
+                                <div className="flex gap-2 mb-3">
+                                    <button onClick={() => addVolume(0.1)} disabled={isDripping || volAdded >= 50} className="flex-1 py-2 border border-slate-700 rounded hover:bg-slate-800 text-slate-300 text-xs font-bold transition-colors">+0.1</button>
+                                    <button onClick={() => addVolume(1)} disabled={isDripping || volAdded >= 50} className="flex-1 py-2 border border-slate-700 rounded hover:bg-slate-800 text-slate-300 text-xs font-bold transition-colors">+1.0</button>
+                                    <button onClick={() => addVolume(5)} disabled={isDripping || volAdded >= 50} className="flex-1 py-2 border border-slate-700 rounded hover:bg-slate-800 text-slate-300 text-xs font-bold transition-colors">+5.0</button>
+                                </div>
+                                <button 
+                                    onClick={() => setIsDripping(!isDripping)}
+                                    disabled={volAdded >= 50}
+                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95
+                                        ${isDripping ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}
+                                    `}
+                                >
+                                    {isDripping ? <Icon name="Pause" /> : <Icon name="Play" />}
+                                    {isDripping ? 'Stop Titration' : 'Start Continuous'}
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Center: Visualization */}
+                        <div className="w-full lg:w-1/3 flex flex-col items-center justify-end relative min-h-[400px]">
+                            
+                            {/* Burette */}
+                            <div className="absolute top-0 flex flex-col items-center z-10">
+                                <div className="w-6 h-64 border-x-2 border-b-2 border-slate-500 bg-white/10 backdrop-blur-sm relative rounded-b-md overflow-hidden">
+                                    <div className="w-full bg-slate-400/50 absolute bottom-0" style={{ height: `${100 - (volAdded/50)*100}%` }}></div>
+                                    {/* Graduations */}
+                                    {[0,10,20,30,40,50].map(v => (
+                                        <div key={v} className="absolute w-2 h-px bg-slate-400 right-0" style={{ top: `${(v/50)*100}%` }}></div>
+                                    ))}
+                                </div>
+                                <div className="w-1 h-6 bg-slate-500 relative">
+                                    {isDripping && <div className="w-2 h-2 bg-slate-300 rounded-full absolute top-full -left-0.5 anim-drop"></div>}
+                                </div>
+                            </div>
+
+                            {/* Flask */}
+                            <div className="relative z-20 mt-64 flex flex-col items-center">
+                                <div className="w-32 h-40 border-4 border-slate-500 rounded-b-[3rem] rounded-t-lg bg-white/5 backdrop-blur-sm relative overflow-hidden flex items-end justify-center shadow-2xl">
+                                    <div 
+                                        className="w-full flask-liquid"
+                                        style={{ 
+                                            height: `${40 + (volAdded/50)*40}%`, 
+                                            backgroundColor: colorStyle.backgroundColor,
+                                            opacity: colorStyle.opacity
+                                        }}
+                                    ></div>
+                                </div>
+                                <div className="mt-4 bg-slate-900 text-emerald-400 px-4 py-2 rounded-lg font-mono text-xl font-bold shadow-lg border border-slate-700">
+                                    pH: {currentPH.toFixed(2)}
+                                </div>
+                                <div className="mt-2 text-xs font-bold text-slate-500">
+                                    Vol Added: {volAdded.toFixed(1)} cm³
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Graph */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-4">
+                            <div className="bg-slate-900 p-4 rounded-2xl shadow-xl border border-slate-800 flex-grow flex flex-col min-h-[400px]">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-2 flex items-center gap-2">
+                                    <Icon name="LineChart" size={16}/> Titration Curve (pH)
+                                </h3>
+                                <div className="relative flex-grow w-full">
+                                    <canvas ref={chartRef}></canvas>
+                                </div>
+                            </div>
+                            
+                            {/* Legend/Hint */}
+                            <div className="bg-amber-900/20 p-4 rounded-xl border border-amber-500/30 text-xs text-amber-200">
+                                <strong className="text-amber-400 mb-1 block">Key Observations:</strong>
+                                <ul className="list-disc list-inside mt-1 space-y-1 opacity-80">
+                                    <li><strong>Equivalence Point:</strong> Vertical section of pH jump.</li>
+                                    <li><strong>Strong Acid/Base:</strong> Jump range 3-11.</li>
+                                    <li><strong>Weak Acid/Base:</strong> Buffer region exists, smaller jump.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
