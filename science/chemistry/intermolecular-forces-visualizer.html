@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intermolecular Forces Visualizer - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        canvas { touch-action: none; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: #ffffff; border: 2px solid currentColor; margin-top: -6px; cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Molecule Types (Internationalized)
+        const Molecules = {
+            'He': { 
+                id: 'He', name: 'Helium', type: 'LDF', 
+                color: '#a855f7', radius: 15, mass: 4, 
+                forceStrength: 1, bp: -269,
+                polarity: 'nonpolar',
+                desc: 'Non-polar monoatomic. Very weak London Dispersion Forces.' 
+            },
+            'N2': { 
+                id: 'N2', name: 'Nitrogen', type: 'LDF', 
+                color: '#3b82f6', radius: 20, mass: 28, 
+                forceStrength: 2, bp: -196,
+                polarity: 'nonpolar',
+                desc: 'Non-polar diatomic. Slightly stronger LDF due to more electrons.' 
+            },
+            'Hexane': {
+                id: 'Hexane', name: 'Hexane', type: 'LDF',
+                color: '#f59e0b', radius: 28, mass: 86,
+                forceStrength: 6, bp: 68,
+                polarity: 'nonpolar',
+                desc: 'Large non-polar molecule. Strong LDF due to large surface area. Liquid at RT.'
+            },
+            'HCl': { 
+                id: 'HCl', name: 'HCl', type: 'Dipole', 
+                color: '#22c55e', radius: 22, mass: 36.5, 
+                forceStrength: 4, bp: -85,
+                polarity: 'polar',
+                desc: 'Polar molecule. Permanent Dipole-Dipole interactions.' 
+            },
+            'Ethanol': {
+                id: 'Ethanol', name: 'Ethanol', type: 'H-Bond',
+                color: '#ec4899', radius: 25, mass: 46,
+                forceStrength: 7, bp: 78,
+                polarity: 'polar',
+                desc: 'Polar organic molecule. Contains -OH group, capable of Hydrogen Bonding.'
+            },
+            'H2O': { 
+                id: 'H2O', name: 'Water', type: 'H-Bond', 
+                color: '#ef4444', radius: 18, mass: 18, 
+                forceStrength: 9, bp: 100,
+                polarity: 'polar',
+                desc: 'Highly polar. Forms extensive and strong Hydrogen Bonds.' 
+            }
+        };
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [molA, setMolA] = useState(Molecules['H2O']);
+            const [molB, setMolB] = useState(null); // Second molecule for mixing
+            const [temperature, setTemperature] = useState(25); 
+            const [isRunning, setIsRunning] = useState(true);
+            
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]);
+            const requestRef = useRef();
+
+            // Initialize Particles
+            useEffect(() => {
+                const numParticles = 24;
+                const newParticles = [];
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+
+                const w = canvas.width;
+                const h = canvas.height;
+
+                // If mixing, split 50/50
+                const typeACount = molB ? numParticles / 2 : numParticles;
+
+                for (let i = 0; i < numParticles; i++) {
+                    const isTypeA = i < typeACount;
+                    const molType = isTypeA ? molA : molB;
+                    
+                    // Initialize with random small velocity
+                    const vx = (Math.random() - 0.5) * 1.0;
+                    const vy = (Math.random() - 0.5) * 1.0;
+
+                    newParticles.push({
+                        id: i,
+                        x: Math.random() * (w - 40) + 20,
+                        y: Math.random() * (h - 40) + 20,
+                        vx: vx,
+                        vy: vy,
+                        mol: molType
+                    });
+                }
+                particlesRef.current = newParticles;
+            }, [molA, molB]);
+
+            // Interaction Logic (Mixing Rule)
+            const getInteraction = (m1, m2) => {
+                if (m1.polarity !== m2.polarity) {
+                    // Polar + Non-polar = Weak interaction (Immiscible)
+                    return { strength: 0.5, type: 'Repulsion' }; 
+                }
+                if (m1.type === 'H-Bond' || m2.type === 'H-Bond') {
+                     return { strength: Math.min(m1.forceStrength, m2.forceStrength), type: 'H-Bond' };
+                }
+                if (m1.type === 'Dipole' || m2.type === 'Dipole') {
+                     return { strength: Math.min(m1.forceStrength, m2.forceStrength), type: 'Dipole' };
+                }
+                return { strength: Math.min(m1.forceStrength, m2.forceStrength), type: 'LDF' };
+            };
+
+            // Animation Loop
+            const animate = () => {
+                if (!isRunning) return;
+                
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width;
+                const h = canvas.height;
+                
+                // Speed Factor based on Kelvin (approx)
+                const kelvin = temperature + 273;
+                const speedFactor = kelvin / 400; 
+                
+                const interactionDist = 100; 
+                
+                ctx.clearRect(0, 0, w, h);
+
+                // Update & Draw Particles
+                particlesRef.current.forEach(p => {
+                    // Move
+                    p.x += p.vx * speedFactor;
+                    p.y += p.vy * speedFactor;
+
+                    // Bounce walls
+                    if (p.x < p.mol.radius || p.x > w - p.mol.radius) {
+                        p.vx *= -1;
+                        p.x = Math.max(p.mol.radius, Math.min(w-p.mol.radius, p.x));
+                    }
+                    if (p.y < p.mol.radius || p.y > h - p.mol.radius) {
+                        p.vy *= -1;
+                        p.y = Math.max(p.mol.radius, Math.min(h-p.mol.radius, p.y));
+                    }
+                });
+
+                // Calculate Forces
+                for (let i = 0; i < particlesRef.current.length; i++) {
+                    for (let j = i + 1; j < particlesRef.current.length; j++) {
+                        const p1 = particlesRef.current[i];
+                        const p2 = particlesRef.current[j];
+                        
+                        const dx = p1.x - p2.x;
+                        const dy = p1.y - p2.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        const minDist = p1.mol.radius + p2.mol.radius;
+
+                        // Collision (Elastic-ish)
+                        if (dist < minDist) {
+                             const angle = Math.atan2(dy, dx);
+                             // Push apart
+                             const overlap = minDist - dist;
+                             const pushX = Math.cos(angle) * overlap * 0.1;
+                             const pushY = Math.sin(angle) * overlap * 0.1;
+                             
+                             p1.x += pushX; p1.y += pushY;
+                             p2.x -= pushX; p2.y -= pushY;
+
+                             // Bounce velocity
+                             const tx = Math.cos(angle);
+                             const ty = Math.sin(angle);
+                             const v1 = p1.vx * tx + p1.vy * ty;
+                             const v2 = p2.vx * tx + p2.vy * ty;
+                             
+                             // Swap normal velocities
+                             p1.vx -= (v1 - v2) * tx;
+                             p1.vy -= (v1 - v2) * ty;
+                             p2.vx += (v1 - v2) * tx;
+                             p2.vy += (v1 - v2) * ty;
+                        }
+
+                        // Attraction (IMF)
+                        if (dist < interactionDist && dist > minDist) {
+                            const interaction = getInteraction(p1.mol, p2.mol);
+                            
+                            // Stability decreases with Temp
+                            const thermalEnergy = kelvin / 100;
+                            const bondStability = (interaction.strength / thermalEnergy);
+                            
+                            // Visual Opacity
+                            const opacity = Math.max(0, (1 - dist/interactionDist) * Math.min(1, bondStability - 0.5));
+                            
+                            if (opacity > 0.1) {
+                                ctx.beginPath();
+                                ctx.moveTo(p1.x, p1.y);
+                                ctx.lineTo(p2.x, p2.y);
+                                ctx.lineWidth = Math.max(1, interaction.strength / 2);
+
+                                if (interaction.type === 'H-Bond') {
+                                    ctx.strokeStyle = `rgba(250, 204, 21, ${opacity})`; // Yellow
+                                    ctx.setLineDash([]);
+                                } else if (interaction.type === 'Dipole') {
+                                    ctx.strokeStyle = `rgba(56, 189, 248, ${opacity})`; // Blue dashed
+                                    ctx.setLineDash([5, 5]);
+                                } else if (interaction.type === 'LDF') {
+                                    ctx.strokeStyle = `rgba(148, 163, 184, ${opacity})`; // Grey dotted
+                                    ctx.setLineDash([2, 4]);
+                                } else {
+                                    // Weak/Repulsive (Immiscible)
+                                    ctx.strokeStyle = `rgba(239, 68, 68, ${opacity * 0.5})`; // Red
+                                    ctx.setLineDash([1, 8]);
+                                }
+                                ctx.stroke();
+                                
+                                // Attraction Force Logic
+                                if (bondStability > 1.0 && interaction.type !== 'Repulsion') {
+                                    const pullStrength = 0.02 * interaction.strength;
+                                    const angle = Math.atan2(dy, dx);
+                                    p1.vx -= Math.cos(angle) * pullStrength;
+                                    p1.vy -= Math.sin(angle) * pullStrength;
+                                    p2.vx += Math.cos(angle) * pullStrength;
+                                    p2.vy += Math.sin(angle) * pullStrength;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Draw Particles
+                particlesRef.current.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.mol.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = p.mol.color;
+                    ctx.fill();
+                    
+                    // Visual Detail
+                    if (p.mol.type === 'H-Bond' || p.mol.id === 'Ethanol') {
+                        ctx.fillStyle = 'white';
+                        ctx.font = '10px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(p.mol.id === 'H2O' ? 'H₂O' : 'OH', p.x, p.y);
+                    } else if (p.mol.type === 'Dipole') {
+                         ctx.fillStyle = 'white';
+                         ctx.font = '10px Arial';
+                         ctx.textAlign = 'center';
+                         ctx.textBaseline = 'middle';
+                         ctx.fillText('δ+/-', p.x, p.y);
+                    } else {
+                        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                        ctx.font = '10px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(p.mol.id, p.x, p.y);
+                    }
+                    
+                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                    ctx.stroke();
+                });
+
+                requestRef.current = requestAnimationFrame(animate);
+            };
+
+            useEffect(() => {
+                if (canvasRef.current) {
+                    const parent = canvasRef.current.parentElement;
+                    canvasRef.current.width = parent.clientWidth;
+                    canvasRef.current.height = parent.clientHeight;
+                }
+                requestRef.current = requestAnimationFrame(animate);
+                return () => cancelAnimationFrame(requestRef.current);
+            });
+
+            // Derived Status
+            const getStatus = () => {
+                if (molB) {
+                    const inter = getInteraction(molA, molB);
+                    if (inter.type === 'Repulsion') return 'Immiscible - Layers Forming';
+                    return 'Miscible - Homogeneous Mixture';
+                }
+                const bp = molA.bp;
+                if (temperature > bp + 20) return 'Gas Phase';
+                if (temperature > bp - 20) return 'Boiling Point';
+                if (temperature > -100) return 'Liquid Phase';
+                return 'Solid Phase';
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
+                                <Icon name="Network" /> Intermolecular Forces Visualizer
+                            </h1>
+                            <p className="text-slate-400 text-sm">Explore Van der Waals, Dipole-Dipole & Hydrogen Bonds</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Canvas Area */}
+                        <div className="w-full lg:w-2/3 bg-slate-800 rounded-3xl border-4 border-slate-700 relative h-[500px] shadow-2xl overflow-hidden">
+                            <canvas ref={canvasRef} className="block w-full h-full" />
+                            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-4 py-2 rounded-xl border border-slate-600 z-10">
+                                <div className="text-xs text-slate-400 font-bold uppercase">Status</div>
+                                <div className="text-lg font-bold text-blue-300">{getStatus()}</div>
+                            </div>
+                        </div>
+
+                        {/* Right: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-4">
+                            
+                            {/* 1. Molecule Selection */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-3">Select Substance</h3>
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {Object.values(Molecules).map(m => (
+                                        <button 
+                                            key={m.id}
+                                            onClick={() => { setMolA(m); setMolB(null); }}
+                                            className={`px-3 py-1 rounded border text-xs font-bold transition-all
+                                                ${!molB && molA.id === m.id 
+                                                    ? `bg-slate-700 text-white border-white ring-2 ring-blue-500` 
+                                                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}
+                                            `}
+                                            style={{ borderColor: m.color }}
+                                        >
+                                            {m.name}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-3">Mixing Mode</h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => { setMolA(Molecules['H2O']); setMolB(Molecules['Hexane']); }} className="flex-1 py-2 bg-slate-700 rounded border border-slate-600 text-xs hover:bg-slate-600 text-slate-300">
+                                        Water + Hexane
+                                    </button>
+                                    <button onClick={() => { setMolA(Molecules['H2O']); setMolB(Molecules['Ethanol']); }} className="flex-1 py-2 bg-slate-700 rounded border border-slate-600 text-xs hover:bg-slate-600 text-slate-300">
+                                        Water + Ethanol
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* 2. Temperature */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <div className="flex justify-between mb-2">
+                                    <span className="text-blue-400 font-bold text-sm"><Icon name="Thermometer" className="inline w-4"/> Temperature</span>
+                                    <span className="text-white font-mono font-bold">{temperature}°C</span>
+                                </div>
+                                <input 
+                                    type="range" min="-200" max="200" value={temperature} 
+                                    onChange={(e) => setTemperature(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-red-500"
+                                />
+                                <div className="flex justify-between text-xs text-slate-500 mt-2">
+                                    <span>Cold (-200°C)</span>
+                                    <span>Hot (200°C)</span>
+                                </div>
+                            </div>
+
+                            {/* 3. Info Card */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg flex-grow overflow-y-auto">
+                                {molB ? (
+                                    <div>
+                                        <div className="font-bold text-white mb-2">Mixture Properties:</div>
+                                        <div className="text-sm text-slate-300 space-y-2">
+                                            <p><strong>{molA.name}</strong> ({molA.polarity})</p>
+                                            <p><strong>{molB.name}</strong> ({molB.polarity})</p>
+                                            <hr className="border-slate-600 my-2"/>
+                                            <p className={getInteraction(molA, molB).type === 'Repulsion' ? 'text-red-400' : 'text-green-400'}>
+                                                {getInteraction(molA, molB).type === 'Repulsion' 
+                                                    ? 'Due to different polarities, the forces are weak/repulsive, leading to immiscibility.' 
+                                                    : 'Similar polarities ("Like dissolves like") allow effective forces, creating a miscible mixture.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <div className="font-bold text-white mb-1" style={{color: molA.color}}>{molA.name}</div>
+                                        <div className="text-xs text-slate-400 mb-3">{molA.type === 'LDF' ? 'Non-polar' : 'Polar'} Molecule</div>
+                                        <p className="text-sm text-slate-300 leading-relaxed">{molA.desc}</p>
+                                        <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between text-sm">
+                                            <span className="text-slate-400">Boiling Point:</span>
+                                            <span className="text-white font-mono">{molA.bp}°C</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
