@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VSEPR Shape Explorer - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Three.js for 3D Rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { outline: none; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: #ffffff; border: 2px solid currentColor; margin-top: -6px; cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- VSEPR Data Logic (Internationalized) ---
+        const VSEPR_DATA = {
+            // 2 Domains
+            '2-0': { shape: 'Linear', angle: '180°', example: 'CO₂, BeCl₂', geom: 'linear' },
+            
+            // 3 Domains
+            '3-0': { shape: 'Trigonal Planar', angle: '120°', example: 'BF₃, BCl₃', geom: 'trigonal_planar' },
+            '2-1': { shape: 'V-shaped (Bent)', angle: '< 120° (~117°)', example: 'SO₂, O₃', geom: 'bent_120' },
+            
+            // 4 Domains
+            '4-0': { shape: 'Tetrahedral', angle: '109.5°', example: 'CH₄, CCl₄', geom: 'tetrahedral' },
+            '3-1': { shape: 'Trigonal Pyramidal', angle: '< 109.5° (~107°)', example: 'NH₃, PCl₃', geom: 'trigonal_pyramidal' },
+            '2-2': { shape: 'V-shaped (Bent)', angle: '< 109.5° (~104.5°)', example: 'H₂O, H₂S', geom: 'bent_109' },
+            
+            // 5 Domains (Trigonal Bipyramidal Base)
+            '5-0': { shape: 'Trigonal Bipyramidal', angle: '90°, 120°', example: 'PCl₅', geom: 'trigonal_bipyramidal' },
+            '4-1': { shape: 'Seesaw', angle: '< 90°, < 120°', example: 'SF₄', geom: 'seesaw' },
+            '3-2': { shape: 'T-shaped', angle: '< 90°', example: 'ClF₃', geom: 't_shaped' },
+            '2-3': { shape: 'Linear', angle: '180°', example: 'XeF₂, I₃⁻', geom: 'linear_5' },
+            
+            // 6 Domains (Octahedral Base)
+            '6-0': { shape: 'Octahedral', angle: '90°', example: 'SF₆', geom: 'octahedral' },
+            '5-1': { shape: 'Square Pyramidal', angle: '< 90°', example: 'BrF₅, IF₅', geom: 'square_pyramidal' },
+            '4-2': { shape: 'Square Planar', angle: '90°', example: 'XeF₄', geom: 'square_planar' }
+        };
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        // --- 3D Scene Component ---
+        const MoleculeScene = ({ bp, lp }) => {
+            const mountRef = useRef(null);
+            
+            useEffect(() => {
+                // 1. Scene Setup
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x1e293b); // Slate-800
+                
+                const camera = new THREE.PerspectiveCamera(50, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 1000);
+                camera.position.z = 8;
+                camera.position.y = 2;
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                
+                // Clean up previous canvas if exists
+                if (mountRef.current.children.length > 0) {
+                    mountRef.current.removeChild(mountRef.current.children[0]);
+                }
+                mountRef.current.appendChild(renderer.domElement);
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                scene.add(ambientLight);
+                const pointLight = new THREE.PointLight(0xffffff, 0.8);
+                pointLight.position.set(10, 10, 10);
+                scene.add(pointLight);
+
+                // Controls
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 2.0;
+
+                // --- Build Molecule Logic ---
+                const group = new THREE.Group();
+
+                // Materials
+                const matCenter = new THREE.MeshPhongMaterial({ color: 0x9333ea }); // Purple (Central)
+                const matBond = new THREE.MeshPhongMaterial({ color: 0xcbd5e1 });   // Grey
+                const matAtom = new THREE.MeshPhongMaterial({ color: 0x22c55e });   // Green (Ligand)
+                const matLonePair = new THREE.MeshPhongMaterial({ 
+                    color: 0xfca5a5, 
+                    transparent: true, 
+                    opacity: 0.6, 
+                    shininess: 100 
+                }); // Red/Pink ghost for LP
+
+                // Geometry
+                const geoCenter = new THREE.SphereGeometry(0.8, 32, 32);
+                const geoAtom = new THREE.SphereGeometry(0.5, 32, 32);
+                // Lone Pair shape (Teardrop-ish approximated by scaling sphere)
+                const geoLP = new THREE.SphereGeometry(0.6, 32, 16); 
+                geoLP.scale(1, 1.5, 1);
+
+                // Add Central Atom
+                const centerMesh = new THREE.Mesh(geoCenter, matCenter);
+                group.add(centerMesh);
+
+                // Helper: Add Bond & Atom
+                const addBond = (vector) => {
+                    // Atom
+                    const atomMesh = new THREE.Mesh(geoAtom, matAtom);
+                    atomMesh.position.copy(vector).multiplyScalar(2.5);
+                    group.add(atomMesh);
+
+                    // Bond Stick
+                    const distance = 2.5;
+                    const cylinderGeo = new THREE.CylinderGeometry(0.1, 0.1, distance, 8);
+                    const bondMesh = new THREE.Mesh(cylinderGeo, matBond);
+                    
+                    // Align cylinder
+                    bondMesh.position.copy(vector).multiplyScalar(distance / 2);
+                    bondMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vector.normalize());
+                    group.add(bondMesh);
+                };
+
+                // Helper: Add Lone Pair Visual
+                const addLP = (vector) => {
+                    const lpMesh = new THREE.Mesh(geoLP, matLonePair);
+                    lpMesh.position.copy(vector).multiplyScalar(1.5);
+                    lpMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vector.normalize());
+                    group.add(lpMesh);
+                };
+
+                // --- Geometry Positions ---
+                // Standard vectors for VSEPR geometries
+                const vectors = [];
+                const totalPairs = bp + lp;
+
+                if (totalPairs === 2) {
+                    vectors.push(new THREE.Vector3(0, 1, 0));
+                    vectors.push(new THREE.Vector3(0, -1, 0));
+                } else if (totalPairs === 3) {
+                    vectors.push(new THREE.Vector3(0, 1, 0));
+                    vectors.push(new THREE.Vector3(Math.sin(2*Math.PI/3), Math.cos(2*Math.PI/3), 0));
+                    vectors.push(new THREE.Vector3(Math.sin(4*Math.PI/3), Math.cos(4*Math.PI/3), 0));
+                } else if (totalPairs === 4) {
+                    // Tetrahedral
+                    vectors.push(new THREE.Vector3(1, 1, 1).normalize());
+                    vectors.push(new THREE.Vector3(-1, -1, 1).normalize());
+                    vectors.push(new THREE.Vector3(-1, 1, -1).normalize());
+                    vectors.push(new THREE.Vector3(1, -1, -1).normalize());
+                } else if (totalPairs === 5) {
+                    // Trigonal Bipyramidal (Specific Order for LP placement)
+                    // 0,1 are Axial. 2,3,4 are Equatorial.
+                    // LPs prefer Equatorial (indices 2,3,4)
+                    vectors.push(new THREE.Vector3(0, 1, 0)); // 0: Axial
+                    vectors.push(new THREE.Vector3(0, -1, 0)); // 1: Axial
+                    vectors.push(new THREE.Vector3(1, 0, 0)); // 2: Equatorial
+                    vectors.push(new THREE.Vector3(-0.5, 0, Math.sqrt(3)/2)); // 3: Equatorial
+                    vectors.push(new THREE.Vector3(-0.5, 0, -Math.sqrt(3)/2)); // 4: Equatorial
+                } else if (totalPairs === 6) {
+                    // Octahedral
+                    // 0,1 are Axial. 2,3,4,5 are Equatorial.
+                    // LPs prefer Axial (indices 0,1) to maximize separation (180deg)
+                    vectors.push(new THREE.Vector3(0, 1, 0)); // 0: Axial (Up)
+                    vectors.push(new THREE.Vector3(0, -1, 0)); // 1: Axial (Down)
+                    vectors.push(new THREE.Vector3(1, 0, 0)); // 2: Eq
+                    vectors.push(new THREE.Vector3(-1, 0, 0)); // 3: Eq
+                    vectors.push(new THREE.Vector3(0, 0, 1)); // 4: Eq
+                    vectors.push(new THREE.Vector3(0, 0, -1)); // 5: Eq
+                }
+
+                // --- LP Assignment Logic ---
+                // Decides which positions become Lone Pairs
+                const lpIndices = [];
+                if (totalPairs === 5) {
+                     // Rule: LPs go to Equatorial positions first (Indices 2, 3, 4)
+                     if (lp >= 1) lpIndices.push(2);
+                     if (lp >= 2) lpIndices.push(3);
+                     if (lp >= 3) lpIndices.push(4);
+                } else if (totalPairs === 6) {
+                     // Rule: LPs go to Axial positions first to be Trans (Indices 0, 1)
+                     if (lp >= 1) lpIndices.push(1); // Start bottom
+                     if (lp >= 2) lpIndices.push(0); // Then top
+                } else {
+                     // For 2, 3, 4, all positions equivalent, just fill linearly
+                     for(let i=0; i<lp; i++) lpIndices.push(i);
+                }
+
+                // Render Loop
+                vectors.forEach((v, i) => {
+                    if (lpIndices.includes(i)) {
+                        addLP(v);
+                    } else {
+                        addBond(v);
+                    }
+                });
+
+                scene.add(group);
+
+                // Animation Frame
+                let animationId;
+                const animate = () => {
+                    animationId = requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                // Cleanup
+                return () => {
+                    cancelAnimationFrame(animationId);
+                    if (mountRef.current && renderer.domElement) {
+                        // Check if child still exists before removing
+                        if (mountRef.current.contains(renderer.domElement)) {
+                            mountRef.current.removeChild(renderer.domElement);
+                        }
+                    }
+                    
+                    // Generic cleanup for geometries and materials in the group
+                    group.traverse((object) => {
+                        if (object.isMesh) {
+                            if (object.geometry) object.geometry.dispose();
+                            if (object.material) {
+                                if (Array.isArray(object.material)) {
+                                    object.material.forEach(material => material.dispose());
+                                } else {
+                                    object.material.dispose();
+                                }
+                            }
+                        }
+                    });
+                    
+                    renderer.dispose();
+                };
+            }, [bp, lp]); // Re-render on prop change
+
+            return <div ref={mountRef} className="w-full h-full rounded-2xl overflow-hidden shadow-inner bg-slate-800" />;
+        };
+
+        // --- Main App ---
+        const App = () => {
+            const [bp, setBp] = useState(4);
+            const [lp, setLp] = useState(0);
+            
+            const key = `${bp}-${lp}`;
+            const info = VSEPR_DATA[key];
+            const totalPairs = bp + lp;
+
+            const isValid = info !== undefined;
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-purple-400 flex items-center gap-2">
+                                <Icon name="Shapes" /> VSEPR Shape Explorer
+                            </h1>
+                            <p className="text-slate-400 text-sm">Valence Shell Electron Pair Repulsion Theory</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: 3D Viewer */}
+                        <div className="w-full lg:w-2/3 h-[500px] relative">
+                            {isValid ? (
+                                <MoleculeScene key={key} bp={bp} lp={lp} />
+                            ) : (
+                                <div className="w-full h-full bg-slate-800 rounded-2xl flex items-center justify-center text-slate-500 border-4 border-slate-700 border-dashed">
+                                    <div className="text-center">
+                                        <Icon name="Ban" size={48} className="mx-auto mb-2"/>
+                                        <p>Uncommon / Unstable Configuration</p>
+                                        <p className="text-xs mt-1">Try Total Pairs = 2 ~ 6</p>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            <div className="absolute bottom-4 left-4 text-xs text-slate-400 bg-black/50 px-3 py-1 rounded pointer-events-none backdrop-blur-sm">
+                                Left Click to Rotate • Right Click to Pan • Scroll to Zoom
+                            </div>
+                        </div>
+
+                        {/* Right: Controls & Info */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            {/* Controls */}
+                            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
+                                <h3 className="text-lg font-bold mb-4 text-white flex items-center gap-2">
+                                    <Icon name="Sliders" /> Electron Domains
+                                </h3>
+                                
+                                <div className="space-y-6">
+                                    <div>
+                                        <div className="flex justify-between mb-2">
+                                            <label className="text-green-400 font-bold">Bonding Pairs (BP)</label>
+                                            <span className="text-2xl font-mono font-bold text-white">{bp}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="2" max="6" value={bp} 
+                                            onChange={(e) => setBp(parseInt(e.target.value))}
+                                            className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-green-500"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <div className="flex justify-between mb-2">
+                                            <label className="text-red-400 font-bold">Lone Pairs (LP)</label>
+                                            <span className="text-2xl font-mono font-bold text-white">{lp}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="0" max="3" value={lp} 
+                                            onChange={(e) => setLp(parseInt(e.target.value))}
+                                            className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-red-500"
+                                        />
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-6 pt-4 border-t border-slate-700 flex justify-between items-center text-sm">
+                                    <span className="text-slate-400">Total Domains:</span>
+                                    <span className={`font-bold px-3 py-1 rounded ${totalPairs > 6 ? 'bg-red-900 text-red-200' : 'bg-slate-700 text-white'}`}>
+                                        {totalPairs}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Info Card */}
+                            {isValid && (
+                                <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg flex-grow animate-in fade-in slide-in-from-bottom-4">
+                                    <div className="mb-4">
+                                        <div className="text-xs text-slate-400 uppercase font-bold mb-1">Molecular Geometry</div>
+                                        <div className="text-2xl font-bold text-purple-300">{info.shape}</div>
+                                    </div>
+
+                                    <div className="space-y-4 text-sm text-slate-300 leading-relaxed">
+                                        <div className="p-3 bg-slate-900/50 rounded-lg border-l-4 border-blue-500">
+                                            <strong className="text-white block mb-1">Bond Angle</strong>
+                                            <span className="font-mono text-lg text-blue-300">{info.angle}</span>
+                                            {lp > 0 && <p className="text-xs mt-1 text-slate-400">Lone pair repulsion compresses the bond angle.</p>}
+                                        </div>
+
+                                        <div className="p-3 bg-slate-900/50 rounded-lg border-l-4 border-green-500">
+                                            <strong className="text-white block mb-1">Examples</strong>
+                                            <span className="font-mono text-lg text-green-300">{info.example}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
