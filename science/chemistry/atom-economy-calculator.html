@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atom Economy Calculator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Progress Bar Animation */
+        @keyframes fill-bar {
+            from { width: 0; }
+            to { width: var(--target-width); }
+        }
+        .progress-bar-fill {
+            animation: fill-bar 1.5s ease-out forwards;
+        }
+
+        .formula-input {
+            transition: all 0.2s;
+        }
+        .formula-input:focus {
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2);
+            border-color: #22c55e;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const AtomicMasses = {
+            H: 1.0, C: 12.0, N: 14.0, O: 16.0, Na: 23.0, Mg: 24.3, S: 32.1, Cl: 35.5, K: 39.1, Cu: 63.5, Fe: 55.8,
+            P: 31.0, Br: 79.9, I: 126.9, Ag: 107.9, Ba: 137.3, Pb: 207.2
+        };
+
+        const Presets = [
+            { eq: 'C6H12O6 -> 2C2H5OH + 2CO2', target: 'C2H5OH', name: 'Ethanol Fermentation' },
+            { eq: 'C2H4 + H2O -> C2H5OH', target: 'C2H5OH', name: 'Ethanol Hydration (Green)' },
+            { eq: 'CH3COOH + C2H5OH -> CH3COOC2H5 + H2O', target: 'CH3COOC2H5', name: 'Esterification' },
+            { eq: 'C6H10O4 + HNO3 -> C6H10O4 + N2O + H2O', target: 'C6H10O4', name: 'Adipic Acid (Historical)' } // Simplified representation for demo
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [inputEq, setInputEq] = useState(Presets[0].eq);
+            const [targetProduct, setTargetProduct] = useState(Presets[0].target);
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState('');
+
+            // Parser function (Handles stoichiometry and molar mass for ALL components)
+            const parseEquation = (equation, targetFormula) => {
+                const parts = equation.split('->');
+                if (parts.length !== 2) throw new Error("Format Error: Use 'A + B -> C + D'");
+                
+                const reactantParts = parts[0].trim().split('+').map(s => s.trim());
+                const productParts = parts[1].trim().split('+').map(s => s.trim());
+
+                let totalReactantMass = 0;
+                let targetMass = 0;
+                let products = [];
+
+                // Helper to extract formula and coefficient
+                const extractComponent = (s) => {
+                    const match = s.match(/(\d*)([A-Za-z0-9\.]+)/);
+                    if (!match) throw new Error(`Cannot parse component: ${s}`);
+                    const coeff = parseInt(match[1]) || 1;
+                    const formula = match[2];
+                    return { coeff, formula };
+                };
+
+                // Helper to calculate MM (Simplified, no brackets support for this context)
+                const getMolarMass = (formula) => {
+                    let mass = 0;
+                    const regex = /([A-Z][a-z]*)(\d*)/g;
+                    let match;
+
+                    while ((match = regex.exec(formula)) !== null) {
+                        const element = match[1];
+                        const count = parseInt(match[2] || 1);
+                        
+                        let elKey = element;
+                        // Simple check for case sensitivity fix or direct mapping
+                        if (!AtomicMasses[elKey]) {
+                             // Try to find case-insensitive match if direct fail
+                             const massMatch = Object.keys(AtomicMasses).find(k => k.toLowerCase() === element.toLowerCase());
+                             if (massMatch) elKey = massMatch;
+                        }
+
+                        if (!AtomicMasses[elKey]) throw new Error(`Unknown element: ${element}`);
+                        mass += AtomicMasses[elKey] * count;
+                    }
+                    return mass;
+                };
+
+                // 1. Process Reactants
+                for (const r of reactantParts) {
+                    const comp = extractComponent(r);
+                    const mm = getMolarMass(comp.formula);
+                    if (mm === 0) throw new Error(`Invalid Molar Mass: ${comp.formula}`);
+                    totalReactantMass += comp.coeff * mm;
+                }
+
+                // 2. Process Products and Find Target Mass
+                for (const p of productParts) {
+                    const comp = extractComponent(p);
+                    const mm = getMolarMass(comp.formula);
+                    if (mm === 0) throw new Error(`Invalid Molar Mass: ${comp.formula}`);
+                    
+                    products.push({ formula: comp.formula, mass: comp.coeff * mm });
+
+                    if (comp.formula === targetFormula) {
+                        targetMass = comp.coeff * mm;
+                    }
+                }
+
+                if (targetMass === 0) throw new Error(`Target Product (${targetFormula}) not found in equation!`);
+
+                // 3. Calculate Atom Economy
+                const ae = (targetMass / totalReactantMass) * 100;
+
+                return { ae: ae.toFixed(1), totalReactantMass: totalReactantMass.toFixed(1), targetMass: targetMass.toFixed(1), products };
+
+            };
+
+            const handleCalculate = () => {
+                setError('');
+                setResult(null);
+
+                if (!inputEq.trim() || !targetProduct.trim()) {
+                    setError('Please enter a balanced equation and a target product.');
+                    return;
+                }
+
+                try {
+                    const res = parseEquation(inputEq, targetProduct);
+                    setResult(res);
+                } catch (e) {
+                    setError(e.message);
+                }
+            };
+            
+            const handlePresetLoad = (preset) => {
+                setInputEq(preset.eq);
+                setTargetProduct(preset.target);
+                setResult(null);
+                setError('');
+            };
+            
+            // Auto-calculate on load or preset change
+            useEffect(() => {
+                if (inputEq && targetProduct) {
+                    handleCalculate();
+                }
+            }, [inputEq, targetProduct]);
+
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-emerald-400 flex items-center gap-2">
+                                <Icon name="Leaf" /> Atom Economy Calculator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Green Chemistry Efficiency Tool</p>
+                        </div>
+                        <button onClick={() => setInputEq('')} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Reset
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Input & Setup */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                            
+                            {/* Equation Input */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-emerald-900/30">
+                                <h3 className="text-lg font-bold mb-4 text-slate-300 flex items-center gap-2">
+                                    <Icon name="GitMerge" size={18} className="text-emerald-500"/> 1. Balanced Equation
+                                </h3>
+                                <input 
+                                    type="text" 
+                                    value={inputEq}
+                                    onChange={(e) => setInputEq(e.target.value)}
+                                    className="w-full p-3 border-2 border-emerald-800 rounded-xl font-mono text-xl bg-slate-800 text-emerald-100 placeholder-slate-600 formula-input outline-none focus:border-emerald-500"
+                                    placeholder="e.g. A + B -> C + D"
+                                />
+                                <p className="text-xs text-slate-500 mt-2">
+                                    Ensure the equation is balanced. No spaces needed between coeff and formula.
+                                </p>
+                            </div>
+                            
+                            {/* Presets & Target */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
+                                <h3 className="text-lg font-bold mb-4 text-slate-300 flex items-center gap-2">
+                                    <Icon name="Target" size={18} className="text-rose-500"/> 2. Target Product & Presets
+                                </h3>
+                                
+                                <div className="mb-4">
+                                    <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Target Formula</label>
+                                    <input 
+                                        type="text" 
+                                        value={targetProduct}
+                                        onChange={(e) => setTargetProduct(e.target.value)}
+                                        className="w-full p-2 border border-slate-700 bg-slate-800 rounded-lg font-mono text-lg text-white placeholder-slate-600 focus:border-rose-500 outline-none"
+                                        placeholder="e.g. C2H5OH"
+                                    />
+                                </div>
+                                
+                                <div className="mb-4 pt-3 border-t border-slate-800">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Quick Load Preset</h4>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {Presets.map((p, idx) => (
+                                            <button 
+                                                key={idx}
+                                                onClick={() => handlePresetLoad(p)}
+                                                className={`px-3 py-1.5 rounded-lg border text-xs font-bold shadow-sm transition-all
+                                                    ${p.eq === inputEq ? 'bg-emerald-900/30 border-emerald-500 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'}
+                                                `}
+                                            >
+                                                {p.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={handleCalculate}
+                                    className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl shadow-lg hover:bg-emerald-500 transition-all active:scale-95 text-lg flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="Calculator" /> Calculate AE
+                                </button>
+                                
+                                {error && (
+                                    <div className="mt-4 p-3 bg-red-900/20 border border-red-500/50 text-red-400 rounded-lg text-sm font-bold flex items-center gap-2 animate-pulse">
+                                        <Icon name="AlertTriangle" size={16} /> {error}
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+
+                        {/* Right: Result & Breakdown */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                            
+                            {result ? (
+                                <div className="animate-in slide-in-from-right duration-500 h-full flex flex-col gap-6">
+                                    
+                                    {/* Final Result Card */}
+                                    <div className="bg-slate-900 rounded-2xl p-6 shadow-xl text-white border border-slate-800 relative overflow-hidden">
+                                        <div className="relative z-10">
+                                            <div className="text-sm text-emerald-400 font-bold uppercase mb-2">Final Atom Economy</div>
+                                            <div className="text-6xl font-mono font-black text-white tracking-tighter">
+                                                {result.ae}<span className="text-4xl">%</span>
+                                            </div>
+                                            <div className="mt-4 w-full bg-slate-950 rounded-full h-4 overflow-hidden border border-slate-700">
+                                                <div className="progress-bar-fill h-full bg-emerald-500" 
+                                                     style={{ '--target-width': `${Math.min(100, parseFloat(result.ae))}%` }}>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between text-xs text-slate-500 mt-2">
+                                                <span>0% (Wasteful)</span>
+                                                <span>100% (Green)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Breakdown */}
+                                    <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-sm flex-grow">
+                                        <div className="bg-slate-800 p-4 border-b border-slate-700 font-bold text-slate-300 flex items-center gap-2">
+                                            <Icon name="ListTree" size={18} /> Breakdown
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            <div className="text-xs font-bold text-slate-500 uppercase mb-2">Formula Used:</div>
+                                            
+                                            {/* Formula */}
+                                            <div className="bg-emerald-900/10 p-3 rounded-lg border border-emerald-500/20 text-sm font-mono text-emerald-400">
+                                                AE = (Mass of Desired Product / Total Mass of Reactants) &times; 100
+                                            </div>
+                                            
+                                            <div className="pt-3 text-sm">
+                                                <div className="flex justify-between border-b border-slate-700 pb-1">
+                                                    <span className="font-bold text-slate-400">Target Product Mass</span>
+                                                    <span className="font-mono text-lg text-emerald-500">{result.targetMass} g/mol</span>
+                                                </div>
+                                                <div className="flex justify-between border-b border-slate-700 pb-1 mt-1">
+                                                    <span className="font-bold text-slate-400">Total Reactant Mass</span>
+                                                    <span className="font-mono text-lg text-rose-500">{result.totalReactantMass} g/mol</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="pt-4 text-center">
+                                                <div className="text-xl font-mono text-slate-300">
+                                                    AE = ({result.targetMass} &divide; {result.totalReactantMass}) &times; 100
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                    </div>
+
+                                </div>
+                            ) : (
+                                <div className="flex-grow flex flex-col items-center justify-center text-slate-500 border-4 border-dashed border-slate-800 rounded-3xl bg-slate-900/50 p-12 min-h-[400px]">
+                                    <Icon name="Target" size={64} className="mb-6 opacity-20" />
+                                    <p className="text-xl text-center font-medium mb-2">Ready to Calculate...</p>
+                                    <p className="text-sm text-center opacity-50">Enter equation and target product.</p>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
