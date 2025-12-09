@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymer Structure Decoder - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Animation Classes */
+        .transition-all-slow { transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        .bond-line { transition: stroke-dasharray 0.5s, stroke-dashoffset 0.5s; }
+        
+        /* Custom Range Slider (Dark Mode) */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%;
+            background: #10B981; cursor: pointer; margin-top: -10px;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        const Icon = ({ name, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+            return <i data-lucide={name} className={className}></i>;
+        };
+
+        // --- POLYMER DATA (Internationalized) ---
+        const RAW_ADDITION = [
+            { 
+                id: 'pe', name: 'Polyethene', short: 'PE',
+                monomer: 'Ethene',
+                groups: ['H', 'H', 'H', 'H'], 
+                desc: 'Used in plastic bags and bottles. The simplest addition polymer.'
+            },
+            { 
+                id: 'pvc', name: 'Polyvinyl Chloride', short: 'PVC',
+                monomer: 'Chloroethene',
+                groups: ['H', 'H', 'H', 'Cl'], 
+                desc: 'Used in pipes and wire insulation. Note the Chlorine atom substituent.'
+            },
+            { 
+                id: 'ps', name: 'Polystyrene', short: 'PS',
+                monomer: 'Styrene',
+                groups: ['H', 'H', 'H', 'Ph'], // Ph for Phenyl group
+                desc: 'Used in packaging and foam. Contains a Phenyl (Benzene) ring substituent.'
+            },
+            { 
+                id: 'pp', name: 'Polypropene', short: 'PP',
+                monomer: 'Propene',
+                groups: ['H', 'H', 'H', 'CH₃'], 
+                desc: 'Used in ropes and crates. Note the Methyl group substituent.'
+            },
+            { 
+                id: 'ptfe', name: 'Polytetrafluoroethene', short: 'Teflon',
+                monomer: 'Tetrafluoroethene',
+                groups: ['F', 'F', 'F', 'F'], 
+                desc: 'Non-stick coating. Carbon-Fluorine bonds are very strong and non-reactive.'
+            }
+        ];
+
+        const RAW_CONDENSATION = [
+            {
+                id: 'pet', name: 'Polyester (PET)', short: 'PET',
+                type: 'ester',
+                monomers: ['Dicarboxylic Acid', 'Diol'],
+                linkage: '-COO-',
+                smallMol: 'H₂O',
+                blocks: { A: 'HOOC—R—COOH', B: 'HO—R\'—OH' },
+                desc: 'Used in clothing and bottles. Formed by Carboxylic Acid + Alcohol, losing Water.'
+            },
+            {
+                id: 'nylon', name: 'Polyamide (Nylon-6,6)', short: 'Nylon',
+                type: 'amide',
+                monomers: ['Dicarboxylic Acid', 'Diamine'],
+                linkage: '-CONH-',
+                smallMol: 'H₂O',
+                blocks: { A: 'HOOC—R—COOH', B: 'H₂N—R\'—NH₂' },
+                desc: 'Strong fiber. Formed by Carboxylic Acid + Amine, losing Water.'
+            }
+        ];
+
+        // --- MERGED LIST ---
+        const ALL_POLYMERS = [
+            ...RAW_ADDITION.map(p => ({ ...p, category: 'addition' })),
+            ...RAW_CONDENSATION.map(p => ({ ...p, category: 'condensation' }))
+        ];
+
+        // --- VISUALIZER COMPONENTS ---
+
+        const GroupLabel = ({ x, y, text = '' }) => {
+            const safeText = String(text || '');
+            const isComplex = safeText.length > 2;
+            return (
+                <g transform={`translate(${x}, ${y})`} className="transition-all-slow">
+                    <circle r={isComplex ? 18 : 12} fill={isComplex ? '#9333ea' : '#0ea5e9'} />
+                    <text x="0" y="1" textAnchor="middle" dominantBaseline="middle" fill="white" fontSize={isComplex ? 12 : 14} fontWeight="bold">{safeText}</text>
+                </g>
+            );
+        };
+
+        const AdditionVisualizer = ({ groups = [], progress }) => {
+            const p = progress;
+            const bracketAlpha = p; 
+            const doubleBondOpacity = 1 - p;
+            const singleBondStroke = 4;
+            const sideBondExtension = 40 * p;
+
+            // Group positions dynamically move from monomer to polymer structure
+            const gPos = {
+                tl: { x: 100 - (10*p), y: 80 - (20*p) },
+                tr: { x: 200 + (10*p), y: 80 - (20*p) },
+                bl: { x: 100 - (10*p), y: 220 + (20*p) },
+                br: { x: 200 + (10*p), y: 220 + (20*p) }
+            };
+
+            const [g0, g1, g2, g3] = groups;
+
+            return (
+                <svg width="300" height="300" viewBox="0 0 300 300" className="overflow-visible transition-all-slow">
+                    {/* Polymer Backbone Bond */}
+                    <line x1="100" y1="150" x2="200" y2="150" stroke="#94a3b8" strokeWidth={singleBondStroke} strokeLinecap="round" />
+                    {/* Double Bond (Fades Out) */}
+                    <line x1="100" y1="150" x2="200" y2="150" stroke="#10b981" strokeWidth={singleBondStroke} strokeLinecap="round" style={{ opacity: doubleBondOpacity, transform: `translateY(-12px)` }} />
+                    
+                    {/* Side Bonds (Fade In) */}
+                    <line x1="100" y1="150" x2={100 - sideBondExtension} y2="150" stroke="#facc15" strokeWidth={singleBondStroke} strokeLinecap="round" style={{opacity: p}} />
+                    <line x1="200" y1="150" x2={200 + sideBondExtension} y2="150" stroke="#facc15" strokeWidth={singleBondStroke} strokeLinecap="round" style={{opacity: p}} />
+
+                    {/* Carbon Atoms */}
+                    <circle cx="100" cy="150" r="12" fill="#334155" />
+                    <circle cx="200" cy="150" r="12" fill="#334155" />
+                    <text x="100" y="155" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold" dominantBaseline="middle">C</text>
+                    <text x="200" y="155" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold" dominantBaseline="middle">C</text>
+
+                    {/* Substituents */}
+                    <line x1="100" y1="150" x2={gPos.tl.x} y2={gPos.tl.y} stroke="#94a3b8" strokeWidth="3" />
+                    <GroupLabel x={gPos.tl.x} y={gPos.tl.y} text={g0} />
+                    <line x1="200" y1="150" x2={gPos.tr.x} y2={gPos.tr.y} stroke="#94a3b8" strokeWidth="3" />
+                    <GroupLabel x={gPos.tr.x} y={gPos.tr.y} text={g1} />
+                    <line x1="100" y1="150" x2={gPos.bl.x} y2={gPos.bl.y} stroke="#94a3b8" strokeWidth="3" />
+                    <GroupLabel x={gPos.bl.x} y={gPos.bl.y} text={g2} />
+                    <line x1="200" y1="150" x2={gPos.br.x} y2={gPos.br.y} stroke="#94a3b8" strokeWidth="3" />
+                    <GroupLabel x={gPos.br.x} y={gPos.br.y} text={g3} />
+
+                    {/* Polymer Brackets */}
+                    <g style={{ opacity: bracketAlpha }}>
+                        <path d="M 60 80 L 50 80 L 50 220 L 60 220" fill="none" stroke="#facc15" strokeWidth="4" />
+                        <path d="M 240 80 L 250 80 L 250 220 L 240 220" fill="none" stroke="#facc15" strokeWidth="4" />
+                        <text x="260" y="230" fill="#facc15" fontSize="20" fontWeight="bold" style={{fontFamily: 'serif'}}>n</text>
+                    </g>
+                </svg>
+            );
+        };
+
+        const CondensationVisualizer = ({ data = {}, progress }) => {
+            const p = progress;
+            const boxW = 120, boxH = 50;
+            const linkPos = 180;
+            const gap = 100 - (100 * p);
+            
+            const leavingLeft = 'OH';
+            const leavingRight = data.type === 'amide' ? 'H' : 'H'; 
+
+            return (
+                <svg width="600" height="300" viewBox="0 0 600 300" className="overflow-visible transition-all-slow">
+                    
+                    {/* Monomer A Block */}
+                    <g transform={`translate(200, 150)`}>
+                        <rect x={-boxW/2} y={-boxH/2} width={boxW} height={boxH} rx="8" fill="#3b82f6" opacity="0.8" />
+                        <text x="0" y="0" textAnchor="middle" dominantBaseline="middle" fill="white" fontSize="12" fontWeight="bold">{data.blocks?.A || 'ACID'}</text>
+                        {/* Reaction End: Carboxyl C */}
+                        <text x="50" y="0" textAnchor="start" dominantBaseline="middle" fill="#facc15" fontSize="14" fontWeight="bold">C=O</text>
+                        {/* Leaving Group: OH */}
+                        <g style={{ opacity: 1-p, transform: `translate(100px, -20px)` }}>
+                            <text x="0" y="0" textAnchor="start" dominantBaseline="middle" fill="#ef4444" fontSize="14" fontWeight="bold">{leavingLeft}</text>
+                        </g>
+                    </g>
+
+                    {/* Monomer B Block */}
+                    <g transform={`translate(${200 + gap + boxW}, 150)`}>
+                        <rect x={-boxW/2} y={-boxH/2} width={boxW} height={boxH} rx="8" fill="#a855f7" opacity="0.8" />
+                        <text x="0" y="0" textAnchor="middle" dominantBaseline="middle" fill="white" fontSize="12" fontWeight="bold">{data.blocks?.B || 'DIAMINE'}</text>
+                        {/* Reaction End: Alcohol O or Amine N */}
+                        <text x="-50" y="0" textAnchor="end" dominantBaseline="middle" fill="#facc15" fontSize="14" fontWeight="bold">{data.type === 'amide' ? 'N—H' : 'O—H'}</text>
+                        {/* Leaving Group: H (from B) */}
+                        <g style={{ opacity: 1-p, transform: `translate(-100px, -20px)` }}>
+                            <text x="0" y="0" textAnchor="end" dominantBaseline="middle" fill="#ef4444" fontSize="14" fontWeight="bold">{leavingRight}</text>
+                        </g>
+                    </g>
+
+                    {/* Linkage Formation (Fades In) */}
+                    <line x1={200 + 50 - gap/2} y1="150" x2={200 + 50 + gap/2} y2="150" stroke="#10b981" strokeWidth="4" style={{ opacity: p, strokeDasharray: 5, strokeDashoffset: p * -20 }} />
+
+                    {/* Small Molecule Out (Fades Out) */}
+                    <g style={{ opacity: 1-p, transform: `translate(${200 + gap/2 + boxW/2}px, ${150 - 50 * p}px)` }}>
+                        <circle r="20" fill="#ef4444" opacity="0.2" />
+                        <text x="0" y="0" textAnchor="middle" dominantBaseline="middle" fill="#ef4444" fontSize="14" fontWeight="bold">{data.smallMol || 'H₂O'}</text>
+                        <text x="0" y="20" textAnchor="middle" fill="#94a3b8" fontSize="10">Lost</text>
+                    </g>
+                    
+                    {/* Polymer Brackets (Fade In) - Simplified Position */}
+                    <g style={{ opacity: p }}>
+                        <path d="M 120 40 L 110 40 L 110 260 L 120 260" fill="none" stroke="#facc15" strokeWidth="4" />
+                        <path d="M 470 40 L 480 40 L 480 260 L 470 260" fill="none" stroke="#facc15" strokeWidth="4" />
+                        <text x="490" y="270" fill="#facc15" fontSize="20" fontWeight="bold" style={{fontFamily: 'serif'}}>n</text>
+                    </g>
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedIndex, setSelectedIndex] = useState(0);
+            const [progress, setProgress] = useState(0); 
+            const [animating, setAnimating] = useState(false);
+
+            const currentData = ALL_POLYMERS[selectedIndex] || ALL_POLYMERS[0];
+            const isAddition = currentData.category === 'addition';
+
+            // Animation Loop
+            const toggleAnimation = () => {
+                if (animating) return;
+                setAnimating(true);
+                let start = null;
+                const duration = 2000;
+                const target = progress > 0.5 ? 0 : 1; 
+                const initialProgress = progress; 
+
+                const step = (timestamp) => {
+                    if (!start) start = timestamp;
+                    const elapsed = timestamp - start;
+                    const rawP = elapsed / duration;
+                    const p = Math.min(rawP, 1);
+                    
+                    // Cubic easing function
+                    const eased = p < .5 ? 4 * p * p * p : (p - 1) * (2 * p - 2) * (2 * p - 2) + 1;
+                    
+                    // Determine current position based on initial start point and target direction
+                    const finalP = target === 1 ? initialProgress + (1 - initialProgress) * eased : initialProgress * (1 - eased);
+                    
+                    setProgress(finalP);
+
+                    if (p < 1) requestAnimationFrame(step);
+                    else setAnimating(false);
+                };
+                requestAnimationFrame(step);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen">
+                        <div className="p-6 border-b border-slate-800 shrink-0">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="Link" className="text-emerald-400" /> Structure Decoder
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Monomer ↔ Polymer Converter</p>
+                        </div>
+
+                        {/* Unified List */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                            {ALL_POLYMERS.map((item, idx) => (
+                                <button 
+                                    key={item.id}
+                                    onClick={() => { setSelectedIndex(idx); setProgress(0); }}
+                                    className={`w-full text-left p-4 rounded-xl border transition-all relative
+                                        ${selectedIndex === idx 
+                                            ? 'bg-slate-800 border-emerald-500 ring-1 ring-emerald-500/50' 
+                                            : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
+                                    `}
+                                >
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className={`font-bold ${selectedIndex === idx ? 'text-white' : 'text-slate-300'}`}>
+                                            {item.short}
+                                        </span>
+                                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                                            item.category === 'addition' 
+                                            ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800' 
+                                            : 'bg-purple-900/30 text-purple-400 border border-purple-800'
+                                        }`}>
+                                            {item.category === 'addition' ? 'Addition' : 'Condensation'}
+                                        </span>
+                                    </div>
+                                    <div className="text-xs text-slate-400 truncate">{item.name}</div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative flex flex-col h-screen overflow-hidden">
+                        
+                        {/* Visualizer Area */}
+                        <div className="flex-1 bg-slate-900/50 flex items-center justify-center relative overflow-hidden">
+                            <div className="absolute inset-0 opacity-10 pointer-events-none" 
+                                style={{backgroundImage: 'radial-gradient(#cbd5e1 1px, transparent 1px)', backgroundSize: '20px 20px'}}>
+                            </div>
+
+                            <div className="relative z-10 transform scale-110 md:scale-125">
+                                {isAddition ? (
+                                    <AdditionVisualizer groups={currentData.groups} progress={progress} />
+                                ) : (
+                                    <CondensationVisualizer data={currentData} progress={progress} />
+                                )}
+                            </div>
+
+                            {/* Labels */}
+                            <div className="absolute top-8 left-0 right-0 flex justify-between px-8 md:px-24 pointer-events-none">
+                                <div className={`transition-all duration-500 ${progress < 0.5 ? 'opacity-100 transform translate-y-0' : 'opacity-30 transform -translate-y-2'}`}>
+                                    <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">Monomer</div>
+                                    <div className="text-2xl font-bold text-white mt-1">
+                                        {isAddition ? currentData.monomer : 'Monomers A + B'}
+                                    </div>
+                                </div>
+                                <div className={`transition-all duration-500 text-right ${progress > 0.5 ? 'opacity-100 transform translate-y-0' : 'opacity-30 transform -translate-y-2'}`}>
+                                    <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">Polymer</div>
+                                    <div className="text-2xl font-bold text-emerald-400 mt-1">{currentData.name}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Control Deck */}
+                        <div className="shrink-0 bg-slate-800 border-t border-slate-700 p-6 md:p-8 flex flex-col lg:flex-row gap-8 items-center">
+                            
+                            {/* Slider */}
+                            <div className="flex-1 w-full max-w-xl">
+                                <div className="flex justify-between text-xs font-bold text-slate-400 uppercase mb-4 tracking-wider">
+                                    <span>Decode (Monomer)</span>
+                                    <span>Polymerize</span>
+                                </div>
+                                <div className="relative flex items-center gap-4">
+                                    <button onClick={toggleAnimation} disabled={animating} className={`p-3 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors shadow-lg shrink-0 ${animating ? 'opacity-50 cursor-wait' : ''}`}>
+                                        <Icon name={progress > 0.5 ? "Rewind" : "Play"} className="w-6 h-6 text-emerald-400" />
+                                    </button>
+                                    <div className="flex-1 relative">
+                                        <input 
+                                            type="range" min="0" max="1" step="0.01" 
+                                            value={progress} 
+                                            onChange={(e) => setProgress(parseFloat(e.target.value))}
+                                            disabled={animating}
+                                            className="w-full z-20 relative block"
+                                        />
+                                        <div className="absolute top-1/2 left-0 right-0 h-1 bg-slate-600 rounded-full transform -translate-y-1/2 z-10 pointer-events-none">
+                                            <div className="h-full bg-emerald-500 rounded-full" style={{width: `${progress * 100}%`}}></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Info */}
+                            <div className="flex-1 w-full bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
+                                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                                    <Icon name="Info" className="w-4 h-4 text-blue-400" /> Reaction Details
+                                </h3>
+                                <p className="text-sm text-slate-400 leading-relaxed mb-3">
+                                    {currentData.desc}
+                                </p>
+                                <div className="flex gap-2 flex-wrap">
+                                    <span className={`text-[10px] px-2 py-1 rounded border uppercase font-bold tracking-wider ${
+                                        isAddition 
+                                        ? 'bg-emerald-900/30 text-emerald-300 border border-emerald-800' 
+                                        : 'bg-purple-900/30 text-purple-300 border border-purple-800'
+                                    }`}>
+                                        {isAddition ? 'Addition Mechanism' : 'Condensation Mechanism'}
+                                    </span>
+                                    {!isAddition && (
+                                        <span className="text-[10px] bg-red-900/30 text-red-300 px-2 py-1 rounded border border-red-800 uppercase font-bold tracking-wider">
+                                            Lost: {currentData.smallMol}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
