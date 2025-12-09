@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equilibrium Constant Calculator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .input-card { transition: all 0.2s; border-color: #334155; }
+        .input-card:focus-within { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+        
+        /* MathJax override for better font size */
+        mjx-container { font-size: 1.2em !important; }
+
+        /* Dark mode overrides for table inputs */
+        .input-card input[type="text"],
+        .input-card input[type="number"] {
+            background-color: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Presets (Internationalized)
+        const Presets = [
+            {
+                name: 'Haber Process',
+                reactants: [{ id: 1, name: 'N2', coeff: 1, conc: '0.1' }, { id: 2, name: 'H2', coeff: 3, conc: '0.2' }],
+                products: [{ id: 3, name: 'NH3', coeff: 2, conc: '0.1' }]
+            },
+            {
+                name: 'Contact Process',
+                reactants: [{ id: 1, name: 'SO2', coeff: 2, conc: '0.4' }, { id: 2, name: 'O2', coeff: 1, conc: '0.2' }],
+                products: [{ id: 3, name: 'SO3', coeff: 2, conc: '0.3' }]
+            },
+            {
+                name: 'Esterification',
+                reactants: [{ id: 1, name: 'Acid', coeff: 1, conc: '0.5' }, { id: 2, name: 'Alcohol', coeff: 1, conc: '0.5' }],
+                products: [{ id: 3, name: 'Ester', coeff: 1, conc: '0.3' }, { id: 4, name: 'Water', coeff: 1, conc: '0.3' }]
+            },
+            {
+                name: 'Decomposition of HI',
+                reactants: [{ id: 1, name: 'HI', coeff: 2, conc: '0.02' }],
+                products: [{ id: 2, name: 'H2', coeff: 1, conc: '0.005' }, { id: 3, name: 'I2', coeff: 1, conc: '0.005' }]
+            }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [reactants, setReactants] = useState([{ id: 1, name: 'A', coeff: 1, conc: '1.0' }]);
+            const [products, setProducts] = useState([{ id: 1, name: 'B', coeff: 1, conc: '1.0' }]);
+            const [result, setResult] = useState(null);
+            const [kcExpression, setKcExpression] = useState('');
+
+            // Helper to update row
+            const updateRow = (type, id, field, value) => {
+                const list = type === 'reactants' ? reactants : products;
+                const newList = list.map(item => item.id === id ? { ...item, [field]: value } : item);
+                if (type === 'reactants') setReactants(newList);
+                else setProducts(newList);
+            };
+
+            const addRow = (type) => {
+                const newItem = { id: Date.now(), name: type === 'reactants' ? 'R' : 'P', coeff: 1, conc: '' };
+                if (type === 'reactants') setReactants([...reactants, newItem]);
+                else setProducts([...products, newItem]);
+            };
+
+            const removeRow = (type, id) => {
+                if (type === 'reactants' && reactants.length > 1) setReactants(reactants.filter(i => i.id !== id));
+                else if (type === 'products' && products.length > 1) setProducts(products.filter(i => i.id !== id));
+            };
+
+            const loadPreset = (p) => {
+                setReactants(p.reactants.map((r, i) => ({ ...r, id: `r-${i}` })));
+                setProducts(p.products.map((pr, i) => ({ ...pr, id: `p-${i}` })));
+                setResult(null);
+            };
+
+            // Calculate Logic
+            const calculate = () => {
+                let num = 1;
+                let den = 1;
+                let totalCoeffP = 0;
+                let totalCoeffR = 0;
+                let isValid = true;
+
+                // Ensure reactants and products lists are not empty
+                if (reactants.length === 0 || products.length === 0) {
+                     setResult({ error: 'The reaction must have at least one reactant and one product.' });
+                     return;
+                }
+
+                products.forEach(p => {
+                    const c = parseFloat(p.conc);
+                    const coeff = parseFloat(p.coeff);
+                    if (isNaN(c) || isNaN(coeff) || c < 0 || coeff < 0) isValid = false;
+                    num *= Math.pow(c, coeff);
+                    totalCoeffP += coeff;
+                });
+
+                reactants.forEach(r => {
+                    const c = parseFloat(r.conc);
+                    const coeff = parseFloat(r.coeff);
+                    if (isNaN(c) || isNaN(coeff) || c < 0 || coeff < 0) isValid = false;
+                    den *= Math.pow(c, coeff);
+                    totalCoeffR += coeff;
+                });
+
+                if (!isValid) {
+                    setResult({ error: 'Please enter valid non-negative numbers for concentration and coefficient.' });
+                    return;
+                }
+
+                if (den === 0) {
+                    setResult({ error: 'Kc approaches infinity (Reactant concentration is zero).' });
+                    return;
+                }
+
+                const kc = num / den;
+                
+                // Calculate Unit
+                // Unit = (mol dm^-3)^(nP - nR)
+                const deltaN = totalCoeffP - totalCoeffR;
+                let unit = '';
+                
+                if (deltaN === 0) {
+                    unit = 'No Unit';
+                } else {
+                    const power = -3 * deltaN;
+                    const molPower = deltaN;
+
+                    const molSup = molPower !== 1 ? toSuperscript(molPower) : '';
+                    const dmSup = power !== 1 ? toSuperscript(power) : '';
+                    
+                    // We render LaTeX for the unit to support MathJax formatting
+                    unit = `[\\text{mol dm}^{-3}]^{${deltaN}}`; 
+                }
+
+                setResult({ value: kc, unit, deltaN });
+            };
+
+            // Helper for superscript
+            const toSuperscript = (num) => {
+                const map = { '-': '⁻', '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+                return num.toString().split('').map(c => map[c] || c).join('');
+            };
+
+            // Live Equation Update for MathJax
+            useEffect(() => {
+                // Generate LaTeX for Kc
+                // Kc = [P1]^c1 [P2]^c2 / [R1]^c1 ...
+                const formatPart = (list) => {
+                    return list.map(item => {
+                        const name = item.name || '?';
+                        const coeff = parseFloat(item.coeff);
+                        const exp = coeff === 1 ? '' : `^{${coeff}}`;
+                        return `[\\text{${name}}]${exp}`;
+                    }).join('');
+                };
+
+                const numerator = formatPart(products);
+                const denominator = formatPart(reactants);
+                
+                let equation = `${reactants.map(r => `${r.coeff === 1 ? '' : r.coeff}\\text{${r.name}}`).join(' + ')} \\rightleftharpoons ${products.map(p => `${p.coeff === 1 ? '' : p.coeff}\\text{${p.name}}`).join(' + ')}`;
+                
+                const latex = `K_c = \\frac{${numerator}}{${denominator}}`;
+                
+                setKcExpression({ latex, equation });
+
+            }, [reactants, products]);
+
+            // Re-render MathJax
+            useEffect(() => {
+                if (window.MathJax) {
+                    window.MathJax.typesetPromise && window.MathJax.typesetPromise();
+                }
+            });
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Scale" /> Equilibrium Constant Calculator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Calculate K<sub>c</sub> from Equilibrium Concentrations</p>
+                        </div>
+                    </div>
+
+                    {/* Preset Buttons (Centered & Prominent) */}
+                    <div className="flex justify-center mb-8">
+                        <div className="bg-slate-900 p-2 rounded-2xl border border-slate-800 shadow-xl flex flex-col md:flex-row items-center gap-3 px-4">
+                            <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1 whitespace-nowrap">
+                                <Icon name="Zap" size={14}/> Quick Load Example:
+                            </span>
+                            <div className="flex gap-2 flex-wrap justify-center">
+                                {Presets.map((p, idx) => (
+                                    <button 
+                                        key={idx} 
+                                        onClick={() => loadPreset(p)}
+                                        className="px-3 py-1.5 text-xs font-bold text-slate-300 bg-slate-800 hover:bg-indigo-900/30 hover:text-indigo-400 border border-slate-700 hover:border-indigo-500/50 rounded-lg transition-all shadow-sm"
+                                    >
+                                        {p.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow items-start">
+                        
+                        {/* Left: Inputs */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                            
+                            {/* Reactants */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-blue-900/30 input-card">
+                                <h3 className="text-sm font-bold text-blue-400 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="FlaskConical" size={16}/> Reactants
+                                </h3>
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-12 gap-2 text-[10px] text-slate-500 uppercase font-bold px-2">
+                                        <div className="col-span-2">Coeff</div>
+                                        <div className="col-span-4">Formula</div>
+                                        <div className="col-span-5">Eqm Conc. (M)</div>
+                                        <div className="col-span-1"></div>
+                                    </div>
+                                    {reactants.map(item => (
+                                        <div key={item.id} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg border border-transparent">
+                                            <div className="col-span-2">
+                                                <input type="number" value={item.coeff} onChange={(e) => updateRow('reactants', item.id, 'coeff', e.target.value)} className="w-full text-center font-bold outline-none bg-transparent border-b border-slate-600 focus:border-blue-500 text-slate-300" min="0" placeholder="1"/>
+                                            </div>
+                                            <div className="col-span-4">
+                                                <input type="text" value={item.name} onChange={(e) => updateRow('reactants', item.id, 'name', e.target.value)} className="w-full outline-none bg-transparent font-mono text-sm text-slate-300" placeholder="Name"/>
+                                            </div>
+                                            <div className="col-span-5 relative">
+                                                <input type="number" value={item.conc} onChange={(e) => updateRow('reactants', item.id, 'conc', e.target.value)} className="w-full p-1 bg-slate-800 rounded text-right font-mono font-bold text-blue-400 outline-none" placeholder="0.0"/>
+                                            </div>
+                                            <div className="col-span-1 flex justify-center">
+                                                <button onClick={() => removeRow('reactants', item.id)} className="text-slate-500 hover:text-red-400 transition-colors" disabled={reactants.length === 1}><Icon name="X" size={16}/></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <button onClick={() => addRow('reactants')} className="w-full py-2 border-2 border-dashed border-blue-500/30 text-blue-400 rounded-xl hover:bg-blue-900/30 text-xs font-bold transition-all">+ Add Reactant</button>
+                                </div>
+                            </div>
+
+                            {/* Products */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-emerald-900/30 input-card">
+                                <h3 className="text-sm font-bold text-emerald-400 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="FlaskConical" size={16} className="transform rotate-180"/> Products
+                                </h3>
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-12 gap-2 text-[10px] text-slate-500 uppercase font-bold px-2">
+                                        <div className="col-span-2">Coeff</div>
+                                        <div className="col-span-4">Formula</div>
+                                        <div className="col-span-5">Eqm Conc. (M)</div>
+                                        <div className="col-span-1"></div>
+                                    </div>
+                                    {products.map(item => (
+                                        <div key={item.id} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg border border-transparent">
+                                            <div className="col-span-2">
+                                                <input type="number" value={item.coeff} onChange={(e) => updateRow('products', item.id, 'coeff', e.target.value)} className="w-full text-center font-bold outline-none bg-transparent border-b border-slate-600 focus:border-emerald-500 text-slate-300" min="0" placeholder="1"/>
+                                            </div>
+                                            <div className="col-span-4">
+                                                <input type="text" value={item.name} onChange={(e) => updateRow('products', item.id, 'name', e.target.value)} className="w-full outline-none bg-transparent font-mono text-sm text-slate-300" placeholder="Name"/>
+                                            </div>
+                                            <div className="col-span-5 relative">
+                                                <input type="number" value={item.conc} onChange={(e) => updateRow('products', item.id, 'conc', e.target.value)} className="w-full p-1 bg-slate-800 rounded text-right font-mono font-bold text-emerald-400 outline-none" placeholder="0.0"/>
+                                            </div>
+                                            <div className="col-span-1 flex justify-center">
+                                                <button onClick={() => removeRow('products', item.id)} className="text-slate-500 hover:text-red-400 transition-colors" disabled={products.length === 1}><Icon name="X" size={16}/></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <button onClick={() => addRow('products')} className="w-full py-2 border-2 border-dashed border-emerald-500/30 text-emerald-400 rounded-xl hover:bg-emerald-900/30 text-xs font-bold transition-all">+ Add Product</button>
+                                </div>
+                            </div>
+                            
+                            <button 
+                                onClick={calculate}
+                                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg hover:bg-indigo-500 transition-all text-lg flex items-center justify-center gap-2 active:scale-95"
+                            >
+                                <Icon name="Calculator" /> Calculate K<sub>c</sub>
+                            </button>
+
+                        </div>
+
+                        {/* Right: Equation & Result */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                            
+                            {/* Reaction Equation */}
+                            <div className="bg-slate-900 p-8 rounded-3xl shadow-xl border border-slate-700 flex flex-col items-center justify-center min-h-[150px]">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 tracking-widest">Reaction Equation</h3>
+                                <div className="text-xl text-white">
+                                    {`\\[ ${kcExpression.equation} \\]`}
+                                </div>
+                            </div>
+
+                            {/* Kc Expression Card */}
+                            <div className="bg-slate-900 p-8 rounded-3xl shadow-lg border border-slate-700 flex flex-col items-center justify-center min-h-[150px]">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 tracking-widest">K<sub>c</sub> Expression</h3>
+                                <div className="text-2xl text-white">
+                                    {`\\[ ${kcExpression.latex} \\]`}
+                                </div>
+                            </div>
+
+                            {/* Result Card */}
+                            {result && !result.error && (
+                                <div className="bg-gradient-to-br from-indigo-800/30 to-slate-900 p-8 rounded-3xl shadow-xl text-center relative overflow-hidden border border-indigo-500/50 animate-in slide-in-from-bottom-4 fade-in">
+                                    <div className="relative z-10">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Calculated Value</div>
+                                        
+                                        <div className="flex flex-col items-center gap-2">
+                                            {/* Value */}
+                                            <div className="text-6xl font-mono font-black tracking-tighter text-indigo-300">
+                                                {result.value < 0.001 || result.value > 10000 ? result.value.toExponential(3) : parseFloat(result.value.toFixed(4))}
+                                            </div>
+                                            
+                                            {/* Unit */}
+                                            <div className="text-xl text-slate-300 font-mono mt-2 bg-slate-900/50 px-4 py-1 rounded-lg border border-slate-700 inline-block">
+                                                {`\\[ ${result.unit} \\]`}
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-6 pt-6 border-t border-slate-700 text-xs text-slate-500">
+                                            <p>Δn = (Products Coeff Sum) - (Reactants Coeff Sum) = <strong>{result.deltaN}</strong></p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {result && result.error && (
+                                <div className="bg-red-900/20 p-6 rounded-2xl border border-red-500/50 text-red-400 font-bold text-center animate-pulse">
+                                    <Icon name="AlertCircle" className="mx-auto mb-2"/>
+                                    {result.error}
+                                </div>
+                            )}
+
+                        </div>
+
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
