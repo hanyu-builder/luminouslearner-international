@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reactivity Series Simulator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .metal-block {
+            cursor: grab;
+            transition: all 0.2s ease;
+        }
+        .metal-block:active { cursor: grabbing; transform: scale(1.05); }
+
+        /* Bubble animation for reaction rate */
+        @keyframes bubbles-fast {
+            0% { opacity: 0; transform: translateY(0); }
+            50% { opacity: 1; transform: translateY(-30px); }
+            100% { opacity: 0; transform: translateY(-60px); }
+        }
+        @keyframes bubbles-slow {
+            0% { opacity: 0; transform: translateY(0); }
+            50% { opacity: 0.8; transform: translateY(-15px); }
+            100% { opacity: 0; transform: translateY(-30px); }
+        }
+        .bubble-anim {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            animation-iteration-count: infinite;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        // --- Data Sets (Internationalized) ---
+        const Metals = [
+            { symbol: 'Na', name: 'Sodium', reactivity: 5, color: 'bg-red-500', mass: 23.0 },
+            { symbol: 'Mg', name: 'Magnesium', reactivity: 4, color: 'bg-gray-400', mass: 24.3 },
+            { symbol: 'Zn', name: 'Zinc', reactivity: 3, color: 'bg-slate-500', mass: 65.4 },
+            { symbol: 'Fe', name: 'Iron', reactivity: 2, color: 'bg-amber-700', mass: 55.8 },
+            { symbol: 'Cu', name: 'Copper', reactivity: 1, color: 'bg-orange-600', mass: 63.5 },
+            { symbol: 'Ag', name: 'Silver', reactivity: 0, color: 'bg-slate-400', mass: 107.9 }
+        ];
+
+        const Reagents = {
+            COLD_WATER: { name: 'Cold Water', color: 'bg-blue-400/50', req: 5 },
+            DILUTE_ACID: { name: 'Dilute HCl', color: 'bg-yellow-200/50', req: 3 },
+            COPPER_SULFATE: { name: 'Copper Sulfate (aq)', color: 'bg-blue-600/50', req: 1 },
+            SILVER_NITRATE: { name: 'Silver Nitrate (aq)', color: 'bg-slate-200/50', req: 0 }
+        };
+
+        const InitialReactionState = {
+            COLD_WATER: null, DILUTE_ACID: null, COPPER_SULFATE: null, SILVER_NITRATE: null
+        };
+        
+        const App = () => {
+            const [metalState, setMetalState] = useState(Metals.map(m => ({...m, tests: []})));
+            const [reactionResults, setReactionResults] = useState(InitialReactionState);
+            const [draggedElement, setDraggedElement] = useState(null);
+            
+            // Sorting Game State
+            const [sortOrder, setSortOrder] = useState(Metals.map(m => m.symbol).sort(() => Math.random() - 0.5)); // Shuffle initially
+
+            // Logic to get the reaction result message
+            const getReactionMessage = (metal, reagent) => {
+                const r = metal.reactivity;
+                const req = Reagents[reagent].req;
+                
+                // Displacement Logic for solutions
+                if (reagent === 'COPPER_SULFATE') {
+                    if (metal.symbol === 'Cu' || metal.symbol === 'Ag') return { text: 'No visible reaction', rate: 'None' };
+                    return { text: 'Displacement! Brown solid (Cu) forms.', rate: 'Medium', color: 'bg-orange-700' };
+                }
+                if (reagent === 'SILVER_NITRATE') {
+                    if (metal.symbol === 'Ag') return { text: 'No visible reaction', rate: 'None' };
+                    return { text: 'Displacement! Grey solid (Ag) forms.', rate: 'Fast', color: 'bg-slate-300' };
+                }
+
+                // General Reactivity Logic
+                if (r >= req) {
+                    if (reagent === 'COLD_WATER') {
+                        if (r === 5) return { text: 'Violent! Melts into ball, moves rapidly.', rate: 'Fast' };
+                        if (r === 4) return { text: 'Very slow, few bubbles.', rate: 'Slow' };
+                    }
+                    if (reagent === 'DILUTE_ACID') {
+                        if (r >= 4) return { text: 'Rapid bubbling (H₂ gas). Dissolves.', rate: 'Fast' };
+                        if (r === 3) return { text: 'Steady bubbling.', rate: 'Medium' };
+                        if (r === 2) return { text: 'Slow bubbling.', rate: 'Slow' };
+                    }
+                }
+                
+                return { text: 'No visible reaction', rate: 'None' };
+            };
+            
+            // Handle Dropping Metal into Reagent
+            const handleDrop = (metal, reagentId) => {
+                const metalData = Metals.find(m => m.symbol === metal.symbol);
+                const result = getReactionMessage(metalData, reagentId);
+                
+                setReactionResults(prev => ({...prev, [reagentId]: { metal: metal.symbol, result }}));
+            };
+
+            // Drag Handlers
+            const handleDragStart = (e, metal) => {
+                e.dataTransfer.setData("metalSymbol", metal.symbol);
+                setDraggedElement(metal.symbol);
+            };
+
+            const handleSortDragStart = (e, index) => {
+                e.dataTransfer.setData("startIndex", index);
+            };
+
+            const handleSortDrop = (e, endIndex) => {
+                e.preventDefault();
+                const startIndex = parseInt(e.dataTransfer.getData("startIndex"));
+                if (!isNaN(startIndex) && startIndex !== endIndex) {
+                    const newOrder = [...sortOrder];
+                    const [movedItem] = newOrder.splice(startIndex, 1);
+                    newOrder.splice(endIndex, 0, movedItem);
+                    setSortOrder(newOrder);
+                }
+            };
+            
+            const handleCheckOrder = () => {
+                const correctOrder = ['Na', 'Mg', 'Zn', 'Fe', 'Cu', 'Ag']; // Most to least
+                const isCorrect = JSON.stringify(sortOrder) === JSON.stringify(correctOrder);
+                if (isCorrect) alert("Perfect! You've mastered the Reactivity Series.");
+                else alert("Not quite right. Remember: Please Stop Calling Me A Careless Zebra...");
+            };
+
+            // Render Reagent Beaker
+            const renderBeaker = (reagentId, reagentData) => {
+                const currentResult = reactionResults[reagentId];
+                
+                // Determine beaker color and reaction content
+                let bgColor = reagentData.color;
+                let reactionInfo = currentResult ? currentResult.result : { text: 'Drag Metal Here', rate: 'None' };
+                let messageStyle = reactionInfo.rate === 'None' ? 'text-slate-500' : (reactionInfo.rate === 'Fast' ? 'text-red-400' : 'text-green-400');
+                
+                // Dynamic styling for displacement results
+                let depositColor = reactionInfo.color;
+                
+                // Rust dots positions
+                const bubbles = Array.from({length: 10}).map((_, i) => ({
+                    x: 20 + Math.random() * 60,
+                    y: 20 + Math.random() * 60,
+                    delay: i * 0.2
+                }));
+
+                return (
+                    <div 
+                        key={reagentId}
+                        className="w-full md:w-1/4 h-72 bg-slate-900 rounded-xl shadow-lg border border-slate-700 p-4 flex flex-col items-center relative transition-all hover:border-slate-500"
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                            const symbol = draggedElement; // Use state if dataTransfer fails in some browsers
+                            if(symbol) handleDrop(Metals.find(m => m.symbol === symbol), reagentId)
+                        }}
+                    >
+                        {/* Beaker Glass */}
+                        <div className="w-24 h-40 border-4 border-slate-500 rounded-b-xl relative overflow-hidden flex flex-col justify-end bg-white/5 backdrop-blur-sm">
+                            
+                            {/* Liquid */}
+                            <div className={`w-full h-3/4 ${bgColor} absolute bottom-0 transition-colors duration-500`}></div>
+                            
+                            {/* Metal Piece (if dropped) */}
+                            {currentResult && (
+                                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-8 h-8 bg-slate-400 rounded-sm border border-slate-600 flex items-center justify-center font-bold text-slate-800 text-xs shadow-lg z-10">
+                                    {currentResult.metal}
+                                </div>
+                            )}
+
+                            {/* Displacement Deposit */}
+                            {currentResult && depositColor && (
+                                <div className={`absolute bottom-2 left-1/2 -translate-x-1/2 w-10 h-10 ${depositColor} rounded-full blur-sm opacity-80 z-0`}></div>
+                            )}
+
+                            {/* Bubbles */}
+                            {currentResult && reactionInfo.rate !== 'None' && !depositColor && (
+                                <div className="absolute inset-0 pointer-events-none">
+                                    {bubbles.map((b, i) => (
+                                        <div key={i} className="bubble-anim" 
+                                             style={{
+                                                 width: Math.random() * 6 + 4 + 'px', 
+                                                 height: Math.random() * 6 + 4 + 'px',
+                                                 left: b.x + '%', 
+                                                 top: b.y + '%', 
+                                                 animation: `${reactionInfo.rate === 'Fast' ? 'bubbles-fast' : 'bubbles-slow'} ${Math.random() * 1 + 1}s linear infinite`,
+                                                 animationDelay: `${b.delay}s`
+                                            }}></div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="mt-3 text-center w-full">
+                            <h4 className="text-sm font-bold text-white">{reagentData.name}</h4>
+                            <p className={`mt-2 text-xs font-bold ${messageStyle} bg-slate-950/50 p-2 rounded`}>{reactionInfo.text}</p>
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <div>
+                            <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-2">
+                                <Icon name="Zap" /> Reactivity Series Simulator
+                            </h1>
+                            <p className="text-slate-400 text-sm">Displacement & Reaction Rate Lab</p>
+                        </div>
+                        <button onClick={() => setReactionResults(InitialReactionState)} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Reset Lab
+                        </button>
+                    </div>
+
+                    {/* Step 1: Metal Test */}
+                    <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 mb-8">
+                        <h2 className="text-xl font-bold text-slate-300 mb-4 flex items-center gap-2">
+                            <Icon name="TestTube" size={20} className="text-blue-400"/> Step 1: Test Metals
+                        </h2>
+                        
+                        {/* Metal Draggables */}
+                        <div className="flex flex-wrap gap-4 mb-8 p-4 bg-slate-950/50 rounded-xl border border-slate-800 justify-center">
+                            {Metals.map(m => (
+                                <div key={m.symbol} 
+                                     draggable 
+                                     onDragStart={(e) => handleDragStart(e, m)}
+                                     className={`p-4 w-20 h-20 rounded-xl flex flex-col items-center justify-center font-bold text-slate-900 shadow-lg cursor-grab active:cursor-grabbing hover:scale-110 transition-transform ${m.color}`}
+                                >
+                                    <span className="text-2xl">{m.symbol}</span>
+                                    <span className="text-[10px] uppercase tracking-wide opacity-80">{m.name}</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Reagent Beakers Grid */}
+                        <div className="flex flex-col md:flex-row gap-4">
+                            {Object.entries(Reagents).map(([id, data]) => renderBeaker(id, data))}
+                        </div>
+                    </div>
+
+                    {/* Step 2: Sorting Challenge */}
+                    <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 flex flex-col lg:flex-row gap-8">
+                         
+                         <div className="w-full lg:w-1/2">
+                              <h2 className="text-xl font-bold text-slate-300 mb-4 flex items-center gap-2">
+                                  <Icon name="ListOrdered" size={20} className="text-green-400"/> Step 2: Order the Series
+                              </h2>
+                              <p className="text-slate-400 text-sm mb-4">Drag and drop the metals to arrange them from <strong>Most Reactive (Top)</strong> to <strong>Least Reactive (Bottom)</strong>.</p>
+                              
+                              <div className="space-y-2">
+                                  {sortOrder.map((symbol, index) => {
+                                      const metal = Metals.find(m => m.symbol === symbol);
+                                      return (
+                                          <div 
+                                              key={symbol}
+                                              draggable 
+                                              onDragStart={(e) => handleSortDragStart(e, index)}
+                                              onDragOver={(e) => e.preventDefault()}
+                                              onDrop={(e) => handleSortDrop(e, index)}
+                                              className={`p-3 bg-slate-800 border border-slate-700 rounded-lg shadow-sm flex justify-between items-center cursor-move hover:border-slate-500 transition-colors`}
+                                          >
+                                              <div className="flex items-center gap-3">
+                                                  <span className="text-slate-500 font-mono text-sm">#{index + 1}</span>
+                                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-slate-900 ${metal.color}`}>
+                                                      {symbol}
+                                                  </div>
+                                                  <span className="text-slate-200 font-bold">{metal.name}</span>
+                                              </div>
+                                              <Icon name="GripVertical" size={16} className="text-slate-600"/>
+                                          </div>
+                                      )
+                                  })}
+                              </div>
+                              <button onClick={handleCheckOrder} className="mt-6 w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-500 transition-colors shadow-lg">
+                                  Check Order
+                              </button>
+                         </div>
+
+                         {/* Info Panel */}
+                         <div className="w-full lg:w-1/2 flex flex-col gap-4">
+                              <div className="bg-slate-800 p-5 rounded-xl border border-slate-700">
+                                   <h3 className="font-bold text-orange-400 mb-2 flex items-center gap-2">
+                                       <Icon name="Lightbulb" size={18} /> Reactivity Rules
+                                   </h3>
+                                   <ul className="text-sm text-slate-300 list-disc list-inside space-y-2">
+                                       <li><strong>Top Metals:</strong> React violently with cold water.</li>
+                                       <li><strong>Middle Metals:</strong> React with acids, but slow/no reaction with water.</li>
+                                       <li><strong>Bottom Metals:</strong> No reaction with acids.</li>
+                                       <li><strong>Displacement:</strong> A more reactive metal will push a less reactive metal out of its salt solution.</li>
+                                   </ul>
+                              </div>
+                              
+                              <div className="bg-slate-800 p-5 rounded-xl border border-slate-700 flex-grow">
+                                   <h3 className="font-bold text-blue-400 mb-2">Observations</h3>
+                                   <div className="text-xs text-slate-400 space-y-2 font-mono">
+                                       <p>Na + Water -> Fizz, move, melt</p>
+                                       <p>Mg + Acid -> Fast bubbles (H2)</p>
+                                       <p>Zn + Acid -> Steady bubbles</p>
+                                       <p>Fe + CuSO4 -> Cu solid forms</p>
+                                       <p>Cu + AgNO3 -> Ag solid forms</p>
+                                   </div>
+                              </div>
+                         </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
