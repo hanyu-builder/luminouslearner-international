@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colorimetry Simulator</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Recharts Dependencies -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #fff; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Beam Animation */
+        .light-beam {
+            transition: opacity 0.2s, background-color 0.2s;
+        }
+        .light-beam-active {
+            animation: beamPulse 2s infinite;
+        }
+        @keyframes beamPulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 0.8; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Ensure Recharts is loaded from window object
+        const { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Line } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA CONFIG (Translated) ---
+        const SOLUTIONS = [
+            { id: 'cu', name: 'Copper(II) Sulfate', formula: 'CuSO₄', color: 'bg-blue-500', hex: '#3b82f6', complementary: 'orange', optimalFilter: 600 }, // Blue -> Orange Filter
+            { id: 'kmno4', name: 'Potassium Permanganate', formula: 'KMnO₄', color: 'bg-purple-600', hex: '#9333ea', complementary: 'green', optimalFilter: 540 }, // Purple -> Green Filter
+            { id: 'fescn', name: 'Iron(III) Thiocyanate', formula: '[FeSCN]²⁺', color: 'bg-red-600', hex: '#dc2626', complementary: 'blue', optimalFilter: 480 }  // Red -> Blue Filter
+        ];
+
+        const FILTERS = [
+            { name: 'Red (650nm)', color: 'bg-red-500', hex: '#ef4444', wl: 650 },
+            { name: 'Orange (600nm)', color: 'bg-orange-500', hex: '#f97316', wl: 600 },
+            { name: 'Green (540nm)', color: 'bg-emerald-500', hex: '#10b981', wl: 540 },
+            { name: 'Blue (480nm)', color: 'bg-blue-500', hex: '#3b82f6', wl: 480 },
+            { name: 'Purple (420nm)', color: 'bg-purple-500', hex: '#a855f7', wl: 420 }
+        ];
+
+        const App = () => {
+            // State
+            const [solutionIdx, setSolutionIdx] = useState(0);
+            const [filterIdx, setFilterIdx] = useState(1); // Default Orange
+            const [mode, setMode] = useState('calibrate'); // calibrate | measure
+            
+            // Calibration Data
+            // We simulate 5 standards: 0.2M, 0.4M, 0.6M, 0.8M, 1.0M
+            const [selectedStandard, setSelectedStandard] = useState(0); // 0 to 4
+            const STANDARDS = [0.2, 0.4, 0.6, 0.8, 1.0];
+            
+            // Unknown Sample (Randomized each session)
+            const [unknownConc, setUnknownConc] = useState(0.55); 
+            
+            // Measurement Logic
+            // Beer-Lambert Law: A = e * l * c
+            // e (epsilon) depends on filter choice. Best filter = max absorbance. Bad filter = low absorbance.
+            const getAbsorbance = (conc) => {
+                const sol = SOLUTIONS[solutionIdx];
+                const filt = FILTERS[filterIdx];
+                
+                // Filter Efficiency: How close is the filter to the optimal wavelength?
+                // Simple Gaussian-like falloff
+                const diff = Math.abs(sol.optimalFilter - filt.wl);
+                const efficiency = Math.max(0.1, 1 - (diff / 150)); 
+                
+                // Base Absorbance Factor (arbitrary for simulation)
+                const factor = 1.5; 
+                
+                // Add some tiny noise for realism
+                const noise = (Math.random() - 0.5) * 0.02;
+                
+                let abs = (conc * factor * efficiency) + noise;
+                return Math.max(0, Math.min(2.5, abs)); // Clamp 0-2.5 range typical for colorimeters
+            };
+
+            // Current reading
+            const currentConc = mode === 'calibrate' ? STANDARDS[selectedStandard] : unknownConc;
+            const [currentAbs, setCurrentAbs] = useState(0);
+            const [isMeasuring, setIsMeasuring] = useState(false);
+
+            // Plot Data
+            const [plotData, setPlotData] = useState([]);
+
+            // Handle Measure Button
+            const handleMeasure = () => {
+                setIsMeasuring(true);
+                setTimeout(() => {
+                    const val = getAbsorbance(currentConc);
+                    setCurrentAbs(val);
+                    setIsMeasuring(false);
+                    
+                    if (mode === 'calibrate') {
+                        // Update plot data
+                        const newData = [...plotData];
+                        // Check if point exists for this concentration, update it
+                        const existingIdx = newData.findIndex(d => d.x === currentConc);
+                        if (existingIdx >= 0) {
+                            newData[existingIdx].y = val;
+                        } else {
+                            newData.push({ x: currentConc, y: val });
+                        }
+                        setPlotData(newData.sort((a, b) => a.x - b.x));
+                    }
+                }, 1000); // 1s delay for effect
+            };
+            
+            const handleReset = () => {
+                setPlotData([]);
+                setCurrentAbs(0);
+            };
+
+            const activeSol = SOLUTIONS[solutionIdx];
+            const activeFilter = FILTERS[filterIdx];
+
+            // Calculate Opacity based on concentration for visual
+            const liquidOpacity = 0.2 + (currentConc * 0.6); 
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar Controls */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="pipette" className="text-emerald-400" /> Colorimetry
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Beer-Lambert Law Simulator</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto space-y-8">
+                            
+                            {/* 1. Select Solution */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">1. Solution</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {SOLUTIONS.map((sol, i) => (
+                                        <button 
+                                            key={sol.id}
+                                            onClick={() => { setSolutionIdx(i); setPlotData([]); setCurrentAbs(0); }}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3
+                                                ${solutionIdx === i 
+                                                    ? 'bg-slate-800 border-white/30 ring-1 ring-white/20' 
+                                                    : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <div className={`w-4 h-4 rounded-full ${sol.color}`}></div>
+                                            <div>
+                                                <div className="text-sm font-bold text-white">{sol.formula}</div>
+                                                <div className="text-[10px] text-slate-400">{sol.name}</div>
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* 2. Select Filter */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">2. Color Filter</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {FILTERS.map((fil, i) => (
+                                        <button 
+                                            key={i}
+                                            onClick={() => { setFilterIdx(i); setCurrentAbs(0); }} // Reset reading on filter change
+                                            className={`w-8 h-8 rounded-full border-2 transition-all transform hover:scale-110
+                                                ${fil.color}
+                                                ${filterIdx === i ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-70'}
+                                            `}
+                                            title={fil.name}
+                                        />
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-slate-500">
+                                    Tip: Use a <span className="text-white font-bold">complementary color</span> filter for max absorbance.
+                                </p>
+                            </div>
+
+                            {/* 3. Mode Select */}
+                            <div className="bg-slate-800 p-1 rounded-xl grid grid-cols-2 gap-1">
+                                <button 
+                                    onClick={() => setMode('calibrate')}
+                                    className={`py-2 text-xs font-bold rounded-lg transition-all ${mode === 'calibrate' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Calibration
+                                </button>
+                                <button 
+                                    onClick={() => setMode('measure')}
+                                    className={`py-2 text-xs font-bold rounded-lg transition-all ${mode === 'measure' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Unknown
+                                </button>
+                            </div>
+
+                            {/* Sample Control */}
+                            {mode === 'calibrate' ? (
+                                <div className="space-y-3">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Standard Conc.</label>
+                                    <input 
+                                        type="range" min="0" max="4" step="1"
+                                        value={selectedStandard}
+                                        onChange={(e) => { setSelectedStandard(parseInt(e.target.value)); setCurrentAbs(0); }}
+                                        className="accent-blue-500"
+                                    />
+                                    <div className="flex justify-between text-xs font-mono text-blue-400">
+                                        {STANDARDS.map(s => <span key={s}>{s}M</span>)}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-xl text-center">
+                                    <div className="text-xs font-bold text-emerald-400 uppercase mb-1">Unknown Sample X</div>
+                                    <div className="text-[10px] text-slate-400">Ready to measure</div>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] overflow-hidden flex flex-col">
+                        
+                        {/* Visualizer Area */}
+                        <div className="flex-1 relative flex items-center justify-center p-8">
+                            
+                            {/* Colorimeter Machine */}
+                            <div className="relative w-[500px] h-[300px] bg-slate-800 rounded-3xl border border-slate-600 shadow-2xl flex flex-col items-center justify-center">
+                                
+                                {/* Screen */}
+                                <div className="absolute top-6 bg-black border-2 border-slate-500 rounded-lg w-48 h-20 flex items-center justify-center font-mono text-3xl text-red-500 shadow-inner">
+                                    {isMeasuring ? <span className="animate-pulse">---</span> : currentAbs.toFixed(3)}
+                                    <span className="text-xs absolute bottom-1 right-2 text-slate-500">ABS</span>
+                                </div>
+
+                                {/* Cuvette Slot */}
+                                <div className="mt-16 relative w-24 h-32 bg-slate-900 border-2 border-slate-700 rounded-lg flex items-end justify-center overflow-hidden shadow-inner">
+                                    
+                                    {/* Light Beam Source (Left) */}
+                                    <div className={`absolute top-1/2 -left-20 w-20 h-2 bg-white blur-sm light-beam ${isMeasuring ? 'opacity-100' : 'opacity-0'}`}
+                                         style={{ backgroundColor: activeFilter.hex }}></div>
+
+                                    {/* The Cuvette */}
+                                    <div className="w-16 h-24 mb-2 border border-white/20 bg-white/5 relative backdrop-blur-sm rounded-sm overflow-hidden">
+                                        <div className={`absolute bottom-0 w-full h-full transition-colors duration-500 ${activeSol.color}`} style={{ opacity: liquidOpacity }}></div>
+                                    </div>
+
+                                    {/* Light Beam Through (Right) - Dimmer based on Absorbance */}
+                                    <div className={`absolute top-1/2 -right-20 w-20 h-2 bg-white blur-sm light-beam ${isMeasuring ? 'opacity-100' : 'opacity-0'}`}
+                                         style={{ 
+                                             backgroundColor: activeFilter.hex, 
+                                             opacity: isMeasuring ? Math.max(0.1, 1 - (currentAbs/2.5)) : 0 
+                                         }}></div>
+
+                                </div>
+
+                                {/* Controls on Machine */}
+                                <button 
+                                    onClick={handleMeasure}
+                                    disabled={isMeasuring}
+                                    className="absolute bottom-6 right-8 w-16 h-16 rounded-full bg-red-600 hover:bg-red-500 border-4 border-red-800 shadow-lg active:scale-95 transition-all flex items-center justify-center font-bold text-xs text-white"
+                                >
+                                    TEST
+                                </button>
+
+                                <div className="absolute bottom-8 left-8 flex flex-col gap-1">
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase">Filter</span>
+                                    <div className={`w-8 h-8 rounded-full border-2 border-slate-500 ${activeFilter.color}`}></div>
+                                </div>
+                            </div>
+                            
+                        </div>
+
+                        {/* Graph Panel */}
+                        <div className="h-[320px] bg-slate-900 border-t border-slate-800 p-6 shrink-0 flex gap-8">
+                            
+                            {/* Graph Container */}
+                            <div className="flex-1 bg-slate-800/50 rounded-xl border border-slate-700 p-4 relative">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase absolute top-4 left-4 flex items-center gap-2">
+                                    <Icon name="trending-up" size={14} /> Calibration Curve
+                                </h3>
+                                
+                                {plotData.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <ScatterChart margin={{ top: 30, right: 20, bottom: 20, left: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                            <XAxis type="number" dataKey="x" name="Concentration" unit="M" stroke="#94a3b8" domain={[0, 1.2]} />
+                                            <YAxis type="number" dataKey="y" name="Absorbance" stroke="#94a3b8" domain={[0, 2.5]} />
+                                            <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569' }} />
+                                            <Scatter name="Standards" data={plotData} fill="#3b82f6" />
+                                            {/* Best Fit Line (Simplified visualization) */}
+                                            {plotData.length >= 2 && (
+                                                <Line type="monotone" dataKey="y" data={plotData} stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={false} />
+                                            )}
+                                            {/* Unknown Point */}
+                                            {mode === 'measure' && currentAbs > 0 && (
+                                                <ReferenceLine y={currentAbs} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Unknown', fill: '#10b981', position: 'insideTopRight' }} />
+                                            )}
+                                        </ScatterChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-500 text-sm">
+                                        Measure standards to build the curve.
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Instructions / Status */}
+                            <div className="w-64 shrink-0 flex flex-col gap-4">
+                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex-1">
+                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Current Step</h4>
+                                    <p className="text-sm text-white leading-relaxed">
+                                        {mode === 'calibrate' 
+                                            ? `Preparing standard: ${currentConc.toFixed(1)}M. Press TEST to measure absorbance.`
+                                            : 'Measure the unknown sample. Compare its absorbance with the curve.'}
+                                    </p>
+                                </div>
+                                
+                                <button 
+                                    onClick={handleReset}
+                                    className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white transition-all flex items-center justify-center gap-2 text-sm font-bold"
+                                >
+                                    <Icon name="trash-2" size={16} /> Clear Data
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
