@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maxwell-Boltzmann Distribution Simulator - LuminousLearner</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.0.2"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Dark Mode Slider Styling */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #4f46e5; /* Indigo */
+            cursor: pointer;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons[name]) {
+                    const iconNode = window.lucide.icons[name];
+                    const iconSvg = window.lucide.createElement(iconNode);
+                    iconSvg.setAttribute('width', size);
+                    iconSvg.setAttribute('height', size);
+                    iconSvg.setAttribute('class', className);
+                    setSvg(iconSvg.outerHTML);
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            // State
+            const [temperature, setTemperature] = useState(300); // Kelvin
+            const [activationEnergy, setActivationEnergy] = useState(50); // Arbitrary energy unit (scaled)
+            const [fraction, setFraction] = useState(0); // % of particles with E > Ea
+            
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            // Maxwell-Boltzmann Distribution Function Approximation
+            // y = x^0.5 * exp(-x/T)
+            const calculateCurve = (temp) => {
+                const data = [];
+                const labels = [];
+                // Scale T to make the curve look nice in our x-axis range (0-120)
+                const T = temp / 20; 
+                
+                for (let x = 0; x <= 120; x += 1) {
+                    // Factor 1000 is just for scaling Y axis to readable numbers
+                    const y = 1000 * Math.sqrt(x) * Math.exp(-x / T) / Math.pow(T, 1.5);
+                    data.push(y);
+                    labels.push(x);
+                }
+                return { labels, data };
+            };
+
+            // Chart Rendering Effect
+            useEffect(() => {
+                if (!chartRef.current) return;
+
+                const { labels, data } = calculateCurve(temperature);
+                
+                // Calculate Fraction (Area > Ea)
+                // Simple Riemann sum approximation
+                let totalArea = 0;
+                let effectiveArea = 0;
+                
+                data.forEach((y, x) => {
+                    totalArea += y;
+                    if (x >= activationEnergy) effectiveArea += y;
+                });
+                
+                // Avoid division by zero
+                const percent = totalArea > 0 ? (effectiveArea / totalArea) * 100 : 0;
+                setFraction(percent.toFixed(2));
+
+                // Chart Colors based on Ea
+                // Bars >= Ea get emerald color
+                const backgroundColors = labels.map(x => x >= activationEnergy ? 'rgba(16, 185, 129, 0.6)' : 'rgba(99, 102, 241, 0.2)');
+                const borderColors = labels.map(x => x >= activationEnergy ? '#059669' : '#4f46e5');
+
+                const ctx = chartRef.current.getContext('2d');
+
+                if (chartInstance.current) {
+                    chartInstance.current.data.labels = labels;
+                    chartInstance.current.data.datasets[0].data = data;
+                    chartInstance.current.data.datasets[0].backgroundColor = backgroundColors;
+                    chartInstance.current.data.datasets[0].borderColor = borderColors;
+                    
+                    chartInstance.current.update();
+                } else {
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'bar', // Bar chart to easily color segments
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Fraction of Molecules',
+                                data: data,
+                                backgroundColor: backgroundColors,
+                                borderColor: borderColors,
+                                borderWidth: 1,
+                                barPercentage: 1.0,
+                                categoryPercentage: 1.0,
+                                pointRadius: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: { intersect: false, mode: 'index' },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: { 
+                                    enabled: true,
+                                    callbacks: {
+                                        title: () => '',
+                                        label: (context) => `Energy: ${context.raw > 0 ? context.dataIndex : 0}`
+                                    },
+                                    backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                                    titleColor: '#e2e8f0',
+                                    bodyColor: '#94a3b8',
+                                    borderColor: '#475569',
+                                    borderWidth: 1
+                                },
+                            },
+                            animation: { duration: 0 }, 
+                            scales: {
+                                x: { 
+                                    type: 'linear',
+                                    title: { display: true, text: 'Kinetic Energy (E)', font: { weight: 'bold', size: 14, color: '#e2e8f0' } },
+                                    min: 0, max: 120,
+                                    grid: { display: false },
+                                    ticks: { display: false }
+                                },
+                                y: { 
+                                    title: { display: true, text: 'Fraction of Molecules (N/Ntotal)', font: { weight: 'bold', size: 14, color: '#e2e8f0' } },
+                                    display: true,
+                                    min: 0,
+                                    ticks: { display: false },
+                                    grid: { color: '#334155', borderDash: [5, 5] }
+                                }
+                            },
+                        },
+                        plugins: [{
+                            id: 'custom-ea-line',
+                            afterDraw: (chart) => {
+                                const ctx = chart.ctx;
+                                const xAxis = chart.scales.x;
+                                const yAxis = chart.scales.y;
+                                
+                                if (activationEnergy > xAxis.max) return;
+
+                                const xPos = xAxis.getPixelForValue(activationEnergy);
+                                
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.moveTo(xPos, yAxis.top);
+                                ctx.lineTo(xPos, yAxis.bottom);
+                                ctx.lineWidth = 3;
+                                ctx.strokeStyle = '#ef4444'; // Red line
+                                ctx.setLineDash([6, 6]);
+                                ctx.stroke();
+                                
+                                // Draw Label "Ea"
+                                ctx.fillStyle = '#ef4444';
+                                ctx.font = 'bold 16px Inter';
+                                ctx.textAlign = 'center';
+                                ctx.fillText('Ea', xPos, yAxis.top + 20);
+                                
+                                ctx.restore();
+                            }
+                        }]
+                    });
+                }
+            }, [temperature, activationEnergy]);
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */
+                    <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Activity" /> Maxwell-Boltzmann Simulator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Kinetic Energy Distribution</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Controls */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            
+                            {/* Temperature Control */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border-l-8 border-red-500/50">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-slate-400 flex items-center gap-2">
+                                        <Icon name="Thermometer" className="text-red-400"/> Temperature (T)
+                                    </h3>
+                                    <span className="font-mono font-bold text-red-400 text-2xl">{temperature} K</span>
+                                </div>
+                                <input 
+                                    type="range" min="100" max="1000" step="10"
+                                    value={temperature}
+                                    onChange={(e) => setTemperature(Number(e.target.value))}
+                                    className="w-full h-2 bg-red-900/50 rounded-lg appearance-none cursor-pointer slider-thumb accent-red-500"
+                                />
+                                <div className="flex justify-between text-xs text-slate-500 mt-2 font-bold">
+                                    <span>Low T</span>
+                                    <span>High T</span>
+                                </div>
+                                <p className="text-xs text-slate-500 mt-3 bg-slate-800 p-2 rounded border border-slate-700">
+                                    👉 Increasing T lowers the peak and shifts the curve to the right.
+                                </p>
+                            </div>
+
+                            {/* Activation Energy Control */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border-l-8 border-amber-500/50">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold text-slate-400 flex items-center gap-2">
+                                        <Icon name="Zap" className="text-amber-400"/> Activation Energy (Ea)
+                                    </h3>
+                                    <span className="font-mono font-bold text-amber-400 text-2xl">{activationEnergy}</span>
+                                </div>
+                                <input 
+                                    type="range" min="20" max="100" step="1"
+                                    value={activationEnergy}
+                                    onChange={(e) => setActivationEnergy(Number(e.target.value))}
+                                    className="w-full h-2 bg-amber-900/50 rounded-lg appearance-none cursor-pointer slider-thumb accent-amber-500"
+                                />
+                                <div className="flex justify-between text-xs text-slate-500 mt-2 font-bold">
+                                    <span>Low Ea (Catalyst)</span>
+                                    <span>High Ea</span>
+                                </div>
+                                <p className="text-xs text-slate-500 mt-3 bg-slate-800 p-2 rounded border border-slate-700">
+                                    👉 Shifting Ea to the left simulates adding a **catalyst**.
+                                </p>
+                            </div>
+
+                            {/* Stats Panel */}
+                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl text-white border border-slate-800">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 tracking-widest border-b border-slate-700 pb-2">
+                                    Effective Collision Fraction
+                                </h3>
+                                
+                                <div className="flex items-baseline gap-2 mb-4">
+                                    <span className={`text-6xl font-mono font-black tracking-tighter ${fraction > 10 ? 'text-emerald-400' : 'text-indigo-400'}`}>
+                                        {fraction}%
+                                    </span>
+                                    <span className="text-sm text-slate-400">particles with E ≥ E<sub>a</sub></span>
+                                </div>
+                                
+                                {/* Progress Bar */}
+                                <div className="w-full bg-slate-700 h-4 rounded-full overflow-hidden border border-slate-600 mb-2">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-300" 
+                                        style={{width: `${Math.min(100, parseFloat(fraction))}%`}}
+                                    ></div>
+                                </div>
+                                
+                                <div className="text-xs text-slate-400 flex items-start gap-2 mt-4">
+                                    <Icon name="Info" size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
+                                    <span>This fraction determines the **maximum rate** of reaction. Small changes in T can drastically change this percentage.</span>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Chart Area */}
+                        <div className="w-full lg:w-2/3 flex flex-col">
+                            <div className="bg-slate-950 rounded-3xl border-4 border-slate-800 p-6 shadow-xl flex-grow flex flex-col min-h-[500px]">
+                                <div className="flex-grow chart-container relative w-full">
+                                    <canvas ref={chartRef}></canvas>
+                                </div>
+                                
+                                {/* Legend */}
+                                <div className="mt-6 flex justify-center gap-8 text-xs font-bold border-t border-slate-800 pt-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-4 h-4 bg-indigo-900 border border-indigo-500 rounded"></div>
+                                        <span className="text-slate-400">Ineffective Collisions (E &lt; E<sub>a</sub>)</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-4 h-4 bg-emerald-900 border border-emerald-600 rounded"></div>
+                                        <span className="text-slate-200">Effective Collisions (E &ge; E<sub>a</sub>)</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-0 border-t-2 border-dashed border-red-500"></div>
+                                        <span className="text-red-400">Activation Energy Threshold</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-12 border-t border-slate-800 pt-6 pb-6">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
