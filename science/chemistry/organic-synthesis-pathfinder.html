@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organic Synthesis Pathfinder - LuminousLearner International</title>
+    
+    <!-- React & Tailwind & Lucide -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Animation for path reveal */
+        .step-card { opacity: 0; transform: translateY(20px); animation: reveal 0.5s ease-out forwards; }
+        @keyframes reveal { to { opacity: 1; transform: translateY(0); } }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const Icon = ({ name, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
+            return <i data-lucide={name} className={className}></i>;
+        };
+
+        // --- CHEMICAL DATABASE & GRAPH ---
+        
+        // Nodes: Functional Groups (Internationalized Terms)
+        const COMPOUNDS = {
+            'alkane': { name: 'Alkane', label: 'C-C Single Bonds', color: 'text-slate-400', bg: 'bg-slate-800' },
+            'alkene': { name: 'Alkene', label: 'C=C Double Bond', color: 'text-emerald-400', bg: 'bg-emerald-900/30' },
+            'haloalkane': { name: 'Halogenoalkane', label: 'R-X (X=Cl,Br,I)', color: 'text-yellow-400', bg: 'bg-yellow-900/30' },
+            'alcohol_1': { name: 'Primary Alcohol', label: 'R-CH₂-OH', color: 'text-cyan-400', bg: 'bg-cyan-900/30' },
+            'alcohol_2': { name: 'Secondary Alcohol', label: 'R₂-CH-OH', color: 'text-cyan-400', bg: 'bg-cyan-900/30' },
+            'aldehyde': { name: 'Aldehyde', label: 'R-CHO', color: 'text-pink-400', bg: 'bg-pink-900/30' },
+            'ketone': { name: 'Ketone', label: 'R-CO-R', color: 'text-pink-400', bg: 'bg-pink-900/30' },
+            'acid': { name: 'Carboxylic Acid', label: 'R-COOH', color: 'text-red-400', bg: 'bg-red-900/30' },
+            'ester': { name: 'Ester', label: 'R-COO-R\'', color: 'text-purple-400', bg: 'bg-purple-900/30' },
+            'amide': { name: 'Amide', label: 'R-CONH₂', color: 'text-indigo-400', bg: 'bg-indigo-900/30' },
+            'nitrile': { name: 'Nitrile', label: 'R-CN', color: 'text-orange-400', bg: 'bg-orange-900/30' },
+            'amine': { name: 'Amine', label: 'R-NH₂', color: 'text-blue-400', bg: 'bg-blue-900/30' },
+            'acyl_chloride': { name: 'Acyl Chloride', label: 'R-COCl', color: 'text-red-300', bg: 'bg-red-800/30' },
+        };
+
+        // Edges: Reactions (Adjacency List)
+        // Format: from: { to: { reagents, type, note, carbonChange } }
+        // carbonChange: 0 = same, 1 = step up, -1 = step down
+        const REACTIONS = {
+            'alkane': {
+                'haloalkane': { r: 'X₂ / UV light', t: 'Substitution', n: 'Free Radical Sub.', c: 0 }
+            },
+            'alkene': {
+                'alkane': { r: 'H₂ / Ni, Heat', t: 'Addition', n: 'Hydrogenation', c: 0 },
+                'haloalkane': { r: 'HX (g) or conc.', t: 'Addition', n: 'Electrophilic Add.', c: 0 },
+                'alcohol_1': { r: '1. BH₃, THF 2. H₂O₂, OH⁻', t: 'Addition', n: 'Hydroboration (Anti-Mark.)', c: 0 }, // Specific for Primary
+                'alcohol_2': { r: 'Steam / H₃PO₄ Catalyst', t: 'Addition', n: 'Hydration (Markovnikov)', c: 0 }
+            },
+            'haloalkane': {
+                'alcohol_1': { r: 'NaOH (aq), Heat', t: 'Substitution', n: 'Nucleophilic Sub.', c: 0 },
+                'alkene': { r: 'NaOH (ethanol), Reflux', t: 'Elimination', n: 'Elimination', c: 0 },
+                'nitrile': { r: 'KCN (ethanol), Reflux', t: 'Substitution', n: 'Step-up Reaction (+1 C)', c: 1 },
+                'amine': { r: 'Excess conc. NH₃ (alc), Heat', t: 'Substitution', n: 'Sealed Tube', c: 0 }
+            },
+            'alcohol_1': {
+                'haloalkane': { r: 'PCl₅ or SOCl₂', t: 'Substitution', n: 'Chlorination', c: 0 },
+                'aldehyde': { r: 'K₂Cr₂O₇ / H⁺, Distil', t: 'Oxidation', n: 'Partial Oxidation', c: 0 },
+                'acid': { r: 'K₂Cr₂O₇ / H⁺, Reflux', t: 'Oxidation', n: 'Full Oxidation', c: 0 },
+                'ester': { r: 'Carboxylic Acid / Conc. H₂SO₄', t: 'Condensation', n: 'Esterification', c: 0 },
+                'alkene': { r: 'Conc. H₂SO₄, 170°C', t: 'Elimination', n: 'Dehydration', c: 0 }
+            },
+            'alcohol_2': {
+                'ketone': { r: 'K₂Cr₂O₇ / H⁺, Reflux', t: 'Oxidation', n: 'Oxidation', c: 0 },
+                'alkene': { r: 'Conc. H₂SO₄, 170°C', t: 'Elimination', n: 'Dehydration', c: 0 }
+            },
+            'aldehyde': {
+                'acid': { r: 'K₂Cr₂O₇ / H⁺, Reflux', t: 'Oxidation', n: 'Reflux', c: 0 },
+                'alcohol_1': { r: 'NaBH₄ (aq)', t: 'Reduction', n: 'Reduction', c: 0 },
+                'nitrile': { r: 'HCN / KCN', t: 'Addition', n: 'Nucleophilic Add. (+1 C)', c: 1 } // Hydroxynitrile really, but fits logic
+            },
+            'ketone': {
+                'alcohol_2': { r: 'NaBH₄ (aq)', t: 'Reduction', n: 'Reduction', c: 0 }
+            },
+            'acid': {
+                'alcohol_1': { r: 'LiAlH₄ in dry ether', t: 'Reduction', n: 'Strong Reduction', c: 0 },
+                'ester': { r: 'Alcohol / Conc. H₂SO₄', t: 'Condensation', n: 'Esterification', c: 0 },
+                'acyl_chloride': { r: 'SOCl₂ or PCl₅', t: 'Substitution', n: 'Formation of Acyl Chloride', c: 0 }
+            },
+            'acyl_chloride': {
+                'amide': { r: 'Conc. NH₃', t: 'Substitution', n: 'Amide Formation', c: 0 },
+                'ester': { r: 'Alcohol', t: 'Condensation', n: 'Vigorous Esterification', c: 0 },
+                'acid': { r: 'H₂O', t: 'Hydrolysis', n: 'Vigorous Hydrolysis', c: 0 }
+            },
+            'nitrile': {
+                'acid': { r: 'Dilute H⁺(aq), Reflux', t: 'Hydrolysis', n: 'Acid Hydrolysis', c: 0 },
+                'amine': { r: 'LiAlH₄ or H₂/Ni', t: 'Reduction', n: 'Reduction', c: 0 }
+            },
+            'amide': {
+                'amine': { r: 'Br₂ / NaOH (aq)', t: 'Degradation', n: 'Hofmann Degradation (-1 C)', c: -1 },
+                'acid': { r: 'Dilute H⁺(aq), Reflux', t: 'Hydrolysis', n: 'Acid Hydrolysis', c: 0 }
+            }
+        };
+
+        // --- PRESETS (Textbook Examples) ---
+        const EXAMPLES = [
+            { title: "Step-up: Ethene to Propanoic Acid", start: 'alkene', end: 'acid', desc: "Classic C2 to C3 synthesis using Nitrile." },
+            { title: "Step-down: Propanoic Acid to Ethylamine", start: 'acid', end: 'amine', desc: "Using Hofmann Degradation to remove a carbon." },
+            { title: "Alcohol to Amide", start: 'alcohol_1', end: 'amide', desc: "Via Carboxylic Acid and Acyl Chloride." },
+            { title: "Halogenoalkane to Ester", start: 'haloalkane', end: 'ester', desc: "Convert to alcohol first, then esterify." },
+            { title: "Alkane to Amine", start: 'alkane', end: 'amine', desc: "From unreactive alkane to reactive amine." }
+        ];
+
+        // --- PATHFINDING ALGORITHM (BFS) ---
+        const findPath = (startNode, endNode) => {
+            if (startNode === endNode) return [];
+
+            let queue = [[{ node: startNode, reaction: null }]];
+            let visited = new Set();
+            visited.add(startNode);
+
+            while (queue.length > 0) {
+                let path = queue.shift();
+                let lastStep = path[path.length - 1];
+                let currentNode = lastStep.node;
+
+                if (currentNode === endNode) {
+                    return path.slice(1); // Remove start node from actions list (keep structure logic)
+                }
+
+                const neighbors = REACTIONS[currentNode];
+                if (neighbors) {
+                    for (let [neighborNode, reaction] of Object.entries(neighbors)) {
+                        if (!visited.has(neighborNode)) {
+                            visited.add(neighborNode);
+                            let newPath = [...path, { node: neighborNode, reaction: reaction, fromNode: currentNode }];
+                            queue.push(newPath);
+                        }
+                    }
+                }
+            }
+            return null; // No path found
+        };
+
+        const App = () => {
+            const [start, setStart] = useState('alkene');
+            const [end, setEnd] = useState('acid');
+            const [path, setPath] = useState([]);
+            
+            // Calculate path whenever start/end changes
+            useEffect(() => {
+                const result = findPath(start, end);
+                setPath(result);
+            }, [start, end]);
+
+            const handlePreset = (ex) => {
+                setStart(ex.start);
+                setEnd(ex.end);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col md:flex-row bg-[#0F172A] text-slate-200 overflow-hidden">
+                    
+                    {/* Sidebar: Controls & Examples */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 p-6 flex flex-col gap-8 overflow-y-auto z-10 shadow-xl h-screen shrink-0">
+                        
+                        {/* Title */}
+                        <div className="flex items-center gap-3">
+                            <div className="p-3 bg-emerald-600 rounded-xl shadow-lg shadow-emerald-900/50">
+                                <Icon name="map" className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h1 className="text-lg font-bold text-white leading-tight">Synthesis<br/>Pathfinder</h1>
+                                <p className="text-xs text-emerald-400 font-mono mt-1">Organic Chemistry GPS</p>
+                            </div>
+                        </div>
+
+                        {/* Selectors */}
+                        <div className="space-y-4">
+                            <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block flex items-center gap-2">
+                                    <Icon name="map-pin" className="w-3 h-3" /> Starting Material
+                                </label>
+                                <select 
+                                    value={start} 
+                                    onChange={(e) => setStart(e.target.value)}
+                                    className="w-full bg-slate-900 text-white p-3 rounded-xl border border-slate-600 focus:border-emerald-500 outline-none font-bold"
+                                >
+                                    {Object.entries(COMPOUNDS).map(([key, val]) => (
+                                        <option key={key} value={key}>{val.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="flex justify-center -my-2 relative z-10">
+                                <div className="bg-slate-700 p-1 rounded-full border-4 border-slate-900">
+                                    <Icon name="arrow-down" className="w-4 h-4 text-slate-400" />
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block flex items-center gap-2">
+                                    <Icon name="flag" className="w-3 h-3" /> Target Product
+                                </label>
+                                <select 
+                                    value={end} 
+                                    onChange={(e) => setEnd(e.target.value)}
+                                    className="w-full bg-slate-900 text-white p-3 rounded-xl border border-slate-600 focus:border-emerald-500 outline-none font-bold"
+                                >
+                                    {Object.entries(COMPOUNDS).map(([key, val]) => (
+                                        <option key={key} value={key} disabled={key === start}>{val.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Presets */}
+                        <div>
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Common Routes</label>
+                            <div className="space-y-2">
+                                {EXAMPLES.map((ex, i) => (
+                                    <button 
+                                        key={i}
+                                        onClick={() => handlePreset(ex)}
+                                        className="w-full text-left p-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 transition-all group"
+                                    >
+                                        <div className="text-sm font-bold text-emerald-400 group-hover:text-emerald-300">{ex.title}</div>
+                                        <div className="text-xs text-slate-400 mt-1">{ex.desc}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content: The Path */}
+                    <div className="flex-1 bg-[#0F172A] relative overflow-y-auto">
+                        <div className="max-w-4xl mx-auto p-8 md:p-12 min-h-full flex flex-col">
+                            
+                            {/* Route Summary Header */}
+                            <div className="flex items-center justify-between mb-12 border-b border-slate-800 pb-6">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                                        Synthesis Route
+                                        {path && <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded-full border border-emerald-500/50">{path.length} Steps</span>}
+                                    </h2>
+                                    <div className="flex items-center gap-2 mt-2 text-slate-400 font-mono text-sm">
+                                        <span>{COMPOUNDS[start].name}</span>
+                                        <Icon name="arrow-right" className="w-4 h-4" />
+                                        <span>{COMPOUNDS[end].name}</span>
+                                    </div>
+                                </div>
+                                <div className="hidden md:block text-right">
+                                    <div className="text-xs font-bold text-slate-500 uppercase mb-1">Total Change</div>
+                                    <div className="text-sm text-white">
+                                        Carbon Count: <span className="text-yellow-400">
+                                            {path && path.reduce((acc, step) => acc + step.reaction.c, 0) > 0 ? '+1 Step Up' : 
+                                             path && path.reduce((acc, step) => acc + step.reaction.c, 0) < 0 ? '-1 Step Down' : 'No Change'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* The Path Visualization */}
+                            <div className="relative flex-1 pb-20">
+                                {/* Vertical connecting line */}
+                                <div className="absolute left-8 top-4 bottom-0 w-1 bg-slate-800 rounded-full"></div>
+
+                                {!path ? (
+                                    <div className="flex flex-col items-center justify-center h-64 text-slate-500">
+                                        <Icon name="search-x" className="w-12 h-12 mb-4 opacity-50"/>
+                                        <p>No direct synthesis path found in database.</p>
+                                        <p className="text-xs mt-2">Try an intermediate target first.</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* START NODE */}
+                                        <div className="relative pl-24 mb-8 step-card" style={{animationDelay: '0ms'}}>
+                                            <div className="absolute left-0 top-0 w-16 h-16 bg-slate-800 rounded-2xl border-4 border-[#0F172A] flex items-center justify-center shadow-lg z-10">
+                                                <div className="font-bold text-white text-xs">START</div>
+                                            </div>
+                                            <div className={`p-5 rounded-2xl border border-slate-700 ${COMPOUNDS[start].bg}`}>
+                                                <h3 className={`text-xl font-bold ${COMPOUNDS[start].color}`}>{COMPOUNDS[start].name}</h3>
+                                                <p className="text-slate-400 text-sm font-mono">{COMPOUNDS[start].label}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* STEPS */}
+                                        {path.map((step, idx) => {
+                                            const compound = COMPOUNDS[step.node];
+                                            const rxn = step.reaction;
+                                            
+                                            return (
+                                                <div key={idx} className="relative pl-24 mb-8 step-card" style={{animationDelay: `${(idx+1) * 150}ms`}}>
+                                                    
+                                                    {/* The Arrow / Reaction Reagent */}
+                                                    <div className="absolute left-[28px] -top-10 w-1 h-16 flex items-center justify-center z-0">
+                                                        {/* Visual connector logic handled by main line */}
+                                                    </div>
+
+                                                    {/* Reaction Card */}
+                                                    <div className="mb-4 -ml-4">
+                                                        <div className="inline-block bg-slate-900 border border-slate-600 rounded-lg p-3 shadow-xl transform -translate-y-2">
+                                                            <div className="text-xs text-slate-500 uppercase font-bold mb-1 flex items-center gap-1">
+                                                                <Icon name="flask-conical" className="w-3 h-3"/> Reagents
+                                                            </div>
+                                                            <div className="font-mono font-bold text-yellow-400 text-sm md:text-base">
+                                                                {rxn.r}
+                                                            </div>
+                                                            <div className="flex items-center gap-2 mt-2">
+                                                                <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-300 border border-slate-700">{rxn.t}</span>
+                                                                {rxn.c !== 0 && (
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${rxn.c > 0 ? 'bg-indigo-500/20 text-indigo-300' : 'bg-orange-500/20 text-orange-300'}`}>
+                                                                            {rxn.c > 0 ? 'Step Up (+C)' : 'Step Down (-C)'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Icon Node */}
+                                                    <div className="absolute left-0 top-12 w-16 h-16 bg-slate-800 rounded-2xl border-4 border-[#0F172A] flex items-center justify-center shadow-lg z-10">
+                                                        <span className="text-slate-500 font-mono text-sm">{idx + 1}</span>
+                                                    </div>
+
+                                                    {/* Compound Card */}
+                                                    <div className={`p-5 rounded-2xl border border-slate-700 shadow-md transition-all hover:scale-[1.01] ${compound.bg}`}>
+                                                        <div className="flex justify-between items-start">
+                                                            <div>
+                                                                <h3 className={`text-xl font-bold ${compound.color}`}>{compound.name}</h3>
+                                                                <p className="text-slate-300/70 text-sm font-mono">{compound.label}</p>
+                                                            </div>
+                                                            {/* Note Badge */}
+                                                            {rxn.n && (
+                                                                <div className="bg-black/20 backdrop-blur px-3 py-1 rounded-lg text-xs text-white/80 border border-white/10">
+                                                                        {rxn.n}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+
+                                        {/* END NODE (Visual Marker) */}
+                                        <div className="absolute left-6 bottom-0 w-4 h-4 bg-emerald-500 rounded-full border-4 border-[#0F172A] z-20"></div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
