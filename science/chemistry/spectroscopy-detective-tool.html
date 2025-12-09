@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spectroscopy Detective</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .chart-container { position: relative; }
+        .tooltip-box { background: rgba(15, 23, 42, 0.9); border: 1px solid #334155; border-radius: 8px; padding: 8px; backdrop-filter: blur(4px); }
+        
+        /* Scanning Animation */
+        .scan-line {
+            position: absolute;
+            top: 0; bottom: 0; width: 2px;
+            background: linear-gradient(to bottom, transparent, #10b981, transparent);
+            animation: scan 2s ease-in-out infinite;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+        @keyframes scan {
+            0% { left: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { left: 100%; opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, LabelList } = window.Recharts;
+
+        // --- SAFE ICON ---
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATABASE (Translated) ---
+        const COMPOUNDS = [
+            {
+                id: 'ethanol',
+                name: 'Ethanol',
+                formula: 'CH₃CH₂OH',
+                mw: 46,
+                structure: 'Alcohol',
+                ir: [ 
+                    { x: 4000, y: 100 }, 
+                    { x: 3350, y: 20, label: 'O-H (Broad)' }, // Alcohol OH
+                    { x: 2950, y: 30, label: 'C-H (sp3)' }, // Alkyl CH
+                    { x: 1050, y: 20, label: 'C-O' }, { x: 500, y: 100 }
+                ],
+                ms: [ 
+                    { x: 15, y: 30, label: 'CH₃⁺' },
+                    { x: 29, y: 40, label: 'C₂H₅⁺ / CHO⁺' },
+                    { x: 31, y: 100, label: 'CH₂OH⁺ (Base Peak)' },
+                    { x: 45, y: 20, label: 'M-1' },
+                    { x: 46, y: 30, label: 'M⁺' }
+                ],
+                hints: ["Broad peak at 3200-3600 cm⁻¹ indicates Hydrogen bonding.", "Base peak at m/z 31 suggests primary alcohol."]
+            },
+            {
+                id: 'ethanoic_acid',
+                name: 'Ethanoic Acid',
+                formula: 'CH₃COOH',
+                mw: 60,
+                structure: 'Carboxylic Acid',
+                ir: [
+                    { x: 4000, y: 100 }, 
+                    { x: 3000, y: 15, label: 'O-H (Very Broad)' }, // Acid OH overlaps CH
+                    { x: 1710, y: 5, label: 'C=O (Strong)' }, // Carbonyl
+                    { x: 1250, y: 30, label: 'C-O' }, { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 15, y: 25, label: 'CH₃⁺' },
+                    { x: 43, y: 100, label: 'CH₃CO⁺ (Acyl)' },
+                    { x: 45, y: 40, label: 'COOH⁺' },
+                    { x: 60, y: 60, label: 'M⁺' }
+                ],
+                hints: ["Very broad 'hairy' OH peak covering 2500-3300 cm⁻¹.", "Strong C=O peak at ~1710 cm⁻¹."]
+            },
+            {
+                id: 'propanone',
+                name: 'Propanone',
+                formula: 'CH₃COCH₃',
+                mw: 58,
+                structure: 'Ketone',
+                ir: [
+                    { x: 4000, y: 100 }, 
+                    { x: 2960, y: 40, label: 'C-H' },
+                    { x: 1715, y: 5, label: 'C=O' }, 
+                    { x: 1200, y: 100 }, { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 15, y: 35, label: 'CH₃⁺' },
+                    { x: 43, y: 100, label: 'CH₃CO⁺ (Base Peak)' },
+                    { x: 58, y: 40, label: 'M⁺' }
+                ],
+                hints: ["No broad O-H peak.", "Sharp, strong peak at ~1715 cm⁻¹."]
+            },
+            {
+                id: 'ethyl_ethanoate',
+                name: 'Ethyl Ethanoate',
+                formula: 'CH₃COOCH₂CH₃',
+                mw: 88,
+                structure: 'Ester',
+                ir: [
+                    { x: 4000, y: 100 },
+                    { x: 2980, y: 40, label: 'C-H' },
+                    { x: 1740, y: 5, label: 'C=O (Ester)' }, 
+                    { x: 1240, y: 10, label: 'C-O (Strong)' },
+                    { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 29, y: 30, label: 'C₂H₅⁺' },
+                    { x: 43, y: 100, label: 'CH₃CO⁺' },
+                    { x: 45, y: 20, label: 'OEt⁺' },
+                    { x: 88, y: 5, label: 'M⁺ (Weak)' } 
+                ],
+                hints: ["Strong C=O (~1740) AND strong C-O (~1240).", "No O-H peak."]
+            },
+            {
+                id: 'benzaldehyde',
+                name: 'Benzaldehyde',
+                formula: 'C₆H₅CHO',
+                mw: 106,
+                structure: 'Aromatic Aldehyde',
+                ir: [
+                    { x: 4000, y: 100 },
+                    { x: 3050, y: 30, label: 'C-H (Aromatic)' },
+                    { x: 2820, y: 40, label: 'C-H (Aldehyde)' },
+                    { x: 2720, y: 40, label: 'C-H (Aldehyde)' },
+                    { x: 1700, y: 5, label: 'C=O' },
+                    { x: 1600, y: 20, label: 'C=C (Aromatic)' },
+                    { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 51, y: 40, label: 'C₄H₃⁺' },
+                    { x: 77, y: 80, label: 'C₆H₅⁺ (Phenyl)' },
+                    { x: 105, y: 100, label: 'C₆H₅CO⁺ (Base)' },
+                    { x: 106, y: 60, label: 'M⁺' }
+                ],
+                hints: ["Characteristic 'Fermi doublet' (2720 & 2820) for Aldehyde C-H.", "Strong peak at m/z 105 (M-1) and 77 (Phenyl)."]
+            },
+            {
+                id: 'phenol',
+                name: 'Phenol',
+                formula: 'C₆H₅OH',
+                mw: 94,
+                structure: 'Aromatic Alcohol',
+                ir: [
+                    { x: 4000, y: 100 },
+                    { x: 3300, y: 15, label: 'O-H (Broad)' },
+                    { x: 3050, y: 30, label: 'C-H (Aromatic)' },
+                    { x: 1600, y: 20, label: 'C=C (Aromatic)' },
+                    { x: 1230, y: 20, label: 'C-O' },
+                    { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 39, y: 20, label: 'C₃H₃⁺' },
+                    { x: 65, y: 15, label: 'C₅H₅⁺' },
+                    { x: 66, y: 20, label: 'C₅H₆⁺' },
+                    { x: 94, y: 100, label: 'M⁺ (Stable)' }
+                ],
+                hints: ["OH peak + Aromatic C=C signals.", "Strong molecular ion peak at m/z 94."]
+            },
+            {
+                id: 'ethanamide',
+                name: 'Ethanamide',
+                formula: 'CH₃CONH₂',
+                mw: 59,
+                structure: 'Primary Amide',
+                ir: [
+                    { x: 4000, y: 100 },
+                    { x: 3350, y: 20, label: 'N-H (Sym)' },
+                    { x: 3180, y: 20, label: 'N-H (Asym)' },
+                    { x: 1680, y: 5, label: 'C=O (Amide)' },
+                    { x: 1600, y: 30, label: 'N-H Bend' },
+                    { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 15, y: 20, label: 'CH₃⁺' },
+                    { x: 43, y: 40, label: 'CH₃CO⁺' },
+                    { x: 44, y: 100, label: 'CONH₂⁺ (Base)' },
+                    { x: 59, y: 60, label: 'M⁺' }
+                ],
+                hints: ["Double spike at 3200-3400 cm⁻¹ indicates primary amine/amide.", "C=O peak at ~1680 cm⁻¹."]
+            },
+            {
+                id: 'benzoic_acid',
+                name: 'Benzoic Acid',
+                formula: 'C₆H₅COOH',
+                mw: 122,
+                structure: 'Aromatic Acid',
+                ir: [
+                    { x: 4000, y: 100 },
+                    { x: 3000, y: 10, label: 'O-H (Very Broad)' },
+                    { x: 1690, y: 5, label: 'C=O (Acid)' },
+                    { x: 1600, y: 25, label: 'C=C (Aromatic)' },
+                    { x: 1290, y: 30, label: 'C-O' },
+                    { x: 500, y: 100 }
+                ],
+                ms: [
+                    { x: 51, y: 30, label: 'C₄H₃⁺' },
+                    { x: 77, y: 65, label: 'C₆H₅⁺' },
+                    { x: 105, y: 100, label: 'C₆H₅CO⁺ (Base)' },
+                    { x: 122, y: 45, label: 'M⁺' }
+                ],
+                hints: ["Broad OH overlapping CH.", "M-17 (loss of OH) peak at m/z 105."]
+            }
+        ];
+
+        const formatIRData = (peaks) => {
+            // Generate a "line" from peaks. 
+            // Start with baseline y=100. Dip down at peaks.
+            let data = [];
+            for(let x=4000; x>=500; x-=10) { // Standard IR goes high to low
+                let y = 100;
+                // Check if near a peak
+                const peak = peaks.find(p => Math.abs(p.x - x) < 50);
+                if (peak) {
+                    // Create a "V" shape dip
+                    const dist = Math.abs(peak.x - x);
+                    // Broadness factor: OH is broad (dist/50), C=O is sharp (dist/10)
+                    const broadness = peak.label && (peak.label.includes('Broad') || peak.label.includes('Hairy')) ? 0.8 : 2.5;
+                    y = peak.y + (100 - peak.y) * Math.min(1, (dist * broadness) / 40);
+                }
+                // Add some noise
+                y += (Math.random() - 0.5) * 2; 
+                data.push({ x, y: Math.min(100, Math.max(0, y)), peak: peak && Math.abs(peak.x - x) < 10 ? peak.label : null });
+            }
+            return data;
+        };
+
+        // --- COMPONENTS ---
+        const IRChart = ({ data, showScan }) => (
+            <div className="w-full h-[300px] bg-slate-800 rounded-xl border border-slate-700 p-4 chart-container overflow-hidden">
+                <h3 className="text-xs font-bold text-red-400 mb-2 flex items-center gap-2">
+                    <Icon name="activity" size={14}/> Infrared Spectrum (IR)
+                </h3>
+                <ResponsiveContainer width="100%" height="90%">
+                    <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                        <XAxis dataKey="x" type="number" domain={[500, 4000]} reversed={true} stroke="#94a3b8" tick={{fontSize: 10}} label={{ value: "Wavenumber (cm⁻¹)", position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 10 }} />
+                        <YAxis domain={[0, 105]} stroke="#94a3b8" tick={{fontSize: 10}} label={{ value: "% Transmittance", angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }} />
+                        <Tooltip 
+                            content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                    const pt = payload[0].payload;
+                                    return (
+                                        <div className="tooltip-box text-xs text-white">
+                                            <div>{pt.x} cm⁻¹</div>
+                                            <div>{pt.y.toFixed(1)}% T</div>
+                                            {pt.peak && <div className="text-yellow-400 font-bold mt-1">{pt.peak}</div>}
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            }}
+                        />
+                        <Line type="monotone" dataKey="y" stroke="#ef4444" strokeWidth={2} dot={false} animationDuration={1500} />
+                    </LineChart>
+                </ResponsiveContainer>
+                {showScan && <div className="scan-line"></div>}
+            </div>
+        );
+
+        const MSChart = ({ peaks, showScan }) => (
+            <div className="w-full h-[300px] bg-slate-800 rounded-xl border border-slate-700 p-4 chart-container overflow-hidden">
+                <h3 className="text-xs font-bold text-blue-400 mb-2 flex items-center gap-2">
+                    <Icon name="bar-chart-2" size={14}/> Mass Spectrum (MS)
+                </h3>
+                <ResponsiveContainer width="100%" height="90%">
+                    <BarChart data={peaks} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                        <XAxis dataKey="x" type="number" domain={[0, 'dataMax + 10']} stroke="#94a3b8" tick={{fontSize: 10}} label={{ value: "m/z Ratio", position: 'insideBottom', offset: -5, fill: '#94a3b8', fontSize: 10 }} />
+                        <YAxis domain={[0, 100]} stroke="#94a3b8" tick={{fontSize: 10}} label={{ value: "Relative Intensity", angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }} />
+                        <Tooltip 
+                            cursor={{fill: 'rgba(255,255,255,0.05)'}}
+                            content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                    const data = payload[0].payload;
+                                    return (
+                                        <div className="tooltip-box text-xs text-white">
+                                            <div>m/z: {data.x}</div>
+                                            <div>Int: {data.y}</div>
+                                            {data.label && <div className="text-blue-300 font-bold mt-1">{data.label}</div>}
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            }}
+                        />
+                        <Bar dataKey="y" fill="#3b82f6" barSize={4} isAnimationActive={true} />
+                    </BarChart>
+                </ResponsiveContainer>
+                {showScan && <div className="scan-line" style={{animationDelay: '1s'}}></div>}
+            </div>
+        );
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [mode, setMode] = useState('learn'); // learn | challenge
+            const [targetId, setTargetId] = useState(null);
+            const [revealed, setRevealed] = useState(false);
+            const [feedback, setFeedback] = useState(null);
+            const [score, setScore] = useState(0);
+            
+            const currentCompound = useMemo(() => {
+                if (!targetId) return COMPOUNDS[0];
+                return COMPOUNDS.find(c => c.id === targetId);
+            }, [targetId]);
+
+            // Process IR data for line chart
+            const irData = useMemo(() => formatIRData(currentCompound.ir), [currentCompound]);
+
+            useEffect(() => {
+                if (mode === 'challenge' && !targetId) {
+                    nextChallenge();
+                } else if (mode === 'learn' && !targetId) {
+                    setTargetId(COMPOUNDS[0].id);
+                }
+            }, [mode]);
+
+            const nextChallenge = () => {
+                const random = COMPOUNDS[Math.floor(Math.random() * COMPOUNDS.length)];
+                setTargetId(random.id);
+                setRevealed(false);
+                setFeedback(null);
+            };
+
+            const handleGuess = (guessId) => {
+                if (revealed) return;
+                
+                if (guessId === targetId) {
+                    setFeedback('correct');
+                    setScore(s => s + 10);
+                } else {
+                    setFeedback('wrong');
+                }
+                setRevealed(true);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="search" className="text-emerald-400" /> Spectroscopy
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">IR & MS Detective Tool</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto">
+                            
+                            {/* Mode Switch */}
+                            <div className="grid grid-cols-2 gap-2 bg-slate-800 p-1 rounded-xl mb-6">
+                                <button 
+                                    onClick={() => setMode('learn')}
+                                    className={`py-2 text-xs font-bold rounded-lg transition-all ${mode === 'learn' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Learn Mode
+                                </button>
+                                <button 
+                                    onClick={() => { setMode('challenge'); nextChallenge(); }}
+                                    className={`py-2 text-xs font-bold rounded-lg transition-all ${mode === 'challenge' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Detective
+                                </button>
+                            </div>
+
+                            {mode === 'learn' ? (
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Compound</label>
+                                    {COMPOUNDS.map(c => (
+                                        <button 
+                                            key={c.id}
+                                            onClick={() => setTargetId(c.id)}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between
+                                                ${targetId === c.id ? 'bg-slate-800 border-blue-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <span className="text-sm font-bold">{c.name}</span>
+                                            {targetId === c.id && <Icon name="eye" size={16} className="text-blue-400"/>}
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-xs font-bold text-purple-400 uppercase">Detective Mode</span>
+                                            <span className="text-xs font-mono bg-slate-900 px-2 py-1 rounded text-white">Score: {score}</span>
+                                        </div>
+                                        <p className="text-sm text-slate-300">Identify the compound based on its spectral fingerprint!</p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Who is the suspect?</label>
+                                        {COMPOUNDS.map(c => (
+                                            <button 
+                                                key={c.id}
+                                                onClick={() => handleGuess(c.id)}
+                                                disabled={revealed}
+                                                className={`w-full text-left p-3 rounded-xl border transition-all relative overflow-hidden
+                                                    ${revealed && c.id === targetId 
+                                                        ? 'bg-emerald-900/50 border-emerald-500 text-emerald-300' 
+                                                        : revealed && feedback === 'wrong' 
+                                                            ? 'opacity-50 cursor-not-allowed bg-slate-900 border-slate-700' 
+                                                            : 'bg-slate-800 border-slate-600 hover:border-slate-400'}
+                                                `}
+                                            >
+                                                <span className="text-sm font-bold">{c.name}</span>
+                                                {revealed && c.id === targetId && <Icon name="check" size={16} className="absolute right-3 top-3 text-emerald-400"/>}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {revealed && (
+                                        <button onClick={nextChallenge} className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white shadow-lg transition-all">
+                                            Next Case
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {/* Reference Table Toggle */}
+                            <div className="mt-8 pt-6 border-t border-slate-800">
+                                <div className="bg-slate-800/50 p-3 rounded-lg text-xs text-slate-400">
+                                    <strong>Hint:</strong> Hover over peaks to see assignments.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 relative bg-[#020617] overflow-y-auto flex flex-col">
+                        
+                        {/* Header */}
+                        <div className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-20 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl font-black text-white flex items-center gap-3">
+                                    {mode === 'learn' || revealed ? currentCompound.name : 'Unknown Compound X'}
+                                    {mode === 'learn' && <span className="text-sm font-mono font-normal text-slate-400 bg-slate-800 px-2 py-1 rounded">{currentCompound.formula}</span>}
+                                </h2>
+                                {mode === 'challenge' && !revealed && (
+                                    <p className="text-xs text-purple-400 mt-1 animate-pulse">Analyzing spectral data...</p>
+                                )}
+                            </div>
+                            {revealed && feedback === 'correct' && (
+                                <div className="text-emerald-400 font-bold flex items-center gap-2 bg-emerald-900/20 px-4 py-2 rounded-full border border-emerald-500/30">
+                                    <Icon name="check-circle" /> Correct Identification!
+                                </div>
+                            )}
+                            {revealed && feedback === 'wrong' && (
+                                <div className="text-red-400 font-bold flex items-center gap-2 bg-red-900/20 px-4 py-2 rounded-full border border-red-500/30">
+                                    <Icon name="x-circle" /> Incorrect. Analyze the peaks again.
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="p-6 md:p-8 space-y-8 max-w-6xl mx-auto w-full">
+                            
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                {/* IR Chart */}
+                                <IRChart data={irData} showScan={mode === 'challenge' && !revealed} />
+
+                                {/* MS Chart */}
+                                <MSChart peaks={currentCompound.ms} showScan={mode === 'challenge' && !revealed} />
+                            </div>
+
+                            {/* Analysis Hints (Only in Learn Mode or Revealed) */}
+                            {(mode === 'learn' || revealed) && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in">
+                                    <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-5">
+                                        <h3 className="text-sm font-bold text-yellow-400 uppercase mb-3 flex items-center gap-2">
+                                            <Icon name="lightbulb" size={16}/> Key Evidence
+                                        </h3>
+                                        <ul className="space-y-2">
+                                            {currentCompound.hints.map((hint, i) => (
+                                                <li key={i} className="text-sm text-slate-300 flex gap-2 items-start">
+                                                    <span className="text-slate-500 mt-1">•</span> {hint}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    
+                                    <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-5">
+                                        <h3 className="text-sm font-bold text-slate-400 uppercase mb-3 flex items-center gap-2">
+                                            <Icon name="info" size={16}/> Structure Info
+                                        </h3>
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div>
+                                                <div className="text-slate-500 text-xs">Family</div>
+                                                <div className="text-white font-bold">{currentCompound.structure}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-slate-500 text-xs">Molar Mass</div>
+                                                <div className="text-white font-bold">{currentCompound.mw} g/mol</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
