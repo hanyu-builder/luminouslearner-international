@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calorimetry Lab Simulator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Flame Animation */
+        @keyframes flicker {
+            0% { transform: scale(1); opacity: 0.9; }
+            50% { transform: scale(1.1) translateX(1px); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.9; }
+        }
+        .flame-anim { animation: flicker 0.1s infinite alternate; }
+
+        /* Heat Waves */
+        @keyframes heat-rise {
+            0% { transform: translateY(0) scale(1); opacity: 0; }
+            20% { opacity: 0.5; }
+            100% { transform: translateY(-30px) scale(1.2); opacity: 0; }
+        }
+        .heat-wave { animation: heat-rise 1.5s infinite linear; }
+
+        /* Thermometer Liquid */
+        .liquid-rise { transition: height 0.5s ease-out; }
+
+        /* Dark Mode Overrides */
+        .bg-white { background-color: #1f2937 !important; } /* Slate 800 */
+        .border-slate-200 { border-color: #374151 !important; }
+        .text-slate-800 { color: #e2e8f0 !important; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#0F172A] text-white">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Constants
+        const SPECIFIC_HEAT_WATER = 4.18; // J g-1 K-1
+
+        // Utility Icon Component
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons[name]) {
+                    const iconNode = window.lucide.icons[name];
+                    const iconSvg = window.lucide.createElement(iconNode);
+                    iconSvg.setAttribute('width', size);
+                    iconSvg.setAttribute('height', size);
+                    iconSvg.setAttribute('class', className);
+                    setSvg(iconSvg.outerHTML);
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        // Experiment Modes
+        const Modes = {
+            COMBUSTION: {
+                id: 'combustion',
+                name: 'Enthalpy of Combustion',
+                fuel: [
+                    { name: 'Methanol', formula: 'CH3OH', molarMass: 32.0, theoDH: -726 },
+                    { name: 'Ethanol', formula: 'C2H5OH', molarMass: 46.0, theoDH: -1367 },
+                    { name: 'Propan-1-ol', formula: 'C3H7OH', molarMass: 60.1, theoDH: -2021 }
+                ]
+            },
+            NEUTRALIZATION: {
+                id: 'neutralization',
+                name: 'Enthalpy of Neutralisation',
+                reactants: [
+                    { name: 'HCl + NaOH', theoDH: -57.1 }, 
+                    { name: 'CH3COOH + NaOH', theoDH: -55.2 }, 
+                    { name: 'HCl + NH3', theoDH: -52.2 } 
+                ]
+            }
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState('combustion'); // combustion or neutralization
+            const [selectedFuel, setSelectedFuel] = useState(Modes.COMBUSTION.fuel[1]);
+            const [selectedReactant, setSelectedReactant] = useState(Modes.NEUTRALIZATION.reactants[0]);
+            
+            // Experiment Settings
+            const [waterMass, setWaterMass] = useState(100); // g (for combustion) or Total Vol (for neut)
+            const [fuelBurned, setFuelBurned] = useState(0.5); // g (mass loss)
+            
+            // Protection (Heat Loss Factors)
+            const [hasShield, setHasShield] = useState(false); 
+            const [hasLid, setHasLid] = useState(false); 
+            const [usePolystyrene, setUsePolystyrene] = useState(false); 
+
+            // Simulation State
+            const [isRunning, setIsRunning] = useState(false);
+            const [temp, setTemp] = useState(25.0);
+            const [startTemp, setStartTemp] = useState(25.0);
+            const [maxTemp, setMaxTemp] = useState(25.0);
+            const [result, setResult] = useState(null);
+            
+            // Reset
+            const reset = () => {
+                setIsRunning(false);
+                setTemp(25.0);
+                setStartTemp(25.0);
+                setMaxTemp(25.0);
+                setResult(null);
+            };
+
+            // Calculate Efficiency based on protection
+            const getEfficiency = () => {
+                if (mode === 'combustion') {
+                    // Base efficiency (very poor for simple calorimetry)
+                    let eff = 0.40; // 40% heat captured without shield
+                    if (hasShield) eff += 0.25; // +25% with shield
+                    return Math.min(0.85, eff);
+                } else {
+                    // Neutralization
+                    let eff = 0.80; // Glass beaker
+                    if (usePolystyrene) eff += 0.10; // Foam cup
+                    if (hasLid) eff += 0.05; // Lid
+                    return Math.min(0.98, eff);
+                }
+            };
+
+            const startExperiment = () => {
+                if (isRunning) return;
+                reset();
+                setStartTemp(25.0);
+                setIsRunning(true);
+
+                // 1. Calculate Theoretical Energy Released (Q_theo)
+                let Q_theo = 0; // Joules
+                let moles = 0;
+
+                if (mode === 'combustion') {
+                    moles = fuelBurned / selectedFuel.molarMass;
+                    Q_theo = Math.abs(selectedFuel.theoDH * 1000 * moles); // kJ -> J
+                } else {
+                    // Assume 50ml 1M acid + 50ml 1M alkali = 0.05 mol water formed (total volume 100g)
+                    moles = 0.05; 
+                    Q_theo = Math.abs(selectedReactant.theoDH * 1000 * moles);
+                    setWaterMass(100); 
+                }
+
+                // 2. Apply Heat Loss (Efficiency)
+                const efficiency = getEfficiency();
+                const Q_actual = Q_theo * efficiency;
+
+                // 3. Calculate Max Temp Rise (Delta T)
+                // Q = mcDT -> DT = Q / mc
+                const dT = Q_actual / (waterMass * SPECIFIC_HEAT_WATER);
+                const targetTemp = 25.0 + dT;
+
+                // 4. Animate Temp Rise
+                let currentT = 25.0;
+                const totalFrames = 50;
+                const step = dT / totalFrames; 
+                let frame = 0;
+
+                const timer = setInterval(() => {
+                    frame++;
+                    currentT = 25.0 + step * frame;
+                    
+                    setTemp(currentT);
+                    
+                    if (frame >= totalFrames) {
+                        clearInterval(timer);
+                        setIsRunning(false);
+                        
+                        // Final results calculation
+                        const experimentalQ = waterMass * SPECIFIC_HEAT_WATER * (targetTemp - 25.0); // J
+                        const expDH = -(experimentalQ / 1000) / moles; // kJ/mol
+
+                        setResult({
+                            dt: targetTemp - 25.0,
+                            q: experimentalQ,
+                            expDH: expDH,
+                            theoDH: mode === 'combustion' ? selectedFuel.theoDH : selectedReactant.theoDH,
+                            efficiency: (efficiency * 100).toFixed(0)
+                        });
+                        setMaxTemp(targetTemp);
+                        setTemp(targetTemp); // Lock to final temp
+                    }
+                }, 50);
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                    
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-rose-400 flex items-center gap-2">
+                                <Icon name="ThermometerSun" className="text-rose-400"/> Calorimetry Lab Simulator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Measuring Enthalpy Change (ΔH)</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Settings */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                            <div className="bg-slate-900 p-5 rounded-2xl shadow-xl border border-slate-800">
+                                
+                                {/* Mode Selection Tabs */}
+                                <div className="flex bg-slate-800 p-1 rounded-xl mb-6 border border-slate-700">
+                                    <button 
+                                        onClick={() => { setMode('combustion'); reset(); }}
+                                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'combustion' ? 'bg-slate-950 text-rose-400 shadow-sm ring-1 ring-rose-900/50' : 'text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        <Icon name="Flame" size={16}/> Combustion
+                                    </button>
+                                    <button 
+                                        onClick={() => { setMode('neutralization'); reset(); }}
+                                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'neutralization' ? 'bg-slate-950 text-blue-400 shadow-sm ring-1 ring-blue-900/50' : 'text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        <Icon name="Droplets" size={16}/> Neutralisation
+                                    </button>
+                                </div>
+
+                                <h3 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center gap-2 border-t border-slate-700 pt-4">
+                                    <Icon name="Settings2" size={16} className="text-slate-500"/> Experiment Setup
+                                </h3>
+                                
+                                {mode === 'combustion' ? (
+                                    <>
+                                        <div className="mb-4">
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">Fuel</label>
+                                            <select 
+                                                value={selectedFuel.formula}
+                                                onChange={(e) => setSelectedFuel(Modes.COMBUSTION.fuel.find(f => f.formula === e.target.value))}
+                                                className="w-full p-2 border rounded-lg font-bold text-rose-400 bg-slate-800 border-slate-700 outline-none focus:ring-2 focus:ring-rose-500/50"
+                                                disabled={isRunning}
+                                            >
+                                                {Modes.COMBUSTION.fuel.map(f => <option key={f.formula} value={f.formula}>{f.name}</option>)}
+                                            </select>
+                                        </div>
+                                        
+                                        <div className="mb-4">
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">Mass Burned (g)</label>
+                                            <input type="number" step="0.1" value={fuelBurned} onChange={(e) => setFuelBurned(Number(e.target.value))} min="0.1" max="2.0" className="w-full p-2 border rounded-lg font-mono bg-slate-800 border-slate-700 outline-none focus:ring-2 focus:ring-rose-500/50" disabled={isRunning} />
+                                        </div>
+
+                                        <div className="mb-4">
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">Heat Loss Prevention</label>
+                                            <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-slate-800 cursor-pointer transition-colors border-slate-700">
+                                                <input type="checkbox" checked={hasShield} onChange={(e) => setHasShield(e.target.checked)} className="accent-rose-500 w-4 h-4" disabled={isRunning}/>
+                                                <span className="text-sm">Draught Shield (Insulation)</span>
+                                            </label>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="mb-4">
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">Reactants</label>
+                                            <select 
+                                                value={selectedReactant.name}
+                                                onChange={(e) => setSelectedReactant(Modes.NEUTRALIZATION.reactants.find(r => r.name === e.target.value))}
+                                                className="w-full p-2 border rounded-lg font-bold text-blue-400 bg-slate-800 border-slate-700 outline-none focus:ring-2 focus:ring-blue-500/50"
+                                                disabled={isRunning}
+                                            >
+                                                {Modes.NEUTRALIZATION.reactants.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="mb-4 space-y-2">
+                                            <label className="text-xs font-bold text-slate-500 block mb-1">Insulation Setup</label>
+                                            <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-slate-800 cursor-pointer transition-colors border-slate-700">
+                                                <input type="checkbox" checked={usePolystyrene} onChange={(e) => setUsePolystyrene(e.target.checked)} className="accent-blue-500 w-4 h-4" disabled={isRunning}/>
+                                                <span className="text-sm">Use Polystyrene Cup (Better Insulation)</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 p-3 border rounded-lg hover:bg-slate-800 cursor-pointer transition-colors border-slate-700">
+                                                <input type="checkbox" checked={hasLid} onChange={(e) => setHasLid(e.target.checked)} className="accent-blue-500 w-4 h-4" disabled={isRunning}/>
+                                                <span className="text-sm">Use Lid</span>
+                                            </label>
+                                        </div>
+                                    </>
+                                )}
+                                
+                                <button 
+                                    onClick={startExperiment}
+                                    disabled={isRunning}
+                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mt-4
+                                        ${mode === 'combustion' ? 'bg-rose-600 hover:bg-rose-500' : 'bg-blue-600 hover:bg-blue-500'}
+                                    `}
+                                >
+                                    {isRunning ? <Icon name="Loader2" className="animate-spin"/> : <Icon name="Play" />}
+                                    {isRunning ? 'Heating...' : 'Start Experiment'}
+                                </button>
+                                <button 
+                                    onClick={reset} 
+                                    className="w-full mt-3 py-2 bg-slate-800 text-slate-400 font-bold rounded-xl hover:bg-slate-700 transition-all flex items-center justify-center gap-2 text-sm border border-slate-700"
+                                >
+                                    <Icon name="RotateCcw" size={14}/> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Center: Visualization */}
+                        <div className="w-full lg:w-1/3 flex flex-col items-center justify-end relative min-h-[400px] bg-slate-900 rounded-3xl border-4 border-slate-800 overflow-hidden p-4">
+                            
+                            {/* Live Temp Display */}
+                            <div className="absolute top-4 right-4 bg-slate-950 text-green-400 font-mono text-2xl font-bold px-4 py-2 rounded-lg shadow-lg border border-slate-700 z-10">
+                                {temp.toFixed(1)}°C
+                            </div>
+                            
+                            {/* Setup Display */}
+                            {mode === 'combustion' ? (
+                                <div className="relative z-20 flex flex-col items-center mb-4">
+                                    
+                                    {/* Thermometer */}
+                                    <div className="absolute -top-32 right-12 w-2 h-48 bg-slate-800 border border-slate-600 rounded-full overflow-hidden shadow-sm z-30">
+                                        <div className="absolute bottom-0 w-full bg-red-500 liquid-rise" style={{height: `${((temp-20)/80)*100}%`}}></div>
+                                    </div>
+
+                                    {/* Metal Can (Calorimeter) */}
+                                    <div className="w-32 h-40 bg-gradient-to-r from-slate-600 to-slate-700 border-2 border-slate-500 rounded-b-lg relative flex items-end justify-center mb-12 shadow-lg">
+                                        <div className="absolute top-2 text-[10px] text-slate-400 font-bold">Water ({waterMass}g)</div>
+                                        <div className="w-full h-3/4 bg-blue-500/20 absolute bottom-0 rounded-b-lg"></div>
+                                        {/* Tripod Stand legs (Visual only) */}
+                                        <div className="absolute -bottom-12 left-0 w-1 h-12 bg-slate-700"></div>
+                                        <div className="absolute -bottom-12 right-0 w-1 h-12 bg-slate-700"></div>
+                                    </div>
+
+                                    {/* Spirit Lamp */}
+                                    <div className="absolute bottom-0 flex flex-col items-center">
+                                        {isRunning && (
+                                            <div className="w-8 h-12 bg-orange-400 rounded-full blur-md absolute -top-10 flame-anim opacity-80 mix-blend-screen"></div>
+                                        )}
+                                        {isRunning && <div className="absolute -top-8 w-4 h-8 bg-yellow-200 rounded-full flame-anim"></div>}
+                                        
+                                        <div className="w-16 h-12 bg-slate-700 border border-slate-600 rounded-lg relative shadow-sm">
+                                            <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-2 h-4 bg-slate-500"></div> {/* Wick */}
+                                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 text-[8px] text-slate-400">{selectedFuel.formula}</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Draught Shield */}
+                                    {hasShield && (
+                                        <div className="absolute bottom-[-5px] w-48 h-32 border-x-4 border-b-4 border-slate-600/50 rounded-b-lg bg-slate-800/20 pointer-events-none z-0"></div>
+                                    )}
+
+                                    {/* Heat Loss Waves */}
+                                    {isRunning && !hasShield && (
+                                        <>
+                                            <div className="absolute bottom-10 left-[-30px] heat-wave text-red-400/50 text-xs">~~~</div>
+                                            <div className="absolute bottom-10 right-[-30px] heat-wave text-red-400/50 text-xs" style={{animationDelay: '0.5s'}}>~~~</div>
+                                        </>
+                                    )}
+                                </div>
+                            ) : (
+                                // Neutralization Setup
+                                <div className="relative z-20 flex flex-col items-center mb-4">
+                                    {/* Thermometer */}
+                                    <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-2 h-48 bg-slate-800 border border-slate-600 rounded-full overflow-hidden shadow-sm z-30">
+                                        <div className="absolute bottom-0 w-full bg-red-500 liquid-rise" style={{height: `${((temp-20)/50)*100}%`}}></div>
+                                    </div>
+
+                                    {/* Cup */}
+                                    <div className={`w-32 h-40 border-4 ${usePolystyrene ? 'bg-slate-700 border-slate-600 shadow-inner' : 'bg-slate-800/80 border-slate-600 backdrop-blur-sm'} rounded-b-xl relative flex items-end overflow-hidden`}>
+                                        {/* Solution */}
+                                        <div className="w-full h-2/3 bg-purple-400/30 absolute bottom-0 transition-all duration-1000"></div>
+                                        
+                                        {/* Lid */}
+                                        {hasLid && (
+                                            <div className="absolute top-0 w-full h-2 bg-slate-600 shadow-sm z-20"></div>
+                                        )}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-2">{usePolystyrene ? 'Polystyrene Cup' : 'Glass Beaker'}</div>
+                                    
+                                    {/* Heat Loss Waves */}
+                                    {isRunning && !usePolystyrene && (
+                                        <>
+                                            <div className="absolute top-10 left-[-20px] heat-wave text-red-400/50 text-xs">~</div>
+                                            <div className="absolute top-10 right-[-20px] heat-wave text-red-400/50 text-xs" style={{animationDelay: '0.5s'}}>~</div>
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right: Results */}
+                        <div className="w-full lg:w-1/3 flex flex-col gap-4">
+                            {result ? (
+                                <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 animate-in slide-in-from-bottom-4 flex-grow">
+                                    <h3 className="text-lg font-bold text-slate-300 mb-4 flex items-center gap-2">
+                                        <Icon name="ClipboardList" className="text-emerald-400" /> Experiment Report
+                                    </h3>
+                                    
+                                    <div className="space-y-3 text-sm">
+                                        <div className="flex justify-between border-b border-slate-700 pb-2">
+                                            <span className="text-slate-500">Max Temp:</span>
+                                            <span className="font-bold text-white">{maxTemp.toFixed(1)} °C</span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-slate-700 pb-2">
+                                            <span className="text-slate-500">Temp Rise (ΔT):</span>
+                                            <span className="font-bold text-rose-400">+{result.dt.toFixed(1)} °C</span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-slate-700 pb-2">
+                                            <span className="text-slate-500">Heat Released (Q):</span>
+                                            <span className="font-bold text-white">{result.q.toFixed(0)} J</span>
+                                        </div>
+                                        
+                                        <div className="mt-4 p-3 bg-slate-800 rounded-lg">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="text-xs font-bold text-slate-400 uppercase">Experimental ΔH</span>
+                                                <span className="text-xs font-bold text-slate-400 uppercase">Theoretical ΔH</span>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-2xl font-mono font-bold text-emerald-400">{result.expDH.toFixed(0)}</span>
+                                                <span className="text-lg font-mono font-bold text-slate-400">{result.theoDH}</span>
+                                            </div>
+                                            <div className="text-right text-xs text-slate-500 mt-1">kJ mol⁻¹</div>
+                                        </div>
+
+                                        {/* Efficiency Bar */}
+                                        <div className="mt-4 pt-2 border-t border-slate-700">
+                                            <div className="flex justify-between text-xs mb-1">
+                                                <span className="font-bold text-slate-500">Heat Efficiency</span>
+                                                <span className={`font-bold ${result.efficiency < 60 ? 'text-red-400' : 'text-green-400'}`}>{result.efficiency}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                                                <div className={`h-full ${result.efficiency < 60 ? 'bg-red-500' : 'bg-green-500'}`} style={{width: `${result.efficiency}%`}}></div>
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+                                                <Icon name="AlertCircle" size={10} className={result.efficiency < 60 ? 'text-red-400' : 'text-green-400'} /> 
+                                                {result.efficiency < 60 ? 'Significant Heat Loss (Poor Insulation)' : 'Good Insulation'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="bg-slate-900 rounded-2xl border-2 border-dashed border-slate-700 flex items-center justify-center h-full min-h-[200px] text-slate-500 flex-grow">
+                                    <div className="text-center">
+                                        <Icon name="BarChart2" size={48} className="mx-auto mb-2 opacity-20" />
+                                        <p>Click 'Start Experiment' to view results.</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner International | IB/A-Level Chemistry
+                    </div>
+                </div>
+            );
+        };
+
+        lucide.createIcons();
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
