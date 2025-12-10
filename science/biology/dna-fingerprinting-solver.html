@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DNA Fingerprinting Solver - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Gel Texture */
+        .gel-texture {
+            background-color: #1e293b;
+            background-image: radial-gradient(#334155 1px, transparent 1px);
+            background-size: 10px 10px;
+        }
+
+        /* Band Glow */
+        .band-glow {
+            box-shadow: 0 0 8px currentColor;
+            z-index: 10;
+        }
+        
+        /* Ruler Line */
+        .ruler-line {
+            pointer-events: none;
+            border-top: 1px dashed rgba(255, 255, 255, 0.5);
+            box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.3);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- GAME LOGIC GENERATORS ---
+
+        const generateBands = (count = 6) => {
+            const bands = [];
+            // Generate random positions between 10% and 90%
+            for (let i = 0; i < count; i++) {
+                bands.push(Math.random() * 80 + 10);
+            }
+            return bands.sort((a, b) => a - b);
+        };
+
+        const generateForensicCase = () => {
+            // 1. Generate Crime Scene DNA
+            const crimeScene = generateBands(8);
+            
+            // 2. Generate Suspects
+            // One matches exactly, others have random variations
+            const correctSuspectIndex = Math.floor(Math.random() * 3);
+            
+            const suspects = [0, 1, 2].map(i => {
+                if (i === correctSuspectIndex) {
+                    return [...crimeScene]; // Exact match
+                } else {
+                    // Slight variation: Keep some, change some
+                    return crimeScene.map(b => Math.random() > 0.5 ? b : Math.random() * 80 + 10).sort((a,b)=>a-b);
+                }
+            });
+
+            return {
+                type: 'forensic',
+                lanes: [
+                    { id: 'crime', label: 'Crime Scene', bands: crimeScene, color: '#f472b6' }, // Pink
+                    { id: 's1', label: 'Suspect A', bands: suspects[0], color: '#38bdf8' }, // Blue
+                    { id: 's2', label: 'Suspect B', bands: suspects[1], color: '#38bdf8' },
+                    { id: 's3', label: 'Suspect C', bands: suspects[2], color: '#38bdf8' }
+                ],
+                correctIndex: correctSuspectIndex
+            };
+        };
+
+        const generatePaternityCase = () => {
+            // 1. Generate Mother and Father
+            const mother = generateBands(8);
+            const trueFather = generateBands(8);
+            
+            // 2. Generate Child
+            // Child bands MUST come from either Mother or Father
+            const child = [];
+            // Pick ~4 from mother
+            mother.forEach(b => { if (Math.random() > 0.5) child.push(b); });
+            // Pick ~4 from father
+            trueFather.forEach(b => { if (Math.random() > 0.5) child.push(b); });
+            // Ensure child has enough bands
+            if (child.length < 6) child.push(trueFather[0]);
+            
+            const childSorted = child.sort((a,b)=>a-b);
+
+            // 3. Generate Fake Fathers
+            // Fake fathers must NOT have some bands that the child inherited from the True Father
+            // Logic: Identify "Obligate Paternal Alleles" (Bands in Child NOT in Mother)
+            const obligatePaternal = childSorted.filter(b => !mother.includes(b));
+            
+            const correctFatherIndex = Math.floor(Math.random() * 3);
+            
+            const fathers = [0, 1, 2].map(i => {
+                if (i === correctFatherIndex) {
+                    return trueFather;
+                } else {
+                    // Random bands, but ensure they MISS at least one obligate paternal allele (statistically likely)
+                    const fake = generateBands(8);
+                    return fake;
+                }
+            });
+
+            return {
+                type: 'paternity',
+                lanes: [
+                    { id: 'mom', label: 'Mother', bands: mother, color: '#a78bfa' }, // Purple
+                    { id: 'child', label: 'Child', bands: childSorted, color: '#facc15' }, // Yellow
+                    { id: 'f1', label: 'Father A', bands: fathers[0], color: '#38bdf8' }, // Blue
+                    { id: 'f2', label: 'Father B', bands: fathers[1], color: '#38bdf8' },
+                    { id: 'f3', label: 'Father C', bands: fathers[2], color: '#38bdf8' }
+                ],
+                correctIndex: correctFatherIndex
+            };
+        };
+
+        // --- COMPONENTS ---
+
+        const Band = ({ top, color, isMarked, onClick }) => (
+            <motion.div
+                className={`absolute left-2 right-2 h-2 rounded-sm cursor-pointer transition-all ${isMarked ? 'brightness-150 band-glow scale-x-110' : 'opacity-70 hover:opacity-100 hover:scale-x-105'}`}
+                style={{ top: `${top}%`, backgroundColor: color }}
+                onClick={onClick}
+                whileTap={{ scale: 0.95 }}
+            />
+        );
+
+        const GelLane = ({ laneData, onBandClick, markedBands }) => {
+            return (
+                <div className="flex-1 border-r border-slate-700 relative bg-slate-900/30 min-w-[80px]">
+                    {/* Well */}
+                    <div className="h-4 bg-black/40 mx-2 mt-2 rounded-b-lg border-x border-b border-slate-600 mb-4 shadow-inner"></div>
+                    
+                    {/* Bands Area */}
+                    <div className="relative h-[400px] w-full">
+                        {laneData.bands.map((pos, idx) => (
+                            <Band 
+                                key={idx} 
+                                top={pos} 
+                                color={laneData.color} 
+                                isMarked={markedBands.has(`${laneData.id}-${idx}`)}
+                                onClick={() => onBandClick(laneData.id, idx)}
+                            />
+                        ))}
+                    </div>
+                    
+                    {/* Label */}
+                    <div className="absolute bottom-2 w-full text-center px-1">
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded bg-slate-950 border border-slate-700 block truncate`} style={{color: laneData.color}}>
+                            {laneData.label}
+                        </span>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [scenario, setScenario] = useState('forensic'); // forensic, paternity
+            const [gameData, setGameData] = useState(null);
+            const [markedBands, setMarkedBands] = useState(new Set());
+            const [rulerY, setRulerY] = useState(null);
+            const [result, setResult] = useState(null); // null, 'correct', 'wrong'
+            const [showRuler, setShowRuler] = useState(true);
+
+            // Init
+            useEffect(() => {
+                loadScenario('forensic');
+            }, []);
+
+            const loadScenario = (type) => {
+                const data = type === 'forensic' ? generateForensicCase() : generatePaternityCase();
+                setGameData(data);
+                setScenario(type);
+                setMarkedBands(new Set());
+                setResult(null);
+            };
+
+            const toggleBand = (laneId, bandIdx) => {
+                const key = `${laneId}-${bandIdx}`;
+                setMarkedBands(prev => {
+                    const next = new Set(prev);
+                    if (next.has(key)) next.delete(key);
+                    else next.add(key);
+                    return next;
+                });
+            };
+
+            const checkAnswer = (suspectIndex) => {
+                if (suspectIndex === gameData.correctIndex) {
+                    setResult('correct');
+                } else {
+                    setResult('wrong');
+                }
+            };
+
+            const handleMouseMove = (e) => {
+                if (!showRuler) return;
+                // Calculate relative Y in the gel container
+                const rect = e.currentTarget.getBoundingClientRect();
+                const y = e.clientY - rect.top;
+                // Clamp within gel area approx
+                if (y > 20 && y < 420) setRulerY(y);
+            };
+
+            if (!gameData) return <div className="text-white p-10">Loading Simulation...</div>;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="fingerprint" className="text-pink-500" /> DNA Solver
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Forensic & Paternity Analysis</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Scenario Switch */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Case</label>
+                                <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
+                                    <button 
+                                        onClick={() => loadScenario('forensic')}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${scenario === 'forensic' ? 'bg-pink-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        <Icon name="search" size={14}/> Forensic
+                                    </button>
+                                    <button 
+                                        onClick={() => loadScenario('paternity')}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${scenario === 'paternity' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        <Icon name="baby" size={14}/> Paternity
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Tools */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Analysis Tools</label>
+                                <button 
+                                    onClick={() => setShowRuler(!showRuler)}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border
+                                        ${showRuler ? 'bg-emerald-900/30 border-emerald-500 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-400'}
+                                    `}
+                                >
+                                    <Icon name={showRuler ? "ruler" : "ruler"} size={18} className={showRuler ? "" : "opacity-50"}/> 
+                                    {showRuler ? "Ruler Active" : "Enable Ruler"}
+                                </button>
+                                <p className="text-[10px] text-slate-500 text-center bg-slate-950 p-2 rounded border border-slate-800">
+                                    Tip: Click on bands to highlight matches. Use the ruler to align bands horizontally.
+                                </p>
+                            </div>
+
+                            {/* Identify Section */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-3 text-center">Identify the Match</div>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {gameData.lanes.filter(l => l.id.startsWith('s') || l.id.startsWith('f')).map((l, idx) => (
+                                        <button 
+                                            key={l.id}
+                                            onClick={() => checkAnswer(idx)}
+                                            className="w-full py-2 bg-slate-700 hover:bg-blue-600 text-sm font-bold rounded-lg transition-colors flex items-center justify-between px-4 border border-slate-600 hover:border-blue-400"
+                                        >
+                                            {l.label}
+                                            <Icon name="chevron-right" size={14} className="opacity-50"/>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Header Info */}
+                        <div className="flex justify-between items-end">
+                            <div>
+                                <h2 className="text-2xl font-black text-white mb-1 flex items-center gap-2">
+                                    {scenario === 'forensic' ? 'Crime Scene Investigation' : 'Paternity Dispute'}
+                                </h2>
+                                <p className="text-sm text-slate-400 max-w-lg">
+                                    {scenario === 'forensic' 
+                                        ? "Match the DNA from the crime scene with one of the suspects. It must be an exact match."
+                                        : "Identify the father. Remember: Half of the child's bands come from the mother, the rest MUST come from the father."}
+                                </p>
+                            </div>
+                            
+                            {/* Result Toast */}
+                            <AnimatePresence>
+                                {result && (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                                        className={`px-6 py-3 rounded-xl font-bold flex items-center gap-3 shadow-lg border
+                                            ${result === 'correct' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'}
+                                        `}
+                                    >
+                                        <Icon name={result === 'correct' ? "check-circle" : "alert-circle"} size={24}/>
+                                        <div>
+                                            <div className="text-sm">{result === 'correct' ? 'Match Confirmed!' : 'Mismatch!'}</div>
+                                            <div className="text-xs opacity-80 font-normal">{result === 'correct' ? 'Excellent analysis.' : 'Check the bands again.'}</div>
+                                        </div>
+                                        {result === 'correct' && (
+                                            <button onClick={() => loadScenario(scenario)} className="ml-4 p-1.5 bg-white/20 rounded hover:bg-white/40 transition-colors">
+                                                <Icon name="rotate-ccw" size={16}/>
+                                            </button>
+                                        )}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+
+                        {/* Gel Visualization */}
+                        <div className="flex-1 bg-black rounded-3xl border-4 border-slate-700 shadow-2xl relative overflow-hidden flex flex-col gel-texture select-none"
+                             onMouseMove={handleMouseMove}
+                        >
+                            {/* Cathode (Negative - Top) */}
+                            <div className="h-10 bg-slate-800 border-b border-slate-600 flex items-center justify-between px-6 z-20">
+                                <span className="font-mono font-bold text-white text-xl">-</span>
+                                <div className="text-xs text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                    <span>Negative Electrode</span>
+                                    <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300">DNA is Negative</span>
+                                </div>
+                                <span className="font-mono font-bold text-white text-xl">-</span>
+                            </div>
+
+                            {/* Lanes Container */}
+                            <div className="flex-1 flex px-10 pb-10 pt-2 relative">
+                                {/* Ruler Line */}
+                                {showRuler && rulerY !== null && (
+                                    <div 
+                                        className="absolute left-0 right-0 h-0.5 bg-red-500/50 ruler-line z-50 pointer-events-none flex items-center"
+                                        style={{ top: rulerY }}
+                                    >
+                                        <div className="bg-red-500 text-white text-[10px] px-1 ml-2 rounded font-mono shadow-sm">Align</div>
+                                    </div>
+                                )}
+
+                                {gameData.lanes.map((lane, idx) => (
+                                    <GelLane 
+                                        key={lane.id} 
+                                        laneData={lane} 
+                                        onBandClick={toggleBand} 
+                                        markedBands={markedBands} 
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Anode (Positive - Bottom) */}
+                            <div className="h-10 bg-red-900/20 border-t border-red-900/50 flex items-center justify-between px-6 z-20">
+                                <span className="font-mono font-bold text-red-500 text-xl">+</span>
+                                <div className="text-xs text-red-900/50 uppercase tracking-widest">Positive Electrode (Smaller fragments run faster)</div>
+                                <span className="font-mono font-bold text-red-500 text-xl">+</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
