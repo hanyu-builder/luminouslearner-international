@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formula Mass Calculator - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .key-btn {
+            transition: all 0.1s;
+        }
+        .key-btn:active {
+            transform: scale(0.95);
+        }
+        
+        .ex-btn {
+            transition: all 0.2s;
+        }
+        .ex-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        /* Progress Bar Animation */
+        @keyframes grow-width {
+            from { width: 0; }
+            to { width: var(--target-width); }
+        }
+        .progress-bar {
+            animation: grow-width 1s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const AtomicMasses = {
+            H: 1.0, He: 4.0, Li: 6.9, Be: 9.0, B: 10.8, C: 12.0, N: 14.0, O: 16.0, F: 19.0, Ne: 20.2,
+            Na: 23.0, Mg: 24.3, Al: 27.0, Si: 28.1, P: 31.0, S: 32.1, Cl: 35.5, K: 39.1, Ar: 39.9, Ca: 40.1,
+            Fe: 55.8, Cu: 63.5, Zn: 65.4, Br: 79.9, Ag: 107.9, I: 126.9, Ba: 137.3, Pb: 207.2
+        };
+
+        const ExampleCategories = [
+            {
+                name: 'Common',
+                items: ['H2O', 'CO2', 'O2', 'N2']
+            },
+            {
+                name: 'Acids & Bases',
+                items: ['HCl', 'H2SO4', 'HNO3', 'NaOH', 'NH3', 'Ca(OH)2']
+            },
+            {
+                name: 'Salts & Hydrates',
+                items: ['NaCl', 'CaCO3', 'CuSO4.5H2O', 'FeSO4.7H2O', 'AgNO3']
+            },
+            {
+                name: 'Organic',
+                items: ['CH4', 'C2H5OH', 'C6H12O6', 'CH3COOH']
+            }
+        ];
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [input, setInput] = useState('');
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState('');
+            const [breakdown, setBreakdown] = useState([]);
+            const [composition, setComposition] = useState([]);
+            const [activeCategory, setActiveCategory] = useState(0);
+
+            const calculateMass = () => {
+                setError('');
+                setResult(null);
+                setBreakdown([]);
+                setComposition([]);
+
+                if (!input.trim()) return;
+                
+                try {
+                    const parts = input.split('.');
+                    let totalMass = 0;
+                    let fullBreakdown = [];
+                    let atomCounts = {};
+
+                    const addToCounts = (el, count, mass) => {
+                        if (!atomCounts[el]) atomCounts[el] = { count: 0, totalMass: 0 };
+                        atomCounts[el].count += count;
+                        atomCounts[el].totalMass += mass;
+                    };
+
+                    // Process Main Formula
+                    const mainResult = parseFormula(parts[0]);
+                    totalMass += mainResult.mass;
+                    fullBreakdown = [...mainResult.details];
+                    
+                    mainResult.details.forEach(d => addToCounts(d.element, d.count, d.atomicMass * d.count));
+
+                    // Process Hydrate (if any)
+                    if (parts.length > 1) {
+                        const hydratePart = parts[1];
+                        const match = hydratePart.match(/^(\d*)(.*)/);
+                        const multiplier = match[1] ? parseInt(match[1]) : 1;
+                        const formula = match[2];
+                        
+                        if(formula) {
+                            const hydrateResult = parseFormula(formula);
+                            const hydrateMass = hydrateResult.mass * multiplier;
+                            totalMass += hydrateMass;
+                            
+                            fullBreakdown.push({
+                                type: 'hydrate',
+                                count: multiplier,
+                                formula: formula,
+                                mass: hydrateMass,
+                                subDetails: hydrateResult.details
+                            });
+
+                            hydrateResult.details.forEach(d => addToCounts(d.element, d.count * multiplier, d.atomicMass * d.count * multiplier));
+                        }
+                    }
+
+                    const finalMass = parseFloat(totalMass.toFixed(1));
+                    setResult(finalMass);
+                    setBreakdown(fullBreakdown);
+
+                    const compData = Object.entries(atomCounts).map(([el, data]) => ({
+                        element: el,
+                        mass: data.totalMass,
+                        percent: ((data.totalMass / finalMass) * 100).toFixed(1)
+                    })).sort((a, b) => b.mass - a.mass);
+
+                    if (parts.length > 1) {
+                        const hydPart = fullBreakdown.find(b => b.type === 'hydrate');
+                        if(hydPart) {
+                            compData.push({
+                                element: 'Water (H₂O)',
+                                mass: hydPart.mass,
+                                percent: ((hydPart.mass / finalMass) * 100).toFixed(1),
+                                isSpecial: true
+                            });
+                        }
+                    }
+                    
+                    setComposition(compData);
+
+                } catch (e) {
+                    setError('Invalid Formula. Please check symbols and brackets.');
+                    console.error(e);
+                }
+            };
+
+            const parseFormula = (formulaStr) => {
+                const stack = [{ atoms: {} }];
+                let i = 0;
+                const len = formulaStr.length;
+
+                while (i < len) {
+                    const char = formulaStr[i];
+
+                    if (char === '(') {
+                        stack.push({ atoms: {} });
+                        i++;
+                    } else if (char === ')') {
+                        if (stack.length === 1) throw new Error("Unmatched brackets");
+                        
+                        const group = stack.pop();
+                        i++;
+                        let numStr = '';
+                        while (i < len && /\d/.test(formulaStr[i])) {
+                            numStr += formulaStr[i];
+                            i++;
+                        }
+                        const multiplier = numStr ? parseInt(numStr) : 1;
+                        
+                        const parent = stack[stack.length - 1];
+                        for (const [el, count] of Object.entries(group.atoms)) {
+                            parent.atoms[el] = (parent.atoms[el] || 0) + count * multiplier;
+                        }
+
+                    } else if (/[A-Z]/.test(char)) {
+                        let element = char;
+                        i++;
+                        if (i < len && /[a-z]/.test(formulaStr[i])) {
+                            element += formulaStr[i];
+                            i++;
+                        }
+
+                        let numStr = '';
+                        while (i < len && /\d/.test(formulaStr[i])) {
+                            numStr += formulaStr[i];
+                            i++;
+                        }
+                        const count = numStr ? parseInt(numStr) : 1;
+
+                        const current = stack[stack.length - 1];
+                        current.atoms[element] = (current.atoms[element] || 0) + count;
+                    } else {
+                        i++;
+                    }
+                }
+
+                if (stack.length > 1) throw new Error("Unmatched brackets");
+
+                const finalAtoms = stack[0].atoms;
+                let mass = 0;
+                const details = [];
+
+                for (const [el, count] of Object.entries(finalAtoms)) {
+                    let elKey = el;
+                    if (!AtomicMasses[elKey]) {
+                        const match = Object.keys(AtomicMasses).find(k => k.toLowerCase() === el.toLowerCase());
+                        if (match) elKey = match;
+                    }
+
+                    const atomicMass = AtomicMasses[elKey];
+                    if (!atomicMass) throw new Error(`Unknown element: ${el}`);
+                    mass += atomicMass * count;
+                    details.push({ element: elKey, count, atomicMass });
+                }
+
+                return { mass, details };
+            };
+
+            const addChar = (char) => {
+                setInput(prev => prev + char);
+            };
+            
+            const backspace = () => {
+                setInput(prev => prev.slice(0, -1));
+            };
+            
+            const clear = () => {
+                setInput('');
+                setResult(null);
+                setBreakdown([]);
+                setComposition([]);
+                setError('');
+            };
+
+            const loadExample = (ex) => {
+                setInput(ex);
+            };
+
+            // Auto-calc on preset click
+            useEffect(() => {
+                if (input && ExampleCategories.some(cat => cat.items.some(i => i === input))) {
+                    calculateMass();
+                }
+            }, [input]);
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
+                    
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="FlaskConical" /> Formula Mass Calculator
+                            </h1>
+                            <p className="text-slate-500 text-sm">Relative Molecular Mass ($M_r$) & Composition</p>
+                        </div>
+                        <button onClick={clear} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700">
+                            <Icon name="RotateCcw" size={16} /> Reset
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                        
+                        {/* Left: Input & Keypad */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-4">
+                            
+                            {/* Display Screen */}
+                            <div className="bg-slate-900 p-4 rounded-2xl shadow-inner border-2 border-slate-700 flex flex-col min-h-[100px] relative transition-all focus-within:border-indigo-500 focus-within:shadow-md">
+                                <span className="text-xs text-indigo-400 font-bold uppercase mb-1">Chemical Formula</span>
+                                <input 
+                                    type="text" 
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    className="w-full text-4xl font-mono font-bold text-white bg-transparent outline-none placeholder-slate-600 tracking-wide"
+                                    placeholder="e.g. H2O"
+                                />
+                                {error && (
+                                    <div className="absolute bottom-2 left-4 text-red-400 text-xs font-bold flex items-center gap-1 animate-pulse">
+                                        <Icon name="AlertCircle" size={12}/> {error}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Categories */}
+                            <div className="bg-slate-800 p-3 rounded-xl border border-slate-700">
+                                <div className="flex gap-2 overflow-x-auto pb-2 mb-2 border-b border-slate-700">
+                                    {ExampleCategories.map((cat, idx) => (
+                                        <button
+                                            key={idx}
+                                            onClick={() => setActiveCategory(idx)}
+                                            className={`px-3 py-1 rounded-md text-xs font-bold whitespace-nowrap transition-all
+                                                ${activeCategory === idx ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-700'}
+                                            `}
+                                        >
+                                            {cat.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2 flex-wrap">
+                                    {ExampleCategories[activeCategory].items.map(ex => (
+                                        <button 
+                                            key={ex}
+                                            onClick={() => loadExample(ex)}
+                                            className="ex-btn px-3 py-1.5 bg-slate-700 text-slate-300 text-xs font-mono rounded border border-slate-600 hover:bg-indigo-900/50 hover:text-indigo-300 hover:border-indigo-500/50"
+                                        >
+                                            {ex}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Keypad */}
+                            <div className="bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700">
+                                <div className="grid grid-cols-4 gap-2 mb-2">
+                                    {['1','2','3','H', '4','5','6','C', '7','8','9','O', '0','(',')','N'].map(k => (
+                                        <button 
+                                            key={k} 
+                                            onClick={() => addChar(k)}
+                                            className={`key-btn h-12 rounded-lg font-bold text-lg shadow-sm
+                                                ${/[A-Z]/.test(k) ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'}
+                                            `}
+                                        >
+                                            {k}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-4 gap-2">
+                                    <button onClick={() => addChar('.')} className="key-btn h-12 bg-slate-700 text-white rounded-lg font-bold hover:bg-slate-600">.</button>
+                                    <button onClick={() => addChar('S')} className="key-btn h-12 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-500">S</button>
+                                    <button onClick={backspace} className="key-btn h-12 bg-red-600 text-white rounded-lg font-bold hover:bg-red-500 flex items-center justify-center"><Icon name="Delete" size={20}/></button>
+                                    <button onClick={calculateMass} className="key-btn h-12 bg-green-600 text-white rounded-lg font-bold hover:bg-green-500 shadow-[0_4px_0_rgb(21,128,61)] transform translate-y-[-2px] active:translate-y-[0px] active:shadow-none">
+                                        =
+                                    </button>
+                                </div>
+                                <div className="mt-3 text-center text-xs text-slate-500">
+                                    Tip: You can type symbols (e.g., Cl, Mg, Fe) directly using your keyboard.
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {/* Right: Result Breakdown */}
+                        <div className="w-full lg:w-1/2 flex flex-col gap-4">
+                            
+                            {result ? (
+                                <div className="animate-in slide-in-from-bottom-4 fade-in duration-500">
+                                    
+                                    {/* Total Result Card */}
+                                    <div className="bg-indigo-900/30 rounded-2xl p-6 border border-indigo-500/30 mb-4 flex justify-between items-center shadow-lg">
+                                        <div>
+                                            <div className="text-xs text-indigo-400 font-bold uppercase mb-1">Formula Mass / Molar Mass</div>
+                                            <div className="text-5xl font-mono font-bold text-indigo-300 tracking-tight">{result}</div>
+                                            <div className="text-xs text-indigo-500 mt-1 font-bold">g/mol</div>
+                                        </div>
+                                        <div className="bg-slate-800 p-4 rounded-full shadow-sm border border-slate-700 hidden sm:block">
+                                            <Icon name="Weight" size={32} className="text-indigo-400" />
+                                        </div>
+                                    </div>
+
+                                    {/* Percentage Composition Card */}
+                                    {composition.length > 0 && (
+                                        <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-sm mb-4">
+                                            <div className="bg-slate-900 p-3 border-b border-slate-700 font-bold text-slate-300 text-sm flex items-center gap-2">
+                                                <Icon name="PieChart" size={16} /> Percentage Composition by Mass
+                                            </div>
+                                            <div className="p-4 space-y-3">
+                                                {composition.map((comp, idx) => (
+                                                    <div key={idx} className="space-y-1">
+                                                        <div className="flex justify-between text-sm">
+                                                            <span className={`font-bold ${comp.isSpecial ? 'text-blue-400' : 'text-slate-300'}`}>
+                                                                {comp.element}
+                                                            </span>
+                                                            <span className="font-mono font-bold text-indigo-400">{comp.percent}%</span>
+                                                        </div>
+                                                        <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className={`h-full progress-bar ${comp.isSpecial ? 'bg-blue-500' : 'bg-indigo-500'}`} 
+                                                                style={{"--target-width": `${comp.percent}%`}}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Calculation Steps */}
+                                    <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-sm">
+                                        <div className="bg-slate-900 p-3 border-b border-slate-700 font-bold text-slate-300 text-sm flex items-center gap-2">
+                                            <Icon name="List" size={16} /> Breakdown
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            {/* Render Atom Breakdown */}
+                                            {breakdown.map((item, idx) => (
+                                                item.type === 'hydrate' ? (
+                                                    <div key={`hyd-${idx}`} className="p-3 bg-blue-900/20 rounded-lg border border-blue-500/30">
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="font-bold text-blue-400 text-sm flex items-center gap-1">
+                                                                {item.count} {item.formula}
+                                                                <span className="text-[10px] font-normal bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded border border-blue-800">Water of Crystallization</span>
+                                                            </span>
+                                                            <span className="font-mono font-bold text-blue-300">
+                                                                + {item.mass.toFixed(1)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-xs text-blue-300 pl-4 border-l-2 border-blue-500/30 font-mono">
+                                                            {item.count} × ({item.subDetails.map((sub, sIdx) => (
+                                                                <span key={sIdx}>
+                                                                    {sIdx > 0 && ' + '}
+                                                                    {sub.atomicMass}×{sub.count}
+                                                                </span>
+                                                            ))})
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div key={`atom-${idx}`} className="flex justify-between items-center border-b border-slate-700 pb-2 last:border-0">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center font-bold text-slate-300 text-sm border border-slate-600">
+                                                                {item.element}
+                                                            </div>
+                                                            <div className="text-sm">
+                                                                <span className="text-slate-500 block text-xs">Aᵣ: {item.atomicMass}</span>
+                                                                <span className="font-bold text-slate-200">{item.count} atom{item.count > 1 ? 's' : ''}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="font-mono text-slate-400">
+                                                            {item.atomicMass} × {item.count} = <span className="font-bold text-slate-200">{(item.atomicMass * item.count).toFixed(1)}</span>
+                                                        </div>
+                                                    </div>
+                                                )
+                                            ))}
+
+                                            <div className="pt-3 mt-2 border-t-2 border-indigo-500/30 flex justify-between items-center text-indigo-400">
+                                                <span className="font-bold text-sm">Total Sum</span>
+                                                <span className="font-mono font-bold text-xl">{result}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            ) : (
+                                <div className="flex-grow flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 p-8 min-h-[300px]">
+                                    <Icon name="Calculator" size={48} className="mb-4 opacity-20" />
+                                    <p className="text-sm text-center">
+                                        Enter a formula on the left<br/>
+                                        (Keyboard input supported)
+                                    </p>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner Science Tools | HKDSE Topic II
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
