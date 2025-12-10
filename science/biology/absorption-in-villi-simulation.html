@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Absorption in Villi - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Nutrient Animations */
+        .nutrient-flow { transition: all 1.5s ease-in-out; }
+        
+        /* Blood Flow */
+        .blood-flow {
+            stroke-dasharray: 10;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -20; }
+        }
+
+        /* Lacteal Flow */
+        .lymph-flow {
+            stroke-dasharray: 8;
+            animation: dash-lymph 2s linear infinite;
+        }
+        @keyframes dash-lymph {
+            to { stroke-dashoffset: -16; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA (Internationalized) ---
+        const NUTRIENTS = {
+            glucose: {
+                id: 'glucose', name: 'Glucose', color: '#60a5fa', shape: 'hexagon', 
+                path: 'blood', method: 'Active Transport / Diffusion'
+            },
+            amino: {
+                id: 'amino', name: 'Amino Acids', color: '#a78bfa', shape: 'circle', 
+                path: 'blood', method: 'Active Transport'
+            },
+            fatty: {
+                id: 'fatty', name: 'Fatty Acids + Glycerol', color: '#facc15', shape: 'rect', 
+                path: 'lacteal', method: 'Diffusion'
+            },
+            water: {
+                id: 'water', name: 'Water', color: '#38bdf8', shape: 'dot', 
+                path: 'blood', method: 'Osmosis'
+            }
+        };
+
+        const STRUCTURES = {
+            villi: { name: 'Villus', desc: 'Finger-like projection increasing surface area for absorption.' },
+            microvilli: { name: 'Microvilli', desc: 'Tiny projections on epithelial cells, further increasing surface area.' },
+            epithelium: { name: 'Epithelium', desc: 'One-cell thick layer for short diffusion distance.' },
+            capillary: { name: 'Capillary Network', desc: 'Transports water-soluble nutrients to the liver via the Hepatic Portal Vein.' },
+            lacteal: { name: 'Lacteal', desc: 'Lymphatic vessel transporting fats (lipids) to the lymphatic system.' }
+        };
+
+        // --- 3D SCENE COMPONENT ---
+        const Villi3DScene = () => {
+            const mountRef = useRef(null);
+            
+            useEffect(() => {
+                if (!mountRef.current) return;
+                const container = mountRef.current;
+
+                // Safety check for dimensions
+                if (container.clientWidth === 0) return;
+
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x020617);
+                scene.fog = new THREE.FogExp2(0x020617, 0.05);
+
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+                camera.position.set(5, 8, 10);
+                camera.lookAt(0, 0, 0);
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                
+                // Clear container
+                while(container.firstChild) container.removeChild(container.firstChild);
+                container.appendChild(renderer.domElement);
+
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 0.5;
+
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                dirLight.position.set(5, 10, 5);
+                scene.add(dirLight);
+                const pointLight = new THREE.PointLight(0xffaa00, 0.5);
+                pointLight.position.set(0, 2, 0);
+                scene.add(pointLight);
+
+                // Create Villi Landscape
+                const villusMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xfca5a5, // Pinkish
+                    roughness: 0.7,
+                    metalness: 0.1
+                });
+
+                const baseGeo = new THREE.PlaneGeometry(15, 15, 32, 32);
+                const baseMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5, roughness: 0.8 });
+                const base = new THREE.Mesh(baseGeo, baseMat);
+                base.rotation.x = -Math.PI / 2;
+                scene.add(base);
+
+                // Distribute villi
+                const villiGroup = new THREE.Group();
+                for (let x = -5; x <= 5; x += 1.2) {
+                    for (let z = -5; z <= 5; z += 1.2) {
+                        // Random height variation
+                        const h = 1.5 + Math.random() * 1.0;
+                        
+                        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, h, 16), villusMaterial);
+                        stem.position.set(x + (Math.random()-0.5)*0.4, h/2, z + (Math.random()-0.5)*0.4);
+                        
+                        const cap = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), villusMaterial);
+                        cap.position.set(stem.position.x, h, stem.position.z);
+                        
+                        // Slight random rotation for organic look
+                        stem.rotation.x = (Math.random()-0.5)*0.2;
+                        stem.rotation.z = (Math.random()-0.5)*0.2;
+                        
+                        villiGroup.add(stem);
+                        villiGroup.add(cap);
+                    }
+                }
+                scene.add(villiGroup);
+
+                // Resize Observer
+                const resizeObserver = new ResizeObserver(() => {
+                    if (container.clientWidth && container.clientHeight) {
+                        const w = container.clientWidth;
+                        const h = container.clientHeight;
+                        camera.aspect = w / h;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(w, h);
+                    }
+                });
+                resizeObserver.observe(container);
+
+                // Animation
+                let frameId;
+                const animate = () => {
+                    frameId = requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                return () => {
+                    cancelAnimationFrame(frameId);
+                    resizeObserver.disconnect();
+                    if (container && renderer.domElement) {
+                        container.removeChild(renderer.domElement);
+                    }
+                    renderer.dispose();
+                };
+            }, []);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+        // --- SVG VISUALIZER ---
+        const VillusSVG = ({ activeNutrient, onStructureClick }) => {
+            
+            // Paths for animation
+            // Start (Lumen) -> Epithelium -> Blood/Lacteal
+            const isLacteal = activeNutrient && NUTRIENTS[activeNutrient].path === 'lacteal';
+            
+            // Generate particles
+            const particles = activeNutrient ? [...Array(8)].map((_, i) => ({ id: i, delay: i * 0.5 })) : [];
+
+            // Define variants based on nutrient type
+            const pathVariants = {
+                hidden: { x: 50, y: 100, opacity: 0 },
+                enter: { 
+                    x: [50, 120, isLacteal ? 250 : 180, isLacteal ? 250 : 320], 
+                    y: [100, 100, 100, 500], 
+                    opacity: [0, 1, 1, 0],
+                    transition: { duration: 4, repeat: Infinity, ease: "easeInOut" }
+                }
+            };
+
+            return (
+                <svg viewBox="0 0 500 500" className="w-full h-full drop-shadow-2xl">
+                    
+                    {/* Background (Lumen) */}
+                    <rect width="500" height="500" fill="#0f172a" opacity="0" />
+                    
+                    {/* Villus Shape (Finger) */}
+                    <path 
+                        d="M 100 500 L 100 100 Q 250 -50 400 100 L 400 500" 
+                        fill="#fef3c7" stroke="#d97706" strokeWidth="4" 
+                        onClick={() => onStructureClick('villi')} className="cursor-pointer hover:fill-amber-100 transition-colors"
+                    />
+
+                    {/* Microvilli (Brush Border on the edge) */}
+                    <path 
+                        d="M 100 500 L 100 100 Q 250 -50 400 100 L 400 500" 
+                        fill="none" stroke="#fbbf24" strokeWidth="8" strokeDasharray="2,4" strokeLinecap="round"
+                        onClick={() => onStructureClick('microvilli')} className="cursor-pointer hover:stroke-amber-300"
+                    />
+
+                    {/* Epithelium Cells (Row of nuclei) */}
+                    {[...Array(12)].map((_, i) => (
+                        <circle key={`l-${i}`} cx={115} cy={100 + i*35} r="5" fill="#b45309" opacity="0.5" />
+                    ))}
+                    {[...Array(12)].map((_, i) => (
+                        <circle key={`r-${i}`} cx={385} cy={100 + i*35} r="5" fill="#b45309" opacity="0.5" />
+                    ))}
+                    {/* Top arch cells */}
+                    <circle cx="150" cy="60" r="5" fill="#b45309" opacity="0.5" />
+                    <circle cx="250" cy="30" r="5" fill="#b45309" opacity="0.5" />
+                    <circle cx="350" cy="60" r="5" fill="#b45309" opacity="0.5" />
+                    
+                    {/* Transparent click zone for Epithelium */}
+                    <path 
+                        d="M 100 500 L 100 100 Q 250 -50 400 100 L 400 500 L 360 500 L 360 120 Q 250 20 140 120 L 140 500 Z" 
+                        fill="transparent" onClick={() => onStructureClick('epithelium')} className="cursor-pointer"
+                    />
+
+                    {/* Lacteal (Center Yellow Tube) */}
+                    <path 
+                        d="M 230 500 L 230 150 Q 250 120 270 150 L 270 500 Z" 
+                        fill="#fef9c3" stroke="#eab308" strokeWidth="3"
+                        onClick={() => onStructureClick('lacteal')} className="cursor-pointer hover:fill-yellow-200"
+                    />
+                    {/* Lymph Flow */}
+                    <line x1="250" y1="480" x2="250" y2="180" stroke="#facc15" strokeWidth="2" className="lymph-flow" strokeDasharray="5,5"/>
+
+
+                    {/* Capillary Network (Red/Blue Net around Lacteal) */}
+                    <g onClick={() => onStructureClick('capillary')} className="cursor-pointer hover:opacity-80">
+                        {/* Artery (Red - Left) */}
+                        <path d="M 180 500 L 180 150 Q 180 100 250 80" fill="none" stroke="#ef4444" strokeWidth="4" />
+                        {/* Vein (Blue - Right) */}
+                        <path d="M 320 500 L 320 150 Q 320 100 250 80" fill="none" stroke="#3b82f6" strokeWidth="4" />
+                        {/* Capillaries (Connecting Mesh) */}
+                        <path d="M 180 400 L 320 380" stroke="#ef4444" strokeWidth="1" />
+                        <path d="M 180 350 L 320 330" stroke="#a855f7" strokeWidth="1" /> {/* Transition color */}
+                        <path d="M 180 300 L 320 280" stroke="#3b82f6" strokeWidth="1" />
+                        
+                        {/* Blood Flow Arrows */}
+                        <circle cx="180" cy="480" r="2" fill="red" className="animate-ping" />
+                        <circle cx="320" cy="480" r="2" fill="blue" className="animate-ping" style={{animationDelay:'0.5s'}} />
+                    </g>
+
+                    {/* NUTRIENT ANIMATION */}
+                    <AnimatePresence>
+                        {activeNutrient && (
+                            <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                {particles.map((p, i) => {
+                                    // Custom variant for each particle to stagger
+                                    const variants = {
+                                        hidden: { x: 50, y: 100 + i*40, opacity: 0 },
+                                        enter: { 
+                                            x: [50, 120, isLacteal ? 250 : 180, isLacteal ? 250 : 320], 
+                                            y: [100+i*40, 100+i*40, 100+i*40, 500], 
+                                            opacity: [0, 1, 1, 0],
+                                            transition: { duration: 4, repeat: Infinity, ease: "easeInOut", delay: p.delay }
+                                        }
+                                    };
+                                    
+                                    const info = NUTRIENTS[activeNutrient];
+
+                                    return (
+                                        <motion.circle 
+                                            key={i}
+                                            r={info.shape === 'dot' ? 3 : 6}
+                                            fill={info.color}
+                                            variants={variants}
+                                            initial="hidden"
+                                            animate="enter"
+                                        />
+                                    );
+                                })}
+                            </motion.g>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Labels (Static) */}
+                    <text x="40" y="250" fill="#94a3b8" fontSize="12" fontWeight="bold" transform="rotate(-90 40 250)">LUMEN (Intestine)</text>
+
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedNutrient, setSelectedNutrient] = useState(null);
+            const [selectedStructure, setSelectedStructure] = useState(null);
+            const [viewMode, setViewMode] = useState('2d'); // '2d' or '3d'
+
+            const handleNutrientSelect = (id) => {
+                setSelectedNutrient(id);
+                setSelectedStructure(null); // Clear structure info to focus on flow
+            };
+
+            const handleStructureSelect = (id) => {
+                setSelectedStructure(STRUCTURES[id]);
+                // Keep nutrient flowing if active
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="download-cloud" className="text-emerald-400" /> Absorption
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Small Intestine Villi</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* View Toggle */}
+                            <div className="bg-slate-800 p-1 rounded-xl flex">
+                                <button 
+                                    onClick={() => setViewMode('2d')}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === '2d' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    2D Mechanism
+                                </button>
+                                <button 
+                                    onClick={() => setViewMode('3d')}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${viewMode === '3d' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    3D Structure
+                                </button>
+                            </div>
+
+                            {/* Nutrient Select (Only for 2D Mode logic usually, but kept available) */}
+                            {viewMode === '2d' && (
+                                <div className="space-y-3">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Absorb Nutrient</label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {Object.values(NUTRIENTS).map(n => (
+                                            <button 
+                                                key={n.id}
+                                                onClick={() => handleNutrientSelect(n.id)}
+                                                className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between group
+                                                    ${selectedNutrient === n.id 
+                                                        ? 'bg-slate-800 border-blue-500 text-white shadow-lg ring-1 ring-blue-500/50' 
+                                                        : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                                `}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-3 h-3 rounded-full" style={{backgroundColor: n.color}}></div>
+                                                    <span className="text-sm font-bold">{n.name.split(' (')[0]}</span>
+                                                </div>
+                                                {selectedNutrient === n.id && <Icon name="activity" size={16} className="text-blue-400 animate-pulse"/>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Current Process Info / 3D Info */}
+                            {viewMode === '2d' ? (
+                                selectedNutrient ? (
+                                    <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 animate-in fade-in slide-in-from-left-4">
+                                        <div className="text-xs font-bold text-blue-400 uppercase mb-2 flex items-center gap-2">
+                                            <Icon name="info" size={14}/> Mechanism
+                                        </div>
+                                        <div className="space-y-2 text-xs text-slate-300">
+                                            <div className="flex justify-between border-b border-blue-500/20 pb-1">
+                                                <span>Route:</span>
+                                                <span className="font-bold text-white">{NUTRIENTS[selectedNutrient].path === 'blood' ? 'Blood Capillary' : 'Lacteal (Lymph)'}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>Method:</span>
+                                                <span className="font-bold text-white">{NUTRIENTS[selectedNutrient].method}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    !selectedStructure && (
+                                        <div className="text-center text-slate-500 text-xs italic p-4">
+                                            Select a nutrient to see absorption path, or click on the diagram to identify structures.
+                                        </div>
+                                    )
+                                )
+                            ) : (
+                                <div className="bg-purple-900/20 p-4 rounded-xl border border-purple-500/30 text-xs text-slate-300 space-y-2 animate-in fade-in">
+                                    <div className="font-bold text-purple-400 uppercase mb-1 flex items-center gap-2"><Icon name="box" size={14}/> 3D View</div>
+                                    <p>Observe how the finger-like projections (villi) vastly increase the surface area of the intestinal wall.</p>
+                                    <p>Drag to rotate, scroll to zoom.</p>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            
+                            {viewMode === '2d' ? (
+                                <div className="w-full h-full max-w-2xl p-8">
+                                    <VillusSVG activeNutrient={selectedNutrient} onStructureClick={handleStructureSelect} />
+                                </div>
+                            ) : (
+                                <div className="w-full h-full relative">
+                                    <Villi3DScene />
+                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none text-xs text-slate-400 font-mono bg-black/40 px-3 py-1 rounded-full border border-white/10">
+                                        Intestinal Wall Surface
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Structure Info Overlay (2D Only) */}
+                            <AnimatePresence>
+                                {viewMode === '2d' && selectedStructure && (
+                                    <motion.div 
+                                        initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }}
+                                        className="absolute bottom-8 left-1/2 -translate-x-1/2 w-80 bg-slate-800/95 backdrop-blur p-5 rounded-2xl border border-slate-600 shadow-2xl text-center z-20"
+                                    >
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h3 className="text-lg font-bold text-emerald-400">{selectedStructure.name}</h3>
+                                            <button onClick={() => setSelectedStructure(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={18}/></button>
+                                        </div>
+                                        <p className="text-xs text-slate-300 leading-relaxed">
+                                            {selectedStructure.desc}
+                                        </p>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {/* Legend Overlay (2D Only) */}
+                            {viewMode === '2d' && (
+                                <div className="absolute top-6 right-6 flex flex-col gap-2 items-end pointer-events-none z-10">
+                                    <div className="bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2">
+                                        <div className="w-3 h-1 bg-red-500"></div> <span className="text-[10px] text-slate-300">Artery (In)</span>
+                                    </div>
+                                    <div className="bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2">
+                                        <div className="w-3 h-1 bg-blue-500"></div> <span className="text-[10px] text-slate-300">Vein (Out)</span>
+                                    </div>
+                                    <div className="bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2">
+                                        <div className="w-3 h-1 bg-yellow-400"></div> <span className="text-[10px] text-slate-300">Lacteal</span>
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
