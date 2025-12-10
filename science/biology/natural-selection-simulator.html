@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natural Selection Simulator - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Moth Animation */
+        .moth { transition: transform 0.5s ease-in-out, opacity 0.3s; cursor: crosshair; }
+        .moth:hover { transform: scale(1.1); }
+        
+        /* Bark Textures */
+        .bark-light {
+            background-color: #cbd5e1;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.4'/%3E%3C/svg%3E");
+        }
+        .bark-dark {
+            background-color: #1e293b;
+            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.2'/%3E%3C/svg%3E");
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        .safe-area-bottom { padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- MOTH COMPONENT ---
+        const Moth = ({ type, x, y, onClick, isEaten }) => {
+            const color = type === 'light' ? '#f8fafc' : '#0f172a'; 
+            const stroke = type === 'light' ? '#94a3b8' : '#334155';
+            const patternOpacity = type === 'light' ? 0.3 : 0.2;
+
+            if (isEaten) return null;
+
+            return (
+                <div 
+                    className="absolute moth" 
+                    style={{ left: x, top: y, width: 40, height: 40 }}
+                    onClick={onClick}
+                >
+                    <svg viewBox="0 0 100 100" width="100%" height="100%">
+                        <path d="M50 50 L20 20 Q5 50 20 80 L50 50 L80 20 Q95 50 80 80 Z" fill={color} stroke={stroke} strokeWidth="2" />
+                        {/* Wing Patterns */}
+                        <circle cx="30" cy="30" r="3" fill="black" opacity={patternOpacity} />
+                        <circle cx="70" cy="30" r="3" fill="black" opacity={patternOpacity} />
+                        <circle cx="25" cy="60" r="4" fill="black" opacity={patternOpacity} />
+                        <circle cx="75" cy="60" r="4" fill="black" opacity={patternOpacity} />
+                        {/* Body */}
+                        <ellipse cx="50" cy="50" rx="5" ry="20" fill="#475569" />
+                        {/* Antennae */}
+                        <path d="M48 30 L40 10" stroke="#475569" strokeWidth="2" />
+                        <path d="M52 30 L60 10" stroke="#475569" strokeWidth="2" />
+                    </svg>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [background, setBackground] = useState('light');
+            const [generation, setGeneration] = useState(1);
+            const [moths, setMoths] = useState([]);
+            const [stats, setStats] = useState([{ gen: 1, light: 20, dark: 20 }]);
+            const [isPlaying, setIsPlaying] = useState(false);
+
+            const POPULATION_SIZE = 40;
+
+            // Initialize
+            useEffect(() => {
+                resetSim();
+            }, []);
+
+            const createMoth = (type) => ({
+                id: Math.random().toString(36).substr(2, 9),
+                type: type,
+                x: Math.random() * 90 + 5 + '%',
+                y: Math.random() * 90 + 5 + '%',
+                isEaten: false
+            });
+
+            const resetSim = () => {
+                const initialMoths = [];
+                // Start with 50/50 population
+                for (let i = 0; i < POPULATION_SIZE; i++) {
+                    initialMoths.push(createMoth(i % 2 === 0 ? 'light' : 'dark'));
+                }
+                setMoths(initialMoths);
+                setGeneration(1);
+                setStats([{ gen: 1, light: POPULATION_SIZE/2, dark: POPULATION_SIZE/2 }]);
+                setIsPlaying(false);
+            };
+
+            // Breeding Logic
+            const nextGeneration = () => {
+                // 1. Count Survivors
+                const survivors = moths.filter(m => !m.isEaten);
+                
+                if (survivors.length === 0) {
+                    // Fail safe: if all eaten, reintroduce random few
+                    const newMoths = [];
+                    for(let i=0; i<POPULATION_SIZE; i++) newMoths.push(createMoth(Math.random()>0.5 ? 'light':'dark'));
+                    setMoths(newMoths);
+                    return;
+                }
+
+                // 2. Calculate Allele Frequencies
+                const lightSurvivors = survivors.filter(m => m.type === 'light').length;
+                const totalSurvivors = survivors.length;
+                const lightRatio = lightSurvivors / totalSurvivors;
+
+                // 3. Generate New Population based on Survivor Ratio
+                const newMoths = [];
+                for (let i = 0; i < POPULATION_SIZE; i++) {
+                    // Inheritance: Probability matches parent pool
+                    let type = Math.random() < lightRatio ? 'light' : 'dark';
+                    
+                    // Mutation (Small chance to flip)
+                    if (Math.random() < 0.05) { // 5% mutation rate for educational visibility
+                        type = type === 'light' ? 'dark' : 'light';
+                    }
+                    newMoths.push(createMoth(type));
+                }
+
+                setMoths(newMoths);
+                setGeneration(g => g + 1);
+
+                // Update Stats
+                const newLightCount = newMoths.filter(m => m.type === 'light').length;
+                const newDarkCount = newMoths.filter(m => m.type === 'dark').length;
+                setStats(prev => [...prev, { gen: generation + 1, light: newLightCount, dark: newDarkCount }]);
+                
+                setIsPlaying(false); // Stop auto-play after breeding
+            };
+
+            // Predator Logic (Auto-hunt)
+            useEffect(() => {
+                let interval;
+                if (isPlaying) {
+                    interval = setInterval(() => {
+                        setMoths(currentMoths => {
+                            const uneaten = currentMoths.filter(m => !m.isEaten);
+                            
+                            // Stop if half population is eaten (simulates predator satiation)
+                            if (uneaten.length <= POPULATION_SIZE / 2) {
+                                setIsPlaying(false);
+                                return currentMoths;
+                            }
+
+                            // Pick a random moth to *attempt* to eat
+                            const targetIndex = Math.floor(Math.random() * currentMoths.length);
+                            const target = currentMoths[targetIndex];
+
+                            if (target.isEaten) return currentMoths;
+
+                            // Selection Pressure Logic
+                            // High probability of being eaten if NOT camouflaged
+                            let eatProbability = 0;
+                            
+                            if (background === 'light') {
+                                // Light BG: Dark moths stand out (High risk), Light moths blend in (Low risk)
+                                eatProbability = target.type === 'dark' ? 0.8 : 0.1; 
+                            } else {
+                                // Dark BG: Light moths stand out (High risk), Dark moths blend in (Low risk)
+                                eatProbability = target.type === 'light' ? 0.8 : 0.1;
+                            }
+
+                            if (Math.random() < eatProbability) {
+                                const newMoths = [...currentMoths];
+                                newMoths[targetIndex] = { ...target, isEaten: true };
+                                return newMoths;
+                            }
+                            
+                            return currentMoths;
+                        });
+                    }, 50); // Hunting speed
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying, background]);
+
+            const handleMothClick = (id) => {
+                // Manual predation
+                setMoths(prev => prev.map(m => m.id === id ? { ...m, isEaten: true } : m));
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="bug" className="text-emerald-400" /> Selection Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Natural Selection (Peppered Moth)</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Environment Control */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Tree Bark Colour</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button 
+                                        onClick={() => setBackground('light')}
+                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-2 transition-all
+                                            ${background === 'light' ? 'border-emerald-500 bg-slate-100 text-slate-900' : 'border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <div className="w-full h-8 rounded bg-slate-200 border border-slate-300"></div>
+                                        <span className="text-xs font-bold">Light (Lichen)</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => setBackground('dark')}
+                                        className={`p-3 rounded-xl border-2 flex flex-col items-center gap-2 transition-all
+                                            ${background === 'dark' ? 'border-emerald-500 bg-slate-800 text-white' : 'border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <div className="w-full h-8 rounded bg-slate-700 border border-slate-600"></div>
+                                        <span className="text-xs font-bold">Dark (Soot)</span>
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-tight bg-slate-800 p-2 rounded border border-slate-700">
+                                    {background === 'light' 
+                                        ? "Pre-industrial: Light moths are camouflaged. Dark moths are easy prey." 
+                                        : "Industrial Revolution: Soot kills lichen. Dark moths are camouflaged. Light moths are exposed."}
+                                </p>
+                            </div>
+
+                            {/* Simulation Controls */}
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center px-1">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Gen: {generation}</span>
+                                    <span className="text-xs font-mono text-emerald-400">{moths.filter(m=>!m.isEaten).length} Survivors</span>
+                                </div>
+                                
+                                <button 
+                                    onClick={() => setIsPlaying(!isPlaying)}
+                                    disabled={moths.filter(m=>!m.isEaten).length <= POPULATION_SIZE/2}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isPlaying ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}
+                                        ${moths.filter(m=>!m.isEaten).length <= POPULATION_SIZE/2 ? 'opacity-50 cursor-not-allowed' : ''}
+                                    `}
+                                >
+                                    <Icon name={isPlaying ? "pause" : "play"} size={18} fill="currentColor" />
+                                    {isPlaying ? 'Pause Predation' : 'Start Predation'}
+                                </button>
+
+                                <button 
+                                    onClick={nextGeneration}
+                                    disabled={isPlaying || moths.filter(m=>!m.isEaten).length > POPULATION_SIZE/2}
+                                    className={`w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all
+                                        ${isPlaying || moths.filter(m=>!m.isEaten).length > POPULATION_SIZE/2 ? 'opacity-50 cursor-not-allowed' : 'animate-pulse'}
+                                    `}
+                                >
+                                    <Icon name="fast-forward" size={18} fill="currentColor" /> Next Generation
+                                </button>
+                                
+                                <button 
+                                    onClick={resetSim}
+                                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all border border-slate-700"
+                                >
+                                    <Icon name="rotate-ccw" size={14} /> Reset
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Forest View */}
+                        <div className={`flex-[2] rounded-3xl border-4 border-slate-800 shadow-2xl relative overflow-hidden transition-colors duration-1000
+                            ${background === 'light' ? 'bark-light' : 'bark-dark'}
+                        `}>
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-4 py-2 rounded-full text-xs font-bold text-white z-10 pointer-events-none border border-white/10">
+                                {isPlaying 
+                                    ? "Birds are hunting..." 
+                                    : moths.filter(m=>!m.isEaten).length <= POPULATION_SIZE/2 
+                                        ? "Feeding done. 50% eaten. Click Next Generation." 
+                                        : "Click 'Start Predation' to simulate bird attacks"}
+                            </div>
+
+                            {moths.map(moth => (
+                                <Moth 
+                                    key={moth.id}
+                                    {...moth}
+                                    onClick={() => handleMothClick(moth.id)}
+                                />
+                            ))}
+                        </div>
+
+                        {/* Graph Panel */}
+                        <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative flex flex-col">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex justify-between items-center">
+                                <span className="flex items-center gap-2"><Icon name="line-chart" size={14}/> Population Trend</span>
+                                <div className="flex gap-4">
+                                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-slate-200"></div> Light</div>
+                                    <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-slate-600"></div> Dark</div>
+                                </div>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={stats}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="gen" stroke="#64748b" fontSize={10} label={{ value: 'Generations', position: 'insideBottom', offset: -5, fill: '#64748b', fontSize: 10 }} />
+                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, POPULATION_SIZE]} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} 
+                                            itemStyle={{ color: '#fff' }}
+                                        />
+                                        <Area type="monotone" dataKey="light" stackId="1" stroke="#cbd5e1" fill="#e2e8f0" name="Light Moths" animationDuration={500} />
+                                        <Area type="monotone" dataKey="dark" stackId="1" stroke="#475569" fill="#64748b" name="Dark Moths" animationDuration={500} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
