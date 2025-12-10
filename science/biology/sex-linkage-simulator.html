@@ -1,1 +1,478 @@
-sex-linkage-simulator
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sex-Linkage Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body { background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        
+        /* Grid Animation */
+        .grid-cell { transition: all 0.3s ease; }
+        .grid-cell:hover { transform: scale(1.05); z-index: 10; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); }
+        
+        /* Color Blindness Filter */
+        .protanopia { filter: url('#protanopia-filter'); }
+        
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- SVG Filter for Color Blindness Simulation -->
+    <svg style="display: none;">
+        <defs>
+            <filter id="protanopia-filter">
+                <feColorMatrix type="matrix" values="0.567, 0.433, 0, 0, 0
+                                                     0.558, 0.442, 0, 0, 0
+                                                     0, 0.242, 0.758, 0, 0
+                                                     0, 0, 0, 1, 0" />
+            </filter>
+        </defs>
+    </svg>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } = window.Recharts;
+
+        // Lucide Icon Component
+        const Icon = ({ name, className = "", size = 20 }) => {
+            useEffect(() => {
+                lucide.createIcons();
+            }, [name]);
+            return <i data-lucide={name} width={size} height={size} className={className}></i>;
+        };
+
+        // --- CONFIGURATION ---
+        const CONDITIONS = {
+            color_blindness: {
+                name: 'Red-Green Color Blindness',
+                dom: 'N (Normal Vision)',
+                rec: 'n (Color Blind)',
+                desc: 'An X-linked recessive condition affecting color perception.',
+                icon: 'eye'
+            },
+            haemophilia: {
+                name: 'Haemophilia',
+                dom: 'H (Normal Clotting)',
+                rec: 'h (Haemophilia)',
+                desc: 'An X-linked recessive disorder impairing blood clotting.',
+                icon: 'droplet'
+            }
+        };
+
+        const FATHER_OPTIONS = [
+            { geno: 'XNY', label: 'Unaffected Male', affected: false },
+            { geno: 'XnY', label: 'Affected Male', affected: true }
+        ];
+
+        const MOTHER_OPTIONS = [
+            { geno: 'XNXN', label: 'Unaffected Female', affected: false, carrier: false },
+            { geno: 'XNXn', label: 'Carrier Female', affected: false, carrier: true },
+            { geno: 'XnXn', label: 'Affected Female', affected: true, carrier: false }
+        ];
+
+        const App = () => {
+            const [conditionKey, setConditionKey] = useState('color_blindness');
+            const [fatherIdx, setFatherIdx] = useState(0); // 0 or 1
+            const [motherIdx, setMotherIdx] = useState(1); // 0, 1 or 2 (Default carrier)
+            const [showSim, setShowSim] = useState(false); // Toggle color blindness sim view
+
+            const currentCondition = CONDITIONS[conditionKey];
+            const father = FATHER_OPTIONS[fatherIdx];
+            const mother = MOTHER_OPTIONS[motherIdx];
+
+            // Re-render icons when condition changes
+            useEffect(() => {
+                lucide.createIcons();
+            }, [conditionKey, showSim]);
+
+            // Replace placeholders with actual gene symbols based on condition
+            const formatGeno = (g) => {
+                const dom = conditionKey === 'color_blindness' ? 'N' : 'H';
+                const rec = conditionKey === 'color_blindness' ? 'n' : 'h';
+                return g.replace(/N/g, dom).replace(/n/g, rec);
+            };
+
+            // Calculate Cross Logic
+            const fGametes = [father.geno.substring(0, 2), 'Y']; // e.g. XN, Y
+            const mGametes = [mother.geno.substring(0, 2), mother.geno.substring(2, 4)]; // e.g. XN, Xn
+
+            const offspring = [];
+            const stats = {
+                sons_affected: 0,
+                sons_normal: 0,
+                daughters_affected: 0,
+                daughters_carrier: 0,
+                daughters_normal: 0
+            };
+
+            for (let m = 0; m < 2; m++) {
+                for (let f = 0; f < 2; f++) {
+                    const mG = mGametes[m]; // Egg
+                    const fG = fGametes[f]; // Sperm
+                    
+                    let geno = '';
+                    let sex = '';
+                    let status = ''; // normal, carrier, affected
+
+                    if (fG === 'Y') {
+                        sex = 'Male';
+                        geno = mG + 'Y';
+                        if (mG.includes('n')) {
+                            status = 'affected';
+                            stats.sons_affected++;
+                        } else {
+                            status = 'normal';
+                            stats.sons_normal++;
+                        }
+                    } else {
+                        sex = 'Female';
+                        // Sort X chromosomes: Dominant first if hetero
+                        if (mG.includes('N') || fG.includes('N')) {
+                            if (mG.includes('n') || fG.includes('n')) {
+                                geno = 'XNXn';
+                                status = 'carrier';
+                                stats.daughters_carrier++;
+                            } else {
+                                geno = 'XNXN';
+                                status = 'normal';
+                                stats.daughters_normal++;
+                            }
+                        } else {
+                            geno = 'XnXn';
+                            status = 'affected';
+                            stats.daughters_affected++;
+                        }
+                    }
+
+                    offspring.push({
+                        geno: formatGeno(geno),
+                        sex,
+                        status,
+                        mGamete: formatGeno(mG),
+                        fGamete: formatGeno(fG)
+                    });
+                }
+            }
+
+            // Chart Data Preparation
+            const sonData = [
+                { name: 'Affected', value: stats.sons_affected, color: '#ef4444' }, // Red-500
+                { name: 'Normal', value: stats.sons_normal, color: '#3b82f6' }    // Blue-500
+            ].filter(d => d.value > 0);
+
+            const daughterData = [
+                { name: 'Affected', value: stats.daughters_affected, color: '#ef4444' }, // Red-500
+                { name: 'Carrier', value: stats.daughters_carrier, color: '#eab308' },  // Yellow-500
+                { name: 'Normal', value: stats.daughters_normal, color: '#3b82f6' }     // Blue-500
+            ].filter(d => d.value > 0);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-slate-300 flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* LEFT SIDEBAR */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2 text-white">
+                                <Icon name="dna" className="text-emerald-400" /> 
+                                Sex-Linkage Sim
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-1">/science/biology/genetics</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Condition Selector */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Condition</label>
+                                <div className="flex gap-2">
+                                    {Object.entries(CONDITIONS).map(([key, val]) => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => setConditionKey(key)}
+                                            className={`flex-1 py-3 px-2 rounded-lg text-[10px] font-bold transition-all border flex flex-col items-center gap-1
+                                                ${conditionKey === key ? 'bg-slate-800 border-emerald-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-500 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <Icon name={val.icon} size={16} />
+                                            {val.name.split(' (')[0]}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-slate-400 italic mt-1 leading-relaxed bg-slate-800/50 p-2 rounded border border-slate-700">
+                                    {currentCondition.desc}
+                                </p>
+                            </div>
+
+                            {/* Parents Config */}
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="text-xs font-bold text-blue-400 uppercase tracking-widest px-1 mb-2 flex items-center gap-2">
+                                        Father (XY)
+                                    </label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {FATHER_OPTIONS.map((opt, i) => (
+                                            <button 
+                                                key={i}
+                                                onClick={() => setFatherIdx(i)}
+                                                className={`p-3 rounded-lg text-sm text-left border flex justify-between items-center transition-all
+                                                    ${fatherIdx === i ? 'bg-blue-900/20 border-blue-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-600'}
+                                                `}
+                                            >
+                                                <span>{opt.label}</span>
+                                                <span className="font-mono font-bold bg-slate-900 px-2 py-0.5 rounded text-blue-300">{formatGeno(opt.geno)}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-bold text-pink-400 uppercase tracking-widest px-1 mb-2 flex items-center gap-2">
+                                        Mother (XX)
+                                    </label>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {MOTHER_OPTIONS.map((opt, i) => (
+                                            <button 
+                                                key={i}
+                                                onClick={() => setMotherIdx(i)}
+                                                className={`p-3 rounded-lg text-sm text-left border flex justify-between items-center transition-all
+                                                    ${motherIdx === i ? 'bg-pink-900/20 border-pink-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-600'}
+                                                `}
+                                            >
+                                                <span>{opt.label}</span>
+                                                <span className="font-mono font-bold bg-slate-900 px-2 py-0.5 rounded text-pink-300">{formatGeno(opt.geno)}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Vision Sim Button (Only for color blindness) */}
+                            {conditionKey === 'color_blindness' && (
+                                <div className="pt-4 border-t border-slate-800">
+                                    <button 
+                                        onClick={() => setShowSim(!showSim)}
+                                        className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all border shadow-lg
+                                            ${showSim ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <Icon name={showSim ? "eye-off" : "eye"} size={18} /> 
+                                        {showSim ? 'Hide Vision Sim' : 'Simulate Vision'}
+                                    </button>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* MAIN STAGE */}
+                    <div className="flex-1 bg-[#0F172A] relative flex flex-col p-4 md:p-8 overflow-y-auto custom-scrollbar">
+                        {/* Background Gradient */}
+                        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-slate-900 via-[#0F172A] to-[#0F172A] -z-10"></div>
+                        
+                        {showSim ? (
+                            <div className="flex flex-col items-center justify-center min-h-full animate-in fade-in duration-500">
+                                <h2 className="text-2xl font-bold mb-10 text-white flex items-center gap-2">
+                                    <Icon name="scan-eye" /> Vision Simulation
+                                </h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
+                                    <div className="text-center group">
+                                        <div className="w-64 h-64 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500 mb-6 flex items-center justify-center text-5xl font-bold shadow-2xl transition-transform group-hover:scale-105 border-4 border-slate-700">
+                                            <span className="drop-shadow-md text-white">74</span>
+                                        </div>
+                                        <div className="text-lg font-bold text-white mb-2">Normal Vision</div>
+                                        <p className="text-sm text-slate-500">Trichromacy</p>
+                                    </div>
+                                    <div className="text-center group">
+                                        <div className="w-64 h-64 rounded-full bg-gradient-to-br from-red-500 via-green-500 to-blue-500 mb-6 flex items-center justify-center text-5xl font-bold shadow-2xl transition-transform group-hover:scale-105 protanopia border-4 border-slate-700">
+                                            <span className="drop-shadow-md text-white">21</span>
+                                        </div>
+                                        <div className="text-lg font-bold text-red-400 mb-2">Protanopia</div>
+                                        <p className="text-sm text-slate-500">Red-Blindness</p>
+                                    </div>
+                                </div>
+                                <div className="mt-12 bg-slate-900/50 p-6 rounded-xl border border-slate-800 max-w-lg text-center backdrop-blur-sm">
+                                    <p className="text-slate-300 leading-relaxed">
+                                        People with red-green color blindness lack the photopigments in the retinal cones needed to distinguish red and green hues. The number '74' might appear as '21' or be completely invisible depending on severity.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-10 w-full max-w-4xl mx-auto animate-in slide-in-from-bottom-4 duration-500">
+                                
+                                {/* Punnett Square Section */}
+                                <div className="flex flex-col items-center w-full">
+                                    <h2 className="text-xl font-bold text-white mb-8 flex items-center gap-2 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-700">
+                                        <Icon name="grid" size={18} className="text-purple-400" /> 
+                                        Punnett Square Analysis
+                                    </h2>
+                                    
+                                    <div className="relative p-6 bg-slate-900/30 rounded-3xl border border-slate-800 shadow-2xl">
+                                        
+                                        {/* Top Labels (Mother Gametes) */}
+                                        <div className="flex mb-4 ml-20 gap-4">
+                                            {mGametes.map((g, i) => (
+                                                <div key={i} className="w-28 text-center flex flex-col items-center">
+                                                    <div className="text-pink-400 font-bold text-xs uppercase mb-1 tracking-wider">Ovum</div>
+                                                    <div className="w-full bg-pink-900/20 text-pink-300 rounded-xl py-3 border-2 border-pink-500/30 font-mono text-xl shadow-lg">
+                                                        {formatGeno(g)}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="flex gap-4">
+                                            {/* Side Labels (Father Gametes) */}
+                                            <div className="flex flex-col gap-4 justify-center mr-2">
+                                                {fGametes.map((g, i) => (
+                                                    <div key={i} className="h-28 w-16 flex flex-col items-center justify-center">
+                                                        <div className="w-full h-full bg-blue-900/20 text-blue-300 rounded-xl flex items-center justify-center border-2 border-blue-500/30 font-mono text-xl shadow-lg relative">
+                                                            {formatGeno(g)}
+                                                            <div className="absolute -left-8 -rotate-90 text-blue-400 font-bold text-xs uppercase tracking-wider">Sperm</div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            {/* The Grid */}
+                                            <div className="grid grid-cols-2 gap-4 bg-slate-950 p-4 rounded-2xl border border-slate-800 shadow-inner">
+                                                {offspring.map((child, i) => (
+                                                    <div key={i} className="w-28 h-28 bg-slate-900 rounded-xl flex flex-col items-center justify-center border border-slate-700 grid-cell relative overflow-hidden group">
+                                                        <span className="text-2xl font-mono font-black text-white mb-2 drop-shadow-md">{child.geno}</span>
+                                                        <div className="flex flex-col items-center gap-1">
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-white ${child.sex === 'Male' ? 'bg-blue-600' : 'bg-pink-600'}`}>
+                                                                {child.sex}
+                                                            </span>
+                                                            <span className={`text-[9px] uppercase font-bold tracking-tight px-1.5 py-0.5 rounded border ${
+                                                                child.status === 'affected' ? 'text-red-300 border-red-900 bg-red-900/20' : 
+                                                                child.status === 'carrier' ? 'text-yellow-300 border-yellow-900 bg-yellow-900/20' : 
+                                                                'text-emerald-300 border-emerald-900 bg-emerald-900/20'
+                                                            }`}>
+                                                                {child.status}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Statistics Panel */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
+                                    
+                                    {/* Sons Stats */}
+                                    <div className="bg-slate-900/50 rounded-2xl border border-slate-800 p-6 backdrop-blur-sm hover:border-blue-500/30 transition-colors">
+                                        <div className="text-xs font-bold text-blue-400 uppercase mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
+                                            <Icon name="user" size={14}/> Probability for Sons (XY)
+                                        </div>
+                                        <div className="h-32 flex items-center gap-6">
+                                            <ResponsiveContainer width="40%" height="100%">
+                                                <PieChart>
+                                                    <Pie data={sonData} cx="50%" cy="50%" innerRadius={25} outerRadius={45} paddingAngle={5} dataKey="value" stroke="none">
+                                                        {sonData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                                    </Pie>
+                                                    <Tooltip contentStyle={{backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '12px'}} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                            <div className="flex-1 space-y-2">
+                                                {sonData.map((d, i) => (
+                                                    <div key={i} className="flex justify-between text-xs items-center bg-slate-950/50 p-2 rounded">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-2 h-2 rounded-full" style={{backgroundColor: d.color}}></div>
+                                                            <span className="text-slate-300">{d.name}</span>
+                                                        </div>
+                                                        <span className="font-bold text-white ml-2">{d.value * 50}%</span>
+                                                    </div>
+                                                ))}
+                                                {sonData.length === 0 && <div className="text-xs text-slate-500 italic">No male offspring possible</div>}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Daughters Stats */}
+                                    <div className="bg-slate-900/50 rounded-2xl border border-slate-800 p-6 backdrop-blur-sm hover:border-pink-500/30 transition-colors">
+                                        <div className="text-xs font-bold text-pink-400 uppercase mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
+                                            <Icon name="user" size={14}/> Probability for Daughters (XX)
+                                        </div>
+                                        <div className="h-32 flex items-center gap-6">
+                                            <ResponsiveContainer width="40%" height="100%">
+                                                <PieChart>
+                                                    <Pie data={daughterData} cx="50%" cy="50%" innerRadius={25} outerRadius={45} paddingAngle={5} dataKey="value" stroke="none">
+                                                        {daughterData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                                                    </Pie>
+                                                    <Tooltip contentStyle={{backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px', fontSize: '12px'}} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                            <div className="flex-1 space-y-2">
+                                                {daughterData.map((d, i) => (
+                                                    <div key={i} className="flex justify-between text-xs items-center bg-slate-950/50 p-2 rounded">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-2 h-2 rounded-full" style={{backgroundColor: d.color}}></div>
+                                                            <span className="text-slate-300">{d.name}</span>
+                                                        </div>
+                                                        <span className="font-bold text-white ml-2">{d.value * 50}%</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
