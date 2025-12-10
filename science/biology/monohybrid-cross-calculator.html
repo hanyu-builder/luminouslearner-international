@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monohybrid Cross Calculator - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Punnett Grid Animation */
+        .grid-cell { transition: all 0.3s ease; }
+        .grid-cell:hover { transform: scale(1.05); background-color: rgba(56, 189, 248, 0.2); border-color: #38bdf8; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- LOGIC (Internationalized) ---
+        const ALLELES = [
+            { char: 'T', trait: 'Tall', type: 'Dominant' },
+            { char: 't', trait: 'Dwarf', type: 'Recessive' },
+            { char: 'R', trait: 'Red', type: 'Dominant' },
+            { char: 'r', trait: 'White', type: 'Recessive' },
+            { char: 'Y', trait: 'Yellow', type: 'Dominant' },
+            { char: 'y', trait: 'Green', type: 'Recessive' }
+        ];
+
+        const App = () => {
+            const [parent1, setParent1] = useState('Tt'); // Heterozygous
+            const [parent2, setParent2] = useState('Tt'); // Heterozygous
+            const [traitType, setTraitType] = useState(0); // Index in ALLELES (pair)
+
+            // Current Alleles
+            const domAllele = ALLELES[traitType * 2];
+            const recAllele = ALLELES[traitType * 2 + 1];
+
+            // Calculate Punnett Square
+            const p1Gametes = parent1.split('');
+            const p2Gametes = parent2.split('');
+            
+            const offspring = [];
+            for (let r = 0; r < 2; r++) {
+                for (let c = 0; c < 2; c++) {
+                    // Convention: Capital first
+                    let geno = p1Gametes[r] + p2Gametes[c];
+                    if (geno[1] < geno[0]) geno = geno[1] + geno[0]; // Sort letters (ASCII: T < t is False, but T=84, t=116. Wait, 'T' < 't' is TRUE. So 'Tt' is correct. If 'tT', 't' > 'T' is true, swap)
+                    // Correction: We want Uppercase first. 'T' is smaller than 't'. So 'T' < 't' is true. 
+                    // If we have 'tT', 't' > 'T'. So we swap if geno[0] > geno[1]
+                    if (geno[0] > geno[1]) geno = geno[1] + geno[0];
+                    offspring.push(geno);
+                }
+            }
+
+            // Analyze Results
+            const genoCounts = {};
+            const phenoCounts = { Dom: 0, Rec: 0 };
+
+            offspring.forEach(geno => {
+                // Genotype count
+                genoCounts[geno] = (genoCounts[geno] || 0) + 1;
+                
+                // Phenotype count
+                if (geno.includes(domAllele.char)) {
+                    phenoCounts.Dom++;
+                } else {
+                    phenoCounts.Rec++;
+                }
+            });
+
+            // Prepare Chart Data
+            const phenoData = [
+                { name: domAllele.trait, value: phenoCounts.Dom, color: '#34d399' }, // Green
+                { name: recAllele.trait, value: phenoCounts.Rec, color: '#94a3b8' }  // Grey
+            ].filter(d => d.value > 0);
+
+            const genoData = Object.entries(genoCounts).map(([geno, count]) => ({
+                name: geno, value: count
+            }));
+
+            // Helper for description
+            const getDesc = (geno) => {
+                if (geno[0] === geno[1]) {
+                    return geno[0] === domAllele.char ? 'Homozygous Dominant' : 'Homozygous Recessive';
+                }
+                return 'Heterozygous';
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="grid" className="text-emerald-400" /> Punnett Calc
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Monohybrid Cross Generator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Trait Selection */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Trait</label>
+                                <div className="flex gap-2">
+                                    {['Height', 'Flower', 'Seed'].map((t, i) => (
+                                        <button 
+                                            key={t}
+                                            onClick={() => { 
+                                                setTraitType(i); 
+                                                // Reset parents to Heterozygous on switch for demo
+                                                setParent1(ALLELES[i*2].char + ALLELES[i*2+1].char);
+                                                setParent2(ALLELES[i*2].char + ALLELES[i*2+1].char);
+                                            }}
+                                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all border
+                                                ${traitType === i ? 'bg-slate-800 border-emerald-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            {t}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Parents Config */}
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Parent 1 (Male)</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {[
+                                            domAllele.char + domAllele.char, 
+                                            domAllele.char + recAllele.char, 
+                                            recAllele.char + recAllele.char
+                                        ].map(geno => (
+                                            <button 
+                                                key={geno}
+                                                onClick={() => setParent1(geno)}
+                                                className={`py-2 rounded font-mono font-bold transition-all border-2
+                                                    ${parent1 === geno ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}
+                                                `}
+                                            >
+                                                {geno}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Parent 2 (Female)</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {[
+                                            domAllele.char + domAllele.char, 
+                                            domAllele.char + recAllele.char, 
+                                            recAllele.char + recAllele.char
+                                        ].map(geno => (
+                                            <button 
+                                                key={geno}
+                                                onClick={() => setParent2(geno)}
+                                                className={`py-2 rounded font-mono font-bold transition-all border-2
+                                                    ${parent2 === geno ? 'bg-pink-600 border-pink-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}
+                                                `}
+                                            >
+                                                {geno}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Key */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-300 space-y-2">
+                                <div className="font-bold text-slate-400 uppercase mb-1">Alleles Key</div>
+                                <div className="flex justify-between">
+                                    <span className="font-bold text-emerald-400">{domAllele.char} : {domAllele.trait}</span>
+                                    <span className="text-slate-500">Dominant</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="font-bold text-slate-400">{recAllele.char} : {recAllele.trait}</span>
+                                    <span className="text-slate-500">Recessive</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-8 overflow-y-auto custom-scrollbar">
+                        
+                        <div className="flex flex-col gap-12 w-full max-w-2xl mx-auto">
+                            
+                            {/* Punnett Square Visual */}
+                            <div className="flex flex-col items-center w-full">
+                                <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+                                    <Icon name="table" /> Punnett Square
+                                </h2>
+                                
+                                <div className="relative p-2">
+                                    {/* Top Labels (Parent 2 Gametes) */}
+                                    <div className="flex mb-2 ml-12">
+                                        <div className="w-24 text-center font-bold text-pink-400 text-xl flex flex-col">
+                                            {p2Gametes[0]} <span className="text-[10px] text-slate-600 font-normal">Gamete</span>
+                                        </div>
+                                        <div className="w-24 text-center font-bold text-pink-400 text-xl flex flex-col">
+                                            {p2Gametes[1]} <span className="text-[10px] text-slate-600 font-normal">Gamete</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex">
+                                        {/* Side Labels (Parent 1 Gametes) */}
+                                        <div className="flex flex-col justify-center mr-2 gap-2">
+                                            <div className="h-24 flex items-center justify-center font-bold text-blue-400 text-xl gap-1">
+                                                {p1Gametes[0]} <span className="text-[10px] text-slate-600 font-normal rotate-[-90deg]">Gamete</span>
+                                            </div>
+                                            <div className="h-24 flex items-center justify-center font-bold text-blue-400 text-xl gap-1">
+                                                {p1Gametes[1]} <span className="text-[10px] text-slate-600 font-normal rotate-[-90deg]">Gamete</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Grid */}
+                                        <div className="grid grid-cols-2 gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700 shadow-2xl">
+                                            {offspring.map((geno, i) => (
+                                                <div key={i} className="w-24 h-24 bg-slate-900 rounded-lg flex flex-col items-center justify-center border border-slate-700 shadow-inner grid-cell relative overflow-hidden group">
+                                                    <span className="text-3xl font-mono font-black text-white z-10">{geno}</span>
+                                                    <span className="text-[10px] text-slate-400 mt-1 font-bold uppercase z-10">
+                                                        {geno.includes(domAllele.char) ? domAllele.trait : recAllele.trait}
+                                                    </span>
+                                                    {/* Hover hint */}
+                                                    <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Statistics */}
+                            <div className="space-y-8 w-full">
+                                {/* Genotype Stats */}
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="dna" size={16}/> Genotype Ratio
+                                    </h3>
+                                    <div className="space-y-3">
+                                        {genoData.map((d, i) => (
+                                            <div key={i} className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex items-center justify-between">
+                                                <div className="flex flex-col">
+                                                    <span className="font-mono font-bold text-lg text-blue-300">{d.name}</span>
+                                                    <span className="text-xs text-slate-500">{getDesc(d.name)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-32 h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+                                                        <div className="h-full bg-blue-500" style={{ width: `${(d.value/4)*100}%` }}></div>
+                                                    </div>
+                                                    <span className="font-mono font-bold text-sm w-8 text-right text-slate-300">{d.value}/4</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Phenotype Stats */}
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="pie-chart" size={16}/> Phenotype Ratio
+                                    </h3>
+                                    <div className="h-48 flex items-center gap-8 bg-slate-800/50 rounded-xl border border-slate-700 p-4 shadow-lg">
+                                        <ResponsiveContainer width="40%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={phenoData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    innerRadius={30}
+                                                    outerRadius={50}
+                                                    paddingAngle={5}
+                                                    dataKey="value"
+                                                    stroke="none"
+                                                >
+                                                    {phenoData.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip 
+                                                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                                    itemStyle={{ color: '#fff' }}
+                                                />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                        <div className="flex-1 space-y-2">
+                                            {phenoData.map((p, i) => (
+                                                <div key={i} className="flex justify-between items-center text-sm border-b border-slate-700/50 pb-1 last:border-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }}></div>
+                                                        <span className="text-slate-300 font-medium">{p.name}</span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="font-bold font-mono text-white block">{(p.value/4)*100}%</span>
+                                                        <span className="text-[10px] text-slate-500">{p.value} in 4</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
