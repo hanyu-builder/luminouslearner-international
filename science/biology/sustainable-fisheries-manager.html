@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sustainable Fisheries Manager - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Ocean Background */
+        .ocean-bg {
+            background: linear-gradient(to bottom, #0ea5e9 0%, #0369a1 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* Bubble Animation */
+        .bubble {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            animation: rise infinite ease-in;
+        }
+        @keyframes rise {
+            0% { transform: translateY(0) scale(1); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateY(-500px) scale(1.5); opacity: 0; }
+        }
+
+        /* Net Animation */
+        .net-sweep {
+            animation: sweep 2s ease-in-out;
+        }
+        @keyframes sweep {
+            0% { transform: translateY(-100%); opacity: 0; }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { transform: translateY(100%); opacity: 0; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { AreaChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONFIG ---
+        const MAX_FISH = 150;
+        const MATURITY_SIZE = 4; // Fish size >= 4 can reproduce
+        const MAX_SIZE = 8;
+        
+        // --- COMPONENTS ---
+
+        // Individual Fish Visual
+        const Fish = ({ size, x, y, speed, direction }) => {
+            // Size classes: 2 (Juvenile), 4-5 (Adult), 7-8 (Large)
+            const scale = 0.5 + (size / 8) * 1.5;
+            const isJuvenile = size < MATURITY_SIZE;
+            const color = isJuvenile ? '#facc15' : size >= 7 ? '#ef4444' : '#38bdf8'; // Yellow -> Blue -> Red (Big)
+            
+            return (
+                <motion.div 
+                    className="absolute transition-all duration-1000 ease-linear"
+                    style={{ 
+                        left: x, 
+                        top: y, 
+                        transform: `scale(${scale}) scaleX(${direction})` // Direction 1 or -1
+                    }}
+                >
+                    <Icon name="fish" size={24} style={{ color: color, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
+                    {size >= MATURITY_SIZE && (
+                        <div className="absolute -top-1 left-1/2 w-1 h-1 bg-white rounded-full opacity-50"></div>
+                    )}
+                </motion.div>
+            );
+        };
+
+        // Net Visual
+        const FishingNet = ({ meshSize, active }) => {
+            if (!active) return null;
+            
+            // Visual representation of mesh
+            // Small mesh = dense grid, Large mesh = loose grid
+            const gridSize = meshSize === 'small' ? 10 : meshSize === 'medium' ? 30 : 60;
+            
+            return (
+                <div className="absolute inset-0 z-20 net-sweep pointer-events-none">
+                    <div className="w-full h-full" 
+                         style={{
+                             backgroundImage: `
+                                linear-gradient(rgba(255,255,255,0.3) 1px, transparent 1px),
+                                linear-gradient(90deg, rgba(255,255,255,0.3) 1px, transparent 1px)
+                             `,
+                             backgroundSize: `${gridSize}px ${gridSize}px`,
+                             backgroundColor: 'rgba(0,0,0,0.1)'
+                         }}>
+                    </div>
+                    <div className="absolute bottom-0 w-full text-center bg-slate-800/80 text-white py-2 font-bold text-lg backdrop-blur-sm">
+                        Catching...
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            // Simulation State
+            const [year, setYear] = useState(1);
+            const [fish, setFish] = useState([]);
+            const [history, setHistory] = useState([{ year: 0, population: 50, catch: 0, profit: 0 }]);
+            const [isAutoPlay, setIsAutoPlay] = useState(false);
+            
+            // Controls
+            const [meshSize, setMeshSize] = useState('medium'); // small, medium, large
+            const [isMoratorium, setIsMoratorium] = useState(false); // true = no fishing
+            const [profit, setProfit] = useState(0);
+            const [isFishingAnim, setIsFishingAnim] = useState(false);
+            const [message, setMessage] = useState("Welcome! Manage your fishery sustainably.");
+
+            // Initialize Fish
+            useEffect(() => {
+                resetSim();
+            }, []);
+
+            const resetSim = () => {
+                const initialFish = [];
+                for(let i=0; i<50; i++) {
+                    initialFish.push(createRandomFish());
+                }
+                setFish(initialFish);
+                setYear(1);
+                setProfit(0);
+                setHistory([{ year: 0, population: 50, catch: 0, profit: 0 }]);
+                setIsAutoPlay(false);
+                setMessage("New simulation started.");
+            };
+
+            const createRandomFish = (isBaby = false) => {
+                const size = isBaby ? 1 : Math.floor(Math.random() * 6) + 2;
+                return {
+                    id: Math.random(),
+                    size: size,
+                    x: Math.random() * 80 + 10 + '%', // Percentage for responsiveness
+                    y: Math.random() * 80 + 10 + '%',
+                    direction: Math.random() > 0.5 ? 1 : -1
+                };
+            };
+
+            // Simulation Step (One Year/Season)
+            const nextSeason = () => {
+                if (fish.length === 0) {
+                    setMessage("❌ Fishery Collapsed! No fish left to reproduce.");
+                    setIsAutoPlay(false);
+                    return;
+                }
+
+                let currentFish = [...fish];
+                let seasonCatch = 0;
+                let seasonIncome = 0;
+
+                // 1. Fishing Phase (if not moratorium)
+                if (!isMoratorium) {
+                    setIsFishingAnim(true);
+                    setTimeout(() => setIsFishingAnim(false), 2000); // Visual only
+
+                    // Determine catch probability based on mesh size
+                    const catchThreshold = meshSize === 'small' ? 2 : meshSize === 'medium' ? 4 : 6;
+                    
+                    // Filter fish
+                    const survivors = [];
+                    currentFish.forEach(f => {
+                        // Chance to be caught if larger than mesh
+                        if (f.size >= catchThreshold) {
+                            const catchChance = 0.7; // 70% chance to be caught if net passes
+                            if (Math.random() < catchChance) {
+                                // Caught!
+                                seasonCatch++;
+                                // Value increases with size (exponentially)
+                                seasonIncome += f.size * 10; 
+                            } else {
+                                survivors.push(f);
+                            }
+                        } else {
+                            // Too small, escapes
+                            survivors.push(f);
+                        }
+                    });
+                    currentFish = survivors;
+                    
+                    if (seasonCatch > 0) setMessage(`🎣 Season Catch: ${seasonCatch} fish. Income: $${seasonIncome}`);
+                    else setMessage("⚠️ No fish caught! Try a smaller mesh?");
+                } else {
+                    setMessage("🛑 Moratorium in effect. Fish population recovering...");
+                }
+
+                // 2. Growth & Natural Death
+                currentFish = currentFish.map(f => ({
+                    ...f,
+                    size: Math.min(MAX_SIZE, f.size + 1), // Grow
+                    x: Math.random() * 90 + '%', // Move
+                    y: Math.random() * 90 + '%',
+                    direction: Math.random() > 0.5 ? 1 : -1
+                })).filter(f => {
+                    // Old fish die naturally (Size > 8 has chance to die)
+                    if (f.size >= MAX_SIZE) return Math.random() > 0.3;
+                    return true;
+                });
+
+                // 3. Reproduction
+                // Only mature fish (size >= MATURITY_SIZE) reproduce
+                const breeders = currentFish.filter(f => f.size >= MATURITY_SIZE).length;
+                // Reproduction rate: e.g. each pair produces 2 offspring
+                // Simplified: 1 breeder = 1 offspring (if space allows)
+                const offspringCount = Math.min(breeders, MAX_FISH - currentFish.length); // Cap population
+                
+                for(let i=0; i<offspringCount; i++) {
+                    currentFish.push(createRandomFish(true)); // Add babies
+                }
+
+                // Update State
+                setFish(currentFish);
+                setProfit(p => p + seasonIncome);
+                setYear(y => y + 1);
+                setHistory(prev => [...prev, { 
+                    year: year, 
+                    population: currentFish.length, 
+                    catch: seasonCatch, 
+                    profit: profit + seasonIncome 
+                }]);
+            };
+
+            // Auto Play Loop
+            useEffect(() => {
+                let interval;
+                if (isAutoPlay) {
+                    interval = setInterval(nextSeason, 2000); // 2s per season
+                }
+                return () => clearInterval(interval);
+            }, [isAutoPlay, fish, meshSize, isMoratorium]);
+
+            // Stats
+            const currentPop = fish.length;
+            const juvenileCount = fish.filter(f => f.size < MATURITY_SIZE).length;
+            const matureCount = currentPop - juvenileCount;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar: Management */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="anchor" className="text-sky-400" /> Fishery Manager
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Sustainable Resource Management</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Status Card */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                                <div className="flex justify-between items-center mb-4">
+                                    <div className="text-xs font-bold text-slate-500 uppercase">Year {year}</div>
+                                    <div className={`text-xs font-bold px-2 py-1 rounded ${isMoratorium ? 'bg-red-900/30 text-red-400 border border-red-500/30' : 'bg-emerald-900/30 text-emerald-400 border border-emerald-500/30'}`}>
+                                        {isMoratorium ? 'Closed Season' : 'Open Season'}
+                                    </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <div className="text-2xl font-black text-white">{currentPop}</div>
+                                        <div className="text-[10px] text-slate-400">Total Fish</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-2xl font-black text-yellow-400">${profit.toLocaleString()}</div>
+                                        <div className="text-[10px] text-slate-400">Total Profit</div>
+                                    </div>
+                                </div>
+
+                                <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden flex">
+                                    <div style={{width: `${(juvenileCount/currentPop)*100}%`}} className="bg-yellow-400"></div>
+                                    <div style={{width: `${(matureCount/currentPop)*100}%`}} className="bg-blue-500"></div>
+                                </div>
+                                <div className="flex justify-between text-[10px] mt-1 text-slate-500">
+                                    <span className="text-yellow-400">Juveniles ({juvenileCount})</span>
+                                    <span className="text-blue-400">Adults ({matureCount})</span>
+                                </div>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="space-y-6">
+                                {/* Mesh Size */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Net Mesh Size</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {['small', 'medium', 'large'].map(size => (
+                                            <button 
+                                                key={size}
+                                                onClick={() => setMeshSize(size)}
+                                                className={`p-2 rounded-lg border text-xs font-bold flex flex-col items-center gap-1 transition-all
+                                                    ${meshSize === size 
+                                                        ? 'bg-blue-600 border-blue-500 text-white shadow-lg' 
+                                                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                                `}
+                                            >
+                                                <Icon name="grid" size={16} className={size === 'small' ? 'scale-75' : size === 'medium' ? 'scale-100' : 'scale-125'}/>
+                                                {size.charAt(0).toUpperCase() + size.slice(1)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 mt-2 text-center h-8">
+                                        {meshSize === 'small' ? 'Catches EVERYTHING. High yield, destroys future.' : 
+                                         meshSize === 'medium' ? 'Balanced. Lets babies escape.' : 
+                                         'Catches only GIANTS. Low yield, high sustainability.'}
+                                    </p>
+                                </div>
+
+                                {/* Moratorium */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Policy</label>
+                                    <button 
+                                        onClick={() => setIsMoratorium(!isMoratorium)}
+                                        className={`w-full p-3 rounded-xl border font-bold flex items-center justify-between transition-all
+                                            ${isMoratorium 
+                                                ? 'bg-red-900/30 border-red-500 text-red-400' 
+                                                : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <span>Fishing Moratorium</span>
+                                        {isMoratorium ? <Icon name="ban" size={18}/> : <Icon name="check" size={18}/>}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-800">
+                                <button 
+                                    onClick={() => setIsAutoPlay(!isAutoPlay)}
+                                    className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isAutoPlay ? 'bg-slate-700 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isAutoPlay ? "pause" : "play"} size={18} fill="currentColor"/> {isAutoPlay ? 'Pause' : 'Next Season'}
+                                </button>
+                                <button 
+                                    onClick={resetSim}
+                                    className="py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 font-bold flex items-center justify-center gap-2 border border-slate-600"
+                                >
+                                    <Icon name="rotate-ccw" size={18}/> Reset
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Ocean View */}
+                        <div className="flex-[2] ocean-bg rounded-3xl border-4 border-slate-800 shadow-2xl relative overflow-hidden">
+                            {/* Bubbles */}
+                            {[...Array(10)].map((_, i) => (
+                                <div key={i} className="bubble" style={{
+                                    left: `${Math.random()*100}%`, 
+                                    width: Math.random()*20+5, height: Math.random()*20+5, 
+                                    animationDuration: `${Math.random()*5+5}s`,
+                                    animationDelay: `${Math.random()*5}s`
+                                }}></div>
+                            ))}
+
+                            {/* Fish */}
+                            <AnimatePresence>
+                                {fish.map(f => (
+                                    <Fish key={f.id} {...f} />
+                                ))}
+                            </AnimatePresence>
+
+                            {/* Fishing Net Overlay */}
+                            {isFishingAnim && <FishingNet meshSize={meshSize} active={true} />}
+
+                            {/* Message Toast */}
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-4 py-2 rounded-full text-sm font-bold text-white border border-white/20 shadow-lg text-center whitespace-nowrap max-w-[90%] truncate">
+                                {message}
+                            </div>
+                        </div>
+
+                        {/* Graph */}
+                        <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col relative">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Population Trend
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={history}>
+                                        <defs>
+                                            <linearGradient id="colorPop" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="year" stroke="#64748b" fontSize={10} tickCount={5}/>
+                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, MAX_FISH]} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ color: '#fff' }}
+                                        />
+                                        <Area type="monotone" dataKey="population" stroke="#38bdf8" fill="url(#colorPop)" strokeWidth={2} name="Fish Population" />
+                                        <Line type="monotone" dataKey="catch" stroke="#facc15" strokeWidth={2} dot={false} name="Annual Catch" />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
