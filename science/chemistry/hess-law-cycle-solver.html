@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hess's Law Cycle Solver - LuminousLearner International</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .node-input {
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .node-input:focus {
+            transform: scale(1.05);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.5);
+            border-color: #6366f1;
+        }
+
+        /* Arrow Animation */
+        .arrow-path {
+            transition: stroke 0.3s, stroke-width 0.3s, marker-end 0.3s;
+            cursor: pointer;
+        }
+        .arrow-path:hover {
+            stroke: #818cf8; /* Indigo-400 */
+            stroke-width: 5;
+        }
+        .arrow-path.highlight {
+            stroke: #4ade80; /* Green-400 */
+            stroke-width: 5;
+            stroke-dasharray: 10;
+            animation: dash 1s linear infinite;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+
+        .val-input {
+            background: rgba(30, 41, 59, 0.9); /* Slate-800 */
+            backdrop-filter: blur(4px);
+            transition: all 0.2s;
+            color: white;
+        }
+        .val-input:focus {
+            background: #0f172a;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="root" class="flex-grow flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState('');
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const iconSvg = window.lucide.createElement(iconNode);
+                        iconSvg.setAttribute('width', size);
+                        iconSvg.setAttribute('height', size);
+                        iconSvg.setAttribute('class', className);
+                        setSvg(iconSvg.outerHTML);
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState('combustion'); // generic, formation, combustion
+            const [nodes, setNodes] = useState({
+                top: 'Reactants',
+                right: 'Products',
+                bottom: 'Combustion Products'
+            });
+            
+            // Edges: 1=Top->Right, 2=Top->Bottom, 3=Right->Bottom (default directions for generic)
+            const [edges, setEdges] = useState({
+                e1: { val: '', dir: 1, name: 'ΔH1', label: 'Reaction Enthalpy' }, 
+                e2: { val: '', dir: 1, name: 'ΔH2', label: 'ΔHc (Reactants)' }, 
+                e3: { val: '', dir: 1, name: 'ΔH3', label: 'ΔHc (Products)' }  
+            });
+
+            const [result, setResult] = useState(null);
+            const [pathHighlight, setPathHighlight] = useState([]);
+
+            // Preset Examples Data
+            const loadExample = (type) => {
+                setResult(null);
+                setPathHighlight([]);
+
+                if (type === 'methane') {
+                    // Methane Formation using Combustion data
+                    // C + 2H2 -> CH4
+                    setMode('combustion');
+                    setNodes({
+                        top: 'C(s) + 2H₂(g)',
+                        right: 'CH₄(g)',
+                        bottom: 'CO₂(g) + 2H₂O(l)'
+                    });
+                    setEdges({
+                        e1: { val: '', dir: 1, name: 'ΔHf', label: 'Formation (Target)' },
+                        // C: -393.5, H2: -285.8 * 2 = -571.6. Total = -965.1
+                        e2: { val: '-965.1', dir: 1, name: 'ΔHc[R]', label: 'Combustion (R)' }, 
+                        e3: { val: '-890.3', dir: 1, name: 'ΔHc[P]', label: 'Combustion (P)' } 
+                    });
+
+                } else if (type === 'ethene') {
+                    // Hydrogenation of Ethene: C2H4 + H2 -> C2H6
+                    setMode('combustion');
+                    setNodes({
+                        top: 'C₂H₄ + H₂',
+                        right: 'C₂H₆',
+                        bottom: '2CO₂ + 3H₂O'
+                    });
+                    setEdges({
+                        e1: { val: '', dir: 1, name: 'ΔHr', label: 'Hydrogenation (Target)' },
+                        // Hc(C2H4) = -1411, Hc(H2) = -286. Total = -1697
+                        e2: { val: '-1697', dir: 1, name: 'ΔHc[R]', label: 'Combustion (R)' },
+                        e3: { val: '-1560', dir: 1, name: 'ΔHc[P]', label: 'Combustion (P)' }
+                    });
+
+                } else if (type === 'caco3') {
+                    // Decomposition: CaCO3 -> CaO + CO2
+                    // Using Formation data
+                    setMode('formation');
+                    setNodes({
+                        top: 'CaCO₃(s)',
+                        right: 'CaO(s) + CO₂(g)',
+                        bottom: 'Ca + C + 1.5O₂'
+                    });
+                    setEdges({
+                        e1: { val: '', dir: 1, name: 'ΔHr', label: 'Decomposition (Target)' },
+                        e2: { val: '-1207', dir: -1, name: 'ΔHf[R]', label: 'Formation (R)' }, // Elements -> Reactant
+                        // Hf(CaO) = -635, Hf(CO2) = -394. Total = -1029
+                        e3: { val: '-1029', dir: -1, name: 'ΔHf[P]', label: 'Formation (P)' }  // Elements -> Products
+                    });
+                }
+            };
+
+            // Update Labels when mode changes
+            useEffect(() => {
+                if (result) return; 
+                
+                if (mode === 'formation') {
+                    setNodes(prev => ({ top: 'Reactants (R)', right: 'Products (P)', bottom: 'Elements' }));
+                    setEdges(prev => ({
+                        e1: { ...prev.e1, label: 'Reaction (ΔHr)' },
+                        e2: { ...prev.e2, dir: -1, label: 'Formation ΔHf[R]' }, 
+                        e3: { ...prev.e3, dir: -1, label: 'Formation ΔHf[P]' }  
+                    }));
+                } else if (mode === 'combustion') {
+                    setNodes(prev => ({ top: 'Reactants (R)', right: 'Products (P)', bottom: 'Oxides' }));
+                    setEdges(prev => ({
+                        e1: { ...prev.e1, label: 'Reaction (ΔHr)' },
+                        e2: { ...prev.e2, dir: 1, label: 'Combustion ΔHc[R]' }, 
+                        e3: { ...prev.e3, dir: 1, label: 'Combustion ΔHc[P]' }  
+                    }));
+                }
+            }, [mode]);
+
+            const toggleDirection = (edgeKey) => {
+                setEdges(prev => ({
+                    ...prev,
+                    [edgeKey]: { ...prev[edgeKey], dir: prev[edgeKey].dir * -1 }
+                }));
+                setResult(null);
+                setPathHighlight([]);
+            };
+
+            const handleValueChange = (edgeKey, value) => {
+                setEdges(prev => ({
+                    ...prev,
+                    [edgeKey]: { ...prev[edgeKey], val: value }
+                }));
+                setResult(null);
+                setPathHighlight([]);
+            };
+
+            const calculate = () => {
+                const unknownKey = Object.keys(edges).find(k => edges[k].val === '');
+                const knownKeys = Object.keys(edges).filter(k => edges[k].val !== '');
+
+                if (!unknownKey) {
+                    alert("Please leave one field empty to calculate (The Target).");
+                    return;
+                }
+                if (knownKeys.length < 2) {
+                    alert("Please enter at least two known values.");
+                    return;
+                }
+
+                let calcValue = 0;
+                let steps = [];
+                let highlight = [];
+
+                const getVal = (key) => parseFloat(edges[key].val);
+                const getDir = (key) => edges[key].dir; 
+
+                if (unknownKey === 'e1') { // Target: Top -> Right
+                    const v2 = getVal('e2') * getDir('e2'); 
+                    const v3 = -(getVal('e3') * getDir('e3')); 
+                    calcValue = v2 + v3;
+                    steps.push(`Target Path: ${nodes.top} → ${nodes.right}`);
+                    steps.push(`Alternative Route: ${nodes.top} → ${nodes.bottom} → ${nodes.right}`);
+                    steps.push(`1. ${nodes.top} → ${nodes.bottom}: ${v2 > 0 ? '+' : ''}${v2}`);
+                    steps.push(`2. ${nodes.bottom} → ${nodes.right}: ${v3 > 0 ? '+' : ''}${v3} (Reverse arrow)`);
+                    highlight = ['e2', 'e3'];
+                } else if (unknownKey === 'e2') { // Target: Top -> Bottom
+                    const v1 = getVal('e1') * getDir('e1');
+                    const v3 = getVal('e3') * getDir('e3');
+                    calcValue = v1 + v3;
+                    steps.push(`Target Path: ${nodes.top} → ${nodes.bottom}`);
+                    steps.push(`Alternative Route: ${nodes.top} → ${nodes.right} → ${nodes.bottom}`);
+                    steps.push(`1. ${nodes.top} → ${nodes.right}: ${v1}`);
+                    steps.push(`2. ${nodes.right} → ${nodes.bottom}: ${v3}`);
+                    highlight = ['e1', 'e3'];
+                } else if (unknownKey === 'e3') { // Target: Right -> Bottom
+                    const v1 = -(getVal('e1') * getDir('e1'));
+                    const v2 = getVal('e2') * getDir('e2');
+                    calcValue = v1 + v2;
+                    steps.push(`Target Path: ${nodes.right} → ${nodes.bottom}`);
+                    steps.push(`Alternative Route: ${nodes.right} → ${nodes.top} → ${nodes.bottom}`);
+                    steps.push(`1. ${nodes.right} → ${nodes.top}: ${v1} (Reverse arrow)`);
+                    steps.push(`2. ${nodes.top} → ${nodes.bottom}: ${v2}`);
+                    highlight = ['e1', 'e2'];
+                }
+                
+                // If the target arrow itself points the wrong way relative to the flow we calculated, flip sign
+                // But usually we calculate "The energy change of the process represented by the missing arrow".
+                // In Hess law problems, we solve for the variable X.
+                // The above logic assumes we are summing the path equal to the unknown vector.
+                
+                // Adjust for target direction:
+                // We calculated the energy change from Start Node of unknown vector to End Node of unknown vector
+                // If the unknown vector's direction is -1 (reversed visually), does it mean we solved for the reverse reaction?
+                // Typically we solve for the arrow AS DRAWN.
+                // If E1 is drawn Right->Left (dir -1), but we calculated Top->Right.
+                // Let's stick to: We calculated "Start of E -> End of E". 
+                // If E1 is Top->Right (dir 1), we calculated Top->Right. Correct.
+                // If E1 is Right->Top (dir -1), we calculated Top->Right. So we need to flip sign.
+                
+                // Wait, getDir returns visual direction.
+                // Standard: e1 is Top->Right. If dir is -1, it's Right->Top.
+                // The logic above calculates Top->Right.
+                // So if dir is -1, we calculated the reverse of the arrow. So we flip sign.
+                if (getDir(unknownKey) === -1) {
+                     calcValue = -calcValue;
+                     steps.push(`Note: Target arrow is reversed. Sign flipped.`);
+                }
+
+                setResult({ value: parseFloat(calcValue.toFixed(1)), steps });
+                setPathHighlight(highlight);
+            };
+
+            return (
+                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-7xl space-y-6">
+                    
+                    {/* Header & Quick Load */}
+                    <div className="flex flex-col md:flex-row justify-between items-start gap-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                                <Icon name="Recycle" /> Hess's Law Cycle Solver
+                            </h1>
+                            <p className="text-slate-400 text-sm">Thermochemistry Energy Cycles</p>
+                        </div>
+                        
+                        <div className="bg-slate-800 p-2 rounded-xl border border-slate-700 shadow-sm flex gap-2">
+                            <span className="text-xs font-bold text-slate-400 uppercase self-center mr-2">Quick Load:</span>
+                            <button onClick={() => loadExample('methane')} className="px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors">
+                                Methane Formation
+                            </button>
+                            <button onClick={() => loadExample('ethene')} className="px-3 py-1 bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors">
+                                Ethene Hydrogenation
+                            </button>
+                            <button onClick={() => loadExample('caco3')} className="px-3 py-1 bg-slate-700 hover:bg-green-600 text-slate-300 hover:text-white rounded text-xs font-bold transition-colors">
+                                Decomposition CaCO₃
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 1. Diagram Section (Full Width) */}
+                    <div className="w-full bg-slate-800 rounded-3xl shadow-xl border border-slate-700 p-6 relative min-h-[600px] flex flex-col">
+                        
+                        {/* Tabs */}
+                        <div className="flex justify-center gap-4 mb-8 z-30 relative">
+                            <button 
+                                onClick={() => setMode('combustion')}
+                                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-sm border
+                                    ${mode === 'combustion' 
+                                        ? 'bg-red-600 text-white border-red-500 ring-2 ring-red-500/50 scale-105' 
+                                        : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'}`}
+                            >
+                                <Icon name="Flame" size={18}/> Combustion Cycle
+                            </button>
+                            <button 
+                                onClick={() => setMode('formation')}
+                                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-sm border
+                                    ${mode === 'formation' 
+                                        ? 'bg-green-600 text-white border-green-500 ring-2 ring-green-500/50 scale-105' 
+                                        : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'}`}
+                            >
+                                <Icon name="Hammer" size={18}/> Formation Cycle
+                            </button>
+                            <button 
+                                onClick={() => setMode('generic')}
+                                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 shadow-sm border
+                                    ${mode === 'generic' 
+                                        ? 'bg-blue-600 text-white border-blue-500 ring-2 ring-blue-500/50 scale-105' 
+                                        : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'}`}
+                            >
+                                <Icon name="Edit3" size={18}/> Custom
+                            </button>
+                        </div>
+
+                        {/* Interactive Diagram */}
+                        <div className="relative flex-grow w-full flex items-center justify-center">
+                            <svg viewBox="0 0 800 450" className="absolute inset-0 w-full h-full pointer-events-none z-0">
+                                <defs>
+                                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                        <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+                                    </marker>
+                                    <marker id="arrowhead-highlight" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                        <polygon points="0 0, 10 3.5, 0 7" fill="#4ade80" />
+                                    </marker>
+                                </defs>
+                                
+                                {/* E1: Left to Right */}
+                                <line x1="250" y1="100" x2="550" y2="100" 
+                                    className={`arrow-path ${pathHighlight.includes('e1') ? 'highlight' : ''}`} 
+                                    stroke="#64748b" strokeWidth="3" 
+                                    markerEnd={pathHighlight.includes('e1') ? "url(#arrowhead-highlight)" : "url(#arrowhead)"}
+                                    transform={edges.e1.dir === -1 ? "rotate(180 400 100)" : ""}
+                                />
+
+                                {/* E2: Left to Bottom */}
+                                <line x1="200" y1="140" x2="350" y2="350" 
+                                    className={`arrow-path ${pathHighlight.includes('e2') ? 'highlight' : ''}`}
+                                    stroke="#64748b" strokeWidth="3" 
+                                    markerEnd={pathHighlight.includes('e2') ? "url(#arrowhead-highlight)" : "url(#arrowhead)"}
+                                    transform={edges.e2.dir === -1 ? "rotate(180 275 245)" : ""}
+                                />
+
+                                {/* E3: Right to Bottom */}
+                                <line x1="600" y1="140" x2="450" y2="350" 
+                                    className={`arrow-path ${pathHighlight.includes('e3') ? 'highlight' : ''}`}
+                                    stroke="#64748b" strokeWidth="3" 
+                                    markerEnd={pathHighlight.includes('e3') ? "url(#arrowhead-highlight)" : "url(#arrowhead)"}
+                                    transform={edges.e3.dir === -1 ? "rotate(180 525 245)" : ""}
+                                />
+                            </svg>
+
+                            {/* Node Inputs */}
+                            <div className="absolute top-16 left-[10%] z-10 w-64">
+                                <input type="text" value={nodes.top} onChange={(e) => setNodes({...nodes, top: e.target.value})}
+                                    className="node-input w-full bg-slate-700 border-2 border-slate-600 text-blue-300 font-bold p-4 rounded-2xl shadow-lg focus:outline-none placeholder-slate-500"/>
+                            </div>
+                            <div className="absolute top-16 right-[10%] z-10 w-64">
+                                <input type="text" value={nodes.right} onChange={(e) => setNodes({...nodes, right: e.target.value})}
+                                    className="node-input w-full bg-slate-700 border-2 border-slate-600 text-green-400 font-bold p-4 rounded-2xl shadow-lg focus:outline-none placeholder-slate-500"/>
+                            </div>
+                            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-10 w-80">
+                                <input type="text" value={nodes.bottom} onChange={(e) => setNodes({...nodes, bottom: e.target.value})}
+                                    className="node-input w-full bg-slate-700 border-2 border-slate-600 text-orange-400 font-bold p-4 rounded-2xl shadow-lg focus:outline-none placeholder-slate-500"/>
+                            </div>
+
+                            {/* Value Inputs - Positioned ON TOP of lines */}
+                            
+                            {/* E1 Input (Center Top) */}
+                            <div className="absolute top-[60px] left-1/2 -translate-x-1/2 z-20 flex flex-col items-center bg-slate-900/90 px-2 py-1 rounded-lg shadow-sm border border-slate-700">
+                                <label className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider cursor-pointer hover:text-indigo-400 flex items-center gap-1" onClick={() => toggleDirection('e1')}>
+                                    {edges.e1.label} <Icon name="RefreshCw" size={10}/>
+                                </label>
+                                <input 
+                                    type="number" placeholder="?" 
+                                    value={edges.e1.val} onChange={(e) => handleValueChange('e1', e.target.value)}
+                                    className={`val-input w-24 p-1 border-b-2 border-slate-500 font-mono font-bold text-center outline-none text-lg bg-transparent focus:border-indigo-500 ${edges.e1.val === '' ? 'border-indigo-500 bg-indigo-900/30' : ''}`}
+                                />
+                            </div>
+
+                            {/* E2 Input (Left Diagonal) */}
+                            <div className="absolute top-[220px] left-[22%] -translate-x-1/2 z-20 flex flex-col items-center bg-slate-900/90 px-2 py-1 rounded-lg shadow-sm border border-slate-700">
+                                <label className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider cursor-pointer hover:text-indigo-400 flex items-center gap-1" onClick={() => toggleDirection('e2')}>
+                                    {edges.e2.label} <Icon name="RefreshCw" size={10}/>
+                                </label>
+                                <input 
+                                    type="number" placeholder="?" 
+                                    value={edges.e2.val} onChange={(e) => handleValueChange('e2', e.target.value)}
+                                    className={`val-input w-24 p-1 border-b-2 border-slate-500 font-mono font-bold text-center outline-none text-lg bg-transparent focus:border-indigo-500 ${edges.e2.val === '' ? 'border-indigo-500 bg-indigo-900/30' : ''}`}
+                                />
+                            </div>
+
+                            {/* E3 Input (Right Diagonal) */}
+                            <div className="absolute top-[220px] left-[78%] -translate-x-1/2 z-20 flex flex-col items-center bg-slate-900/90 px-2 py-1 rounded-lg shadow-sm border border-slate-700">
+                                <label className="text-[10px] text-slate-400 font-bold mb-1 uppercase tracking-wider cursor-pointer hover:text-indigo-400 flex items-center gap-1" onClick={() => toggleDirection('e3')}>
+                                    {edges.e3.label} <Icon name="RefreshCw" size={10}/>
+                                </label>
+                                <input 
+                                    type="number" placeholder="?" 
+                                    value={edges.e3.val} onChange={(e) => handleValueChange('e3', e.target.value)}
+                                    className={`val-input w-24 p-1 border-b-2 border-slate-500 font-mono font-bold text-center outline-none text-lg bg-transparent focus:border-indigo-500 ${edges.e3.val === '' ? 'border-indigo-500 bg-indigo-900/30' : ''}`}
+                                />
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* 2. Controls Section (Full Width) */}
+                    <div className="w-full bg-slate-800 p-6 rounded-3xl shadow-md border border-slate-700 flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div className="flex-grow">
+                            <h3 className="font-bold text-slate-300 flex items-center gap-2 mb-2">
+                                <Icon name="Info" className="text-indigo-400"/> Instructions
+                            </h3>
+                            <ul className="list-disc list-inside text-sm text-slate-400 space-y-1">
+                                <li>Enter two known values (kJ/mol), leave one <strong>empty</strong> for the unknown target.</li>
+                                <li>Click the label above the value to <strong>flip the arrow direction</strong>.</li>
+                            </ul>
+                        </div>
+                        <button 
+                            onClick={calculate}
+                            className="w-full md:w-auto px-12 py-4 bg-indigo-600 text-white rounded-xl font-bold shadow-lg hover:bg-indigo-500 transition-all active:scale-95 text-lg flex items-center justify-center gap-2"
+                        >
+                            <Icon name="Calculator" /> Calculate Unknown
+                        </button>
+                    </div>
+
+                    {/* 3. Results Section (Full Width, only if result exists) */}
+                    {result && (
+                        <div className="w-full bg-slate-800 p-8 rounded-3xl shadow-lg border border-slate-700 animate-in slide-in-from-bottom-4 fade-in">
+                            <div className="flex flex-col md:flex-row gap-8 items-center">
+                                {/* Big Result Number */}
+                                <div className="w-full md:w-1/3 bg-slate-900 text-white p-8 rounded-2xl shadow-md text-center relative overflow-hidden border border-slate-700">
+                                    <div className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Calculated Result</div>
+                                    <div className="text-5xl font-mono font-black text-green-400">
+                                        {result.value > 0 ? '+' : ''}{result.value}
+                                    </div>
+                                    <div className="text-lg text-slate-500 mt-1">kJ mol⁻¹</div>
+                                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                                        <Icon name="CheckCircle" size={64} />
+                                    </div>
+                                </div>
+                                
+                                {/* Steps List */}
+                                <div className="w-full md:w-2/3 bg-slate-900 p-6 rounded-2xl border border-slate-700">
+                                    <h4 className="font-bold text-slate-300 text-sm uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="ListOrdered" size={16}/> Solution Steps
+                                    </h4>
+                                    <div className="space-y-3 text-sm font-mono text-slate-400">
+                                        {result.steps.map((s, i) => (
+                                            <div key={i} className="border-b border-slate-800 pb-2 last:border-0 flex gap-3">
+                                                <span className="text-indigo-400 font-bold flex-shrink-0">{i+1}.</span>
+                                                <span>{s}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
+                        Luminous Learner Science Tools | HKDSE Topic VIII
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
