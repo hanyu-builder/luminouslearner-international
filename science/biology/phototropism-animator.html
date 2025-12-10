@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phototropism Animator - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Auxin Particle Animation */
+        .auxin {
+            transition: all 1s ease-in-out;
+        }
+        
+        /* Sun Glow */
+        .sun-glow {
+            filter: drop-shadow(0 0 20px rgba(250, 204, 21, 0.8));
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const EXPERIMENTS = [
+            { id: 'normal', name: 'Normal Shoot', desc: 'Untreated coleoptile tip.' },
+            { id: 'tip_removed', name: 'Tip Removed', desc: 'The apex is cut off. No auxin source.' },
+            { id: 'opaque_cap', name: 'Opaque Cap', desc: 'Tip covered with foil. Light cannot reach the tip.' },
+            { id: 'transparent_cap', name: 'Transparent Cap', desc: 'Tip covered with clear plastic. Light reaches the tip.' },
+            { id: 'mica_shaded', name: 'Mica on Shaded Side', desc: 'Impermeable barrier on the dark side. Blocks downward transport.' },
+            { id: 'mica_light', name: 'Mica on Light Side', desc: 'Impermeable barrier on the illuminated side. Does not block transport on shaded side.' }
+        ];
+
+        // --- COMPONENT: Plant Shoot ---
+        const PlantShoot = ({ experiment, lightDir, progress }) => {
+            // Logic for Auxin Distribution & Growth
+            // 0 = Start, 1 = End
+            
+            // Determine Auxin Concentration (Left vs Right)
+            // Default balanced
+            let leftAuxin = 50;
+            let rightAuxin = 50;
+            let hasAuxin = true;
+            let canBend = false;
+            let bendDir = 0; // -1 Left, 0 Straight, 1 Right
+
+            if (experiment === 'tip_removed') {
+                hasAuxin = false;
+                leftAuxin = 0; rightAuxin = 0;
+            } else if (experiment === 'opaque_cap') {
+                // No light sensing -> Even distribution -> Straight growth
+                leftAuxin = 50; rightAuxin = 50;
+                canBend = false;
+            } else {
+                // Light sensing active
+                if (lightDir === 'left') {
+                    // Light from left -> Auxin moves to right (shaded)
+                    if (experiment === 'mica_shaded') {
+                         // Mica blocks transport down shaded side (right) -> No growth on right
+                         rightAuxin = 0; // Blocked
+                         leftAuxin = 50;
+                         canBend = false; 
+                    } else if (experiment === 'mica_light') {
+                         // Mica on light side (left). Auxin moves to right and goes down right.
+                         // Result: Bends towards light.
+                         leftAuxin = 0; // Blocked
+                         rightAuxin = 80; // High on shaded
+                         canBend = true;
+                         bendDir = -1; // Bend Left (towards light)
+                    } else {
+                        // Normal Phototropism
+                        leftAuxin = 20; 
+                        rightAuxin = 80;
+                        canBend = true;
+                        bendDir = -1;
+                    }
+                } else if (lightDir === 'right') {
+                    // Light from right -> Auxin moves to left (shaded)
+                    if (experiment === 'mica_shaded') { // Mica on left (shaded side relative to right light)
+                         // Wait, if light is Right, Left is shaded. Mica on shaded (Left) blocks flow.
+                         // So LeftAuxin = 0.
+                        leftAuxin = 0;
+                        rightAuxin = 50;
+                        canBend = false;
+                    } else if (experiment === 'mica_light') { // Mica on right (light side)
+                        rightAuxin = 0;
+                        leftAuxin = 80;
+                        canBend = true;
+                        bendDir = 1; // Bend Right
+                    } else {
+                         leftAuxin = 80;
+                         rightAuxin = 20;
+                         canBend = true;
+                         bendDir = 1;
+                    }
+                } else {
+                    // Top light -> Even
+                    leftAuxin = 50; rightAuxin = 50;
+                }
+            }
+
+            // Animation Calculation
+            // Curve path based on progress and bendDir
+            // Simple quadratic curve for SVG
+            
+            const startH = 200;
+            const growthH = hasAuxin ? 100 * progress : 0; // Only grows if auxin present
+            const totalH = startH + growthH;
+            
+            // Bending
+            const bendX = canBend ? bendDir * 80 * progress : 0;
+            
+            // Mica Position
+            const micaY = 50; // From tip
+
+            return (
+                <div className="relative w-full h-full flex justify-center items-end pb-10">
+                    
+                    <svg width="400" height="500" viewBox="0 0 400 500" className="overflow-visible">
+                        
+                        {/* Plant Stem */}
+                        <motion.path 
+                            d={`
+                                M 170 500 
+                                Q ${170 + bendX/2} ${500 - totalH/2}, ${170 + bendX} ${500 - totalH} 
+                                L ${230 + bendX} ${500 - totalH} 
+                                Q ${230 + bendX/2} ${500 - totalH/2}, 230 500 
+                                Z
+                            `}
+                            fill="#86efac" 
+                            stroke="#166534" 
+                            strokeWidth="3"
+                        />
+                        
+                        {/* Tip Cap (If applicable) */}
+                        {experiment === 'opaque_cap' && (
+                             <motion.path 
+                                d={`
+                                    M ${168 + bendX} ${500 - totalH + 10} 
+                                    L ${168 + bendX} ${500 - totalH - 10}
+                                    Q ${200 + bendX} ${500 - totalH - 30}, ${232 + bendX} ${500 - totalH - 10}
+                                    L ${232 + bendX} ${500 - totalH + 10}
+                                    Z
+                                `}
+                                fill="#475569" 
+                            />
+                        )}
+                        {experiment === 'transparent_cap' && (
+                             <motion.path 
+                                d={`
+                                    M ${168 + bendX} ${500 - totalH + 10} 
+                                    L ${168 + bendX} ${500 - totalH - 10}
+                                    Q ${200 + bendX} ${500 - totalH - 30}, ${232 + bendX} ${500 - totalH - 10}
+                                    L ${232 + bendX} ${500 - totalH + 10}
+                                    Z
+                                `}
+                                fill="rgba(255,255,255,0.5)" stroke="#94a3b8" strokeWidth="2"
+                            />
+                        )}
+
+                        {/* Mica Sheet */}
+                        {experiment.includes('mica') && (
+                            <motion.rect 
+                                x={experiment === 'mica_light' && lightDir === 'left' || experiment === 'mica_shaded' && lightDir === 'right' ? 170 + bendX : 200 + bendX}
+                                y={500 - totalH + micaY}
+                                width="30" height="2" fill="#000"
+                            />
+                        )}
+
+                        {/* Auxin Particles */}
+                        {hasAuxin && (
+                            <g>
+                                {/* Left Side Auxin */}
+                                {Array.from({ length: Math.floor(leftAuxin/5) }).map((_, i) => (
+                                    <motion.circle 
+                                        key={`l-${i}`}
+                                        cx={185 + bendX * (i/10)} // Crude distribution logic
+                                        cy={500 - totalH + 20 + Math.random()*80 + (progress * 200)} // Move down
+                                        r="3" fill="#15803d"
+                                        className="auxin"
+                                    />
+                                ))}
+                                {/* Right Side Auxin */}
+                                {Array.from({ length: Math.floor(rightAuxin/5) }).map((_, i) => (
+                                    <motion.circle 
+                                        key={`r-${i}`}
+                                        cx={215 + bendX * (i/10)}
+                                        cy={500 - totalH + 20 + Math.random()*80 + (progress * 200)}
+                                        r="3" fill="#15803d"
+                                        className="auxin"
+                                    />
+                                ))}
+                            </g>
+                        )}
+                        
+                        {/* Tip Cut Visual */}
+                        {experiment === 'tip_removed' && (
+                            <line x1="170" y1={500-startH} x2="230" y2={500-startH} stroke="#166534" strokeWidth="3"/>
+                        )}
+
+                    </svg>
+
+                    {/* Cells Zoom View (Magnifying Glass effect) */}
+                    <div className="absolute bottom-4 right-4 w-40 h-40 bg-white rounded-full border-4 border-slate-300 overflow-hidden shadow-xl flex items-center justify-center">
+                        <div className="flex gap-1 h-full items-end pb-4">
+                            {/* Left Cells */}
+                            <div className="flex flex-col gap-1">
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (leftAuxin/50)*20 * progress}px` }}></div>
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (leftAuxin/50)*20 * progress}px` }}></div>
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (leftAuxin/50)*20 * progress}px` }}></div>
+                            </div>
+                            {/* Right Cells */}
+                            <div className="flex flex-col gap-1">
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (rightAuxin/50)*20 * progress}px` }}></div>
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (rightAuxin/50)*20 * progress}px` }}></div>
+                                <div className={`w-8 bg-green-200 border border-green-600 transition-all duration-1000`} style={{ height: `${20 + (rightAuxin/50)*20 * progress}px` }}></div>
+                            </div>
+                        </div>
+                        <div className="absolute top-2 text-[10px] text-slate-500 font-bold uppercase">Cell Elongation</div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [exp, setExp] = useState('normal');
+            const [light, setLight] = useState('right'); // left, top, right
+            const [progress, setProgress] = useState(0);
+            const [isPlaying, setIsPlaying] = useState(false);
+
+            const currentExp = EXPERIMENTS.find(e => e.id === exp);
+
+            // Animation Loop
+            useEffect(() => {
+                let interval;
+                if (isPlaying) {
+                    interval = setInterval(() => {
+                        setProgress(p => {
+                            if (p >= 1) {
+                                setIsPlaying(false);
+                                return 1;
+                            }
+                            return p + 0.01;
+                        });
+                    }, 50);
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying]);
+
+            const handleReset = () => {
+                setIsPlaying(false);
+                setProgress(0);
+            };
+
+            const togglePlay = () => {
+                if (progress >= 1) setProgress(0);
+                setIsPlaying(!isPlaying);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="sun" className="text-yellow-400" /> Phototropism
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Auxin & Growth Response</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Light Control */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Light Source</label>
+                                <div className="flex gap-2 bg-slate-800 p-1 rounded-xl">
+                                    {['left', 'top', 'right'].map(dir => (
+                                        <button 
+                                            key={dir}
+                                            onClick={() => { setLight(dir); handleReset(); }}
+                                            className={`flex-1 py-2 rounded-lg flex justify-center transition-all
+                                                ${light === dir ? 'bg-yellow-500 text-white shadow' : 'text-slate-400 hover:text-white'}
+                                            `}
+                                        >
+                                            <Icon name={dir === 'top' ? 'arrow-down' : dir === 'left' ? 'arrow-right' : 'arrow-left'} />
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Experiment Selector */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Experiment Setup</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {EXPERIMENTS.map(e => (
+                                        <button 
+                                            key={e.id}
+                                            onClick={() => { setExp(e.id); handleReset(); }}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all
+                                                ${exp === e.id ? 'bg-slate-800 border-emerald-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <div className="text-sm font-bold">{e.name}</div>
+                                            <div className="text-[10px] opacity-70 truncate">{e.desc}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Legend */}
+                            <div className="bg-emerald-900/20 p-4 rounded-xl border border-emerald-500/30 text-xs text-slate-300 space-y-2">
+                                <div className="font-bold text-emerald-400 uppercase mb-1 flex items-center gap-2"><Icon name="info" size={14}/> Concept</div>
+                                <p>Auxin (Green dots) moves away from light.</p>
+                                <p>High Auxin conc. = Faster cell elongation.</p>
+                                <p>Uneven growth causes bending.</p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col overflow-hidden">
+                        
+                        {/* Simulation Area */}
+                        <div className="flex-1 relative">
+                            
+                            {/* Sun Position */}
+                            <div className={`absolute p-4 transition-all duration-500 z-20
+                                ${light === 'left' ? 'top-10 left-10' : light === 'right' ? 'top-10 right-10' : 'top-4 left-1/2 -translate-x-1/2'}
+                            `}>
+                                <Icon name="sun" size={64} className="text-yellow-400 sun-glow fill-yellow-400" />
+                                {/* Light Rays */}
+                                <div className={`absolute top-1/2 left-1/2 w-96 h-96 bg-gradient-to-b from-yellow-400/20 to-transparent -z-10 pointer-events-none transform -translate-x-1/2 -translate-y-1/2
+                                     ${light === 'left' ? 'rotate-[135deg]' : light === 'right' ? 'rotate-[-135deg]' : 'rotate-[180deg]'}
+                                `} style={{clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)'}}></div>
+                            </div>
+
+                            <PlantShoot experiment={exp} lightDir={light} progress={progress} />
+
+                        </div>
+
+                        {/* Playback Controls */}
+                        <div className="h-24 bg-slate-900 border-t border-slate-800 p-4 flex items-center justify-center gap-6 z-30">
+                            <button 
+                                onClick={handleReset}
+                                className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300 transition-all"
+                            >
+                                <Icon name="rotate-ccw" />
+                            </button>
+                            
+                            <button 
+                                onClick={togglePlay}
+                                className={`px-8 py-3 rounded-full font-bold text-white shadow-lg flex items-center gap-2 transition-all active:scale-95
+                                    ${isPlaying ? 'bg-yellow-600 hover:bg-yellow-500' : 'bg-emerald-600 hover:bg-emerald-500'}
+                                `}
+                            >
+                                <Icon name={isPlaying ? "pause" : "play"} fill="currentColor" />
+                                {isPlaying ? 'Pause Growth' : 'Start Growth'}
+                            </button>
+
+                            <div className="w-48">
+                                <div className="flex justify-between text-xs text-slate-500 mb-1">
+                                    <span>Time</span>
+                                    <span>{(progress * 100).toFixed(0)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                    <div className="h-full bg-emerald-500 transition-all duration-100" style={{width: `${progress * 100}%`}}></div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
