@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antibody-Antigen Matcher | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { outline: none; }
+        
+        /* Game Canvas Background */
+        .bloodstream-bg {
+            background-image: radial-gradient(#1e293b 2px, transparent 2px), radial-gradient(#1e293b 2px, transparent 2px);
+            background-size: 32px 32px;
+            background-position: 0 0, 16px 16px;
+            background-color: #0f172a;
+            animation: flowBackground 20s linear infinite;
+        }
+        @keyframes flowBackground {
+            from { background-position: 0 0, 16px 16px; }
+            to { background-position: 0 64px, 16px 80px; }
+        }
+
+        /* Antibody Float */
+        .float { animation: float 3s ease-in-out infinite; }
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const TYPES = {
+            square: { name: 'Type A (Square)', color: 0xfacc15, shapeDesc: 'Cube Antigen' },
+            circle: { name: 'Type B (Circle)', color: 0x38bdf8, shapeDesc: 'Sphere Antigen' },
+            triangle: { name: 'Type C (Triangle)', color: 0xef4444, shapeDesc: 'Pyramid Antigen' }
+        };
+
+        // --- 3D SCENE COMPONENT ---
+        const MolecularScene = ({ type, isBinding }) => {
+            const mountRef = useRef(null);
+            const sceneRef = useRef(null);
+            const antibodyRef = useRef(null);
+            const frameIdRef = useRef(null); // Track animation frame
+            
+            useEffect(() => {
+                if (!mountRef.current) return;
+                const container = mountRef.current;
+                
+                // Setup
+                let width = container.clientWidth || 100;
+                let height = container.clientHeight || 100;
+                
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x020617); 
+                scene.fog = new THREE.FogExp2(0x020617, 0.03);
+                sceneRef.current = scene;
+
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                camera.position.set(0, 0, 25);
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                
+                while(container.firstChild) container.removeChild(container.firstChild);
+                container.appendChild(renderer.domElement);
+
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = !isBinding; // Stop rotate when binding
+                controls.autoRotateSpeed = 1.0;
+
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+                dirLight.position.set(10, 10, 10);
+                scene.add(dirLight);
+                const pointLight = new THREE.PointLight(TYPES[type].color, 0.8);
+                pointLight.position.set(-5, 5, 5);
+                scene.add(pointLight);
+
+                // --- MATERIALS ---
+                const pathogenMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.7 });
+                const antigenMat = new THREE.MeshStandardMaterial({ color: TYPES[type].color, roughness: 0.3, metalness: 0.3 });
+                const antibodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 });
+
+                // --- BUILD PATHOGEN ---
+                const pathogenGroup = new THREE.Group();
+                
+                // Main Body
+                const body = new THREE.Mesh(new THREE.SphereGeometry(4, 32, 32), pathogenMat);
+                pathogenGroup.add(body);
+
+                // Antigens (Surface Spikes)
+                const antigenGeo = type === 'square' ? new THREE.BoxGeometry(1, 1, 1) :
+                                   type === 'circle' ? new THREE.SphereGeometry(0.6, 16, 16) :
+                                   new THREE.ConeGeometry(0.6, 1.5, 4);
+
+                // Add multiple antigens
+                for (let i = 0; i < 12; i++) {
+                    const phi = Math.acos(-1 + (2 * i) / 12);
+                    const theta = Math.sqrt(12 * Math.PI) * phi;
+                    const vec = new THREE.Vector3();
+                    vec.setFromSphericalCoords(4.5, phi, theta); // Surface + offset
+
+                    const antigen = new THREE.Mesh(antigenGeo, antigenMat);
+                    antigen.position.copy(vec);
+                    antigen.lookAt(0, 0, 0);
+                    if (type === 'triangle') antigen.rotateX(Math.PI/2); // Point out
+                    pathogenGroup.add(antigen);
+                }
+                
+                scene.add(pathogenGroup);
+
+                // --- BUILD ANTIBODY ---
+                const abGroup = new THREE.Group();
+                antibodyRef.current = abGroup;
+
+                // Y-Shape Base
+                const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 4, 8), antibodyMat);
+                stem.position.y = -2;
+                abGroup.add(stem);
+
+                // Arms
+                const armGeo = new THREE.CylinderGeometry(0.4, 0.4, 3, 8);
+                const leftArm = new THREE.Mesh(armGeo, antibodyMat);
+                leftArm.position.set(-1.2, 1.2, 0);
+                leftArm.rotation.z = Math.PI / 4;
+                abGroup.add(leftArm);
+
+                const rightArm = new THREE.Mesh(armGeo, antibodyMat);
+                rightArm.position.set(1.2, 1.2, 0);
+                rightArm.rotation.z = -Math.PI / 4;
+                abGroup.add(rightArm);
+
+                // Binding Sites (The "Key")
+                const siteGroupL = new THREE.Group();
+                const siteGroupR = new THREE.Group();
+
+                if (type === 'square') {
+                    // U-Shape claw for square
+                    const clawGeo = new THREE.BoxGeometry(0.2, 1.5, 1.5);
+                    const wall1 = new THREE.Mesh(clawGeo, antibodyMat); wall1.position.x = -0.6;
+                    const wall2 = new THREE.Mesh(clawGeo, antibodyMat); wall2.position.x = 0.6;
+                    const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 1.5), antibodyMat); base.position.y = -0.7;
+                    siteGroupL.add(wall1, wall2, base);
+                    siteGroupR.add(wall1.clone(), wall2.clone(), base.clone());
+                } else if (type === 'circle') {
+                    // Cup shape for sphere
+                    const cupGeo = new THREE.TorusGeometry(0.6, 0.2, 8, 16, Math.PI);
+                    const cup = new THREE.Mesh(cupGeo, antibodyMat);
+                    cup.rotation.z = Math.PI/2;
+                    siteGroupL.add(cup);
+                    siteGroupR.add(cup.clone());
+                } else {
+                    // V-Shape for triangle
+                    const vGeo = new THREE.BoxGeometry(0.2, 1.5, 1.5);
+                    const v1 = new THREE.Mesh(vGeo, antibodyMat); v1.rotation.z = -0.3; v1.position.x = -0.4;
+                    const v2 = new THREE.Mesh(vGeo, antibodyMat); v2.rotation.z = 0.3; v2.position.x = 0.4;
+                    siteGroupL.add(v1, v2);
+                    siteGroupR.add(v1.clone(), v2.clone());
+                }
+
+                // Position sites at arm tips
+                siteGroupL.position.set(-2.2, 2.2, 0);
+                siteGroupL.rotation.z = Math.PI / 4;
+                abGroup.add(siteGroupL);
+
+                siteGroupR.position.set(2.2, 2.2, 0);
+                siteGroupR.rotation.z = -Math.PI / 4;
+                abGroup.add(siteGroupR);
+
+                // Position Antibody initial (UPDATED)
+                abGroup.position.set(0, 8.5, 0); // Closer to antigen
+                abGroup.lookAt(0, 5, 0); // Look roughly at pathogen top
+                
+                scene.add(abGroup);
+
+                // Resize Observer
+                const resizeObserver = new ResizeObserver(() => {
+                    if (container.clientWidth && container.clientHeight) {
+                        const w = container.clientWidth;
+                        const h = container.clientHeight;
+                        camera.aspect = w / h;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(w, h);
+                    }
+                });
+                resizeObserver.observe(container);
+
+                // Animation Loop
+                const animate = () => {
+                    const time = Date.now() * 0.001;
+                    
+                    if (!isBinding) {
+                        // Float around if not binding
+                        abGroup.position.y = 8.5 + Math.sin(time) * 0.5; // Float near 8.5
+                        abGroup.rotation.y = Math.sin(time * 0.5) * 0.5;
+                    } else {
+                        // Binding Animation
+                        abGroup.position.lerp(new THREE.Vector3(0, 6.5, 0), 0.05); // Just above
+                        
+                        // Rotate to align
+                        const targetQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI, 0, 0));
+                        abGroup.quaternion.slerp(targetQ, 0.05);
+                    }
+
+                    controls.update();
+                    renderer.render(scene, camera);
+                    frameIdRef.current = requestAnimationFrame(animate);
+                };
+                animate();
+
+                return () => {
+                    if (frameIdRef.current) cancelAnimationFrame(frameIdRef.current);
+                    resizeObserver.disconnect();
+                    if (container && renderer.domElement) {
+                        container.removeChild(renderer.domElement);
+                    }
+                    renderer.dispose();
+                };
+            }, [type, isBinding]);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+
+        // --- 2D SVG COMPONENTS (GAME) ---
+        // Fixed Pathogen: Returns SVG
+        const Pathogen = ({ type, size = 50 }) => {
+            let antigenShape;
+            let color;
+
+            if (type === 'square') {
+                antigenShape = <rect x="-5" y="-8" width="10" height="10" fill="#facc15" />;
+                color = "#854d0e";
+            } else if (type === 'circle') {
+                antigenShape = <circle cx="0" cy="-5" r="5" fill="#38bdf8" />;
+                color = "#1e3a8a";
+            } else {
+                antigenShape = <path d="M 0 -10 L 5 0 L -5 0 Z" fill="#ef4444" />;
+                color = "#7f1d1d";
+            }
+
+            return (
+                <svg width={size} height={size} viewBox={`-${size/2} -${size/1.5} ${size} ${size*1.5}`} className="overflow-visible">
+                    <g>
+                        <ellipse cx="0" cy="0" rx={size/2} ry={size/1.5} fill={color} stroke="white" strokeWidth="2" />
+                        <g transform={`translate(0, ${-size/1.5})`}>{antigenShape}</g>
+                        <g transform={`translate(${size/2}, 0) rotate(90)`}>{antigenShape}</g>
+                        <g transform={`translate(${-size/2}, 0) rotate(-90)`}>{antigenShape}</g>
+                        <g transform={`translate(0, ${size/1.5}) rotate(180)`}>{antigenShape}</g>
+                        
+                        <path d="M -10 -5 L -5 -2 M 10 -5 L 5 -2" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                        <circle cx="-8" cy="5" r="2" fill="white"/>
+                        <circle cx="8" cy="5" r="2" fill="white"/>
+                        <path d="M -5 15 Q 0 10 5 15" stroke="white" strokeWidth="2" fill="none"/>
+                    </g>
+                </svg>
+            );
+        };
+
+        // 2D Antibody
+        const Antibody2D = ({ type, size = 40 }) => {
+            let color = type === 'square' ? "#facc15" : type === 'circle' ? "#38bdf8" : "#ef4444";
+            return (
+                <svg viewBox="-25 -25 50 50" width={size} height={size} className="overflow-visible">
+                    <path d="M 0 20 L 0 5 L -15 -15 M 0 5 L 15 -15" stroke={color} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                    {type === 'square' && <g><rect x="-20" y="-20" width="10" height="10" fill="none" stroke={color} strokeWidth="2" /><rect x="10" y="-20" width="10" height="10" fill="none" stroke={color} strokeWidth="2" /></g>}
+                    {type === 'circle' && <g><circle cx="-15" cy="-15" r="5" fill="none" stroke={color} strokeWidth="2" /><circle cx="15" cy="-15" r="5" fill="none" stroke={color} strokeWidth="2" /></g>}
+                    {type === 'triangle' && <g><path d="M -20 -20 L -15 -10 L -10 -20" fill="none" stroke={color} strokeWidth="2" /><path d="M 10 -20 L 15 -10 L 20 -20" fill="none" stroke={color} strokeWidth="2" /></g>}
+                </svg>
+            );
+        };
+
+        // --- GAME ENGINE ---
+        const GameArea = ({ isPlaying, onScore, onGameOver }) => {
+            const [enemies, setEnemies] = useState([]);
+            const [projectiles, setProjectiles] = useState([]);
+            const [selectedType, setSelectedType] = useState('square');
+            const containerRef = useRef(null);
+            const requestRef = useRef();
+            const lastSpawnTime = useRef(0);
+            
+            const spawnEnemy = (timestamp) => {
+                if (timestamp - lastSpawnTime.current > 2000) {
+                    const types = ['square', 'circle', 'triangle'];
+                    const type = types[Math.floor(Math.random() * types.length)];
+                    const x = Math.random() * (containerRef.current.clientWidth - 60) + 30;
+                    setEnemies(prev => [...prev, { id: Date.now(), type, x, y: -50, speed: 0.5 + Math.random() * 0.5 }]);
+                    lastSpawnTime.current = timestamp;
+                }
+            };
+
+            const update = (timestamp) => {
+                if (!isPlaying) return;
+                spawnEnemy(timestamp);
+                setEnemies(prev => {
+                    const next = prev.map(e => ({ ...e, y: e.y + e.speed })).filter(e => e.y < 600);
+                    if (next.some(e => e.y > 550)) { onGameOver(); return []; }
+                    return next;
+                });
+                setProjectiles(prevProj => {
+                    let nextProj = prevProj.map(p => ({ ...p, y: p.y - 4 })).filter(p => p.y > -50);
+                    setEnemies(prevEnemies => {
+                        const nextEnemies = [...prevEnemies];
+                        for (let i = nextProj.length - 1; i >= 0; i--) {
+                            const p = nextProj[i];
+                            let hit = false;
+                            for (let j = nextEnemies.length - 1; j >= 0; j--) {
+                                const e = nextEnemies[j];
+                                const dx = p.x - e.x;
+                                const dy = p.y - e.y;
+                                if (Math.sqrt(dx*dx + dy*dy) < 40) {
+                                    if (p.type === e.type) { nextEnemies.splice(j, 1); onScore(10); hit = true; break; } 
+                                    else { hit = true; break; }
+                                }
+                            }
+                            if (hit) nextProj.splice(i, 1);
+                        }
+                        return nextEnemies;
+                    });
+                    return nextProj;
+                });
+                requestRef.current = requestAnimationFrame(update);
+            };
+
+            useEffect(() => {
+                if (isPlaying) requestRef.current = requestAnimationFrame(update);
+                else cancelAnimationFrame(requestRef.current);
+                return () => cancelAnimationFrame(requestRef.current);
+            }, [isPlaying]);
+
+            const handleAreaClick = (e) => {
+                if (!isPlaying) return;
+                const rect = containerRef.current.getBoundingClientRect();
+                setProjectiles(prev => [...prev, { id: Date.now(), type: selectedType, x: e.clientX - rect.left, y: 500 }]);
+            };
+
+            return (
+                <div className="flex flex-col h-full w-full relative">
+                    <div ref={containerRef} className="flex-1 relative bloodstream-bg cursor-crosshair overflow-hidden border-b-4 border-slate-700" onClick={handleAreaClick}>
+                        <AnimatePresence>
+                            {enemies.map(e => (
+                                <motion.div key={e.id} className="absolute" initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: e.y, x: e.x }} exit={{ scale: 0, opacity: 0 }} style={{ left: 0, top: 0, marginLeft: -25, marginTop: -25, transform: `translate(${e.x}px, ${e.y}px)` }}>
+                                    <Pathogen type={e.type} />
+                                </motion.div>
+                            ))}
+                        </AnimatePresence>
+                        {projectiles.map(p => (
+                            <div key={p.id} className="absolute" style={{ left: p.x, top: p.y, transform: 'translate(-50%, -50%)' }}>
+                                <Antibody2D type={p.type} />
+                            </div>
+                        ))}
+                        {!isPlaying && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
+                                <div className="text-center text-white">
+                                    <h2 className="text-3xl font-black mb-2">Ready?</h2>
+                                    <p>Select antibody & click to shoot!</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="h-24 bg-slate-900 flex items-center justify-center gap-8 p-4 shrink-0">
+                        {['square', 'circle', 'triangle'].map(type => (
+                            <button key={type} onClick={() => setSelectedType(type)} className={`p-3 rounded-xl border-2 transition-all flex flex-col items-center gap-1 w-24 ${selectedType === type ? 'bg-slate-800 border-white scale-110 shadow-lg' : 'bg-slate-900 border-slate-700 opacity-60 hover:opacity-100'}`}>
+                                <Antibody2D type={type} size={24} />
+                                <span className="text-[10px] font-bold text-slate-400">Anti-{type === 'square' ? 'A' : type === 'circle' ? 'B' : 'C'}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [mode, setMode] = useState('game'); // 'game', '3d'
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [score, setScore] = useState(0);
+            const [gameOver, setGameOver] = useState(false);
+            
+            // 3D State
+            const [demoType, setDemoType] = useState('square');
+            const [isBinding, setIsBinding] = useState(false);
+
+            const handleStart = () => { setScore(0); setGameOver(false); setIsPlaying(true); };
+            const handleGameOver = () => { setIsPlaying(false); setGameOver(true); };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="shield" className="text-emerald-400" /> Immunology
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Antibody-Antigen Matcher</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Mode Switch */}
+                            <div className="flex bg-slate-800 p-1 rounded-xl">
+                                <button onClick={() => { setMode('game'); setIsPlaying(false); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${mode === 'game' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                                    Defense Game
+                                </button>
+                                <button onClick={() => { setMode('3d'); setIsPlaying(false); }} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${mode === '3d' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                                    3D Structure
+                                </button>
+                            </div>
+
+                            {mode === 'game' ? (
+                                <>
+                                    <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 text-center">
+                                        <div className="text-xs font-bold text-slate-500 uppercase mb-1">Score</div>
+                                        <div className="text-4xl font-mono font-black text-white">{score}</div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {!isPlaying ? (
+                                            <button onClick={handleStart} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2 text-lg">
+                                                <Icon name="play" size={24}/> {gameOver ? 'Try Again' : 'Start'}
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => setIsPlaying(false)} className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl font-bold border border-slate-600">Pause</button>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="space-y-6 animate-in fade-in">
+                                    <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">Select Antigen Type</div>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {Object.entries(TYPES).map(([key, info]) => (
+                                            <button key={key} onClick={() => { setDemoType(key); setIsBinding(false); }} 
+                                                className={`w-full p-3 rounded-xl border transition-all text-left flex items-center justify-between
+                                                ${demoType === key ? 'bg-slate-800 border-purple-500 text-white shadow' : 'bg-slate-900/50 border-slate-700 text-slate-400'}`}>
+                                                <span>{info.name}</span>
+                                                <div className="w-3 h-3 rounded-full" style={{backgroundColor: '#'+info.color.toString(16)}}></div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    
+                                    <div className="bg-purple-900/20 p-4 rounded-xl border border-purple-500/30 text-xs text-slate-300">
+                                        <div className="font-bold text-purple-400 uppercase mb-2">Lock & Key Theory</div>
+                                        <p className="mb-2">Antibodies have a unique <strong>Paratope</strong> (binding site) shape that complements the specific <strong>Epitope</strong> on the Antigen.</p>
+                                        <p className="text-white font-bold">{TYPES[demoType].shapeDesc}</p>
+                                    </div>
+
+                                    <button onClick={() => setIsBinding(!isBinding)} className={`w-full py-3 rounded-xl font-bold border transition-all flex items-center justify-center gap-2 ${isBinding ? 'bg-slate-700 border-slate-600' : 'bg-emerald-600 border-emerald-500 hover:bg-emerald-500'}`}>
+                                        {isBinding ? 'Reset Position' : 'Simulate Binding'}
+                                    </button>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative flex flex-col overflow-hidden">
+                        {mode === 'game' ? (
+                            <>
+                                <GameArea isPlaying={isPlaying} onScore={(pts) => setScore(s => s + pts)} onGameOver={handleGameOver} />
+                                {gameOver && (
+                                    <div className="absolute inset-0 bg-red-900/90 backdrop-blur-md flex items-center justify-center z-50 animate-in zoom-in">
+                                        <div className="text-center p-8 bg-slate-900 rounded-3xl border-2 border-red-500 shadow-2xl max-w-md">
+                                            <Icon name="alert-triangle" size={48} className="text-red-500 mx-auto mb-4"/>
+                                            <h2 className="text-3xl font-black text-white mb-2">Infection Spread!</h2>
+                                            <div className="text-2xl font-mono font-bold text-white mb-8">Final Score: {score}</div>
+                                            <button onClick={handleStart} className="px-8 py-3 bg-white text-slate-900 rounded-full font-bold hover:bg-slate-200 transition-colors">Restart</button>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <div className="flex-1 bg-slate-900 relative">
+                                <MolecularScene type={demoType} isBinding={isBinding} />
+                                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-xs text-slate-500 font-mono bg-black/40 px-3 py-1 rounded-full border border-white/10 pointer-events-none">
+                                    Drag to Rotate • Scroll to Zoom
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
