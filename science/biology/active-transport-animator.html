@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Active Transport Animator - LuminousLearner International</title>
+    
+    <!-- React & Tailwind -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        .safe-area-bottom { padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION CONFIG ---
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 500;
+        const MEMBRANE_Y = 250;
+        const PUMP_X = CANVAS_WIDTH / 2;
+        
+        const App = () => {
+            const canvasRef = useRef(null);
+            
+            // UI State
+            const [uiAtp, setUiAtp] = useState(100);
+            const [concOut, setConcOut] = useState(10); 
+            const [concIn, setConcIn] = useState(40);
+            const [isRunning, setIsRunning] = useState(false);
+            const [history, setHistory] = useState([]);
+
+            // Simulation State (Refs for performance)
+            const simRef = useRef({
+                atp: 100,
+                pumpState: 'idle', // idle, binding, pumping, releasing, resetting
+                pumpTimer: 0,
+                targetParticle: null,
+                particles: [],
+                atpEffects: []
+            });
+
+            // Initialize Particles
+            const initParticles = () => {
+                const p = [];
+                let idCounter = 0;
+                // Outside (Top - Low Concentration initially)
+                for(let i=0; i<concOut; i++) {
+                    p.push({
+                        id: idCounter++,
+                        x: Math.random() * CANVAS_WIDTH,
+                        y: Math.random() * (MEMBRANE_Y - 60),
+                        vx: (Math.random() - 0.5),
+                        vy: (Math.random() - 0.5),
+                        location: 'out'
+                    });
+                }
+                // Inside (Bottom - High Concentration initially)
+                for(let i=0; i<concIn; i++) {
+                    p.push({
+                        id: idCounter++,
+                        x: Math.random() * CANVAS_WIDTH,
+                        y: Math.random() * (CANVAS_HEIGHT - MEMBRANE_Y - 60) + MEMBRANE_Y + 60,
+                        vx: (Math.random() - 0.5),
+                        vy: (Math.random() - 0.5),
+                        location: 'in'
+                    });
+                }
+                simRef.current.particles = p;
+                simRef.current.atp = 100;
+                simRef.current.pumpState = 'idle';
+                simRef.current.targetParticle = null;
+                simRef.current.atpEffects = [];
+                setUiAtp(100);
+                setHistory([]);
+            };
+
+            useEffect(() => {
+                initParticles();
+            }, []);
+
+            // Reset Handler
+            const handleReset = () => {
+                setIsRunning(false);
+                initParticles();
+            };
+
+            // Animation Loop
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                let frame = 0;
+                
+                const render = () => {
+                    const state = simRef.current;
+
+                    // Clear Canvas
+                    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                    // 1. Draw Membrane (Phospholipid Bilayer representation)
+                    const drawMembrane = () => {
+                        ctx.fillStyle = "#334155"; // Slate-700
+                        ctx.fillRect(0, MEMBRANE_Y - 20, CANVAS_WIDTH, 40);
+                        
+                        // Detail lines
+                        ctx.strokeStyle = "#475569";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(0, MEMBRANE_Y - 20); ctx.lineTo(CANVAS_WIDTH, MEMBRANE_Y - 20);
+                        ctx.moveTo(0, MEMBRANE_Y + 20); ctx.lineTo(CANVAS_WIDTH, MEMBRANE_Y + 20);
+                        ctx.stroke();
+                    };
+                    drawMembrane();
+                    
+                    // 2. Draw Pump (Carrier Protein)
+                    ctx.fillStyle = "#10b981"; // Emerald-500
+
+                    // Determine Shape based on state
+                    let gapTop = 25;
+                    let gapBot = 5;
+
+                    if (state.pumpState === 'pumping' || state.pumpState === 'releasing' || state.pumpState === 'resetting') {
+                        gapTop = 5;
+                        gapBot = 25;
+                    }
+
+                    // Left Arm
+                    ctx.beginPath();
+                    ctx.moveTo(PUMP_X - 40, MEMBRANE_Y - 40); 
+                    ctx.lineTo(PUMP_X - 10 - gapTop, MEMBRANE_Y - 20); 
+                    ctx.lineTo(PUMP_X - 10 - gapBot, MEMBRANE_Y + 20); 
+                    ctx.lineTo(PUMP_X - 40, MEMBRANE_Y + 40); 
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Right Arm
+                    ctx.beginPath();
+                    ctx.moveTo(PUMP_X + 40, MEMBRANE_Y - 40);
+                    ctx.lineTo(PUMP_X + 10 + gapTop, MEMBRANE_Y - 20);
+                    ctx.lineTo(PUMP_X + 10 + gapBot, MEMBRANE_Y + 20);
+                    ctx.lineTo(PUMP_X + 40, MEMBRANE_Y + 40);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // 3. Pump Logic (Continuous Loop)
+                    if (isRunning && state.atp > 0) {
+                        if (state.pumpState === 'idle') {
+                            // Search for candidate near the pump entrance (Outside)
+                            // We are pumping 'In' against gradient (assuming In is High)
+                            // Wait, active transport moves Low -> High.
+                            // If user set Out=Low, In=High, we pump Out -> In.
+                            
+                            const candidate = state.particles.find(p => 
+                                p.location === 'out' && 
+                                Math.abs(p.x - PUMP_X) < 60 && 
+                                Math.abs(p.y - (MEMBRANE_Y - 40)) < 50
+                            );
+                            
+                            if (candidate) {
+                                state.targetParticle = candidate;
+                                state.pumpState = 'binding';
+                            } 
+                        } 
+                        else if (state.pumpState === 'binding') {
+                            if (state.targetParticle) {
+                                const tp = state.targetParticle;
+                                const dx = PUMP_X - tp.x;
+                                const dy = MEMBRANE_Y - tp.y; 
+                                // Force pull to center
+                                tp.x += dx * 0.15;
+                                tp.y += dy * 0.15;
+                                tp.vx = 0; tp.vy = 0;
+
+                                if (Math.abs(dy) < 5 && Math.abs(dx) < 5) {
+                                    state.pumpState = 'pumping';
+                                    state.atp = Math.max(0, state.atp - 5); // Consume ATP
+                                    state.pumpTimer = 0;
+                                    // Add ATP Flash effect
+                                    state.atpEffects.push({x: PUMP_X + 50, y: MEMBRANE_Y, age: 0}); 
+                                }
+                            } else {
+                                state.pumpState = 'idle';
+                            }
+                        }
+                        else if (state.pumpState === 'pumping') {
+                            // Hold particle, change shape (visualized by gap variable above)
+                            state.pumpTimer++;
+                            if (state.targetParticle) {
+                                state.targetParticle.x = PUMP_X;
+                                state.targetParticle.y = MEMBRANE_Y;
+                            }
+                            if (state.pumpTimer > 20) {
+                                state.pumpState = 'releasing';
+                            }
+                        }
+                        else if (state.pumpState === 'releasing') {
+                            if (state.targetParticle) {
+                                state.targetParticle.location = 'in';
+                                state.targetParticle.vy = 3; // Shoot down into the cell
+                                state.targetParticle.y += 5; 
+                            }
+                            state.targetParticle = null;
+                            state.pumpState = 'resetting';
+                            state.pumpTimer = 0;
+                        }
+                        else if (state.pumpState === 'resetting') {
+                            state.pumpTimer++;
+                            if (state.pumpTimer > 20) {
+                                state.pumpState = 'idle'; // Loop back to idle
+                            }
+                        }
+                    }
+
+                    // 4. ATP Visuals (Yellow flashes)
+                    state.atpEffects = state.atpEffects.filter(e => e.age < 30);
+                    state.atpEffects.forEach(e => {
+                        e.age++;
+                        ctx.beginPath();
+                        ctx.arc(e.x, e.y - e.age, 10 + e.age/2, 0, Math.PI*2);
+                        ctx.fillStyle = `rgba(250, 204, 21, ${1 - e.age/30})`; // Yellow-400 fade out
+                        ctx.fill();
+                        
+                        ctx.fillStyle = `rgba(255, 255, 255, ${1 - e.age/30})`;
+                        ctx.font = "bold 16px sans-serif";
+                        ctx.fillText("-ATP", e.x + 15, e.y - e.age);
+                    });
+
+                    // 5. Particles Render & Physics
+                    let countIn = 0;
+                    state.particles.forEach(p => {
+                        const isCaptured = (p === state.targetParticle);
+                        
+                        if (isRunning && !isCaptured) {
+                            p.x += p.vx;
+                            p.y += p.vy;
+                            
+                            // Random walk (Brownian motion)
+                            p.vx += (Math.random() - 0.5) * 0.5;
+                            p.vy += (Math.random() - 0.5) * 0.5;
+                            p.vx *= 0.98; p.vy *= 0.98; // Friction
+
+                            // Canvas Bounds
+                            if (p.x < 5 || p.x > CANVAS_WIDTH - 5) p.vx *= -1;
+                            if (p.y < 5 || p.y > CANVAS_HEIGHT - 5) p.vy *= -1;
+
+                            // Membrane Barrier Collision (Particles cannot cross without pump)
+                            if (p.location === 'out' && p.y > MEMBRANE_Y - 25) {
+                                if (Math.abs(p.x - PUMP_X) > 30) { p.y = MEMBRANE_Y - 25; p.vy *= -1; }
+                            }
+                            if (p.location === 'in' && p.y < MEMBRANE_Y + 25) {
+                                if (Math.abs(p.x - PUMP_X) > 30) { p.y = MEMBRANE_Y + 25; p.vy *= -1; }
+                            }
+                        }
+
+                        // Draw Particle
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+                        // Blue if outside, Purple if inside (to visualize accumulation)
+                        ctx.fillStyle = p.location === 'out' ? "#60a5fa" : "#a855f7"; 
+                        if(isCaptured) ctx.fillStyle = "#fbbf24"; // Yellow when captured
+                        ctx.fill();
+                        
+                        // Stroke
+                        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+
+                        if (p.location === 'in') countIn++;
+                    });
+
+                    // Update UI stats periodically
+                    if (frame % 10 === 0) {
+                        setUiAtp(state.atp);
+                        setHistory(prev => {
+                            const newData = [...prev, { time: frame, count: countIn }];
+                            if (newData.length > 100) newData.shift(); // Keep graph clean
+                            return newData;
+                        });
+                    }
+
+                    frame++;
+                    animationId = requestAnimationFrame(render);
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [isRunning]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="zap" className="text-yellow-400" /> Active Transport
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Energy-driven Pump</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* ATP Control */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold uppercase">
+                                    <span className="text-slate-500">ATP Energy Level</span>
+                                    <span className={uiAtp < 20 ? "text-red-400 animate-pulse" : "text-yellow-400"}>{uiAtp.toFixed(0)}%</span>
+                                </div>
+                                <div className="h-4 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-yellow-600 to-yellow-400 transition-all duration-300" 
+                                        style={{width: `${uiAtp}%`}}
+                                    ></div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => { simRef.current.atp = Math.min(100, simRef.current.atp + 20); setUiAtp(simRef.current.atp); }} 
+                                        className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-yellow-400 border border-slate-600 flex items-center justify-center gap-2"
+                                    >
+                                        <Icon name="battery-charging" size={14}/> + Recharge ATP
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Initial Conditions */}
+                            <div className="space-y-4 pt-4 border-t border-slate-800">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Initial Setup</label>
+                                
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-400">Outside Conc. (Low)</span>
+                                        <span className="text-blue-400">{concOut}</span>
+                                    </div>
+                                    <input type="range" min="5" max="30" value={concOut} onChange={(e) => setConcOut(parseInt(e.target.value))} className="w-full accent-blue-500" />
+                                </div>
+                                
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-400">Inside Conc. (High)</span>
+                                        <span className="text-purple-400">{concIn}</span>
+                                    </div>
+                                    <input type="range" min="30" max="100" value={concIn} onChange={(e) => setConcIn(parseInt(e.target.value))} className="w-full accent-purple-500" />
+                                </div>
+
+                                <button onClick={handleReset} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold border border-slate-600 flex items-center justify-center gap-2">
+                                    <Icon name="rotate-ccw" size={14}/> Reset & Apply
+                                </button>
+                            </div>
+                            
+                            {/* Info */}
+                            <div className="bg-emerald-900/20 p-4 rounded-xl border border-emerald-500/30">
+                                <div className="flex items-center gap-2 mb-2 text-emerald-400 font-bold text-xs uppercase">
+                                    <Icon name="info" size={14} /> Mechanism
+                                </div>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                    Carrier proteins use ATP energy to pump substances <strong>against</strong> the concentration gradient (from Low to High).
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        {/* Animation Area */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col">
+                            <div className="absolute top-4 left-4 z-10 flex gap-4">
+                                <div className="text-xs font-bold text-slate-400 uppercase bg-black/40 px-3 py-1 rounded border border-white/10">Outside Cell (Low)</div>
+                            </div>
+                            <div className="absolute bottom-4 left-4 z-10">
+                                <div className="text-xs font-bold text-slate-400 uppercase bg-black/40 px-3 py-1 rounded border border-white/10">Inside Cell (High)</div>
+                            </div>
+
+                            <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="w-full h-full object-contain" />
+                        </div>
+
+                        {/* Control Bar & Graph */}
+                        <div className="h-40 mt-4 flex gap-4">
+                            
+                            {/* Play Controls */}
+                            <div className="w-48 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col justify-center gap-3 shrink-0">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isRunning ? 'bg-yellow-600 text-white' : 'bg-emerald-600 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} size={20} fill="currentColor" />
+                                    {isRunning ? 'Pause' : 'Start Pump'}
+                                </button>
+                                <div className="text-center text-[10px] text-slate-500 uppercase font-bold">
+                                    Status: {isRunning ? (uiAtp > 0 ? 'ACTIVE PUMPING' : 'NO ENERGY (ATP DEPLETED)') : 'PAUSED'}
+                                </div>
+                            </div>
+
+                            {/* Graph */}
+                            <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative">
+                                <div className="absolute top-4 left-4 text-xs font-bold text-slate-500 uppercase">Accumulation Inside Cell</div>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={history}>
+                                        <defs>
+                                            <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#a855f7" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="time" hide />
+                                        <YAxis hide domain={['auto', 'auto']} />
+                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} itemStyle={{ color: '#fff' }} />
+                                        <Area type="monotone" dataKey="count" stroke="#a855f7" fillOpacity={1} fill="url(#colorCount)" name="Particles Inside" isAnimationActive={false} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
