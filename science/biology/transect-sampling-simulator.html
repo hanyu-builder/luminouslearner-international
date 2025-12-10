@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transect Sampling Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Gradient Background for Field */
+        .field-gradient {
+            background: linear-gradient(to right, #064e3b, #10b981, #facc15, #d97706);
+            /* Dark Green (Wet) -> Green -> Yellow -> Orange (Dry) */
+        }
+
+        /* Tape Measure Tick */
+        .tape-tick {
+            border-left: 2px solid #94a3b8;
+            height: 10px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, LineChart, Line, Legend } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONSTANTS ---
+        const FIELD_LENGTH = 20; // meters
+        const FIELD_WIDTH_PX = 800;
+        const QUADRAT_SIZE_PX = 40; // Equivalent to 1m visually
+
+        const SPECIES = {
+            fern: { id: 'fern', name: 'Fern', color: '#34d399', icon: 'sprout', pref: { min: 0, max: 8, peak: 2 } },
+            grass: { id: 'grass', name: 'Grass', color: '#facc15', icon: 'leaf', pref: { min: 4, max: 16, peak: 10 } },
+            cactus: { id: 'cactus', name: 'Cactus', color: '#fb923c', icon: 'sun', pref: { min: 12, max: 20, peak: 18 } }
+        };
+
+        // --- COMPONENT: TRANSECT FIELD ---
+        const TransectField = ({ quadratPos, onRecord, plants }) => {
+            
+            // Calculate counts in current quadrat
+            const currentCounts = useMemo(() => {
+                // Quadrat Range (in meters)
+                const qStart = quadratPos;
+                const qEnd = quadratPos + 1;
+                
+                const counts = { fern: 0, grass: 0, cactus: 0 };
+                plants.forEach(p => {
+                    if (p.x >= qStart && p.x < qEnd) {
+                        // Also check Y to be inside "belt" (simplified: entire strip width)
+                        // Or just assume quadrat covers a sample strip
+                        counts[p.type]++;
+                    }
+                });
+                return counts;
+            }, [quadratPos, plants]);
+
+            // Environmental Readings at current pos
+            const moisture = Math.max(0, 100 - (quadratPos * 5)); // 100 -> 0
+            const light = Math.min(100, quadratPos * 5); // 0 -> 100
+
+            return (
+                <div className="relative w-full h-full flex flex-col">
+                    {/* 1. The Field Visual */}
+                    <div className="relative flex-1 field-gradient rounded-xl overflow-hidden border border-slate-700 shadow-inner mx-4 mt-4">
+                        
+                        {/* Ruler / Tape Measure */}
+                        <div className="absolute top-0 left-0 right-0 h-8 bg-yellow-400/90 flex items-end border-b border-yellow-600 z-10">
+                            {Array.from({ length: 21 }).map((_, i) => (
+                                <div key={i} className="flex-1 flex flex-col items-start h-full justify-end relative">
+                                    <div className="h-3 w-px bg-black/50"></div>
+                                    <span className="text-[8px] text-black font-bold absolute -bottom-4 -left-1">{i}m</span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Plants */}
+                        <div className="absolute inset-0 top-8 overflow-hidden">
+                            {plants.map((p) => (
+                                <div 
+                                    key={p.id}
+                                    className="absolute transition-opacity duration-500"
+                                    style={{ 
+                                        left: `${(p.x / FIELD_LENGTH) * 100}%`, 
+                                        top: `${p.y}%`,
+                                        color: SPECIES[p.type].color 
+                                    }}
+                                >
+                                    <Icon name={SPECIES[p.type].icon} size={p.size} />
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* The Quadrat (Draggable Visual) */}
+                        <div 
+                            className="absolute top-8 bottom-0 border-4 border-white/80 bg-white/10 backdrop-blur-[1px] transition-all duration-300 shadow-[0_0_15px_rgba(255,255,255,0.3)]"
+                            style={{ 
+                                left: `${(quadratPos / FIELD_LENGTH) * 100}%`, 
+                                width: `${(1 / FIELD_LENGTH) * 100}%` 
+                            }}
+                        >
+                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-white text-black text-[10px] font-bold px-2 py-0.5 rounded-t">
+                                {quadratPos}m
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* 2. Controls & Current Reading */}
+                    <div className="h-32 bg-slate-900 border-t border-slate-800 p-4 flex items-center justify-between gap-8">
+                        
+                        {/* Slider */}
+                        <div className="flex-1">
+                            <div className="flex justify-between text-xs font-bold text-slate-400 mb-2">
+                                <span>Position: {quadratPos}m</span>
+                                <span>Drag to move quadrat</span>
+                            </div>
+                            <input 
+                                type="range" min="0" max="19" step="1"
+                                value={quadratPos}
+                                onChange={(e) => onRecord(parseInt(e.target.value), false)} // Move only
+                                className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                <span>Wet / Shady</span>
+                                <span>Dry / Sunny</span>
+                            </div>
+                        </div>
+
+                        {/* Live Stats Box */}
+                        <div className="bg-slate-800 border border-slate-700 p-3 rounded-xl min-w-[200px]">
+                            <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Current Quadrat ({quadratPos}-{quadratPos+1}m)</div>
+                            <div className="grid grid-cols-3 gap-2 text-center mb-2">
+                                <div className="flex flex-col items-center">
+                                    <span className="text-lg font-bold text-emerald-400">{currentCounts.fern}</span>
+                                    <Icon name="sprout" size={12} className="text-emerald-400"/>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-lg font-bold text-yellow-400">{currentCounts.grass}</span>
+                                    <Icon name="leaf" size={12} className="text-yellow-400"/>
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-lg font-bold text-orange-400">{currentCounts.cactus}</span>
+                                    <Icon name="sun" size={12} className="text-orange-400"/>
+                                </div>
+                            </div>
+                            <div className="flex gap-2 justify-center text-[10px] text-slate-400 border-t border-slate-700 pt-1">
+                                <span className="flex items-center gap-1"><Icon name="droplets" size={10}/> {moisture}%</span>
+                                <span className="flex items-center gap-1"><Icon name="sun" size={10}/> {light}%</span>
+                            </div>
+                        </div>
+
+                        {/* Record Button */}
+                        <button 
+                            onClick={() => onRecord(quadratPos, true)} // Record
+                            className="h-16 w-16 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg flex flex-col items-center justify-center gap-1 transition-transform active:scale-95 border-4 border-slate-900"
+                        >
+                            <Icon name="clipboard-check" size={24}/>
+                            <span className="text-[10px] font-bold">Record</span>
+                        </button>
+
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [quadratPos, setQuadratPos] = useState(0);
+            const [records, setRecords] = useState([]); // Array of { pos, fern, grass, cactus, moisture, light }
+            const [plants, setPlants] = useState([]);
+
+            // Generate Ecosystem
+            useEffect(() => {
+                const newPlants = [];
+                // Generate ~300 plants based on preferences
+                for(let i=0; i<300; i++) {
+                    // Random position
+                    const x = Math.random() * FIELD_LENGTH;
+                    
+                    // Determine likelihood of species based on x
+                    let type = null;
+                    
+                    // Probability Distribution (Gaussian-ish)
+                    const probFern = Math.exp(-Math.pow(x - SPECIES.fern.pref.peak, 2) / 10);
+                    const probGrass = Math.exp(-Math.pow(x - SPECIES.grass.pref.peak, 2) / 20);
+                    const probCactus = Math.exp(-Math.pow(x - SPECIES.cactus.pref.peak, 2) / 10);
+                    
+                    const rand = Math.random();
+                    const totalProb = probFern + probGrass + probCactus;
+                    const normFern = probFern / totalProb;
+                    const normGrass = probGrass / totalProb;
+                    
+                    if (rand < normFern) type = 'fern';
+                    else if (rand < normFern + normGrass) type = 'grass';
+                    else type = 'cactus';
+
+                    newPlants.push({
+                        id: i,
+                        type,
+                        x,
+                        y: Math.random() * 100, // 0-100% height
+                        size: 12 + Math.random() * 8
+                    });
+                }
+                setPlants(newPlants);
+            }, []);
+
+            // Handle interactions
+            const handleRecord = (pos, shouldSave) => {
+                setQuadratPos(pos);
+                
+                if (shouldSave) {
+                    // Check if already recorded
+                    if (records.some(r => r.pos === pos)) return;
+
+                    // Calculate data
+                    const qStart = pos;
+                    const qEnd = pos + 1;
+                    const counts = { fern: 0, grass: 0, cactus: 0 };
+                    plants.forEach(p => {
+                        if (p.x >= qStart && p.x < qEnd) counts[p.type]++;
+                    });
+                    
+                    const newRecord = {
+                        pos,
+                        fern: counts.fern,
+                        grass: counts.grass,
+                        cactus: counts.cactus,
+                        moisture: Math.max(0, 100 - (pos * 5)),
+                        light: Math.min(100, pos * 5)
+                    };
+
+                    setRecords(prev => [...prev, newRecord].sort((a, b) => a.pos - b.pos));
+                }
+            };
+
+            const resetData = () => setRecords([]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="ruler" className="text-blue-400" /> Transect Lab
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Environmental Gradient Study</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Instructions */}
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300">
+                                <div className="font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icon name="info" size={14}/> Methodology</div>
+                                <p>This is a <strong>Belt Transect</strong>.</p>
+                                <ol className="list-decimal pl-4 mt-1 space-y-1">
+                                    <li>Place quadrats at regular intervals along the environmental gradient.</li>
+                                    <li>Count species abundance.</li>
+                                    <li>Analyze how abiotic factors affect distribution.</li>
+                                </ol>
+                            </div>
+
+                            {/* Data Table */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Recorded Data</label>
+                                    <button onClick={resetData} className="text-[10px] text-red-400 hover:text-red-300">Clear All</button>
+                                </div>
+                                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                                    <div className="grid grid-cols-4 bg-slate-900 p-2 text-[10px] font-bold text-slate-400 border-b border-slate-700">
+                                        <div>Dist.</div>
+                                        <div className="text-emerald-400">Fern</div>
+                                        <div className="text-yellow-400">Grass</div>
+                                        <div className="text-orange-400">Cactus</div>
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                        {records.length === 0 ? (
+                                            <div className="p-4 text-center text-xs text-slate-600 italic">No data recorded yet.</div>
+                                        ) : (
+                                            records.map((r) => (
+                                                <div key={r.pos} className="grid grid-cols-4 p-2 text-xs text-slate-300 border-b border-slate-700/50 last:border-0 hover:bg-slate-700/50">
+                                                    <div className="font-mono font-bold">{r.pos}m</div>
+                                                    <div>{r.fern}</div>
+                                                    <div>{r.grass}</div>
+                                                    <div>{r.cactus}</div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Chart: Species Distribution */}
+                            <div className="h-40 bg-slate-800 rounded-xl border border-slate-700 p-2 relative">
+                                <div className="absolute top-2 left-3 text-[10px] font-bold text-slate-500 uppercase">Abundance</div>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={records}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="pos" stroke="#64748b" fontSize={10} tickCount={5} />
+                                        <YAxis stroke="#64748b" fontSize={10} width={20} />
+                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
+                                        <Area type="monotone" dataKey="fern" stroke="#34d399" fill="#34d399" fillOpacity={0.3} name="Fern" />
+                                        <Area type="monotone" dataKey="grass" stroke="#facc15" fill="#facc15" fillOpacity={0.3} name="Grass" />
+                                        <Area type="monotone" dataKey="cactus" stroke="#fb923c" fill="#fb923c" fillOpacity={0.3} name="Cactus" />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                             {/* Chart: Environment */}
+                             <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 p-2 relative">
+                                <div className="absolute top-2 left-3 text-[10px] font-bold text-slate-500 uppercase">Abiotic Factors</div>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={records}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="pos" stroke="#64748b" fontSize={10} />
+                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, 100]} width={20} />
+                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
+                                        <Line type="monotone" dataKey="moisture" stroke="#60a5fa" strokeWidth={2} dot={false} name="Moisture %" />
+                                        <Line type="monotone" dataKey="light" stroke="#fcd34d" strokeWidth={2} dot={false} name="Light %" />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col">
+                            <TransectField 
+                                quadratPos={quadratPos} 
+                                onRecord={handleRecord}
+                                plants={plants}
+                            />
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
