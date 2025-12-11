@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speciation Animator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Mountain Animation */
+        .mountain-rise { animation: rise 1s ease-out forwards; }
+        @keyframes rise {
+            0% { transform: translateY(100%); }
+            100% { transform: translateY(0); }
+        }
+
+        /* Organism Animation */
+        .organism { transition: fill 1s ease, transform 0.5s ease; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION CONFIG ---
+        const CANVAS_WIDTH = 600;
+        const CANVAS_HEIGHT = 400;
+        const BARRIER_WIDTH = 60;
+
+        // Organism Types
+        const TYPE_ANCESTOR = '#94a3b8'; // Grey
+        const TYPE_A = '#3b82f6'; // Blue (Cold adapted)
+        const TYPE_B = '#ef4444'; // Red (Heat adapted)
+
+        const App = () => {
+            const canvasRef = useRef(null);
+            
+            // State
+            const [stage, setStage] = useState('initial'); // initial, barrier, evolution, reunion
+            const [generation, setGeneration] = useState(0);
+            const [isRunning, setIsRunning] = useState(false);
+            
+            // Refs for loop
+            const populationsRef = useRef({ left: [], right: [] });
+            
+            // Initialize
+            const initPopulation = () => {
+                const p = [];
+                // Randomly distributed
+                for(let i=0; i<40; i++) {
+                    p.push({
+                        id: i,
+                        x: Math.random() * CANVAS_WIDTH,
+                        y: Math.random() * CANVAS_HEIGHT,
+                        vx: (Math.random() - 0.5),
+                        vy: (Math.random() - 0.5),
+                        color: TYPE_ANCESTOR,
+                        gene: 0.5 // 0 = Blue/Square, 1 = Red/Triangle
+                    });
+                }
+                // Initial split purely by position, but logically they are one population until barrier
+                populationsRef.current.left = p.filter(o => o.x < CANVAS_WIDTH/2);
+                populationsRef.current.right = p.filter(o => o.x >= CANVAS_WIDTH/2);
+                
+                setGeneration(0);
+            };
+
+            useEffect(() => {
+                initPopulation();
+            }, []);
+
+            // Control Handlers
+            const startBarrier = () => {
+                setStage('barrier');
+                // Push organisms out of the barrier zone
+                const left = populationsRef.current.left;
+                const right = populationsRef.current.right;
+                
+                const all = [...left, ...right];
+                populationsRef.current.left = [];
+                populationsRef.current.right = [];
+
+                all.forEach(o => {
+                    if (o.x < CANVAS_WIDTH/2) {
+                        o.x = Math.min(o.x, CANVAS_WIDTH/2 - BARRIER_WIDTH/2 - 10);
+                        populationsRef.current.left.push(o);
+                    } else {
+                        o.x = Math.max(o.x, CANVAS_WIDTH/2 + BARRIER_WIDTH/2 + 10);
+                        populationsRef.current.right.push(o);
+                    }
+                });
+                setIsRunning(true);
+            };
+
+            const evolve = () => {
+                setStage('evolution');
+                setIsRunning(true);
+            };
+
+            const removeBarrier = () => {
+                setStage('reunion');
+                // Allow mixing again (logic handled in update loop)
+            };
+
+            const reset = () => {
+                setStage('initial');
+                setIsRunning(false);
+                initPopulation();
+            };
+
+            // Animation Loop
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                let frame = 0;
+
+                const render = () => {
+                    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                    // Draw Background Environments
+                    if (stage === 'evolution' || stage === 'reunion') {
+                        // Left: Cold (Blueish)
+                        ctx.fillStyle = '#1e3a8a'; 
+                        ctx.fillRect(0, 0, CANVAS_WIDTH/2, CANVAS_HEIGHT);
+                        // Right: Hot (Reddish)
+                        ctx.fillStyle = '#7f1d1d';
+                        ctx.fillRect(CANVAS_WIDTH/2, 0, CANVAS_WIDTH/2, CANVAS_HEIGHT);
+                        
+                        // Labels
+                        ctx.font = "bold 20px monospace";
+                        ctx.fillStyle = "rgba(255,255,255,0.1)";
+                        ctx.textAlign = "center";
+                        ctx.fillText("COLD ENV", CANVAS_WIDTH/4, 40);
+                        ctx.fillText("HOT ENV", 3*CANVAS_WIDTH/4, 40);
+                    } else {
+                        // Uniform Env
+                        ctx.fillStyle = '#1e293b';
+                        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    }
+
+                    // Draw Barrier (Mountain)
+                    if (stage === 'barrier' || stage === 'evolution') {
+                        ctx.fillStyle = '#475569'; // Slate-600
+                        ctx.beginPath();
+                        ctx.moveTo(CANVAS_WIDTH/2 - BARRIER_WIDTH/2, CANVAS_HEIGHT);
+                        ctx.lineTo(CANVAS_WIDTH/2, 50); // Peak
+                        ctx.lineTo(CANVAS_WIDTH/2 + BARRIER_WIDTH/2, CANVAS_HEIGHT);
+                        ctx.fill();
+                        
+                        // Mountain snow cap
+                        ctx.fillStyle = '#e2e8f0';
+                        ctx.beginPath();
+                        ctx.moveTo(CANVAS_WIDTH/2 - 10, 85);
+                        ctx.lineTo(CANVAS_WIDTH/2, 50);
+                        ctx.lineTo(CANVAS_WIDTH/2 + 10, 85);
+                        ctx.fill();
+                    }
+
+                    // Update & Draw Organisms
+                    const updateOrganism = (o, side) => {
+                        if (isRunning) {
+                            o.x += o.vx;
+                            o.y += o.vy;
+
+                            // Bounds
+                            if (o.y < 10 || o.y > CANVAS_HEIGHT - 10) o.vy *= -1;
+                            if (o.x < 10 || o.x > CANVAS_WIDTH - 10) o.vx *= -1;
+
+                            // Barrier Collision
+                            if (stage === 'barrier' || stage === 'evolution') {
+                                if (side === 'left' && o.x > CANVAS_WIDTH/2 - BARRIER_WIDTH/2) {
+                                    o.x = CANVAS_WIDTH/2 - BARRIER_WIDTH/2; o.vx *= -1;
+                                }
+                                if (side === 'right' && o.x < CANVAS_WIDTH/2 + BARRIER_WIDTH/2) {
+                                    o.x = CANVAS_WIDTH/2 + BARRIER_WIDTH/2; o.vx *= -1;
+                                }
+                            }
+
+                            // Evolution Logic
+                            if (stage === 'evolution' && frame % 60 === 0) { // Slower evolution tick
+                                if (side === 'left') {
+                                    // Adapt to Cold -> Blue (Gene -> 0)
+                                    o.gene = Math.max(0, o.gene - 0.05);
+                                } else if (side === 'right') {
+                                    // Adapt to Hot -> Red (Gene -> 1)
+                                    o.gene = Math.min(1, o.gene + 0.05);
+                                }
+                                // Update visual color based on gene
+                                if (o.gene < 0.4) o.color = TYPE_A;
+                                else if (o.gene > 0.6) o.color = TYPE_B;
+                                else o.color = TYPE_ANCESTOR;
+                            }
+                        }
+
+                        // Draw Shape based on Gene
+                        ctx.fillStyle = o.color;
+                        ctx.strokeStyle = "white";
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+
+                        const size = 6;
+
+                        if (o.gene <= 0.3) {
+                            // Square (Species A - Cold)
+                            ctx.rect(o.x - size, o.y - size, size * 2, size * 2);
+                        } else if (o.gene >= 0.7) {
+                            // Triangle (Species B - Hot)
+                            ctx.moveTo(o.x, o.y - size);
+                            ctx.lineTo(o.x + size, o.y + size);
+                            ctx.lineTo(o.x - size, o.y + size);
+                            ctx.closePath();
+                        } else {
+                            // Circle (Ancestor)
+                            ctx.arc(o.x, o.y, size, 0, Math.PI * 2);
+                        }
+                        
+                        ctx.fill();
+                        ctx.stroke();
+                    };
+
+                    // Process all
+                    const leftPop = populationsRef.current.left;
+                    const rightPop = populationsRef.current.right;
+
+                    // If reunion, treat as one list but keep their gene properties
+                    if (stage === 'reunion') {
+                        [...leftPop, ...rightPop].forEach(o => updateOrganism(o, 'mixed'));
+                    } else {
+                        leftPop.forEach(o => updateOrganism(o, 'left'));
+                        rightPop.forEach(o => updateOrganism(o, 'right'));
+                    }
+                    
+                    // Generations counter visual
+                    if (isRunning && stage === 'evolution' && frame % 60 === 0) {
+                        setGeneration(g => g + 1);
+                    }
+
+                    frame++;
+                    animationId = requestAnimationFrame(render);
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [stage, isRunning]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="map" className="text-indigo-400" /> Speciation Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Allopatric Speciation</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Stage Controls */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Simulation Stages</label>
+                                    <span className="text-xs font-mono text-emerald-400">Gen: {generation}</span>
+                                </div>
+
+                                <button 
+                                    onClick={startBarrier}
+                                    disabled={stage !== 'initial'}
+                                    className={`w-full p-4 rounded-xl border text-left transition-all flex gap-3
+                                        ${stage === 'initial' ? 'bg-slate-800 border-indigo-500 text-white hover:bg-slate-700' : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'}
+                                    `}
+                                >
+                                    <div className={`p-2 rounded-lg ${stage === 'initial' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-700'}`}>
+                                        <Icon name="mountain" size={20}/>
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-sm">1. Isolation</div>
+                                        <div className="text-[10px] opacity-70">Form a geographic barrier</div>
+                                    </div>
+                                </button>
+
+                                <button 
+                                    onClick={evolve}
+                                    disabled={stage !== 'barrier'}
+                                    className={`w-full p-4 rounded-xl border text-left transition-all flex gap-3
+                                        ${stage === 'barrier' ? 'bg-slate-800 border-indigo-500 text-white hover:bg-slate-700' : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'}
+                                    `}
+                                >
+                                    <div className={`p-2 rounded-lg ${stage === 'barrier' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-700'}`}>
+                                        <Icon name="clock" size={20}/>
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-sm">2. Evolution</div>
+                                        <div className="text-[10px] opacity-70">Time passes, adaptation occurs</div>
+                                    </div>
+                                </button>
+
+                                <button 
+                                    onClick={removeBarrier}
+                                    disabled={stage !== 'evolution'}
+                                    className={`w-full p-4 rounded-xl border text-left transition-all flex gap-3
+                                        ${stage === 'evolution' ? 'bg-slate-800 border-indigo-500 text-white hover:bg-slate-700' : 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'}
+                                    `}
+                                >
+                                    <div className={`p-2 rounded-lg ${stage === 'evolution' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-700'}`}>
+                                        <Icon name="users" size={20}/>
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-sm">3. Reunion</div>
+                                        <div className="text-[10px] opacity-70">Remove barrier, test breeding</div>
+                                    </div>
+                                </button>
+                                
+                                {stage === 'reunion' && (
+                                    <div className="bg-emerald-900/20 border border-emerald-500/30 p-4 rounded-xl animate-in fade-in">
+                                        <div className="text-emerald-400 font-bold text-sm mb-1 flex items-center gap-2"><Icon name="check-circle" size={16}/> Speciation Complete!</div>
+                                        <p className="text-xs text-slate-300 leading-relaxed">
+                                            The two populations have diverged into distinct shapes (Squares vs Triangles) and colors. They are now separate species.
+                                        </p>
+                                        <button onClick={reset} className="mt-3 w-full py-2 bg-slate-800 hover:bg-slate-700 rounded text-xs font-bold text-white border border-slate-600">
+                                            Reset Simulation
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Species Key</div>
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-4 h-4 rounded-full bg-slate-400 border border-white"></div>
+                                        <span className="text-xs text-slate-300">Ancestor (Circle)</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-4 h-4 bg-blue-500 border border-white"></div>
+                                        <span className="text-xs text-slate-300">Species A (Square)</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[16px] border-b-red-500 relative top-[-4px]"></div>
+                                        <span className="text-xs text-slate-300">Species B (Triangle)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="w-full h-full object-contain" />
+                            
+                            {/* Overlay Labels */}
+                            {stage !== 'initial' && (
+                                <>
+                                    <div className="absolute top-4 left-4 text-xs font-bold text-blue-300 bg-blue-900/50 px-3 py-1 rounded backdrop-blur border border-blue-500/30 shadow-lg">
+                                        Environment A (Cold)
+                                    </div>
+                                    <div className="absolute top-4 right-4 text-xs font-bold text-red-300 bg-red-900/50 px-3 py-1 rounded backdrop-blur border border-red-500/30 shadow-lg">
+                                        Environment B (Hot)
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
