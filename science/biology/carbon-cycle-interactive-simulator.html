@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carbon Cycle Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Carbon Particle Animation */
+        .carbon-dot { transition: all 0.5s linear; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -6px; 
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA & LOGIC ---
+        const PROCESSES = {
+            photosynthesis: { 
+                name: 'Photosynthesis', 
+                from: 'atmosphere', to: 'biosphere', 
+                rate: 2, color: '#22c55e', icon: 'leaf',
+                desc: 'Plants absorb CO₂ from the atmosphere.'
+            },
+            respiration: { 
+                name: 'Respiration', 
+                from: 'biosphere', to: 'atmosphere', 
+                rate: 2, color: '#94a3b8', icon: 'wind',
+                desc: 'Organisms release CO₂ back into the air.'
+            },
+            decomposition: { 
+                name: 'Decomposition', 
+                from: 'biosphere', to: 'soil', 
+                rate: 1, color: '#a8a29e', icon: 'sprout',
+                desc: 'Dead matter breaks down, carbon enters soil.'
+            },
+            soil_resp: {
+                name: 'Soil Respiration',
+                from: 'soil', to: 'atmosphere',
+                rate: 1, color: '#94a3b8', icon: 'wind',
+                desc: 'Microbes in soil release CO₂.'
+            },
+            ocean_uptake: { 
+                name: 'Ocean Uptake', 
+                from: 'atmosphere', to: 'ocean', 
+                rate: 1.5, color: '#3b82f6', icon: 'waves',
+                desc: 'CO₂ dissolves in sea water.'
+            },
+            ocean_release: { 
+                name: 'Ocean Release', 
+                from: 'ocean', to: 'atmosphere', 
+                rate: 1.5, color: '#94a3b8', icon: 'wind',
+                desc: 'Ocean releases CO₂.'
+            },
+            combustion: { 
+                name: 'Combustion', 
+                from: 'fossil', to: 'atmosphere', 
+                rate: 0, color: '#ef4444', icon: 'flame', // Controlled by user
+                desc: 'Burning fossil fuels releases stored carbon rapidly.'
+            }
+        };
+
+        // --- VISUAL COMPONENT ---
+        const CarbonWorld = ({ carbonLevels, activeFlows }) => {
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]); // { x, y, vx, vy, type, target }
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const width = 800;
+                const height = 500;
+
+                // Zones
+                const zones = {
+                    atmosphere: { x: 400, y: 80, w: 800, h: 160 },
+                    biosphere: { x: 200, y: 350, w: 300, h: 150 }, // Trees/Land
+                    ocean: { x: 650, y: 380, w: 300, h: 150 },
+                    soil: { x: 200, y: 450, w: 300, h: 50 }, // Deep soil
+                    fossil: { x: 450, y: 480, w: 100, h: 40 } // Deep underground
+                };
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+
+                    // --- Draw Backgrounds (Schematic) ---
+                    
+                    // Sky
+                    // Color changes based on CO2 level (Global Warming Visual)
+                    const co2Level = carbonLevels.atmosphere;
+                    const redTint = Math.min(255, Math.max(0, (co2Level - 100) * 2));
+                    ctx.fillStyle = `rgb(${200 + redTint/5}, ${230 - redTint/5}, ${255 - redTint/5})`;
+                    ctx.fillRect(0, 0, width, 250);
+                    
+                    // Ground
+                    ctx.fillStyle = "#4ade80"; // Grass
+                    ctx.beginPath(); 
+                    ctx.moveTo(0, 250); 
+                    ctx.bezierCurveTo(200, 240, 400, 260, 500, 250); // Hill
+                    ctx.lineTo(500, 500); ctx.lineTo(0, 500); 
+                    ctx.fill();
+
+                    // Soil/Underground
+                    ctx.fillStyle = "#573c29";
+                    ctx.fillRect(0, 300, 500, 200);
+
+                    // Fossil Fuel Deposit
+                    ctx.fillStyle = "#1e1e1e";
+                    ctx.fillRect(380, 420, 100, 60);
+                    ctx.fillStyle = "#fff"; ctx.font = "10px sans-serif"; ctx.fillText("FOSSIL FUELS", 395, 450);
+
+                    // Ocean
+                    ctx.fillStyle = "#3b82f6";
+                    ctx.fillRect(500, 280, 300, 220);
+                    
+                    // Factory (If combustion active)
+                    ctx.fillStyle = "#475569";
+                    ctx.fillRect(380, 200, 60, 100); // Building
+                    ctx.fillRect(420, 150, 15, 50); // Chimney
+                    
+                    // Trees
+                    const drawTree = (x, y) => {
+                        ctx.fillStyle = "#854d0e"; ctx.fillRect(x-5, y, 10, 40); // Trunk
+                        ctx.fillStyle = "#16a34a"; ctx.beginPath(); ctx.arc(x, y-10, 25, 0, Math.PI*2); ctx.fill(); // Leaves
+                    };
+                    drawTree(100, 210);
+                    drawTree(180, 220);
+                    if (activeFlows.deforestation_rate < 0.5) { // Show more trees if not deforested
+                        drawTree(260, 200);
+                        drawTree(60, 230);
+                    }
+
+                    // --- Particle System ---
+                    
+                    // Generate Particles based on Flows
+                    Object.entries(PROCESSES).forEach(([key, proc]) => {
+                        let rate = proc.rate;
+                        // Modifiers
+                        if (key === 'combustion') rate = activeFlows.combustion_rate;
+                        if (key === 'photosynthesis') rate = proc.rate * (1 - activeFlows.deforestation_rate);
+                        
+                        // Chance to spawn particle
+                        if (Math.random() < rate * 0.05) {
+                            const startZone = zones[proc.from];
+                            const endZone = zones[proc.to];
+                            
+                            // Random start pos within zone
+                            const sx = startZone.x - startZone.w/2 + Math.random()*startZone.w;
+                            const sy = startZone.y + (Math.random()-0.5)*startZone.h/2;
+                            
+                            // Target pos
+                            const tx = endZone.x + (Math.random()-0.5)*20; // Approximate center target
+                            const ty = endZone.y;
+
+                            particlesRef.current.push({
+                                x: Math.max(0, Math.min(width, sx)),
+                                y: Math.max(0, Math.min(height, sy)),
+                                tx: Math.max(0, Math.min(width, tx)), 
+                                ty: Math.max(0, Math.min(height, ty)),
+                                color: proc.color,
+                                life: 100
+                            });
+                        }
+                    });
+
+                    // Update & Draw Particles
+                    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+                        const p = particlesRef.current[i];
+                        
+                        // Move towards target
+                        const dx = p.tx - p.x;
+                        const dy = p.ty - p.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        
+                        if (dist < 5) {
+                            particlesRef.current.splice(i, 1); // Arrived
+                            continue;
+                        }
+
+                        const speed = 3;
+                        p.x += (dx / dist) * speed;
+                        p.y += (dy / dist) * speed;
+
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                        ctx.fillStyle = p.color;
+                        ctx.fill();
+                    }
+                    
+                    // Labels
+                    ctx.fillStyle = "#0f172a"; ctx.font = "bold 12px sans-serif";
+                    ctx.fillText("ATMOSPHERE (CO₂)", 350, 50);
+                    ctx.fillText("BIOSPHERE", 150, 350);
+                    ctx.fillStyle = "white";
+                    ctx.fillText("OCEAN", 620, 350);
+
+                    // --- Draw Info Box (Legend) ---
+                    const legendX = width - 160;
+                    const legendY = 20;
+                    const legendW = 140;
+                    const legendH = 100;
+
+                    // Box background
+                    ctx.fillStyle = "rgba(15, 23, 42, 0.8)"; // Semi-transparent dark blue
+                    ctx.fillRect(legendX, legendY, legendW, legendH);
+                    ctx.strokeStyle = "#334155";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(legendX, legendY, legendW, legendH);
+
+                    // Title
+                    ctx.fillStyle = "#e2e8f0";
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.fillText("Particle Key", legendX + 10, legendY + 20);
+
+                    // Legend Items
+                    const drawLegendItem = (color, label, yOffset) => {
+                        ctx.beginPath();
+                        ctx.arc(legendX + 20, legendY + yOffset, 5, 0, Math.PI * 2);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                        ctx.fillStyle = "#cbd5e1";
+                        ctx.font = "10px sans-serif";
+                        ctx.fillText(label, legendX + 35, legendY + yOffset + 4);
+                    };
+
+                    drawLegendItem(PROCESSES.photosynthesis.color, "Photosynthesis", 45);
+                    drawLegendItem(PROCESSES.respiration.color, "Respiration", 65);
+                    drawLegendItem(PROCESSES.combustion.color, "Combustion", 85);
+
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [carbonLevels, activeFlows]);
+
+            return <canvas ref={canvasRef} width={800} height={500} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            // Initial Carbon Stocks (Arbitrary Units)
+            const [carbonLevels, setCarbonLevels] = useState({
+                atmosphere: 100, // ppm-like
+                biosphere: 200,
+                ocean: 300,
+                fossil: 500
+            });
+
+            // User Controls
+            const [combustionRate, setCombustionRate] = useState(0); // 0 to 5
+            const [deforestationRate, setDeforestationRate] = useState(0); // 0 to 1 (1 = 100% trees gone)
+            
+            const [history, setHistory] = useState([]);
+            const [time, setTime] = useState(0);
+            const [isRunning, setIsRunning] = useState(true);
+
+            // Simulation Loop
+            useEffect(() => {
+                let interval;
+                if (isRunning) {
+                    interval = setInterval(() => {
+                        setCarbonLevels(prev => {
+                            const next = { ...prev };
+                            
+                            // Base Rates
+                            let photo = PROCESSES.photosynthesis.rate * (1 - deforestationRate);
+                            let resp = PROCESSES.respiration.rate;
+                            let oceanIn = PROCESSES.ocean_uptake.rate;
+                            let oceanOut = PROCESSES.ocean_release.rate;
+                            let comb = combustionRate;
+
+                            // Fluxes
+                            // Atm <-> Bio
+                            const netBio = photo - resp; // + means to Bio, - means to Atm
+                            next.atmosphere -= netBio * 0.1;
+                            next.biosphere += netBio * 0.1;
+
+                            // Atm <-> Ocean
+                            // Ocean buffers CO2: more Atm CO2 -> more uptake
+                            // Simple equilibrium push
+                            const oceanFlux = (next.atmosphere * 0.01) - (next.ocean * 0.003); 
+                            next.atmosphere -= oceanFlux;
+                            next.ocean += oceanFlux;
+
+                            // Fossil -> Atm
+                            next.fossil -= comb * 0.1;
+                            next.atmosphere += comb * 0.1;
+
+                            return next;
+                        });
+
+                        setTime(t => t + 1);
+                    }, 200);
+                }
+                return () => clearInterval(interval);
+            }, [isRunning, combustionRate, deforestationRate]);
+
+            // Logging History
+            useEffect(() => {
+                if (time % 5 === 0) {
+                    setHistory(prev => {
+                        const newData = [...prev, { time, co2: carbonLevels.atmosphere }];
+                        if (newData.length > 50) newData.shift();
+                        return newData;
+                    });
+                }
+            }, [time, carbonLevels.atmosphere]);
+
+            const reset = () => {
+                setCarbonLevels({ atmosphere: 100, biosphere: 200, ocean: 300, fossil: 500 });
+                setCombustionRate(0);
+                setDeforestationRate(0);
+                setHistory([]);
+                setTime(0);
+            };
+
+            // Status Color
+            const atmStatus = carbonLevels.atmosphere > 140 ? 'Critical' : carbonLevels.atmosphere > 120 ? 'High' : 'Normal';
+            const statusColor = atmStatus === 'Critical' ? 'text-red-500' : atmStatus === 'High' ? 'text-orange-400' : 'text-emerald-400';
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="globe" className="text-blue-400" /> Carbon Cycle
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Global Climate Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Status Card */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Atmospheric CO₂ Level</div>
+                                <div className="flex justify-between items-end">
+                                    <span className={`text-3xl font-mono font-black ${statusColor}`}>
+                                        {carbonLevels.atmosphere.toFixed(0)} <span className="text-xs">ppm</span>
+                                    </span>
+                                    <span className={`text-xs font-bold px-2 py-1 rounded bg-slate-900 ${statusColor} border border-current`}>
+                                        {atmStatus}
+                                    </span>
+                                </div>
+                                {/* Temperature Proxy */}
+                                <div className="mt-3 text-xs text-slate-400 flex items-center gap-2">
+                                    <Icon name="thermometer" size={14}/> 
+                                    Global Temp: +{((carbonLevels.atmosphere - 100)/20).toFixed(1)}°C
+                                </div>
+                            </div>
+
+                            {/* Human Impact Controls */}
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs font-bold">
+                                        <span className="text-red-400 flex items-center gap-2"><Icon name="factory" size={14}/> Fossil Fuel Burning</span>
+                                        <span>{combustionRate > 0 ? 'Active' : 'Off'}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="5" step="1"
+                                        value={combustionRate}
+                                        onChange={(e) => setCombustionRate(parseInt(e.target.value))}
+                                        className="w-full accent-red-500"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs font-bold">
+                                        <span className="text-orange-400 flex items-center gap-2"><Icon name="axe" size={14}/> Deforestation</span>
+                                        <span>{(deforestationRate * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="1" step="0.1"
+                                        value={deforestationRate}
+                                        onChange={(e) => setDeforestationRate(parseFloat(e.target.value))}
+                                        className="w-full accent-orange-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Legend */}
+                            <div className="space-y-2 text-xs text-slate-400 bg-slate-900 p-3 rounded-lg border border-slate-700">
+                                <div className="font-bold text-white mb-1">Particle Key</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Photosynthesis (Absorption)</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-slate-400"></div> Respiration (Release)</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500"></div> Combustion (Emission)</div>
+                            </div>
+
+                            <button 
+                                onClick={reset}
+                                className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-xs font-bold text-white transition-all"
+                            >
+                                Reset Earth
+                            </button>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            <div className="w-full h-full">
+                                <CarbonWorld 
+                                    carbonLevels={carbonLevels} 
+                                    activeFlows={{ combustion_rate: combustionRate, deforestation_rate: deforestationRate }} 
+                                    onProcessClick={() => {}}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Graph */}
+                        <div className="h-40 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative flex flex-col">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Atmospheric CO₂ Trend
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={history}>
+                                        <defs>
+                                            <linearGradient id="colorCo2" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="time" hide />
+                                        <YAxis domain={[80, 200]} hide />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ color: '#fff' }}
+                                            labelStyle={{ display: 'none' }}
+                                            formatter={(val) => `${val.toFixed(0)} ppm`}
+                                        />
+                                        <ReferenceLine y={100} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Normal', fill: '#10b981', fontSize: 10 }} />
+                                        <Area type="monotone" dataKey="co2" stroke="#ef4444" fill="url(#colorCo2)" strokeWidth={2} isAnimationActive={false} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
