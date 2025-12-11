@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blood Group Inheritance Calculator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Grid Animation */
+        .grid-cell { transition: all 0.3s ease; }
+        .grid-cell:hover { transform: scale(1.05); background-color: rgba(239, 68, 68, 0.2); }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- GENETICS LOGIC ---
+        const ALLELES = {
+            'A': 'Iᴬ',
+            'B': 'Iᴮ',
+            'i': 'i'
+        };
+
+        // Possible Genotypes for each Blood Type
+        const GENOTYPES = {
+            'A': ['AA', 'Ai'],
+            'B': ['BB', 'Bi'],
+            'AB': ['AB'],
+            'O': ['ii']
+        };
+
+        // Display names for Genotypes
+        const GENO_LABELS = {
+            'AA': 'IᴬIᴬ (Homozygous A)',
+            'Ai': 'Iᴬi (Heterozygous A)',
+            'BB': 'IᴮIᴮ (Homozygous B)',
+            'Bi': 'Iᴮi (Heterozygous B)',
+            'AB': 'IᴬIᴮ (AB)',
+            'ii': 'ii (O)'
+        };
+
+        const PHENOTYPES = {
+            'AA': 'A', 'Ai': 'A', 'iA': 'A',
+            'BB': 'B', 'Bi': 'B', 'iB': 'B',
+            'AB': 'AB', 'BA': 'AB',
+            'ii': 'O'
+        };
+        
+        const COLORS = {
+            'A': '#ef4444', // Red
+            'B': '#3b82f6', // Blue
+            'AB': '#a855f7', // Purple
+            'O': '#10b981'  // Green
+        };
+
+        const App = () => {
+            const [p1Type, setP1Type] = useState('A');
+            const [p2Type, setP2Type] = useState('B');
+            
+            // Specific Genotype Selection
+            const [p1Geno, setP1Geno] = useState('Ai');
+            const [p2Geno, setP2Geno] = useState('Bi');
+
+            // Update genotype options when blood type changes
+            useEffect(() => {
+                setP1Geno(GENOTYPES[p1Type][0]);
+            }, [p1Type]);
+
+            useEffect(() => {
+                setP2Geno(GENOTYPES[p2Type][0]);
+            }, [p2Type]);
+
+            // Calculate Cross
+            const calculateCross = () => {
+                const g1 = p1Geno.split('');
+                const g2 = p2Geno.split('');
+                
+                const grid = [];
+                const counts = { 'A': 0, 'B': 0, 'AB': 0, 'O': 0 };
+                const genoCounts = {};
+
+                for(let r=0; r<2; r++) {
+                    for(let c=0; c<2; c++) {
+                        let allele1 = g1[r];
+                        let allele2 = g2[c];
+                        
+                        // Combine (Standardize order: A/B before i, A before B)
+                        let combo = allele1 + allele2;
+                        if (combo === 'iA') combo = 'Ai';
+                        if (combo === 'iB') combo = 'Bi';
+                        if (combo === 'BA') combo = 'AB';
+                        
+                        const bloodType = PHENOTYPES[combo];
+                        grid.push({ 
+                            genotype: combo, 
+                            phenotype: bloodType,
+                            p1Allele: allele1,
+                            p2Allele: allele2
+                        });
+
+                        counts[bloodType]++;
+                        genoCounts[combo] = (genoCounts[combo] || 0) + 1;
+                    }
+                }
+
+                return { grid, counts, genoCounts };
+            };
+
+            const result = useMemo(() => calculateCross(), [p1Geno, p2Geno]);
+            
+            const chartData = Object.entries(result.counts)
+                .filter(([_, val]) => val > 0)
+                .map(([name, value]) => ({
+                    name: `Type ${name}`,
+                    value: value,
+                    color: COLORS[name]
+                }));
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="droplet" className="text-red-500" /> Blood Calc
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">ABO Inheritance Predictor</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Parent 1 */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-blue-400 uppercase tracking-widest px-1 flex items-center gap-2">
+                                    <Icon name="user" size={14}/> Father (P1)
+                                </label>
+                                <div>
+                                    <div className="text-[10px] text-slate-500 mb-1">Phenotype (Blood Type)</div>
+                                    <div className="flex gap-1">
+                                        {['A', 'B', 'AB', 'O'].map(t => (
+                                            <button 
+                                                key={t}
+                                                onClick={() => setP1Type(t)}
+                                                className={`flex-1 py-2 rounded text-xs font-bold border transition-all
+                                                    ${p1Type === t ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                                `}
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] text-slate-500 mb-1">Genotype (Alleles)</div>
+                                    <select 
+                                        value={p1Geno}
+                                        onChange={(e) => setP1Geno(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                                    >
+                                        {GENOTYPES[p1Type].map(g => (
+                                            <option key={g} value={g}>{GENO_LABELS[g]}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Parent 2 */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-pink-400 uppercase tracking-widest px-1 flex items-center gap-2">
+                                    <Icon name="user" size={14}/> Mother (P2)
+                                </label>
+                                <div>
+                                    <div className="text-[10px] text-slate-500 mb-1">Phenotype (Blood Type)</div>
+                                    <div className="flex gap-1">
+                                        {['A', 'B', 'AB', 'O'].map(t => (
+                                            <button 
+                                                key={t}
+                                                onClick={() => setP2Type(t)}
+                                                className={`flex-1 py-2 rounded text-xs font-bold border transition-all
+                                                    ${p2Type === t ? 'bg-pink-600 border-pink-500 text-white shadow-lg' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                                `}
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] text-slate-500 mb-1">Genotype (Alleles)</div>
+                                    <select 
+                                        value={p2Geno}
+                                        onChange={(e) => setP2Geno(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-pink-500 outline-none"
+                                    >
+                                        {GENOTYPES[p2Type].map(g => (
+                                            <option key={g} value={g}>{GENO_LABELS[g]}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Info */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-300 space-y-2">
+                                <div className="font-bold text-slate-400 uppercase mb-1 flex items-center gap-2"><Icon name="book-open" size={14}/> Key Concepts</div>
+                                <p>
+                                    <strong className="text-red-400">Iᴬ</strong> and <strong className="text-blue-400">Iᴮ</strong> are <strong>codominant</strong> (both expressed).
+                                </p>
+                                <p>
+                                    <strong className="text-slate-400">i</strong> is <strong>recessive</strong> (hidden by A or B).
+                                </p>
+                                <p>
+                                    A parent with Type A blood could be <strong>IᴬIᴬ</strong> (Homozygous) or <strong>Iᴬi</strong> (Heterozygous).
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-8 overflow-y-auto">
+                        
+                        <div className="flex flex-col items-center w-full max-w-5xl mx-auto gap-12">
+                            
+                            {/* Punnett Square Visual */}
+                            <div className="w-full flex flex-col items-center">
+                                <h2 className="text-xl font-bold text-white mb-8 flex items-center gap-2">
+                                    <Icon name="grid-3x3" className="text-emerald-400" /> Inheritance Pattern (Punnett Square)
+                                </h2>
+                                
+                                <div className="relative p-4">
+                                    {/* Top Labels (Mother Gametes) */}
+                                    <div className="flex mb-4 ml-16 gap-4">
+                                        {p2Geno.split('').map((g, i) => (
+                                            <div key={i} className="w-32 text-center font-bold text-pink-400 text-2xl bg-slate-900/50 rounded-xl py-3 border border-pink-500/30 shadow-lg">
+                                                {ALLELES[g]}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="flex gap-4">
+                                        {/* Side Labels (Father Gametes) */}
+                                        <div className="flex flex-col gap-4 justify-center mr-2">
+                                            {p1Geno.split('').map((g, i) => (
+                                                <div key={i} className="h-32 w-14 flex items-center justify-center font-bold text-blue-400 text-2xl bg-slate-900/50 rounded-xl border border-blue-500/30 shadow-lg">
+                                                    {ALLELES[g]}
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* Grid */}
+                                        <div className="grid grid-cols-2 gap-4 bg-slate-800 p-3 rounded-2xl border border-slate-700 shadow-2xl">
+                                            {result.grid.map((cell, i) => (
+                                                <motion.div 
+                                                    key={i} 
+                                                    initial={{ opacity: 0, scale: 0.9 }}
+                                                    animate={{ opacity: 1, scale: 1 }}
+                                                    transition={{ delay: i * 0.1 }}
+                                                    className="w-32 h-32 bg-slate-900 rounded-xl flex flex-col items-center justify-center border border-slate-700 shadow-inner grid-cell relative overflow-hidden group cursor-default"
+                                                >
+                                                    <div className="absolute inset-0 opacity-20 transition-opacity group-hover:opacity-30" style={{backgroundColor: COLORS[cell.phenotype]}}></div>
+                                                    
+                                                    {/* Genotype */}
+                                                    <span className="text-3xl font-serif font-bold text-white mb-2 z-10">
+                                                        {ALLELES[cell.p1Allele]}{ALLELES[cell.p2Allele]}
+                                                    </span>
+                                                    
+                                                    {/* Phenotype Badge */}
+                                                    <span className={`text-xs font-bold px-3 py-1 rounded-full text-white shadow-lg z-10`} style={{backgroundColor: COLORS[cell.phenotype]}}>
+                                                        Type {cell.phenotype}
+                                                    </span>
+                                                </motion.div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Results & Stats */}
+                            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-8">
+                                
+                                {/* Probability Chart */}
+                                <div className="bg-slate-900 rounded-3xl border border-slate-800 p-8 h-80 flex flex-col shadow-xl">
+                                    <div className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="pie-chart" size={14}/> Offspring Probability
+                                    </div>
+                                    <div className="flex-1 min-h-0 flex items-center">
+                                        <div className="w-1/2 h-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <PieChart>
+                                                    <Pie
+                                                        data={chartData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        innerRadius={60}
+                                                        outerRadius={90}
+                                                        paddingAngle={5}
+                                                        dataKey="value"
+                                                        stroke="none"
+                                                    >
+                                                        {chartData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip 
+                                                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px', borderRadius: '8px' }}
+                                                        itemStyle={{ color: '#fff' }}
+                                                        formatter={(value) => `${(value/4)*100}%`}
+                                                    />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                        
+                                        {/* Custom Legend */}
+                                        <div className="w-1/2 pl-4 space-y-3">
+                                            {chartData.map((d, i) => (
+                                                <div key={i} className="flex items-center justify-between text-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-3 h-3 rounded-full" style={{backgroundColor: d.color}}></div>
+                                                        <span className="text-slate-300 font-bold">{d.name}</span>
+                                                    </div>
+                                                    <span className="font-mono text-white">{(d.value/4)*100}%</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Possible Outcomes List */}
+                                <div className="bg-slate-900 rounded-3xl border border-slate-800 p-8 flex flex-col shadow-xl">
+                                    <div className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+                                        <Icon name="list" size={14}/> Genotype Breakdown
+                                    </div>
+                                    <div className="space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+                                        {Object.entries(result.genoCounts).map(([geno, count], i) => (
+                                            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-slate-800/50 border border-slate-700/50 hover:bg-slate-800 transition-colors">
+                                                <div className="flex flex-col">
+                                                    <span className="text-lg font-serif font-bold text-white">
+                                                        {ALLELES[geno[0]]}{ALLELES[geno[1]]}
+                                                    </span>
+                                                    <span className="text-xs text-slate-500">{GENO_LABELS[geno] ? GENO_LABELS[geno].split('(')[1].replace(')', '') : ''}</span>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-white bg-slate-700`}>
+                                                        {count}/4
+                                                    </span>
+                                                    <div className="w-12 text-right font-mono text-emerald-400">
+                                                        {(count/4)*100}%
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
