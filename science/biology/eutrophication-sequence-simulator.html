@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eutrophication Sequence | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Bubbles Animation */
+        .bubble {
+            animation: rise 4s ease-in infinite;
+        }
+        @keyframes rise {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            20% { opacity: 0.8; }
+            100% { transform: translateY(-100px) scale(1.2); opacity: 0; }
+        }
+
+        /* Algae Bloom Pulse */
+        .algae-pulse {
+            animation: algae-grow 2s infinite alternate;
+        }
+        @keyframes algae-grow {
+            from { transform: scale(1); }
+            to { transform: scale(1.05); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const STAGES = [
+            {
+                id: 'normal',
+                title: '1. Normal State',
+                desc: 'Balanced ecosystem. Clear water, sunlight reaches bottom, healthy fish and plants.',
+                stats: { nutrients: 10, algae: 10, oxygen: 90, fish: 100 }
+            },
+            {
+                id: 'leaching',
+                title: '2. Leaching',
+                desc: 'Fertilizers (Nitrates/Phosphates) wash into the water from farmland or sewage.',
+                stats: { nutrients: 90, algae: 20, oxygen: 85, fish: 100 }
+            },
+            {
+                id: 'bloom',
+                title: '3. Algal Bloom',
+                desc: 'Algae grow rapidly due to nutrients, covering the surface and blocking sunlight.',
+                stats: { nutrients: 60, algae: 100, oxygen: 120, fish: 90 } // O2 high at surface due to photo, but...
+            },
+            {
+                id: 'death',
+                title: '4. Plant Death',
+                desc: 'Submerged plants die due to lack of light. Algae also die as nutrients are used up.',
+                stats: { nutrients: 40, algae: 80, oxygen: 50, fish: 80 }
+            },
+            {
+                id: 'decomposition',
+                title: '5. Decomposition',
+                desc: 'Aerobic bacteria decompose dead matter, using up vast amounts of dissolved oxygen.',
+                stats: { nutrients: 50, algae: 30, oxygen: 10, fish: 50 }
+            },
+            {
+                id: 'hypoxia',
+                title: '6. Hypoxia / Dead Zone',
+                desc: 'Oxygen levels drop to critical lows. Fish and other aquatic life die or migrate.',
+                stats: { nutrients: 60, algae: 20, oxygen: 5, fish: 0 }
+            }
+        ];
+
+        // --- VISUAL COMPONENT ---
+        const LakeScene = ({ stageIdx }) => {
+            const stageId = STAGES[stageIdx].id;
+            
+            // Visual States
+            const isBloom = stageIdx >= 2;
+            const isDark = stageIdx >= 3; // No light at bottom
+            const isBacteriaActive = stageIdx >= 4;
+            const isFishDead = stageIdx === 5;
+            
+            // Water Color: Blue -> Green (Bloom) -> Murky Brown (Decay)
+            let waterColor = "#0ea5e9"; // Blue
+            if (stageIdx === 2) waterColor = "#22c55e"; // Green
+            if (stageIdx >= 4) waterColor = "#3f3f46"; // Murky Grey/Brown
+            
+            // Opacity for murkiness
+            const murkiness = stageIdx >= 2 ? 0.6 + (stageIdx*0.05) : 0.2;
+
+            return (
+                <div className="relative w-full h-full rounded-3xl overflow-hidden border-4 border-slate-700 bg-sky-100">
+                    
+                    {/* Sky */}
+                    <div className="absolute top-0 left-0 w-full h-1/3 bg-sky-200 flex items-center justify-center">
+                        <motion.div 
+                            className="absolute top-4 right-10 w-16 h-16 bg-yellow-400 rounded-full shadow-[0_0_40px_rgba(250,204,21,0.8)]"
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ duration: 3, repeat: Infinity }}
+                        />
+                        {/* Rain of Nutrients (Stage 2) */}
+                        {stageId === 'leaching' && (
+                            <div className="absolute inset-0 flex justify-center gap-8">
+                                {[...Array(5)].map((_,i) => (
+                                    <motion.div 
+                                        key={i}
+                                        className="w-1 h-8 bg-purple-500 rounded-full"
+                                        initial={{ y: -50, opacity: 0 }}
+                                        animate={{ y: 200, opacity: 1 }}
+                                        transition={{ duration: 1, repeat: Infinity, delay: i*0.2 }}
+                                    />
+                                ))}
+                                <div className="absolute top-10 bg-purple-100 text-purple-800 px-2 py-1 rounded text-xs font-bold">Fertilizers</div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Water Surface */}
+                    <div className="absolute top-1/3 left-0 w-full h-2/3 transition-colors duration-1000" style={{ backgroundColor: waterColor }}>
+                        
+                        {/* Algal Scum (Surface) */}
+                        {isBloom && (
+                            <motion.div 
+                                initial={{ opacity: 0, scaleY: 0 }}
+                                animate={{ opacity: 1, scaleY: 1 }}
+                                className="absolute top-0 left-0 w-full h-8 bg-green-600 opacity-90 origin-top algae-pulse"
+                            />
+                        )}
+
+                        {/* Murkiness Overlay */}
+                        <div className="absolute inset-0 bg-black transition-opacity duration-1000 pointer-events-none" style={{ opacity: isDark ? 0.7 : 0 }}></div>
+                        
+                        {/* Plants (Bottom) */}
+                        <div className="absolute bottom-0 left-10 flex gap-12 items-end">
+                            {[1, 2, 3].map(i => (
+                                <motion.div 
+                                    key={i} 
+                                    className="w-4 bg-green-700 rounded-t-full origin-bottom"
+                                    initial={{ height: 80 }}
+                                    animate={{ 
+                                        height: isDark ? 10 : 80, // Die back
+                                        rotate: isDark ? 90 : 0, // Fall over
+                                        backgroundColor: isDark ? '#57534e' : '#15803d' // Brown
+                                    }}
+                                    transition={{ duration: 1 }}
+                                />
+                            ))}
+                        </div>
+                        
+                        {/* Fish */}
+                        <AnimatePresence>
+                            {!isFishDead && (
+                                <motion.div 
+                                    className="absolute"
+                                    initial={{ x: 50, y: 100 }}
+                                    animate={{ 
+                                        x: [50, 250, 50], 
+                                        y: [100, 150, 100],
+                                        rotate: [0, 10, 0]
+                                    }}
+                                    transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+                                >
+                                    <Icon name="fish" size={48} className="text-orange-400 drop-shadow-lg" />
+                                </motion.div>
+                            )}
+                            {/* Dead Fish (Stage 6) */}
+                            {isFishDead && (
+                                <motion.div 
+                                    className="absolute bottom-10 right-20"
+                                    initial={{ y: 100, rotate: 0 }}
+                                    animate={{ y: 200, rotate: 180 }} // Sink and flip
+                                    transition={{ duration: 2 }}
+                                >
+                                    <Icon name="fish-off" size={48} className="text-slate-400" />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Bacteria (Decomposition) */}
+                        {isBacteriaActive && (
+                            <div className="absolute bottom-10 left-0 w-full h-20 flex justify-center gap-4">
+                                {[...Array(8)].map((_, i) => (
+                                    <motion.div 
+                                        key={i}
+                                        className="w-2 h-2 bg-white rounded-full"
+                                        animate={{ y: [0, -10, 0], opacity: [0.5, 1, 0.5] }}
+                                        transition={{ duration: 0.5, repeat: Infinity, delay: i*0.1 }}
+                                    />
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Oxygen Bubbles */}
+                        {!isBacteriaActive && !isDark && (
+                            <div className="absolute bottom-0 w-full h-full pointer-events-none">
+                                {[...Array(5)].map((_, i) => (
+                                    <div key={i} className="absolute bottom-10 w-3 h-3 border border-white/50 rounded-full bubble"
+                                         style={{ left: `${20 + i*15}%`, animationDelay: `${i}s` }}></div>
+                                ))}
+                            </div>
+                        )}
+
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [stageIdx, setStageIdx] = useState(0);
+            const [graphData, setGraphData] = useState([]);
+            
+            // Update graph data based on stage
+            useEffect(() => {
+                // Build cumulative data
+                const newData = STAGES.map((s, i) => ({
+                    name: `Stage ${i+1}`,
+                    ...s.stats
+                }));
+                setGraphData(newData);
+            }, []);
+
+            const currentStage = STAGES[stageIdx];
+            const nextStep = () => setStageIdx(prev => Math.min(prev + 1, STAGES.length - 1));
+            const prevStep = () => setStageIdx(prev => Math.max(0, prev - 1));
+            const reset = () => setStageIdx(0);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="sprout" className="text-emerald-400" /> Eutrophication
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Nutrient Pollution Sequence</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-6">
+                            
+                            {/* Timeline Control */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                                    <span>Sequence Progress</span>
+                                    <span>{stageIdx + 1} / {STAGES.length}</span>
+                                </div>
+                                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div 
+                                        className="h-full bg-emerald-500 transition-all duration-300" 
+                                        style={{ width: `${((stageIdx + 1) / STAGES.length) * 100}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+
+                            {/* Stage Info Card */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg min-h-[160px] flex flex-col justify-center">
+                                <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                                    <span className="bg-blue-600 w-6 h-6 rounded-full flex items-center justify-center text-xs">{stageIdx + 1}</span>
+                                    {currentStage.title.split(' (')[0]}
+                                </h2>
+                                <p className="text-sm text-slate-300 leading-relaxed border-l-2 border-blue-500 pl-3">
+                                    {currentStage.desc}
+                                </p>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="flex gap-3">
+                                <button onClick={prevStep} disabled={stageIdx === 0} className="p-3 rounded-xl bg-slate-800 border border-slate-600 hover:bg-slate-700 disabled:opacity-50 transition-all">
+                                    <Icon name="chevron-left" />
+                                </button>
+                                <button 
+                                    onClick={nextStep} 
+                                    disabled={stageIdx === STAGES.length - 1}
+                                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 disabled:bg-slate-700 disabled:text-slate-500"
+                                >
+                                    Next Event <Icon name="arrow-right" size={18}/>
+                                </button>
+                            </div>
+                            
+                            {stageIdx === STAGES.length - 1 && (
+                                <button onClick={reset} className="w-full py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-sm font-bold transition-all">
+                                    Restart Ecosystem
+                                </button>
+                            )}
+
+                            {/* Stats Legend */}
+                            <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700 text-[10px] text-slate-400 space-y-2">
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-400"></div> Dissolved Oxygen (DO)</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-purple-400"></div> Nutrients</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-400"></div> Algae Level</div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden p-4 flex items-center justify-center">
+                            <LakeScene stageIdx={stageIdx} />
+                        </div>
+
+                        {/* Graph */}
+                        <div className="h-48 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Parameter Trends
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={graphData}>
+                                        <defs>
+                                            <linearGradient id="gradDO" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="name" hide />
+                                        <YAxis hide />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ padding: 0 }}
+                                        />
+                                        {/* Current Stage Line */}
+                                        <ReferenceLine x={`Stage ${stageIdx + 1}`} stroke="#fbbf24" strokeDasharray="3 3" />
+
+                                        <Area type="monotone" dataKey="oxygen" name="Oxygen (DO)" stroke="#3b82f6" fill="url(#gradDO)" strokeWidth={2} />
+                                        <Area type="monotone" dataKey="nutrients" name="Nutrients" stroke="#a855f7" fill="none" strokeWidth={2} />
+                                        <Area type="monotone" dataKey="algae" name="Algae" stroke="#22c55e" fill="none" strokeWidth={2} />
+                                        
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
