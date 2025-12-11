@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thermoregulation Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%; 
+            background: #fff; cursor: pointer; margin-top: -10px; 
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5); border: 2px solid #cbd5e1;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 6px; cursor: pointer; background: #334155; border-radius: 3px;
+        }
+
+        /* Sweat Animation */
+        .sweat-drop {
+            animation: sweat-fall 1.5s infinite ease-in;
+        }
+        @keyframes sweat-fall {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            20% { opacity: 0.8; }
+            100% { transform: translateY(30px) scale(1); opacity: 0; }
+        }
+
+        /* Shivering Animation */
+        .shiver { animation: shiver-shake 0.1s infinite; }
+        @keyframes shiver-shake {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(1px, 1px); }
+            50% { transform: translate(-1px, -1px); }
+            75% { transform: translate(1px, -1px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        /* Heat Radiation */
+        .heat-wave { animation: radiate 2s infinite linear; }
+        @keyframes radiate {
+            0% { transform: translateY(0) scale(0.8); opacity: 0.6; }
+            100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION CANVAS ---
+        const SkinCanvas = ({ temp }) => {
+            // temp range: -10 to 40
+            // Normal body temp ~ 37 (internal), Environment is the variable.
+            
+            // Logic Variables
+            const isHot = temp > 25;
+            const isCold = temp < 15;
+            const isFreezing = temp < 5;
+            
+            // 1. Vasodilation / Constriction
+            // Arterioles widen when hot, narrow when cold
+            const vesselWidth = Math.max(2, Math.min(12, 7 + (temp - 20) * 0.3)); 
+            const vesselColor = temp > 25 ? "#ef4444" : temp < 10 ? "#fca5a5" : "#f87171";
+            
+            // 2. Hair Erector Muscle
+            // Cold -> Contract (Shorten) -> Hair stands up (Angle -> 90)
+            // Hot -> Relax (Lengthen) -> Hair lies flat (Angle -> 160)
+            const muscleLength = isCold ? 30 : 50;
+            const hairAngle = Math.max(90, Math.min(160, 160 - (20 - temp) * 4)); 
+            // Simplified: Hot = 160deg, Cold = 90deg
+            
+            // 3. Sweating
+            const sweatRate = temp > 28 ? (temp - 28) : 0;
+            
+            // 4. Shivering (Muscle layer shakes)
+            const shiveringClass = isFreezing ? 'shiver' : '';
+
+            return (
+                <svg viewBox="0 0 500 400" className="w-full h-full drop-shadow-xl overflow-visible">
+                    
+                    {/* Background Layers */}
+                    {/* Epidermis */}
+                    <path d="M 0 50 L 500 50 L 500 80 L 0 80 Z" fill="#fde68a" stroke="#d97706" strokeWidth="2" />
+                    <text x="10" y="70" fontSize="10" fill="#d97706" fontWeight="bold">Epidermis</text>
+                    
+                    {/* Dermis */}
+                    <path d="M 0 80 L 500 80 L 500 300 L 0 300 Z" fill="#fecaca" />
+                    <text x="10" y="100" fontSize="10" fill="#be123c" fontWeight="bold">Dermis</text>
+                    
+                    {/* Subcutaneous Fat (Muscle below) */}
+                    <g className={shiveringClass}>
+                        <path d="M 0 300 L 500 300 L 500 400 L 0 400 Z" fill="#fef08a" />
+                        <text x="10" y="320" fontSize="10" fill="#b45309" fontWeight="bold">Fat / Muscle</text>
+                        {/* Fat globules */}
+                        {[...Array(10)].map((_, i) => (
+                            <circle key={i} cx={30 + i*50} cy={350} r="15" fill="#fde047" opacity="0.5" />
+                        ))}
+                    </g>
+
+                    {/* --- HAIR FOLLICLE & MUSCLE --- */}
+                    <g transform="translate(250, 80)">
+                        {/* Hair Shaft (Pivots at base) */}
+                        <motion.line 
+                            x1="0" y1="0" x2="0" y2="-60" 
+                            stroke="#475569" strokeWidth="4" strokeLinecap="round"
+                            animate={{ rotate: hairAngle - 90 }} // 0 is up
+                            transition={{ type: "spring", stiffness: 50 }}
+                            style={{ transformOrigin: "0 20px" }} // Pivot inside dermis
+                        />
+                        {/* Follicle Base */}
+                        <ellipse cx="0" cy="20" rx="5" ry="10" fill="#475569" />
+                        
+                        {/* Erector Muscle */}
+                        {/* Connects follicle to epidermis underside */}
+                        <motion.line 
+                            x1="2" y1="25" x2="40" y2="0" 
+                            stroke="#be123c" strokeWidth={isCold ? 6 : 3} 
+                            strokeLinecap="round"
+                            animate={{ 
+                                x2: isCold ? 30 : 50, // Shorten when cold
+                                strokeWidth: isCold ? 8 : 4 // Thicken when contracted
+                            }}
+                        />
+                    </g>
+
+                    {/* --- SWEAT GLAND --- */}
+                    <g transform="translate(380, 100)">
+                        {/* Coil */}
+                        <path d="M 0 150 Q 20 140 0 130 Q -20 120 0 110 Q 20 100 0 90" fill="none" stroke="#06b6d4" strokeWidth="6" strokeLinecap="round" />
+                        {/* Duct */}
+                        <path d="M 0 90 L 0 -50" fill="none" stroke="#06b6d4" strokeWidth="4" />
+                        {/* Pore */}
+                        <ellipse cx="0" cy="-50" rx="3" ry="1" fill="#064e3b" />
+                        
+                        {/* Sweat Droplets Animation */}
+                        {sweatRate > 0 && (
+                            <g>
+                                <circle cx="0" cy="-55" r="3" fill="#38bdf8" className="sweat-drop" style={{animationDuration: `${20/sweatRate}s`}} />
+                                <circle cx="5" cy="-52" r="2" fill="#38bdf8" className="sweat-drop" style={{animationDuration: `${15/sweatRate}s`, animationDelay: '0.5s'}} />
+                            </g>
+                        )}
+                    </g>
+
+                    {/* --- BLOOD VESSELS --- */}
+                    {/* Arteriole (Deep) -> Capillary Loop (Surface) -> Venule */}
+                    <g transform="translate(0, 200)">
+                        {/* Deep Artery */}
+                        <path d="M 0 80 L 150 80" stroke="#ef4444" strokeWidth="10" fill="none" />
+                        
+                        {/* Capillary Loop (The part that constricts/dilates) */}
+                        <motion.path 
+                            d="M 150 80 L 180 80 L 180 -50 Q 250 -80 320 -50 L 320 80 L 500 80"
+                            fill="none" 
+                            stroke={vesselColor}
+                            animate={{ strokeWidth: vesselWidth }}
+                            transition={{ duration: 0.5 }}
+                        />
+                        
+                        {/* Heat Radiation Arrows (From blood) */}
+                        {temp > 20 && (
+                            <g transform="translate(250, -60)">
+                                <path d="M 0 0 L 0 -30" stroke="red" strokeWidth="2" className="heat-wave" opacity={vesselWidth/12} />
+                                <path d="M -20 10 L -30 -20" stroke="red" strokeWidth="2" className="heat-wave" opacity={vesselWidth/12} style={{animationDelay:'0.5s'}} />
+                                <path d="M 20 10 L 30 -20" stroke="red" strokeWidth="2" className="heat-wave" opacity={vesselWidth/12} style={{animationDelay:'1s'}} />
+                            </g>
+                        )}
+
+                        {/* Shunt Vessel (Bypass) - Logical visual */}
+                         <motion.path 
+                            d="M 180 50 L 320 50" 
+                            stroke="#ef4444" 
+                            fill="none"
+                            animate={{ strokeWidth: isCold ? 8 : 2, opacity: isCold ? 1 : 0.3 }}
+                        />
+                        <text x="250" y="45" fontSize="8" fill="#7f1d1d" textAnchor="middle" opacity="0.7">Shunt Vessel</text>
+
+                    </g>
+
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [temp, setTemp] = useState(20); // 20°C default
+            
+            // Determine State
+            let state = 'Neutral';
+            let color = 'text-slate-400';
+            
+            if (temp > 30) { state = 'Overheating (Heat Loss)'; color = 'text-red-500'; }
+            else if (temp > 24) { state = 'Warm'; color = 'text-orange-400'; }
+            else if (temp < 10) { state = 'Freezing (Heat Conserve)'; color = 'text-cyan-500'; }
+            else if (temp < 18) { state = 'Cool'; color = 'text-blue-400'; }
+
+            // Presets
+            const setHot = () => setTemp(35);
+            const setCold = () => setTemp(5);
+            const setNormal = () => setTemp(22);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="thermometer" className="text-orange-500" /> Thermoregulation
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Homeostasis Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Environment Control */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-slate-400">External Temperature</span>
+                                        <span className={`font-mono text-lg ${temp > 25 ? 'text-red-400' : temp < 15 ? 'text-blue-400' : 'text-emerald-400'}`}>
+                                            {temp}°C
+                                        </span>
+                                    </div>
+                                    
+                                    {/* Thermometer Visual Slider */}
+                                    <div className="relative h-10 flex items-center">
+                                        <div className="absolute w-full h-3 rounded-full bg-gradient-to-r from-cyan-500 via-green-500 to-red-500 opacity-80"></div>
+                                        <input 
+                                            type="range" min="-5" max="45" step="1"
+                                            value={temp} 
+                                            onChange={(e) => setTemp(parseInt(e.target.value))}
+                                            className="w-full relative z-10 accent-white cursor-pointer"
+                                        />
+                                    </div>
+                                    
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={setCold} className="flex-1 py-2 bg-cyan-900/30 border border-cyan-500/50 rounded text-cyan-300 text-xs hover:bg-cyan-900/50 transition"><Icon name="snowflake" size={14} className="inline mr-1"/> Cold</button>
+                                        <button onClick={setNormal} className="flex-1 py-2 bg-emerald-900/30 border border-emerald-500/50 rounded text-emerald-300 text-xs hover:bg-emerald-900/50 transition">Normal</button>
+                                        <button onClick={setHot} className="flex-1 py-2 bg-red-900/30 border border-red-500/50 rounded text-red-300 text-xs hover:bg-red-900/50 transition"><Icon name="sun" size={14} className="inline mr-1"/> Hot</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Status Dashboard */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-3">Physiological Response</div>
+                                <div className={`text-sm font-bold mb-4 ${color} flex items-center gap-2`}>
+                                    {temp > 30 ? <Icon name="flame" size={16}/> : temp < 10 ? <Icon name="snowflake" size={16}/> : <Icon name="check-circle" size={16}/>}
+                                    {state}
+                                </div>
+                                
+                                <div className="space-y-3 text-xs text-slate-300">
+                                    <div className="flex justify-between items-center p-2 bg-slate-900 rounded border border-slate-700/50">
+                                        <span>Arterioles</span>
+                                        <span className={temp > 25 ? "text-red-400 font-bold" : temp < 15 ? "text-blue-400 font-bold" : "text-slate-400"}>
+                                            {temp > 25 ? 'Dilated (Vasodilation)' : temp < 15 ? 'Constricted (Vasoconstriction)' : 'Normal'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 bg-slate-900 rounded border border-slate-700/50">
+                                        <span>Sweat Glands</span>
+                                        <span className={temp > 28 ? "text-blue-400 font-bold" : "text-slate-500"}>
+                                            {temp > 28 ? 'Active (Secreting)' : 'Inactive'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 bg-slate-900 rounded border border-slate-700/50">
+                                        <span>Hair Muscles</span>
+                                        <span className={temp < 15 ? "text-yellow-400 font-bold" : "text-slate-500"}>
+                                            {temp < 15 ? 'Contracted (Goosebumps)' : 'Relaxed'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-2 bg-slate-900 rounded border border-slate-700/50">
+                                        <span>Skeletal Muscles</span>
+                                        <span className={temp < 5 ? "text-orange-400 font-bold animate-pulse" : "text-slate-500"}>
+                                            {temp < 5 ? 'Shivering!' : 'Normal tone'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Info Box */}
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300">
+                                <div className="font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icon name="info" size={14}/> Mechanism</div>
+                                <p className="mb-2">
+                                    <strong>Heat Loss:</strong> Vasodilation brings blood to surface (radiation/convection). Sweat evaporates (latent heat).
+                                </p>
+                                <p>
+                                    <strong>Heat Gain/Conservation:</strong> Vasoconstriction keeps blood deep. Shivering generates metabolic heat.
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            
+                            <div className="w-full h-full max-w-3xl relative">
+                                <SkinCanvas temp={temp} />
+                            </div>
+
+                            <div className="absolute bottom-6 left-6 text-xs text-slate-500 font-mono bg-black/40 px-3 py-1 rounded-full border border-white/10 pointer-events-none">
+                                Skin Section
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
