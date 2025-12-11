@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Menstrual Cycle Grapher | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #ec4899; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(236, 72, 153, 0.5); border: 2px solid white;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, AreaChart, Area } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA GENERATION ---
+        // Approximate hormone levels over 28 days
+        const generateCycleData = () => {
+            const data = [];
+            for (let day = 1; day <= 28; day++) {
+                // FSH: Small peak at start, dip, spike at 14
+                let fsh = 5 + Math.sin((day-1)*0.3)*2 + (day > 11 && day < 15 ? 10 * Math.exp(-Math.pow(day-13, 2)) : 0);
+                
+                // LH: Low, massive spike at 13-14
+                let lh = 4 + (day > 11 && day < 15 ? 40 * Math.exp(-Math.pow(day-13, 2)/0.5) : 0);
+
+                // Estrogen: Rise to peak at 12, drop, secondary rise at 21
+                let estrogen = 20 + (day < 14 ? 50 * Math.exp(-Math.pow(day-12, 2)/10) : 30 * Math.exp(-Math.pow(day-21, 2)/20));
+
+                // Progesterone: Low until 14, peak at 21 (Corpus Luteum)
+                let progesterone = 2 + (day > 14 ? 20 * Math.exp(-Math.pow(day-21, 2)/15) : 0);
+
+                // Lining Thickness (Endometrium)
+                // Day 1-5: Drop (Menstruation)
+                // Day 5-14: Rebuild (Proliferative)
+                // Day 14-28: Maintain/Thicken (Secretory)
+                let lining = 0;
+                if (day <= 5) lining = 4 * (1 - (day-1)/5); // Shedding
+                else if (day <= 14) lining = 4 * ((day-5)/9); // Rebuilding
+                else lining = 4 + 2 * Math.sin((day-14)/14 * Math.PI); // Thickening
+
+                data.push({ day, fsh, lh, estrogen, progesterone, lining });
+            }
+            return data;
+        };
+
+        const CYCLE_DATA = generateCycleData();
+
+        // --- VISUAL COMPONENTS ---
+
+        const OvaryCanvas = ({ day }) => {
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width;
+                const h = canvas.height;
+                const cx = w / 2;
+                const cy = h / 2;
+
+                ctx.clearRect(0, 0, w, h);
+
+                // Draw Ovary Outline
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, 120, 70, 0, 0, Math.PI * 2);
+                ctx.fillStyle = '#fce7f3'; // Pinkish
+                ctx.fill();
+                ctx.strokeStyle = '#db2777';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Visualize Follicle Development based on Day
+                // 1-13: Follicle growth
+                // 14: Ovulation
+                // 15-28: Corpus Luteum -> Albicans
+
+                let follicleSize = 5;
+                let follicleX = cx - 80;
+                let follicleY = cy;
+                let color = '#facc15'; // Yellowish follicle
+                
+                if (day <= 13) {
+                    // Developing Follicle
+                    const progress = (day - 1) / 12;
+                    follicleSize = 10 + 30 * progress;
+                    follicleX = cx - 80 + (cx - (cx-80)) * progress; // Move towards surface
+                    
+                    // Draw Follicle
+                    ctx.beginPath();
+                    ctx.arc(follicleX, follicleY, follicleSize, 0, Math.PI * 2);
+                    ctx.fillStyle = 'white';
+                    ctx.fill();
+                    ctx.stroke();
+                    // Egg inside
+                    ctx.beginPath();
+                    ctx.arc(follicleX, follicleY, follicleSize * 0.4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fill();
+
+                } else if (day === 14) {
+                    // Ovulation
+                    follicleSize = 40;
+                    follicleX = cx; // At surface/edge (simplified to center for visual clarity then egg pops)
+                    
+                    // Ruptured Follicle
+                    ctx.beginPath();
+                    ctx.arc(follicleX, follicleY, follicleSize, 0.2, Math.PI * 1.8, true); // Open
+                    ctx.strokeStyle = '#db2777';
+                    ctx.stroke();
+                    
+                    // Released Egg
+                    ctx.beginPath();
+                    ctx.arc(follicleX + 60, follicleY - 40, 10, 0, Math.PI*2);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fill();
+                    ctx.font = "14px sans-serif";
+                    ctx.fillStyle = "#ef4444";
+                    ctx.fillText("Ovulation!", follicleX + 50, follicleY - 60);
+
+                } else {
+                    // Corpus Luteum (Yellow Body)
+                    const progress = (day - 15) / 13;
+                    // Grow then shrink
+                    let clSize = 30;
+                    if (progress > 0.5) clSize = 30 * (1 - (progress-0.5)*2); // Degenerate
+                    
+                    follicleX = cx + 50;
+                    
+                    ctx.beginPath();
+                    // Irregular shape
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i / 6) * Math.PI * 2;
+                        const r = clSize + Math.random() * 5;
+                        ctx.lineTo(follicleX + Math.cos(angle) * r, follicleY + Math.sin(angle) * r);
+                    }
+                    ctx.closePath();
+                    ctx.fillStyle = progress > 0.8 ? '#e5e7eb' : '#eab308'; // Yellow -> White
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                
+                // Labels
+                ctx.fillStyle = "#4b5563";
+                ctx.font = "12px sans-serif";
+                ctx.textAlign = "center";
+                if (day <= 13) ctx.fillText("Follicle Developing", cx, h - 20);
+                else if (day === 14) ctx.fillText("Ovulation", cx, h - 20);
+                else ctx.fillText("Corpus Luteum", cx, h - 20);
+
+            }, [day]);
+
+            return <canvas ref={canvasRef} width={300} height={200} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [day, setDay] = useState(1);
+            const [isPlaying, setIsPlaying] = useState(false);
+            
+            // Auto-play loop
+            useEffect(() => {
+                let interval;
+                if (isPlaying) {
+                    interval = setInterval(() => {
+                        setDay(d => (d % 28) + 1);
+                    }, 500); // 0.5s per day
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying]);
+
+            const currentData = CYCLE_DATA[day - 1];
+            
+            // Determine Phase
+            let phaseName = '';
+            let phaseDesc = '';
+            if (day <= 5) {
+                phaseName = 'Menstrual Phase';
+                phaseDesc = 'Uterine lining sheds. FSH levels rise slightly to stimulate new follicles.';
+            } else if (day <= 13) {
+                phaseName = 'Follicular Phase';
+                phaseDesc = 'Follicle matures, secreting Estrogen. Uterine lining rebuilds (Proliferative phase).';
+            } else if (day === 14) {
+                phaseName = 'Ovulation';
+                phaseDesc = 'Surge in LH causes the follicle to rupture and release the egg.';
+            } else {
+                phaseName = 'Luteal Phase';
+                phaseDesc = 'Corpus luteum secretes Progesterone to maintain lining (Secretory phase). If no fertilization, it degenerates.';
+            }
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-pink-400" /> Cycle Grapher
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Menstrual Cycle Dynamics</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Day Control */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-end">
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Cycle Day</label>
+                                    <span className="text-3xl font-mono font-black text-pink-400">{day}</span>
+                                </div>
+                                <input 
+                                    type="range" min="1" max="28" step="1"
+                                    value={day} 
+                                    onChange={(e) => { setDay(parseInt(e.target.value)); setIsPlaying(false); }}
+                                    className="w-full accent-pink-500"
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500">
+                                    <span>Day 1 (Menses)</span>
+                                    <span>Day 14 (Ovulation)</span>
+                                    <span>Day 28</span>
+                                </div>
+                            </div>
+
+                            {/* Phase Info */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 animate-in fade-in" key={phaseName}>
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-1">Current Phase</div>
+                                <h2 className="text-lg font-bold text-white mb-2">{phaseName}</h2>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                    {phaseDesc}
+                                </p>
+                            </div>
+
+                            {/* Controls */}
+                            <div className="space-y-2">
+                                <button 
+                                    onClick={() => setIsPlaying(!isPlaying)}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isPlaying ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isPlaying ? "pause" : "play"} size={18} fill="currentColor"/>
+                                    {isPlaying ? 'Pause Cycle' : 'Auto Play'}
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-4">
+                        
+                        {/* Graphs Panel - Stacked */}
+                        <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
+                            
+                            {/* 1. Pituitary Hormones */}
+                            <div className="bg-slate-900 rounded-2xl border border-slate-800 p-4 flex-1 min-h-[200px] flex flex-col">
+                                <div className="text-xs font-bold text-slate-400 mb-2 flex justify-between">
+                                    <span>Pituitary Hormones</span>
+                                    <div className="flex gap-3">
+                                        <span className="text-blue-400">● FSH</span>
+                                        <span className="text-purple-400">● LH</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={CYCLE_DATA}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                                            <XAxis dataKey="day" hide />
+                                            <YAxis hide domain={[0, 'auto']} />
+                                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
+                                            <ReferenceLine x={day} stroke="#fbbf24" strokeDasharray="3 3" />
+                                            <Line type="monotone" dataKey="fsh" stroke="#60a5fa" strokeWidth={2} dot={false} animationDuration={0} />
+                                            <Line type="monotone" dataKey="lh" stroke="#c084fc" strokeWidth={2} dot={false} animationDuration={0} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 2. Ovarian Hormones */}
+                            <div className="bg-slate-900 rounded-2xl border border-slate-800 p-4 flex-1 min-h-[200px] flex flex-col">
+                                <div className="text-xs font-bold text-slate-400 mb-2 flex justify-between">
+                                    <span>Ovarian Hormones</span>
+                                    <div className="flex gap-3">
+                                        <span className="text-pink-400">● Estrogen</span>
+                                        <span className="text-yellow-400">● Progesterone</span>
+                                    </div>
+                                </div>
+                                <div className="flex-1">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={CYCLE_DATA}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                                            <XAxis dataKey="day" hide />
+                                            <YAxis hide domain={[0, 'auto']} />
+                                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
+                                            <ReferenceLine x={day} stroke="#fbbf24" strokeDasharray="3 3" />
+                                            <Line type="monotone" dataKey="estrogen" stroke="#f472b6" strokeWidth={2} dot={false} animationDuration={0} />
+                                            <Line type="monotone" dataKey="progesterone" stroke="#facc15" strokeWidth={2} dot={false} animationDuration={0} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* 3. Visualizations Row */}
+                            <div className="flex flex-col md:flex-row gap-4 h-auto md:h-48 shrink-0">
+                                {/* Ovarian Cycle Visual */}
+                                <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col items-center justify-center relative overflow-hidden min-h-[150px]">
+                                    <div className="absolute top-2 left-3 text-[10px] font-bold text-slate-500 uppercase">Ovarian Cycle</div>
+                                    <OvaryCanvas day={day} />
+                                </div>
+
+                                {/* Uterine Lining Graph */}
+                                <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col min-h-[150px]">
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase mb-2">Uterine Lining Thickness</div>
+                                    <div className="flex-1">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={CYCLE_DATA}>
+                                                <defs>
+                                                    <linearGradient id="colorLining" x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.8}/>
+                                                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.3}/>
+                                                    </linearGradient>
+                                                </defs>
+                                                <XAxis dataKey="day" stroke="#64748b" fontSize={10} tickCount={15} />
+                                                <YAxis hide />
+                                                <ReferenceLine x={day} stroke="#fbbf24" strokeDasharray="3 3" />
+                                                <Area type="monotone" dataKey="lining" stroke="#f43f5e" fill="url(#colorLining)" animationDuration={0} />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
