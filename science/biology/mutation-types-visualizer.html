@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mutation Types Visualizer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Animations */
+        .fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .highlight-change { animation: flash 1s ease-out; }
+        @keyframes flash { 
+            0% { background-color: rgba(244, 63, 94, 0.5); } 
+            100% { background-color: transparent; } 
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- GENETIC CODE ---
+        const CODON_MAP = {
+            'UUU': 'Phe', 'UUC': 'Phe', 'UUA': 'Leu', 'UUG': 'Leu',
+            'UCU': 'Ser', 'UCC': 'Ser', 'UCA': 'Ser', 'UCG': 'Ser',
+            'UAU': 'Tyr', 'UAC': 'Tyr', 'UAA': 'STOP', 'UAG': 'STOP',
+            'UGU': 'Cys', 'UGC': 'Cys', 'UGA': 'STOP', 'UGG': 'Trp',
+            'CUU': 'Leu', 'CUC': 'Leu', 'CUA': 'Leu', 'CUG': 'Leu',
+            'CCU': 'Pro', 'CCC': 'Pro', 'CCA': 'Pro', 'CCG': 'Pro',
+            'CAU': 'His', 'CAC': 'His', 'CAA': 'Gln', 'CAG': 'Gln',
+            'CGU': 'Arg', 'CGC': 'Arg', 'CGA': 'Arg', 'CGG': 'Arg',
+            'AUU': 'Ile', 'AUC': 'Ile', 'AUA': 'Ile', 'AUG': 'Met',
+            'ACU': 'Thr', 'ACC': 'Thr', 'ACA': 'Thr', 'ACG': 'Thr',
+            'AAU': 'Asn', 'AAC': 'Asn', 'AAA': 'Lys', 'AAG': 'Lys',
+            'AGU': 'Ser', 'AGC': 'Ser', 'AGA': 'Arg', 'AGG': 'Arg',
+            'GUU': 'Val', 'GUC': 'Val', 'GUA': 'Val', 'GUG': 'Val',
+            'GCU': 'Ala', 'GCC': 'Ala', 'GCA': 'Ala', 'GCG': 'Ala',
+            'GAU': 'Asp', 'GAC': 'Asp', 'GAA': 'Glu', 'GAG': 'Glu',
+            'GGU': 'Gly', 'GGC': 'Gly', 'GGA': 'Gly', 'GGG': 'Gly'
+        };
+
+        const INITIAL_DNA = "TACGGGCATATTAATTGA"; // AUG CCC GUA UAA UUA ACU (Met-Pro-Val-Stop-Leu-Thr)
+        // DNA Template Strand (3' to 5') -> mRNA (5' to 3') -> Protein
+        
+        const getRNA = (dna) => {
+            return dna.split('').map(b => {
+                if (b === 'A') return 'U';
+                if (b === 'T') return 'A';
+                if (b === 'C') return 'G';
+                if (b === 'G') return 'C';
+                return '';
+            }).join('');
+        };
+
+        const getProtein = (rna) => {
+            const codons = [];
+            for (let i = 0; i < rna.length; i += 3) {
+                if (i + 3 <= rna.length) {
+                    codons.push(rna.substring(i, i + 3));
+                }
+            }
+            return codons.map(c => CODON_MAP[c] || '?');
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [originalDNA, setOriginalDNA] = useState(INITIAL_DNA);
+            const [mutatedDNA, setMutatedDNA] = useState(INITIAL_DNA);
+            const [cursorPos, setCursorPos] = useState(3); // Default selection index
+            const [mutationType, setMutationType] = useState(null); // 'deletion', 'insertion', 'substitution', 'inversion'
+            const [analysis, setAnalysis] = useState(null); // 'frameshift', 'missense', 'nonsense', 'silent'
+
+            // Derived States
+            const originalRNA = getRNA(originalDNA);
+            const originalProtein = getProtein(originalRNA);
+            
+            const mutatedRNA = getRNA(mutatedDNA);
+            const mutatedProtein = getProtein(mutatedRNA);
+
+            // Analyze Mutation Effect
+            useEffect(() => {
+                if (originalDNA === mutatedDNA) {
+                    setAnalysis(null);
+                    return;
+                }
+                
+                // Check for Frameshift (Length change not multiple of 3)
+                const lenDiff = Math.abs(mutatedDNA.length - originalDNA.length);
+                if (lenDiff % 3 !== 0 && lenDiff > 0) {
+                    setAnalysis('frameshift'); // Shifted reading frame
+                    return;
+                }
+
+                // Check Protein Diff
+                let type = 'silent';
+                let hasStop = false;
+
+                // Compare codon by codon
+                const len = Math.min(originalProtein.length, mutatedProtein.length);
+                for(let i=0; i<len; i++) {
+                    if (originalProtein[i] !== mutatedProtein[i]) {
+                        if (mutatedProtein[i] === 'STOP' && originalProtein[i] !== 'STOP') {
+                            type = 'nonsense'; // Premature stop
+                            hasStop = true;
+                            break;
+                        } else {
+                            type = 'missense'; // Amino acid changed
+                        }
+                    }
+                }
+                
+                // If length changed but multiple of 3 (in-frame insertion/deletion)
+                if (lenDiff > 0 && lenDiff % 3 === 0) {
+                    if (type === 'silent') type = 'in-frame'; // Changed amount of AA
+                }
+
+                setAnalysis(type);
+
+            }, [mutatedDNA, originalDNA]);
+
+            // Mutation Handlers
+            const handleReset = () => {
+                setMutatedDNA(INITIAL_DNA);
+                setMutationType(null);
+            };
+
+            const applyDeletion = () => {
+                if (cursorPos >= mutatedDNA.length) return;
+                const newSeq = mutatedDNA.slice(0, cursorPos) + mutatedDNA.slice(cursorPos + 1);
+                setMutatedDNA(newSeq);
+                setMutationType('deletion');
+            };
+
+            const applyInsertion = () => {
+                // Insert random base 'A' for demo
+                const base = 'A';
+                const newSeq = mutatedDNA.slice(0, cursorPos) + base + mutatedDNA.slice(cursorPos);
+                setMutatedDNA(newSeq);
+                setMutationType('insertion');
+            };
+
+            const applySubstitution = () => {
+                if (cursorPos >= mutatedDNA.length) return;
+                const current = mutatedDNA[cursorPos];
+                const bases = ['A', 'T', 'C', 'G'];
+                const nextBase = bases[(bases.indexOf(current) + 1) % 4]; // Cycle through
+                const newSeq = mutatedDNA.slice(0, cursorPos) + nextBase + mutatedDNA.slice(cursorPos + 1);
+                setMutatedDNA(newSeq);
+                setMutationType('substitution');
+            };
+
+            const applyInversion = () => {
+                // Invert 3 bases starting at cursor
+                if (cursorPos + 3 > mutatedDNA.length) return;
+                const segment = mutatedDNA.slice(cursorPos, cursorPos + 3);
+                const inverted = segment.split('').reverse().join('');
+                const newSeq = mutatedDNA.slice(0, cursorPos) + inverted + mutatedDNA.slice(cursorPos + 3);
+                setMutatedDNA(newSeq);
+                setMutationType('inversion');
+            };
+
+            // Helper to display sequence with cursor
+            const SequenceDisplay = ({ seq, isProtein }) => {
+                // Split for display
+                const items = isProtein ? seq : seq.split('');
+                
+                return (
+                    <div className="flex flex-wrap gap-1 font-mono text-lg break-all">
+                        {items.map((item, i) => {
+                            // Highlight logic
+                            let isDiff = false;
+                            
+                            // For protein, compare with original
+                            if (isProtein && originalProtein[i] && item !== originalProtein[i]) isDiff = true;
+                            // Frameshift logic: if frameshift, everything after mutation point is likely different
+                            if (isProtein && analysis === 'frameshift' && i >= Math.floor(cursorPos/3)) isDiff = true;
+
+                            return (
+                                <div 
+                                    key={i} 
+                                    onClick={() => !isProtein && setCursorPos(i)}
+                                    className={`
+                                        ${isProtein ? 'w-14' : 'w-8'} h-10 flex items-center justify-center rounded cursor-pointer transition-colors relative
+                                        ${!isProtein && i === cursorPos ? 'bg-blue-600 ring-2 ring-blue-400 z-10' : 'bg-slate-800'}
+                                        ${isDiff ? 'bg-red-900 text-red-200' : ''}
+                                        ${item === 'STOP' ? 'bg-red-600 text-white font-bold text-xs' : ''}
+                                    `}
+                                >
+                                    {item}
+                                    {!isProtein && i === cursorPos && (
+                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-2 h-2 bg-blue-400 rotate-45"></div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="zap" className="text-yellow-400" /> Mutation Simulator
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Genetic Variation Visualizer</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Controls */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Apply Mutation</label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button 
+                                        onClick={applySubstitution}
+                                        className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-blue-500 rounded-xl flex flex-col items-center gap-1 transition-all group"
+                                    >
+                                        <Icon name="replace" size={20} className="text-blue-400"/>
+                                        <span className="text-xs font-bold group-hover:text-white">Substitution</span>
+                                    </button>
+                                    <button 
+                                        onClick={applyDeletion}
+                                        className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-red-500 rounded-xl flex flex-col items-center gap-1 transition-all group"
+                                    >
+                                        <Icon name="delete" size={20} className="text-red-400"/>
+                                        <span className="text-xs font-bold group-hover:text-white">Deletion</span>
+                                    </button>
+                                    <button 
+                                        onClick={applyInsertion}
+                                        className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-green-500 rounded-xl flex flex-col items-center gap-1 transition-all group"
+                                    >
+                                        <Icon name="plus-square" size={20} className="text-green-400"/>
+                                        <span className="text-xs font-bold group-hover:text-white">Insertion</span>
+                                    </button>
+                                    <button 
+                                        onClick={applyInversion}
+                                        className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-purple-500 rounded-xl flex flex-col items-center gap-1 transition-all group"
+                                    >
+                                        <Icon name="refresh-cw" size={20} className="text-purple-400"/>
+                                        <span className="text-xs font-bold group-hover:text-white">Inversion</span>
+                                    </button>
+                                </div>
+                                <button 
+                                    onClick={handleReset}
+                                    className="w-full py-2 mt-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-xs font-bold flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="rotate-ccw" size={14}/> Reset DNA
+                                </button>
+                            </div>
+
+                            {/* Analysis Result */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Impact Analysis</div>
+                                {analysis ? (
+                                    <div className="animate-in fade-in">
+                                        <div className={`text-xl font-black mb-1 uppercase
+                                            ${analysis === 'frameshift' ? 'text-red-500' : 
+                                              analysis === 'nonsense' ? 'text-orange-500' : 
+                                              analysis === 'missense' ? 'text-yellow-400' : 
+                                              'text-emerald-400'
+                                            }
+                                        `}>
+                                            {analysis}
+                                        </div>
+                                        <p className="text-xs text-slate-300 leading-relaxed">
+                                            {analysis === 'frameshift' && "Reading frame shifted! All downstream amino acids are likely changed."}
+                                            {analysis === 'nonsense' && "Premature STOP codon created. Protein synthesis will end too early."}
+                                            {analysis === 'missense' && "One amino acid changed. Protein structure may be altered."}
+                                            {analysis === 'silent' && "No change in amino acid sequence. (Degeneracy of code)"}
+                                            {analysis === 'in-frame' && "Amino acids added/removed, but reading frame is preserved."}
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-slate-500 italic">Apply a mutation to see the effect.</div>
+                                )}
+                            </div>
+                            
+                            <div className="text-[10px] text-slate-500">
+                                Click on a DNA base to set mutation point (Blue Cursor).
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-8 overflow-y-auto">
+                        
+                        <div className="max-w-4xl mx-auto w-full space-y-12">
+                            
+                            {/* Original Sequence */}
+                            <div className="opacity-50">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Original DNA Template</div>
+                                <div className="flex flex-wrap gap-1 mb-4">
+                                    {originalDNA.split('').map((b, i) => (
+                                        <div key={i} className="w-8 h-10 flex items-center justify-center bg-slate-900 rounded border border-slate-800 text-slate-500">
+                                            {b}
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Original Protein</div>
+                                <div className="flex flex-wrap gap-1">
+                                    {originalProtein.map((aa, i) => (
+                                        <div key={i} className="w-14 h-10 flex items-center justify-center bg-slate-800 rounded-lg text-slate-400 text-xs font-bold border border-slate-700">
+                                            {aa}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="w-full h-px bg-slate-800"></div>
+
+                            {/* Mutated Sequence */}
+                            <div>
+                                <div className="flex justify-between items-end mb-2">
+                                    <div className="text-sm font-bold text-blue-400 uppercase">Mutated DNA</div>
+                                    <div className="text-xs text-slate-500">Length: {mutatedDNA.length}</div>
+                                </div>
+                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 overflow-x-auto">
+                                    <SequenceDisplay seq={mutatedDNA} isProtein={false} />
+                                </div>
+                            </div>
+
+                            {/* Arrow */}
+                            <div className="flex justify-center">
+                                <Icon name="arrow-down" className="text-slate-600" size={32} />
+                            </div>
+
+                            {/* Resulting Protein */}
+                            <div>
+                                <div className="text-sm font-bold text-emerald-400 uppercase mb-2">Resulting Protein</div>
+                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 overflow-x-auto">
+                                    <SequenceDisplay seq={mutatedProtein} isProtein={true} />
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
