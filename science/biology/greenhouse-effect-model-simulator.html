@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greenhouse Effect Model | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Slider */
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #ef4444; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); border: 2px solid white;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Heat Haze Animation */
+        .heat-haze { animation: haze 2s infinite linear; }
+        @keyframes haze {
+            0% { filter: blur(0px); transform: translateY(0); }
+            50% { filter: blur(1px); transform: translateY(-2px); }
+            100% { filter: blur(0px); transform: translateY(0); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION CANVAS ---
+        const EarthAtmosphere = ({ co2Level, isRunning }) => {
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]); // Stores sun rays and heat rays
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const width = 800;
+                const height = 600;
+                
+                // Simulation Parameters based on CO2
+                // Higher CO2 -> Higher probability of IR reflection
+                // CO2 range: 280 (low) to 800 (high)
+                // Reflection prob: 0.2 to 0.8
+                const reflectionProb = 0.2 + ((co2Level - 280) / 600) * 0.6;
+                
+                const groundY = 450;
+                const atmosphereTop = 100;
+                const atmosphereBottom = 400; // Where GHGs live visually
+
+                // Initialize or Reset? Keep particles flowing
+                
+                const createSunRay = () => ({
+                    type: 'sun', // yellow, shortwave
+                    x: Math.random() * width,
+                    y: -10,
+                    vx: 0,
+                    vy: 3, // Fast
+                    life: 100
+                });
+
+                const createIRRay = (x, y) => ({
+                    type: 'ir', // red, longwave
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: -1.5, // Slower than sun
+                    life: 200,
+                    trapped: false
+                });
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+
+                    // --- BACKGROUND ---
+                    // Sky
+                    // Color shifts slightly red/hazy with CO2
+                    const heatAlpha = (co2Level - 280) / 1000;
+                    const skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+                    skyGrad.addColorStop(0, "#0c4a6e");
+                    skyGrad.addColorStop(1, `rgba(255, 100, 100, ${heatAlpha})`); // Heat haze at bottom
+                    ctx.fillStyle = skyGrad;
+                    ctx.fillRect(0, 0, width, groundY);
+
+                    // Atmosphere Layer Visual
+                    ctx.fillStyle = `rgba(255, 255, 255, ${0.05 + reflectionProb * 0.2})`;
+                    ctx.fillRect(0, atmosphereTop, width, atmosphereBottom - atmosphereTop);
+                    
+                    // GHG Molecules (Visual Only)
+                    const moleculeCount = Math.floor((co2Level - 200) / 10);
+                    ctx.fillStyle = "rgba(200, 200, 200, 0.5)";
+                    for(let i=0; i<moleculeCount; i++) {
+                        // Use psuedo-random positions based on index to avoid jitter
+                        const mx = (i * 137.5) % width;
+                        const my = atmosphereTop + (i * 132.7) % (atmosphereBottom - atmosphereTop);
+                        ctx.beginPath(); ctx.arc(mx, my, 2, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    // Ground
+                    ctx.fillStyle = "#059669";
+                    ctx.fillRect(0, groundY, width, height - groundY);
+                    
+                    // Ice Caps (Visual for melting)
+                    // Size decreases with CO2
+                    const iceSize = Math.max(0, 200 - (co2Level - 280) * 0.3);
+                    ctx.fillStyle = "#e0f2fe";
+                    ctx.beginPath();
+                    ctx.moveTo(0, groundY);
+                    ctx.lineTo(iceSize, groundY);
+                    ctx.lineTo(0, groundY - iceSize/3);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(width, groundY);
+                    ctx.lineTo(width - iceSize, groundY);
+                    ctx.lineTo(width, groundY - iceSize/3);
+                    ctx.fill();
+                    
+                    // Sea Level (Visual)
+                    const seaLevel = (co2Level - 280) * 0.1; // Rising
+                    if (seaLevel > 0) {
+                        ctx.fillStyle = "rgba(56, 189, 248, 0.5)";
+                        ctx.fillRect(0, groundY - seaLevel, width, seaLevel + (height - groundY));
+                    }
+
+                    // --- PARTICLES ---
+                    
+                    // Spawn Sun Rays
+                    if (isRunning && Math.random() < 0.1) {
+                        particlesRef.current.push(createSunRay());
+                    }
+
+                    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+                        const p = particlesRef.current[i];
+                        
+                        // Move
+                        p.x += p.vx;
+                        p.y += p.vy;
+
+                        // Logic
+                        if (p.type === 'sun') {
+                            // Hit Ground
+                            if (p.y >= groundY) {
+                                // Convert to IR (Heat)
+                                // One sun ray produces 2 IR rays scattering
+                                particlesRef.current.push(createIRRay(p.x, p.y));
+                                particlesRef.current.push(createIRRay(p.x, p.y));
+                                particlesRef.current.splice(i, 1);
+                                continue;
+                            }
+                        } else if (p.type === 'ir') {
+                            // Interaction with Atmosphere
+                            if (!p.trapped && p.y < atmosphereBottom && p.y > atmosphereTop) {
+                                // Chance to be reflected back (Greenhouse Effect)
+                                if (Math.random() < 0.01 * reflectionProb * 5) { // Prob per frame
+                                    p.vy = Math.abs(p.vy); // Bounce down
+                                    p.trapped = true; // Mark as trapped so it doesn't bounce forever in air instantly
+                                }
+                            }
+                            
+                            // Hit Ground again (Re-absorbed or bounce?)
+                            // Let's just bounce them off ground if they were trapped, lose energy eventually
+                            if (p.y > groundY) {
+                                p.y = groundY;
+                                p.vy = -p.vy;
+                                p.trapped = false; // Can try to escape again
+                                p.life -= 50; // Absorbed heat energy loss
+                            }
+
+                            // Escape to space
+                            if (p.y < -50) {
+                                particlesRef.current.splice(i, 1);
+                                continue;
+                            }
+                            
+                            p.life--;
+                            if (p.life <= 0) {
+                                particlesRef.current.splice(i, 1);
+                                continue;
+                            }
+                        }
+
+                        // Draw
+                        ctx.beginPath();
+                        if (p.type === 'sun') {
+                            // Yellow wave
+                            ctx.strokeStyle = "#facc15";
+                            ctx.lineWidth = 2;
+                            ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y - 15);
+                        } else {
+                            // Red wave (Heat)
+                            ctx.strokeStyle = "#ef4444";
+                            ctx.lineWidth = 2;
+                            // Draw little wiggle
+                            ctx.moveTo(p.x, p.y); 
+                            ctx.lineTo(p.x + Math.sin(p.y*0.2)*5, p.y + 10);
+                        }
+                        ctx.stroke();
+                    }
+                    
+                    // Labels
+                    ctx.fillStyle = "white"; ctx.font = "bold 12px sans-serif";
+                    ctx.fillText("SPACE", width/2 - 20, 30);
+                    ctx.fillText("ATMOSPHERE", width/2 - 40, 150);
+                    ctx.fillStyle = "#064e3b";
+                    ctx.fillText("EARTH SURFACE", width/2 - 50, 550);
+
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [co2Level, isRunning]);
+
+            return <canvas ref={canvasRef} width={800} height={600} className="w-full h-full object-contain bg-slate-900 rounded-xl border border-slate-700" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [co2, setCo2] = useState(400); // ppm
+            const [isRunning, setIsRunning] = useState(true);
+            
+            // Derived Stats
+            // Base Temp = 14C at 280ppm. Sensitivity approx 3C per doubling? Simplified linear model for demo.
+            const tempAnomaly = ((co2 - 280) / 100) * 0.8; 
+            const globalTemp = 14 + tempAnomaly;
+            const seaLevelRise = Math.max(0, (co2 - 350) * 0.5); // cm
+
+            // Year Proxy
+            // 280 = 1850, 420 = 2024, 800 = 2100 (Worst case)
+            let yearLabel = "Current Era";
+            if (co2 < 300) yearLabel = "Pre-Industrial (1850)";
+            else if (co2 > 600) yearLabel = "Future (High Emission)";
+            
+            const setPreset = (val) => setCo2(val);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="thermometer-sun" className="text-red-500" /> Greenhouse Simulator
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Global Warming Mechanism</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Controls */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-slate-400">CO₂ Concentration</span>
+                                        <span className={`font-mono font-bold ${co2 > 450 ? 'text-red-500 animate-pulse' : 'text-emerald-400'}`}>
+                                            {co2} ppm
+                                        </span>
+                                    </div>
+                                    <input 
+                                        type="range" min="280" max="900" step="10"
+                                        value={co2} 
+                                        onChange={(e) => setCo2(parseInt(e.target.value))}
+                                        className="w-full accent-red-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>1850 (280)</span>
+                                        <span>Future (900)</span>
+                                    </div>
+                                </div>
+
+                                {/* Presets */}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={() => setPreset(280)} className="p-2 bg-slate-800 border border-slate-600 rounded text-xs hover:bg-slate-700 text-blue-300">Pre-Industrial</button>
+                                    <button onClick={() => setPreset(420)} className="p-2 bg-slate-800 border border-slate-600 rounded text-xs hover:bg-slate-700 text-green-400">Today</button>
+                                    <button onClick={() => setPreset(550)} className="p-2 bg-slate-800 border border-slate-600 rounded text-xs hover:bg-slate-700 text-yellow-400">2050 Projection</button>
+                                    <button onClick={() => setPreset(850)} className="p-2 bg-slate-800 border border-slate-600 rounded text-xs hover:bg-slate-700 text-red-400">Business as Usual</button>
+                                </div>
+                            </div>
+
+                            {/* Dashboard */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg space-y-4">
+                                <div className="text-xs font-bold text-slate-500 uppercase border-b border-slate-700 pb-2">Climate Impact</div>
+                                
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-300">Global Temp</span>
+                                    <div className="text-right">
+                                        <span className="text-lg font-mono font-bold text-white">{globalTemp.toFixed(1)}°C</span>
+                                        <div className="text-[10px] text-red-400">+{tempAnomaly.toFixed(1)}°C Anomaly</div>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-300">Sea Level Rise</span>
+                                    <span className="text-lg font-mono font-bold text-blue-400">+{seaLevelRise.toFixed(0)} cm</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-300">Scenario</span>
+                                    <span className="text-xs font-bold text-yellow-500">{yearLabel}</span>
+                                </div>
+                            </div>
+                            
+                            {/* Concept Info */}
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300 space-y-2">
+                                <div className="font-bold text-blue-400 uppercase mb-1 flex items-center gap-2"><Icon name="info" size={14}/> How it works</div>
+                                <p>
+                                    <strong>Shortwave Radiation (Solar):</strong> Passes through atmosphere easily.
+                                </p>
+                                <p>
+                                    <strong>Longwave Radiation (Heat):</strong> Emitted by Earth. Absorbed and re-emitted by Greenhouse Gases (CO₂, Methane), trapping heat.
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            
+                            <div className="w-full h-full max-w-4xl relative">
+                                <EarthAtmosphere co2Level={co2} isRunning={isRunning} />
+                                
+                                {/* Visual Legend Overlay */}
+                                <div className="absolute top-4 right-4 bg-black/60 backdrop-blur px-3 py-2 rounded-lg border border-white/10 text-[10px] text-slate-300 space-y-2 pointer-events-none">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-0.5 bg-yellow-400"></div> Incoming Solar
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-0.5 bg-red-500 relative">
+                                            <div className="absolute -top-1 right-0 w-2 h-2 border-t-2 border-r-2 border-red-500 rotate-45"></div>
+                                        </div> Outgoing Heat (IR)
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-slate-400"></div> GHG Molecule
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className="absolute bottom-6 right-6 p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 shadow-lg transition-all"
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} size={20} fill="currentColor"/>
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
