@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anaerobic Respiration Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Animation for CO2 bubbles */
+        .bubble-rise {
+            animation: rise 2s infinite ease-in;
+        }
+        @keyframes rise {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateY(-100px) scale(1.2); opacity: 0; }
+        }
+
+        /* Muscle Fatigue Pulse */
+        .muscle-fatigue {
+            animation: pulse-red 1s infinite alternate;
+        }
+        @keyframes pulse-red {
+            from { background-color: #ef4444; }
+            to { background-color: #7f1d1d; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const MODES = {
+            yeast: {
+                id: 'yeast',
+                name: 'Yeast (Alcoholic Fermentation)',
+                organism: 'Yeast (Fungi)',
+                product: 'Ethanol + CO₂',
+                energy: '2 ATP',
+                equation: 'Glucose → 2 Ethanol + 2 CO₂ + 2 ATP',
+                color: 'bg-yellow-500',
+                lineColor: '#eab308',
+                desc: 'Used in baking (CO₂ rises dough) and brewing (Ethanol).'
+            },
+            muscle: {
+                id: 'muscle',
+                name: 'Muscle (Lactic Acid Fermentation)',
+                organism: 'Human Muscle Cells',
+                product: 'Lactic Acid',
+                energy: '2 ATP',
+                equation: 'Glucose → 2 Lactic Acid + 2 ATP',
+                color: 'bg-red-500',
+                lineColor: '#ef4444',
+                desc: 'Occurs during intense exercise when oxygen is scarce. Causes fatigue.'
+            }
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState('yeast');
+            const [isRunning, setIsRunning] = useState(false);
+            const [time, setTime] = useState(0);
+            const [data, setData] = useState([]);
+            
+            // Simulation State
+            const [glucose, setGlucose] = useState(100);
+            const [product, setProduct] = useState(0); // Ethanol or Lactic Acid
+            const [atp, setAtp] = useState(0);
+
+            const currentMode = MODES[mode];
+
+            // Reset
+            useEffect(() => {
+                handleReset();
+            }, [mode]);
+
+            const handleReset = () => {
+                setIsRunning(false);
+                setTime(0);
+                setGlucose(100);
+                setProduct(0);
+                setAtp(0);
+                setData([{ time: 0, glucose: 100, product: 0, atp: 0 }]);
+            };
+
+            // Simulation Loop
+            useEffect(() => {
+                let interval;
+                if (isRunning && glucose > 0) {
+                    interval = setInterval(() => {
+                        setTime(t => {
+                            const newTime = t + 1;
+                            
+                            // Reaction Logic
+                            // Rate slows down as glucose depletes
+                            const rate = Math.max(0.5, glucose * 0.05); 
+                            
+                            setGlucose(g => Math.max(0, g - rate));
+                            setProduct(p => p + rate * 0.8); // Some loss or stoichiometry visual
+                            setAtp(a => a + rate * 0.2); // ATP accumulation (scaled for visual)
+
+                            // Update Chart Data
+                            setData(prev => [...prev, { 
+                                time: newTime, 
+                                glucose: Math.max(0, glucose - rate), 
+                                product: product + rate * 0.8, 
+                                atp: atp + rate * 0.2 
+                            }]);
+
+                            if (glucose <= 0.5) setIsRunning(false); // Stop when fuel empty
+
+                            return newTime;
+                        });
+                    }, 100);
+                }
+                return () => clearInterval(interval);
+            }, [isRunning, glucose, product, atp]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-emerald-400" /> Anaerobic Simulator
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Fermentation Pathways</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Mode Switch */}
+                            <div className="flex bg-slate-800 p-1 rounded-xl">
+                                <button 
+                                    onClick={() => setMode('yeast')}
+                                    className={`flex-1 py-3 rounded-lg text-xs font-bold transition-all flex flex-col items-center gap-1 ${mode === 'yeast' ? 'bg-yellow-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    <Icon name="beer" size={16}/> Yeast
+                                </button>
+                                <button 
+                                    onClick={() => setMode('muscle')}
+                                    className={`flex-1 py-3 rounded-lg text-xs font-bold transition-all flex flex-col items-center gap-1 ${mode === 'muscle' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    <Icon name="dumbbell" size={16}/> Muscle
+                                </button>
+                            </div>
+
+                            {/* Reaction Info */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <div className={`text-xs font-bold uppercase mb-2 flex items-center gap-2 ${mode === 'yeast' ? 'text-yellow-400' : 'text-red-400'}`}>
+                                    <Icon name="flask-conical" size={14} /> Reaction
+                                </div>
+                                <div className="text-xs font-mono bg-slate-900 p-2 rounded border border-slate-800 mb-3 break-words leading-relaxed">
+                                    {currentMode.equation}
+                                </div>
+                                <div className="space-y-2 text-xs text-slate-400">
+                                    <div className="flex justify-between">
+                                        <span>Organism:</span>
+                                        <span className="text-white font-bold">{currentMode.organism}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Main Product:</span>
+                                        <span className="text-white font-bold">{currentMode.product}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Energy Yield:</span>
+                                        <span className="text-emerald-400 font-bold">{currentMode.energy} (Low)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* App Description */}
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30">
+                                <div className="flex items-center gap-2 mb-2 text-blue-400 font-bold text-xs uppercase">
+                                    <Icon name="info" size={14} /> Application
+                                </div>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                    {currentMode.desc}
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            
+                            {mode === 'yeast' ? (
+                                <div className="relative w-40 h-56 bg-yellow-900/20 rounded-b-3xl border-x-4 border-b-4 border-slate-600/50 backdrop-blur-sm overflow-hidden">
+                                    {/* Liquid */}
+                                    <div className="absolute bottom-0 w-full bg-yellow-600/60 transition-all duration-300" style={{ height: '80%' }}>
+                                        {/* Rising Bubbles (CO2) */}
+                                        {isRunning && [...Array(10)].map((_, i) => (
+                                            <div key={i} className="bubble-rise absolute bg-white/40 rounded-full" 
+                                                 style={{ 
+                                                     left: `${Math.random()*100}%`, 
+                                                     width: `${Math.random()*10+5}px`, 
+                                                     height: `${Math.random()*10+5}px`, 
+                                                     animationDelay: `${Math.random()}s`,
+                                                     animationDuration: `${Math.random()+1}s`
+                                                 }} 
+                                            />
+                                        ))}
+                                    </div>
+                                    <div className="absolute bottom-4 w-full text-center text-yellow-200 font-bold text-sm drop-shadow-md">
+                                        Fermenting Mixture
+                                    </div>
+                                    {/* CO2 Label */}
+                                    {isRunning && (
+                                        <div className="absolute top-10 right-10 bg-white/80 text-black text-xs font-bold px-2 py-1 rounded animate-bounce">
+                                            CO₂ Gas
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="relative flex flex-col items-center gap-4">
+                                    {/* Muscle Fiber Graphic */}
+                                    <div className={`w-64 h-32 rounded-2xl border-2 border-red-900 flex items-center justify-center overflow-hidden relative transition-colors duration-500 ${product > 50 ? 'bg-red-800' : 'bg-red-900'}`}>
+                                        {/* Fibers */}
+                                        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 10px, #000 10px, #000 11px)' }}></div>
+                                        
+                                        {/* Fatigue Overlay */}
+                                        {product > 60 && (
+                                            <div className="absolute inset-0 muscle-fatigue opacity-50 mix-blend-overlay"></div>
+                                        )}
+
+                                        <span className="relative z-10 font-black text-2xl text-white/80 tracking-widest">MUSCLE</span>
+                                    </div>
+                                    
+                                    {/* Pain/Fatigue Indicator */}
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-xs font-bold text-slate-400 uppercase">Lactic Acid Build-up:</div>
+                                        <div className="w-32 h-2 bg-slate-700 rounded-full overflow-hidden">
+                                            <div className="h-full bg-red-500 transition-all" style={{ width: `${Math.min(100, product)}%` }}></div>
+                                        </div>
+                                    </div>
+                                    {product > 70 && (
+                                        <div className="text-red-400 font-bold animate-pulse flex items-center gap-2">
+                                            <Icon name="alert-triangle" size={16}/> Fatigue & Cramps!
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Controls Overlay */}
+                            <div className="absolute bottom-6 flex gap-4">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    disabled={glucose <= 0}
+                                    className={`px-8 py-3 rounded-full font-bold shadow-lg flex items-center gap-2 transition-all active:scale-95
+                                        ${isRunning ? 'bg-yellow-600 text-white' : glucose <= 0 ? 'bg-slate-700 text-slate-500' : 'bg-emerald-600 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} fill="currentColor" />
+                                    {isRunning ? 'Pause' : glucose <= 0 ? 'Done' : 'Start'}
+                                </button>
+                                <button 
+                                    onClick={handleReset}
+                                    className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all border border-slate-700"
+                                >
+                                    <Icon name="rotate-ccw" size={20} />
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Graph */}
+                        <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col relative">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Production Rates
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={data}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="time" stroke="#64748b" fontSize={10} tick={false} label={{ value: 'Time', position: 'insideBottom', offset: -5, fill: '#64748b', fontSize: 10 }}/>
+                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, 100]} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} 
+                                            itemStyle={{ color: '#fff' }}
+                                            labelFormatter={(v) => `Time: ${v}`}
+                                        />
+                                        <Line type="monotone" dataKey="glucose" stroke="#60a5fa" strokeWidth={2} dot={false} name="Glucose" />
+                                        <Line type="monotone" dataKey="product" stroke={currentMode.lineColor} strokeWidth={3} dot={false} name={mode === 'yeast' ? 'Ethanol' : 'Lactic Acid'} />
+                                        <Line type="monotone" dataKey="atp" stroke="#34d399" strokeWidth={2} dot={false} name="ATP" strokeDasharray="5 5" />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
