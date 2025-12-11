@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Birth Control Methods Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Sperm Animation */
+        .sperm-wiggle {
+            animation: wiggle 0.2s linear infinite;
+        }
+        @keyframes wiggle {
+            0% { transform: rotate(0deg); }
+            25% { transform: rotate(10deg); }
+            75% { transform: rotate(-10deg); }
+            100% { transform: rotate(0deg); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const METHODS = {
+            none: {
+                id: 'none', name: 'No Protection',
+                type: 'Control',
+                desc: 'Natural fertilization process.',
+                effectiveness: '0% (Risk of pregnancy)',
+                preventsSTI: false,
+                action: 'normal'
+            },
+            condom: {
+                id: 'condom', name: 'Male Condom',
+                type: 'Barrier',
+                desc: 'A thin sheath worn on the penis. Prevents sperm from entering the vagina.',
+                effectiveness: '98%',
+                preventsSTI: true,
+                action: 'barrier_vagina'
+            },
+            pill: {
+                id: 'pill', name: 'Contraceptive Pill',
+                type: 'Hormonal',
+                desc: 'Contains hormones (estrogen/progesterone) that prevent ovulation.',
+                effectiveness: '99%',
+                preventsSTI: false,
+                action: 'no_ovulation'
+            },
+            iud: {
+                id: 'iud', name: 'IUD',
+                type: 'Device',
+                desc: 'Copper or hormonal device in uterus. Prevents implantation and impairs sperm.',
+                effectiveness: '99%+',
+                preventsSTI: false,
+                action: 'block_implantation'
+            },
+            tubal: {
+                id: 'tubal', name: 'Tubal Ligation',
+                type: 'Surgical',
+                desc: 'Fallopian tubes are cut or tied. Sperm cannot reach the egg.',
+                effectiveness: '99.5%',
+                preventsSTI: false,
+                action: 'block_tubes'
+            },
+            vasectomy: {
+                id: 'vasectomy', name: 'Vasectomy',
+                type: 'Surgical',
+                desc: 'Sperm ducts are cut. Semen contains no sperm.',
+                effectiveness: '99.9%',
+                preventsSTI: false,
+                action: 'no_sperm'
+            }
+        };
+
+        // --- ANIMATION COMPONENTS ---
+        const Sperm = ({ startX, startY, delay, blockage, targetY = 100 }) => {
+            // Blockage types: 'condom', 'tubal', 'none', 'iud_kill'
+            
+            // Path logic
+            // Vagina (200, 450) -> Uterus (200, 300) -> Tube (100, 100) or (300, 100)
+            
+            const isBlocked = blockage === 'condom';
+            const isTubalBlocked = blockage === 'tubal';
+            const isIUD = blockage === 'iud';
+
+            return (
+                <motion.g
+                    initial={{ x: startX, y: startY, opacity: 0 }}
+                    animate={{ 
+                        x: isBlocked ? startX + (Math.random()-0.5)*20 : [startX, 200, isTubalBlocked ? 150 : (Math.random()>0.5 ? 100 : 300)], 
+                        y: isBlocked ? startY - 20 : [startY, 300, 100],
+                        opacity: [0, 1, isIUD ? 0 : 1, isTubalBlocked || isIUD ? 0 : 0] // Fade out if blocked/killed or reaches end
+                    }}
+                    transition={{ 
+                        duration: isBlocked ? 1 : 4, 
+                        delay: delay,
+                        times: isBlocked ? [0, 1] : [0, 0.4, 1],
+                        ease: "easeInOut"
+                    }}
+                >
+                    <ellipse cx="0" cy="0" rx="3" ry="2" fill="white" className="sperm-wiggle" />
+                    <path d="M -3 0 Q -6 2 -9 0 Q -6 -2 -3 0" stroke="white" strokeWidth="0.5" fill="none" />
+                </motion.g>
+            );
+        };
+
+        const Egg = ({ show, blockage }) => {
+            if (!show) return null;
+
+            return (
+                <motion.circle 
+                    cx="100" cy="350" r="10" fill="#fecaca" stroke="#ef4444" strokeWidth="1"
+                    initial={{ x: 0, y: 0, opacity: 0 }}
+                    animate={{ 
+                        x: [0, 50, 100], // Move from ovary to tube to uterus
+                        y: [0, -200, -100],
+                        opacity: 1 
+                    }}
+                    transition={{ duration: 4, delay: 0.5, times: [0, 0.5, 1] }}
+                />
+            );
+        };
+
+        const AnatomySVG = ({ method, isPlaying }) => {
+            const action = METHODS[method].action;
+            const showSperm = action !== 'no_sperm';
+            const showEgg = action !== 'no_ovulation';
+            
+            // Blockage visual states
+            const showCondom = action === 'barrier_vagina';
+            const showIUD = action === 'block_implantation';
+            const showLigation = action === 'block_tubes';
+
+            return (
+                <svg viewBox="0 0 400 500" className="w-full h-full drop-shadow-2xl">
+                    
+                    {/* --- Anatomy --- */}
+                    {/* Uterus */}
+                    <path d="M 120 150 L 280 150 L 250 350 L 150 350 Z" fill="#fce7f3" stroke="#db2777" strokeWidth="3" />
+                    
+                    {/* Fallopian Tubes */}
+                    <path d="M 120 150 Q 50 100 50 150" fill="none" stroke="#ec4899" strokeWidth="8" strokeLinecap="round" />
+                    <path d="M 280 150 Q 350 100 350 150" fill="none" stroke="#ec4899" strokeWidth="8" strokeLinecap="round" />
+                    
+                    {/* Ovaries */}
+                    <ellipse cx="60" cy="180" rx="15" ry="10" fill="#fbcfe8" stroke="#be185d" />
+                    <ellipse cx="340" cy="180" rx="15" ry="10" fill="#fbcfe8" stroke="#be185d" />
+
+                    {/* Vagina */}
+                    <path d="M 170 380 L 170 480 L 230 480 L 230 380 Z" fill="#fbcfe8" stroke="#be185d" strokeWidth="2" />
+                    
+                    {/* Cervix */}
+                    <rect x="170" y="350" width="60" height="30" rx="5" fill="#f9a8d4" />
+
+                    {/* --- Methods Visuals --- */}
+                    
+                    {/* Condom Barrier */}
+                    {showCondom && (
+                        <motion.path 
+                            d="M 160 480 Q 200 460 240 480" 
+                            stroke="#38bdf8" strokeWidth="4" fill="none"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                        />
+                    )}
+
+                    {/* IUD */}
+                    {showIUD && (
+                        <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                            <path d="M 200 200 L 200 280" stroke="#fff" strokeWidth="3" /> {/* Stem */}
+                            <path d="M 180 200 L 220 200" stroke="#fff" strokeWidth="3" /> {/* Arms */}
+                            <circle cx="200" cy="280" r="2" fill="#fff" />
+                        </motion.g>
+                    )}
+
+                    {/* Tubal Ligation (X marks) */}
+                    {showLigation && (
+                        <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                            <path d="M 70 130 L 90 150 M 90 130 L 70 150" stroke="#ef4444" strokeWidth="3" />
+                            <path d="M 310 130 L 330 150 M 330 130 L 310 150" stroke="#ef4444" strokeWidth="3" />
+                        </motion.g>
+                    )}
+
+                    {/* --- Simulation Animations --- */}
+                    {isPlaying && (
+                        <>
+                            {/* Sperm Swarm */}
+                            {showSperm && [...Array(15)].map((_, i) => (
+                                <Sperm 
+                                    key={i} 
+                                    startX={180 + Math.random()*40} 
+                                    startY={480} 
+                                    delay={i * 0.1} 
+                                    blockage={action === 'barrier_vagina' ? 'condom' : action === 'block_tubes' ? 'tubal' : action === 'block_implantation' ? 'iud' : 'none'}
+                                />
+                            ))}
+
+                            {/* Egg Release (Ovulation) */}
+                            {showEgg && <Egg show={true} blockage={action} />}
+                            
+                            {/* Fertilization Flash (If successful) */}
+                            {action === 'normal' && (
+                                <motion.circle 
+                                    cx="100" cy="100" r="30" fill="#facc15" opacity="0"
+                                    animate={{ opacity: [0, 0.5, 0] }}
+                                    transition={{ delay: 3.5, duration: 0.5 }}
+                                />
+                            )}
+                        </>
+                    )}
+
+                    {/* Labels */}
+                    <text x="360" y="180" fontSize="10" fill="#94a3b8">Ovary</text>
+                    <text x="200" y="250" fontSize="10" fill="#94a3b8" textAnchor="middle">Uterus</text>
+
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedMethod, setSelectedMethod] = useState('none');
+            const [isPlaying, setIsPlaying] = useState(false);
+
+            const currentData = METHODS[selectedMethod];
+
+            const handlePlay = () => {
+                setIsPlaying(false);
+                setTimeout(() => setIsPlaying(true), 100);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="shield-check" className="text-emerald-400" /> Contraception
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Birth Control Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Method Selector */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Method</label>
+                                <div className="flex flex-col gap-2">
+                                    {Object.values(METHODS).map(m => (
+                                        <button 
+                                            key={m.id}
+                                            onClick={() => { setSelectedMethod(m.id); setIsPlaying(false); }}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between group
+                                                ${selectedMethod === m.id 
+                                                    ? 'bg-slate-800 border-blue-500 text-white shadow-lg' 
+                                                    : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <span className="text-sm font-bold">{m.name}</span>
+                                            {selectedMethod === m.id && <Icon name="check-circle" size={16} className="text-blue-400"/>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Info Card */}
+                            <AnimatePresence mode='wait'>
+                                <motion.div 
+                                    key={selectedMethod}
+                                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                                    className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg"
+                                >
+                                    <div className="flex justify-between items-start mb-2">
+                                        <span className="text-xs font-bold text-blue-400 uppercase border border-blue-500/30 px-2 py-0.5 rounded bg-blue-900/20">
+                                            {currentData.type}
+                                        </span>
+                                        <div className="flex items-center gap-1 text-emerald-400 text-xs font-bold">
+                                            <Icon name="shield" size={12}/> {currentData.effectiveness}
+                                        </div>
+                                    </div>
+                                    
+                                    <p className="text-sm text-white font-bold mb-2">Mechanism:</p>
+                                    <p className="text-xs text-slate-300 leading-relaxed mb-4">
+                                        {currentData.desc}
+                                    </p>
+
+                                    <div className={`flex items-center gap-2 text-xs font-bold p-2 rounded border
+                                        ${currentData.preventsSTI ? 'bg-green-900/20 border-green-500/30 text-green-400' : 'bg-red-900/20 border-red-500/30 text-red-400'}
+                                    `}>
+                                        {currentData.preventsSTI ? <Icon name="check" size={14}/> : <Icon name="x" size={14}/>}
+                                        {currentData.preventsSTI ? 'Protects against STIs' : 'No STI Protection'}
+                                    </div>
+                                </motion.div>
+                            </AnimatePresence>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-8">
+                            
+                            <div className="w-full h-full max-w-lg relative">
+                                <AnatomySVG method={selectedMethod} isPlaying={isPlaying} />
+                                
+                                {/* Simulation Overlay Text */}
+                                {isPlaying && (
+                                    <div className="absolute top-0 left-0 right-0 text-center">
+                                        <span className="text-xs font-mono text-blue-300 bg-black/60 px-3 py-1 rounded-full border border-blue-500/30">
+                                            {currentData.action === 'normal' ? 'Fertilization Possible' : 
+                                             currentData.action === 'barrier_vagina' ? 'Sperm Blocked' :
+                                             currentData.action === 'no_ovulation' ? 'No Egg Released' :
+                                             currentData.action === 'block_tubes' ? 'Path Blocked' :
+                                             currentData.action === 'no_sperm' ? 'No Sperm Ejaculated' :
+                                             'Implantation Prevented'}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <button 
+                                onClick={handlePlay}
+                                className="absolute bottom-8 px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2"
+                            >
+                                <Icon name="play" size={18} fill="currentColor"/> Simulate Process
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
