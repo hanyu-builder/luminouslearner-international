@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microscope Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Microscope Viewport Mask */
+        .microscope-mask {
+            mask-image: radial-gradient(circle, white 98%, transparent 100%);
+            -webkit-mask-image: radial-gradient(circle, white 98%, transparent 100%);
+        }
+
+        /* Sample Slide Animation */
+        .sample-slide {
+            transition: transform 0.3s ease-out;
+        }
+
+        /* Knob Rotation */
+        .knob {
+            transition: transform 0.1s linear;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA: Samples ---
+        const SAMPLES = [
+            { 
+                id: 'onion', name: 'Onion Epidermis', 
+                color: '#e9d5ff', // Light purple
+                features: 'Cell wall, Nucleus, Cytoplasm',
+                // Simplified SVG path for cells
+                pattern: (scale) => (
+                    <pattern id="onionPattern" x="0" y="0" width={100*scale} height={60*scale} patternUnits="userSpaceOnUse">
+                        <rect width={100*scale} height={60*scale} fill="#f3e8ff" stroke="#a855f7" strokeWidth={2*scale} />
+                        <circle cx={50*scale} cy={30*scale} r={5*scale} fill="#6b21a8" opacity="0.6" />
+                    </pattern>
+                )
+            },
+            { 
+                id: 'letter_e', name: 'Letter "e"', 
+                color: '#ffffff',
+                features: 'Inverted image, Ink texture',
+                // Text based
+                isText: true,
+                content: 'e'
+            },
+            { 
+                id: 'blood', name: 'Human Blood Smear', 
+                color: '#fecaca', // Light red
+                features: 'Red blood cells (no nucleus), White blood cells',
+                // Random circles pattern
+                pattern: (scale) => (
+                    <pattern id="bloodPattern" x="0" y="0" width={60*scale} height={60*scale} patternUnits="userSpaceOnUse">
+                        <rect width="100%" height="100%" fill="#fff1f2" />
+                        <circle cx={30*scale} cy={30*scale} r={15*scale} fill="#fca5a5" stroke="#f87171" strokeWidth={1*scale} />
+                        {/* Occasional WBC */}
+                         <circle cx={10*scale} cy={10*scale} r={18*scale} fill="#e0e7ff" stroke="#818cf8" strokeWidth={1*scale} opacity="0.2" />
+                    </pattern>
+                )
+            }
+        ];
+
+        const OBJECTIVES = [
+            { mag: 4, label: '4x (Scanning)', color: 'bg-red-500', ring: 'border-red-500' },
+            { mag: 10, label: '10x (Low Power)', color: 'bg-yellow-500', ring: 'border-yellow-500' },
+            { mag: 40, label: '40x (High Power)', color: 'bg-blue-500', ring: 'border-blue-500' },
+            { mag: 100, label: '100x (Oil)', color: 'bg-white', ring: 'border-white' }
+        ];
+
+        const App = () => {
+            // State
+            const [currentSample, setCurrentSample] = useState(SAMPLES[1]); // Default 'e'
+            const [objectiveIdx, setObjectiveIdx] = useState(0); // 0 to 3
+            const [stageZ, setStageZ] = useState(0); // 0 is perfect focus. Range -100 to 100
+            const [lightIntensity, setLightIntensity] = useState(50); // 0 to 100
+            const [iris, setIris] = useState(50); // 0 to 100 (Aperture)
+            const [xPos, setXPos] = useState(0);
+            const [yPos, setYPos] = useState(0);
+
+            // Derived values
+            const currentObj = OBJECTIVES[objectiveIdx];
+            const totalMag = currentObj.mag * 10; // Eyepiece is 10x
+            
+            // Focus Logic:
+            const blurFactor = (currentObj.mag / 4); // 4x -> 1, 100x -> 25
+            const blurAmount = Math.abs(stageZ) * 0.2 * blurFactor;
+            const isFocused = blurAmount < 2;
+
+            // Brightness Logic:
+            const magDimming = 1 - (objectiveIdx * 0.2); // 1.0, 0.8, 0.6, 0.4
+            const effectiveBrightness = (lightIntensity / 100) * (iris / 100) * magDimming * 2; // Factor to boost
+            const brightnessFilter = `brightness(${effectiveBrightness})`;
+
+            // Viewport Transform
+            const visualScale = currentObj.mag / 4; 
+
+            // Handlers
+            const handleCoarse = (dir) => {
+                setStageZ(prev => Math.max(-100, Math.min(100, prev + (dir * 5))));
+            };
+            const handleFine = (dir) => {
+                setStageZ(prev => Math.max(-100, Math.min(100, prev + (dir * 0.5))));
+            };
+
+            const handleMove = (dx, dy) => {
+                // Movement speed inversely proportional to mag
+                const speed = 10 / visualScale; 
+                setXPos(prev => prev + dx * speed);
+                setYPos(prev => prev + dy * speed);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar Controls */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-20 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800 shrink-0">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="microscope" className="text-cyan-400" /> Microscope Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Magnification & Resolution</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar pb-20">
+                            
+                            {/* 1. Select Sample */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Sample</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {SAMPLES.map(s => (
+                                        <button 
+                                            key={s.id}
+                                            onClick={() => { setCurrentSample(s); setXPos(0); setYPos(0); }}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3
+                                                ${currentSample.id === s.id ? 'bg-slate-800 border-cyan-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <div className="w-3 h-3 rounded-full" style={{background: s.color}}></div>
+                                            <span className="text-sm font-bold">{s.name}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* 2. Objectives */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Objective Lens</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {OBJECTIVES.map((obj, i) => (
+                                        <button 
+                                            key={obj.mag}
+                                            onClick={() => setObjectiveIdx(i)}
+                                            className={`aspect-square rounded-xl border-2 flex flex-col items-center justify-center transition-all
+                                                ${objectiveIdx === i ? `${obj.ring} bg-slate-800 text-white scale-105 shadow-lg` : 'border-slate-700 text-slate-500 hover:border-slate-500'}
+                                            `}
+                                        >
+                                            <div className={`w-6 h-6 rounded-full ${obj.color} mb-1 opacity-80`}></div>
+                                            <span className="text-[10px] font-bold">{obj.mag}x</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="text-center text-xs font-mono text-cyan-400 mt-1">
+                                    Total Mag: {totalMag}x
+                                </div>
+                            </div>
+
+                            {/* 3. Light & Iris */}
+                            <div className="space-y-4 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-400 font-bold">Light Source</span>
+                                        <span className="font-mono">{lightIntensity}%</span>
+                                    </div>
+                                    <input type="range" min="0" max="100" value={lightIntensity} onChange={(e) => setLightIntensity(parseInt(e.target.value))} className="w-full accent-yellow-400" />
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-400 font-bold">Iris Diaphragm</span>
+                                        <span className="font-mono">{iris}%</span>
+                                    </div>
+                                    <input type="range" min="0" max="100" value={iris} onChange={(e) => setIris(parseInt(e.target.value))} className="w-full accent-slate-400" />
+                                </div>
+                            </div>
+
+                            {/* 4. Focus Controls (MOVED HERE) */}
+                            <div className="space-y-4 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block text-center">Focus Adjustment</label>
+                                
+                                <div className="flex justify-center gap-6 items-start">
+                                    {/* Coarse */}
+                                    <div className="flex flex-col items-center gap-1">
+                                        <button onClick={() => handleCoarse(-1)} className="p-3 bg-slate-700 rounded-t-lg hover:bg-slate-600 active:bg-slate-500 transition-colors border-b border-slate-800 w-full flex justify-center"><Icon name="chevron-up" size={20}/></button>
+                                        <div className="w-20 h-12 bg-gradient-to-b from-slate-700 to-slate-800 border-x-4 border-slate-600 flex items-center justify-center shadow-inner">
+                                            <span className="text-[10px] font-bold text-slate-300">COARSE</span>
+                                        </div>
+                                        <button onClick={() => handleCoarse(1)} className="p-3 bg-slate-700 rounded-b-lg hover:bg-slate-600 active:bg-slate-500 transition-colors border-t border-slate-800 w-full flex justify-center"><Icon name="chevron-down" size={20}/></button>
+                                    </div>
+
+                                    {/* Fine */}
+                                    <div className="flex flex-col items-center gap-1 mt-2">
+                                        <button onClick={() => handleFine(-1)} className="p-2 bg-slate-700 rounded-t-lg hover:bg-slate-600 active:bg-slate-500 transition-colors border-b border-slate-800 w-full flex justify-center"><Icon name="chevron-up" size={14}/></button>
+                                        <div className="w-14 h-8 bg-gradient-to-b from-slate-700 to-slate-800 border-x-2 border-slate-600 flex items-center justify-center shadow-inner">
+                                            <span className="text-[8px] font-bold text-slate-300">FINE</span>
+                                        </div>
+                                        <button onClick={() => handleFine(1)} className="p-2 bg-slate-700 rounded-b-lg hover:bg-slate-600 active:bg-slate-500 transition-colors border-t border-slate-800 w-full flex justify-center"><Icon name="chevron-down" size={14}/></button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 5. Stage XY Controls (MOVED HERE) */}
+                            <div className="space-y-4 bg-slate-800/50 p-4 rounded-xl border border-slate-700 flex flex-col items-center">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block">Stage Position</label>
+                                <div className="grid grid-cols-3 gap-1">
+                                    <div></div>
+                                    <button onClick={() => handleMove(0, -5)} className="p-2 bg-slate-700 rounded hover:bg-slate-600 active:bg-slate-500"><Icon name="arrow-up" size={16}/></button>
+                                    <div></div>
+                                    <button onClick={() => handleMove(-5, 0)} className="p-2 bg-slate-700 rounded hover:bg-slate-600 active:bg-slate-500"><Icon name="arrow-left" size={16}/></button>
+                                    <div className="w-8 h-8 bg-slate-900 rounded flex items-center justify-center border border-slate-700"><Icon name="move" size={14} className="text-slate-500"/></div>
+                                    <button onClick={() => handleMove(5, 0)} className="p-2 bg-slate-700 rounded hover:bg-slate-600 active:bg-slate-500"><Icon name="arrow-right" size={16}/></button>
+                                    <div></div>
+                                    <button onClick={() => handleMove(0, 5)} className="p-2 bg-slate-700 rounded hover:bg-slate-600 active:bg-slate-500"><Icon name="arrow-down" size={16}/></button>
+                                    <div></div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col items-center justify-center p-4 overflow-hidden">
+                        
+                        {/* Viewport Container */}
+                        <div className="relative w-[500px] h-[500px] rounded-full border-8 border-slate-800 shadow-2xl bg-black overflow-hidden microscope-mask flex items-center justify-center cursor-move">
+                            
+                            {/* The "Slide" Content */}
+                            <div 
+                                className="w-full h-full relative sample-slide"
+                                style={{ 
+                                    filter: `blur(${blurAmount}px) ${brightnessFilter}`,
+                                    opacity: effectiveBrightness > 0.1 ? 1 : 0.2 // Fade if too dark
+                                }}
+                            >
+                                {/* Render Pattern based on sample type */}
+                                <svg width="100%" height="100%" viewBox="0 0 500 500" className="absolute inset-0">
+                                    <defs>
+                                        {/* Inject Pattern Def if available */}
+                                        {!currentSample.isText && currentSample.pattern(1)}
+                                    </defs>
+                                    
+                                    {/* Background Fill */}
+                                    <rect x="0" y="0" width="500" height="500" fill="#fff" />
+
+                                    {/* Content Group transformed by Stage Pos */}
+                                    <g transform={`translate(${xPos}, ${yPos}) scale(${visualScale})`}>
+                                        {/* Infinite Grid of Pattern */}
+                                        {!currentSample.isText ? (
+                                            <rect x="-2500" y="-2500" width="5000" height="5000" fill={`url(#${currentSample.id === 'onion' ? 'onionPattern' : 'bloodPattern'})`} />
+                                        ) : (
+                                            // Letter 'e' (Inverted)
+                                            <text x="250" y="250" textAnchor="middle" dominantBaseline="middle" fontSize="40" fontFamily="serif" transform="rotate(180 250 250) scale(1, 1)">e</text>
+                                        )}
+                                    </g>
+
+                                    {/* Micrometer Ruler (Overlay) */}
+                                    <g opacity="0.5">
+                                        <line x1="50" y1="250" x2="450" y2="250" stroke="black" strokeWidth="2" />
+                                        {[...Array(41)].map((_, i) => (
+                                            <line key={i} x1={50 + i * 10} y1="245" x2={50 + i * 10} y2="255" stroke="black" strokeWidth={i % 5 === 0 ? 2 : 1} />
+                                        ))}
+                                    </g>
+                                </svg>
+                            </div>
+
+                            {/* Dark Overlay if light is off */}
+                            <div className="absolute inset-0 bg-black pointer-events-none transition-opacity duration-300" style={{ opacity: 1 - Math.min(1, effectiveBrightness) }}></div>
+
+                        </div>
+
+                        {/* Status Overlay (Moved to be centered or cleaner) */}
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur px-6 py-2 rounded-full border border-white/10 text-xs font-mono text-white flex gap-6 shadow-lg">
+                            <div>Magnification: <span className="text-cyan-400 font-bold">{totalMag}x</span></div>
+                            <div className="flex items-center gap-2">
+                                Focus: 
+                                <div className="w-20 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                    <div 
+                                        className={`h-full transition-colors duration-300 ${isFocused ? 'bg-emerald-500' : 'bg-red-500'}`} 
+                                        style={{ width: `${Math.max(0, 100 - blurAmount*10)}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
