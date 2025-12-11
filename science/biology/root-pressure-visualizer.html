@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Root Pressure Visualizer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Water Animation */
+        .water-flow { animation: flow 2s infinite linear; }
+        @keyframes flow { 
+            0% { stroke-dashoffset: 20; } 
+            100% { stroke-dashoffset: 0; } 
+        }
+
+        /* Ion Pulse */
+        .ion-pulse { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -6px; 
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CANVAS COMPONENT ---
+        const RootCanvas = ({ atpLevel, soilWater, isRunning }) => {
+            const canvasRef = useRef(null);
+            
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                // Simulation State
+                const particles = []; // Ions (Red) & Water (Blue)
+                
+                // Root Structures
+                const rootHairX = 50;
+                const cortexX = 200;
+                const endodermisX = 350;
+                const xylemX = 450;
+                const width = canvas.width;
+                const height = canvas.height;
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+
+                    // --- DRAW BACKGROUND STRUCTURES ---
+                    
+                    // Soil (Left)
+                    ctx.fillStyle = "#3f2e18"; // Dark brown soil
+                    ctx.fillRect(0, 0, rootHairX, height);
+                    
+                    // Root Hair Cell
+                    ctx.fillStyle = "#fef3c7"; // Pale yellow
+                    ctx.beginPath();
+                    ctx.moveTo(rootHairX, 50);
+                    ctx.lineTo(cortexX, 50); // Cell wall
+                    ctx.lineTo(cortexX, height - 50);
+                    ctx.lineTo(rootHairX, height - 50);
+                    // Hair extension
+                    ctx.lineTo(rootHairX - 40, height / 2 + 20);
+                    ctx.lineTo(rootHairX - 40, height / 2 - 20);
+                    ctx.lineTo(rootHairX, 50);
+                    ctx.fill();
+                    ctx.strokeStyle = "#d97706";
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Cortex Cells (Middle)
+                    ctx.fillStyle = "#dcfce7"; // Pale green
+                    ctx.fillRect(cortexX, 50, endodermisX - cortexX, height - 100);
+                    ctx.strokeRect(cortexX, 50, endodermisX - cortexX, height - 100);
+
+                    // Endodermis + Casparian Strip
+                    ctx.fillStyle = "#fcd34d"; // Yellowish
+                    ctx.fillRect(endodermisX, 50, xylemX - endodermisX, height - 100);
+                    ctx.strokeRect(endodermisX, 50, xylemX - endodermisX, height - 100);
+                    // Casparian Strip (Red wax)
+                    ctx.fillStyle = "#ef4444";
+                    ctx.fillRect(endodermisX + 10, 50, 10, 20); // Top strip
+                    ctx.fillRect(endodermisX + 10, height - 70, 10, 20); // Bottom strip
+
+                    // Xylem (Right) - The Pipe
+                    ctx.fillStyle = "#bae6fd"; // Water blue
+                    ctx.fillRect(xylemX, 0, width - xylemX, height); // Full height pipe
+                    ctx.strokeStyle = "#0ea5e9";
+                    ctx.lineWidth = 5;
+                    ctx.beginPath();
+                    ctx.moveTo(xylemX, 0); ctx.lineTo(xylemX, height);
+                    ctx.stroke();
+
+                    // Labels
+                    ctx.fillStyle = "#94a3b8";
+                    ctx.font = "10px monospace";
+                    ctx.fillText("Soil", 10, 30);
+                    ctx.fillText("Root Hair", 60, 40);
+                    ctx.fillText("Cortex", 220, 40);
+                    ctx.fillText("Endodermis", 360, 40);
+                    ctx.fillText("Xylem", 460, 30);
+
+                    // --- PARTICLE SYSTEM ---
+                    if (isRunning) {
+                        // Generate Ions based on ATP
+                        // Active Transport needs ATP to pump ions INTO root hair
+                        if (Math.random() < atpLevel * 0.05) {
+                            particles.push({
+                                x: 10, y: Math.random() * height,
+                                type: 'ion',
+                                vx: 2, vy: (Math.random()-0.5)*0.5,
+                                life: 300
+                            });
+                        }
+
+                        // Generate Water based on Soil Water + Osmotic Gradient
+                        // Water follows Ions. If lots of ions in root, water enters.
+                        // Simplified: Water probability linked to accumulated ions (simulated by ATP for flow visual)
+                        if (Math.random() < soilWater * 0.05 && atpLevel > 0.2) {
+                             particles.push({
+                                x: 10, y: Math.random() * height,
+                                type: 'water',
+                                vx: 1.5, vy: (Math.random()-0.5)*0.5,
+                                life: 400
+                            });
+                        }
+                    }
+
+                    // Update & Draw Particles
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        const p = particles[i];
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.life--;
+
+                        // Path logic
+                        // Ions: Active Transport at Hair -> Diffusion to Xylem -> Pumped into Xylem
+                        // Water: Osmosis follows Ions
+                        
+                        // Boundary Checks & Speed changes
+                        if (p.x > rootHairX && p.x < cortexX) { // Inside Root Hair
+                             p.vx = 1.5; // Slow down
+                        }
+                        if (p.x > endodermisX && p.x < xylemX) { // Endodermis (Active Pump to Xylem)
+                             if (p.type === 'ion' && atpLevel < 0.1) p.vx = 0; // Stop if no ATP at endodermis pump
+                             else p.vx = 2;
+                        }
+                        if (p.x > xylemX) { // Inside Xylem
+                             p.vx = 0;
+                             p.vy = -3; // Shoot UP (Root Pressure!)
+                        }
+
+                        // Draw
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.type === 'ion' ? 4 : 3, 0, Math.PI * 2);
+                        ctx.fillStyle = p.type === 'ion' ? '#ef4444' : '#3b82f6';
+                        ctx.fill();
+
+                        // Remove if out of bounds or dead
+                        if (p.y < 0 || p.life <= 0) {
+                            particles.splice(i, 1);
+                        }
+                    }
+                    
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [atpLevel, soilWater, isRunning]);
+
+            return <canvas ref={canvasRef} width={600} height={300} className="w-full h-full object-contain bg-slate-900/50 rounded-xl border border-slate-700" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [atp, setAtp] = useState(0.8); // 0-1
+            const [soilWater, setSoilWater] = useState(0.8); // 0-1
+            const [isRunning, setIsRunning] = useState(true);
+            
+            // Derived Pressure (0-100 kPa approx)
+            // Pressure = f(ATP, Water)
+            // Need ATP to create gradient, need Water to fill it.
+            const pressure = (atp * soilWater * 100).toFixed(1);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="arrow-up-circle" className="text-blue-400" /> Root Pressure
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Active Transport & Osmosis</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Controls */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">ATP Supply (Energy)</span>
+                                        <span className={`font-mono ${atp > 0.2 ? 'text-yellow-400' : 'text-red-400'}`}>{(atp * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="1" step="0.1"
+                                        value={atp} 
+                                        onChange={(e) => setAtp(parseFloat(e.target.value))}
+                                        className="w-full accent-yellow-500"
+                                    />
+                                    <div className="text-[10px] text-slate-500 mt-1">Required for active transport of minerals</div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Soil Moisture</span>
+                                        <span className="font-mono text-blue-400">{(soilWater * 100).toFixed(0)}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="1" step="0.1"
+                                        value={soilWater} 
+                                        onChange={(e) => setSoilWater(parseFloat(e.target.value))}
+                                        className="w-full accent-blue-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Gauge */}
+                            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col items-center">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-4">Xylem Root Pressure</div>
+                                <div className="relative w-32 h-32">
+                                    <svg viewBox="0 0 100 100" className="w-full h-full rotate-[135deg]">
+                                        <circle cx="50" cy="50" r="45" fill="none" stroke="#1e293b" strokeWidth="10" />
+                                        <circle 
+                                            cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" strokeWidth="10"
+                                            strokeDasharray="283"
+                                            strokeDashoffset={283 - (283 * 0.75 * (pressure / 100))} 
+                                            strokeLinecap="round"
+                                            className="transition-all duration-500"
+                                        />
+                                    </svg>
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                        <span className="text-2xl font-black text-white">{pressure}</span>
+                                        <span className="text-[10px] text-slate-400">kPa</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Play Control */}
+                            <button 
+                                onClick={() => setIsRunning(!isRunning)}
+                                className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all
+                                    ${isRunning ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}
+                                `}
+                            >
+                                <Icon name={isRunning ? "pause" : "play"} size={18} fill="currentColor"/> {isRunning ? 'Pause Simulation' : 'Start Simulation'}
+                            </button>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#0F172A] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Canvas Container */}
+                        <div className="flex-1 flex flex-col relative">
+                            <RootCanvas atpLevel={atp} soilWater={soilWater} isRunning={isRunning} />
+                            
+                            {/* Overlay Key */}
+                            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur px-4 py-2 rounded-lg border border-white/10 text-xs text-slate-300">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <div className="w-3 h-3 rounded-full bg-red-500"></div> Minerals (Active Transport)
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-blue-500"></div> Water (Osmosis)
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Logic Flow */}
+                        <div className="h-32 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex items-center justify-around">
+                            <div className={`text-center transition-opacity ${atp > 0 ? 'opacity-100' : 'opacity-30'}`}>
+                                <div className="w-10 h-10 rounded-full bg-yellow-900/50 text-yellow-400 flex items-center justify-center mx-auto mb-2 border border-yellow-500/30">
+                                    <Icon name="zap" size={20}/>
+                                </div>
+                                <div className="text-xs font-bold text-slate-300">1. Active Transport</div>
+                                <div className="text-[10px] text-slate-500">Ions pumped into root</div>
+                            </div>
+                            <Icon name="arrow-right" className="text-slate-600"/>
+                            
+                            <div className={`text-center transition-opacity ${atp > 0 ? 'opacity-100' : 'opacity-30'}`}>
+                                <div className="w-10 h-10 rounded-full bg-red-900/50 text-red-400 flex items-center justify-center mx-auto mb-2 border border-red-500/30">
+                                    <Icon name="arrow-down-circle" size={20}/>
+                                </div>
+                                <div className="text-xs font-bold text-slate-300">2. Low Water Potential</div>
+                                <div className="text-[10px] text-slate-500">Root becomes salty</div>
+                            </div>
+                            <Icon name="arrow-right" className="text-slate-600"/>
+
+                            <div className={`text-center transition-opacity ${atp > 0 && soilWater > 0 ? 'opacity-100' : 'opacity-30'}`}>
+                                <div className="w-10 h-10 rounded-full bg-blue-900/50 text-blue-400 flex items-center justify-center mx-auto mb-2 border border-blue-500/30">
+                                    <Icon name="droplets" size={20}/>
+                                </div>
+                                <div className="text-xs font-bold text-slate-300">3. Osmosis</div>
+                                <div className="text-[10px] text-slate-500">Water follows salt</div>
+                            </div>
+                            <Icon name="arrow-right" className="text-slate-600"/>
+
+                            <div className={`text-center transition-opacity ${pressure > 10 ? 'opacity-100' : 'opacity-30'}`}>
+                                <div className="w-10 h-10 rounded-full bg-emerald-900/50 text-emerald-400 flex items-center justify-center mx-auto mb-2 border border-emerald-500/30">
+                                    <Icon name="arrow-up" size={20}/>
+                                </div>
+                                <div className="text-xs font-bold text-slate-300">4. Root Pressure</div>
+                                <div className="text-[10px] text-slate-500">Push water up xylem</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
