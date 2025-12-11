@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bioaccumulation Calculator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Toxin Glow */
+        .toxic-glow {
+            animation: toxic-pulse 2s infinite;
+        }
+        @keyframes toxic-pulse {
+            0% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.3); border-color: #ef4444; }
+            50% { box-shadow: 0 0 15px rgba(239, 68, 68, 0.6); border-color: #f87171; }
+            100% { box-shadow: 0 0 5px rgba(239, 68, 68, 0.3); border-color: #ef4444; }
+        }
+        
+        /* Flow Particles */
+        .flow-up {
+            animation: flowUp 1s linear infinite;
+        }
+        @keyframes flowUp {
+            from { transform: translateY(5px); opacity: 0; }
+            to { transform: translateY(-15px); opacity: 1; }
+        }
+        
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA STRUCTURE ---
+        const LEVELS = [
+            { id: 'water', name: 'Water', icon: 'droplets', type: 'Environment' },
+            { id: 'plankton', name: 'Plankton', icon: 'snowflake', type: 'Producer', intakeMultiplier: 1 }, // Absorbs direct
+            { id: 'small_fish', name: 'Small Fish', icon: 'fish', type: 'Primary Consumer', intakeMultiplier: 100 }, // Eats 100 plankton
+            { id: 'big_fish', name: 'Large Fish', icon: 'fish-off', type: 'Secondary Consumer', intakeMultiplier: 50 }, // Eats 50 small fish
+            { id: 'eagle', name: 'Eagle', icon: 'bird', type: 'Top Predator', intakeMultiplier: 10 } // Eats 10 big fish
+        ];
+
+        // --- COMPONENTS ---
+
+        const OrganismCard = ({ data, levelIndex, concentration, prevConcentration, multiplier }) => {
+            // Calculate visual toxicity (0 to 1)
+            const toxicityVisual = Math.min(1, Math.log10(concentration + 1) / 6); 
+            const isToxic = concentration > 0;
+
+            return (
+                <motion.div 
+                    className="relative flex flex-col items-center z-10"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: levelIndex * 0.1 }}
+                >
+                    {/* Card - Rectangular Layout */}
+                    <div 
+                        className={`w-72 px-4 py-3 rounded-xl border bg-slate-800 relative overflow-hidden transition-all duration-500 flex items-center justify-between shadow-lg ${isToxic ? 'toxic-glow' : ''}`}
+                        style={{ borderColor: isToxic ? '#ef4444' : '#334155' }}
+                    >
+                        {/* Toxic Fill Background */}
+                        <div 
+                            className="absolute top-0 bottom-0 left-0 bg-red-600/20 transition-all duration-500"
+                            style={{ width: `${toxicityVisual * 100}%` }}
+                        ></div>
+
+                        {/* Left: Icon & Name */}
+                        <div className="relative z-10 flex items-center gap-3 flex-1 min-w-0">
+                            <div className={`p-2 rounded-full shrink-0 ${isToxic ? 'bg-red-500/20 text-red-400' : 'bg-slate-700 text-slate-400'}`}>
+                                <Icon name={data.icon} size={20} />
+                            </div>
+                            <div className="min-w-0">
+                                <div className="text-sm font-bold text-white truncate">{data.name}</div>
+                                <div className="text-[10px] text-slate-400 truncate">{data.type}</div>
+                            </div>
+                        </div>
+
+                        {/* Right: Concentration */}
+                        <div className="relative z-10 text-right pl-2">
+                            <div className="flex flex-col items-end">
+                                <span className={`font-mono font-black text-sm ${isToxic ? 'text-red-400' : 'text-slate-500'}`}>
+                                    {concentration < 1 ? concentration.toFixed(4) : concentration.toLocaleString()} 
+                                </span>
+                                <span className="text-[10px] text-slate-500">ppm</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Connector Line (Visually Below) */}
+                    {levelIndex > 0 && (
+                        <div className="absolute top-full h-6 w-0.5 bg-slate-700 flex flex-col items-center justify-center">
+                            <div className="text-[10px] text-slate-300 bg-slate-900 px-2 py-0.5 border border-slate-700 rounded-full z-10 font-mono font-bold shadow-sm">
+                                × {multiplier}
+                            </div>
+                            {isToxic && (
+                                <div className="absolute w-full h-full flex flex-col items-center justify-center overflow-hidden pointer-events-none">
+                                    <div className="w-1 h-1 bg-red-500/80 rounded-full flow-up"></div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </motion.div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [startPPM, setStartPPM] = useState(0.0001); // Initial concentration in water
+            
+            // Multipliers
+            const [multipliers, setMultipliers] = useState({
+                water_to_plankton: 500,
+                plankton_to_small: 50,
+                small_to_big: 20,
+                big_to_eagle: 10
+            });
+
+            // Calculate Concentration Chain
+            const data = useMemo(() => {
+                const water = startPPM;
+                const plankton = water * multipliers.water_to_plankton;
+                const small = plankton * multipliers.plankton_to_small;
+                const big = small * multipliers.small_to_big;
+                const eagle = big * multipliers.big_to_eagle;
+
+                return [
+                    { ...LEVELS[0], val: water, prev: 0, mult: 0 },
+                    { ...LEVELS[1], val: plankton, prev: water, mult: multipliers.water_to_plankton },
+                    { ...LEVELS[2], val: small, prev: plankton, mult: multipliers.plankton_to_small },
+                    { ...LEVELS[3], val: big, prev: small, mult: multipliers.small_to_big },
+                    { ...LEVELS[4], val: eagle, prev: big, mult: multipliers.big_to_eagle }
+                ];
+            }, [startPPM, multipliers]);
+
+            const maxConcentration = data[4].val;
+            const totalMagnification = maxConcentration / startPPM;
+
+            // Chart Data
+            const chartData = data.map(d => ({
+                name: d.name.split(' ')[0],
+                ppm: d.val,
+                fill: d.val > 100 ? '#ef4444' : '#3b82f6'
+            }));
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="skull" className="text-red-500" /> Bioaccumulation
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Toxin Magnification Calculator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Input: Water PPM */}
+                            <div className="space-y-4">
+                                <div className="bg-slate-800 p-4 rounded-xl border border-blue-500/30">
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-blue-400">1. Water Contamination</span>
+                                        <span className="font-mono text-white">{startPPM.toFixed(5)} ppm</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0.00001" max="0.001" step="0.00001"
+                                        value={startPPM} 
+                                        onChange={(e) => setStartPPM(parseFloat(e.target.value))}
+                                        className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg cursor-pointer"
+                                    />
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        Small amount in water (e.g. DDT run-off)
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Input: Consumption Rates */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">2. Food Chain Dynamics</label>
+                                
+                                <div className="space-y-3">
+                                    <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span>Plankton Absorption</span>
+                                            <span className="text-emerald-400">x{multipliers.water_to_plankton}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="100" max="1000" step="50"
+                                            value={multipliers.water_to_plankton}
+                                            onChange={(e) => setMultipliers({...multipliers, water_to_plankton: parseInt(e.target.value)})}
+                                            className="w-full accent-emerald-500 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                    </div>
+
+                                    <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span>Small Fish Eats Plankton</span>
+                                            <span className="text-yellow-400">x{multipliers.plankton_to_small}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="10" max="100" step="5"
+                                            value={multipliers.plankton_to_small}
+                                            onChange={(e) => setMultipliers({...multipliers, plankton_to_small: parseInt(e.target.value)})}
+                                            className="w-full accent-yellow-500 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                    </div>
+
+                                    <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span>Eagle Eats Fish</span>
+                                            <span className="text-red-400">x{multipliers.big_to_eagle}</span>
+                                        </div>
+                                        <input 
+                                            type="range" min="1" max="20" step="1"
+                                            value={multipliers.big_to_eagle}
+                                            onChange={(e) => setMultipliers({...multipliers, big_to_eagle: parseInt(e.target.value)})}
+                                            className="w-full accent-red-500 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Summary Stats */}
+                            <div className="bg-red-900/20 p-4 rounded-xl border border-red-500/30">
+                                <div className="text-xs font-bold text-red-400 uppercase mb-2 flex items-center gap-2">
+                                    <Icon name="trending-up" size={14}/> Total Magnification
+                                </div>
+                                <div className="text-3xl font-black text-white mb-1">
+                                    {totalMagnification.toLocaleString()}x
+                                </div>
+                                <p className="text-xs text-slate-400">
+                                    The concentration increased {totalMagnification.toLocaleString()} times from water to eagle.
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Food Chain Stack */}
+                        {/* Changed layout to reduce height and improve spacing */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-y-auto overflow-x-hidden p-4 flex flex-col-reverse items-center gap-6 custom-scrollbar">
+                            {data.map((level, i) => (
+                                <OrganismCard 
+                                    key={level.id} 
+                                    data={level} 
+                                    levelIndex={i} 
+                                    concentration={level.val}
+                                    prevConcentration={level.prev}
+                                    multiplier={level.mult}
+                                />
+                            ))}
+                            {/* Spacer for bottom */}
+                            <div className="h-2 w-full shrink-0"></div>
+                        </div>
+
+                        {/* Exponential Graph */}
+                        {/* Increased height slightly for text clarity */}
+                        <div className="h-64 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col relative shrink-0">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Biomagnification Curve (Log Scale)
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={chartData} margin={{top: 20, right: 30, left: 10, bottom: 20}}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                                        <XAxis 
+                                            dataKey="name" 
+                                            stroke="#64748b" 
+                                            fontSize={11} 
+                                            tickLine={false}
+                                            axisLine={{ stroke: '#334155' }}
+                                        />
+                                        <YAxis 
+                                            stroke="#64748b" 
+                                            fontSize={10} 
+                                            label={{ value: 'PPM (Log)', angle: -90, position: 'insideLeft', fill: '#64748b', offset: 10 }} 
+                                            scale="log" 
+                                            domain={['auto', 'auto']} 
+                                            allowDataOverflow 
+                                            width={40}
+                                        />
+                                        <Tooltip 
+                                            cursor={{fill: 'rgba(255,255,255,0.05)'}}
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px', borderRadius: '8px' }}
+                                            itemStyle={{ color: '#fff' }}
+                                            formatter={(val) => `${val.toLocaleString()} ppm`}
+                                        />
+                                        <Bar dataKey="ppm" radius={[4, 4, 0, 0]} barSize={40}>
+                                            {chartData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={index === 4 ? '#ef4444' : index === 0 ? '#3b82f6' : '#facc15'} />
+                                            ))}
+                                        </Bar>
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
