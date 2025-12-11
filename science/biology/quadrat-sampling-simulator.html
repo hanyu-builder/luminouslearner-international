@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quadrat Sampling Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Field Grid */
+        .field-grid {
+            background-image: 
+                linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.1) 1px, transparent 1px);
+            background-size: 10% 10%; /* 10x10 grid */
+        }
+
+        /* Organism Animation */
+        .plant-pop { animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes popIn { from { transform: scale(0); } to { transform: scale(1); } }
+
+        /* Quadrat Animation */
+        .quadrat-drop { animation: drop 0.4s ease-out; border: 2px solid #fbbf24; background: rgba(251, 191, 36, 0.2); }
+        @keyframes drop { 
+            0% { transform: scale(3); opacity: 0; } 
+            100% { transform: scale(1); opacity: 1; } 
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONFIG ---
+        const FIELD_SIZE = 10; // 10m x 10m
+        const QUADRAT_SIZE = 1; // 1m x 1m
+        const SCALE = 50; // pixels per meter
+
+        const SPECIES = {
+            dandelion: { id: 'dandelion', name: 'Dandelion', icon: 'flower', color: '#facc15' },
+            plantain: { id: 'plantain', name: 'Plantain', icon: 'sprout', color: '#4ade80' },
+            daisy: { id: 'daisy', name: 'Daisy', icon: 'asterisk', color: '#f472b6' }
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [targetSpecies, setTargetSpecies] = useState('dandelion');
+            const [populationSize, setPopulationSize] = useState(50); // Actual total
+            const [plants, setPlants] = useState([]);
+            const [quadrats, setQuadrats] = useState([]); // { x, y, count }
+            const [showActual, setShowActual] = useState(false);
+
+            // Initialize Field
+            useEffect(() => {
+                generateField();
+            }, [targetSpecies, populationSize]);
+
+            const generateField = () => {
+                const newPlants = [];
+                for(let i=0; i<populationSize; i++) {
+                    newPlants.push({
+                        id: i,
+                        x: Math.random() * FIELD_SIZE,
+                        y: Math.random() * FIELD_SIZE
+                    });
+                }
+                setPlants(newPlants);
+                setQuadrats([]);
+            };
+
+            // Throw Quadrat Logic
+            const throwQuadrat = () => {
+                const qX = Math.random() * (FIELD_SIZE - QUADRAT_SIZE);
+                const qY = Math.random() * (FIELD_SIZE - QUADRAT_SIZE);
+                
+                // Count plants inside
+                // Plant center must be inside rect
+                const count = plants.filter(p => 
+                    p.x >= qX && p.x <= qX + QUADRAT_SIZE &&
+                    p.y >= qY && p.y <= qY + QUADRAT_SIZE
+                ).length;
+
+                setQuadrats(prev => [...prev, { x: qX, y: qY, count, id: Date.now() }]);
+            };
+
+            // Statistics
+            const totalSampledCount = quadrats.reduce((acc, q) => acc + q.count, 0);
+            const numSamples = quadrats.length;
+            const avgDensity = numSamples > 0 ? totalSampledCount / numSamples : 0; // plants per m^2
+            const estimatedTotal = avgDensity * (FIELD_SIZE * FIELD_SIZE);
+            const errorPercent = populationSize > 0 ? Math.abs((estimatedTotal - populationSize) / populationSize) * 100 : 0;
+
+            // Chart Data (Accuracy over samples)
+            // Re-calculate estimation history
+            const chartData = useMemo(() => {
+                let cumulativeCount = 0;
+                return quadrats.map((q, i) => {
+                    cumulativeCount += q.count;
+                    const currentAvg = cumulativeCount / (i + 1);
+                    const currentEst = currentAvg * (FIELD_SIZE * FIELD_SIZE);
+                    return {
+                        sample: i + 1,
+                        estimate: currentEst,
+                        actual: populationSize
+                    };
+                });
+            }, [quadrats, populationSize]);
+
+            const currentInfo = SPECIES[targetSpecies];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="grid" className="text-yellow-400" /> Sampling Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Quadrat Method Calculator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Setup */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Ecosystem Setup</label>
+                                
+                                <div className="grid grid-cols-3 gap-2">
+                                    {Object.values(SPECIES).map(s => (
+                                        <button 
+                                            key={s.id}
+                                            onClick={() => setTargetSpecies(s.id)}
+                                            className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all
+                                                ${targetSpecies === s.id ? `bg-slate-800 border-[${s.color}] text-white` : 'bg-slate-900 border-slate-700 text-slate-500'}
+                                            `}
+                                            style={targetSpecies === s.id ? {borderColor: s.color} : {}}
+                                        >
+                                            <Icon name={s.icon} size={20} style={{color: s.color}}/>
+                                            <span className="text-[10px] font-bold">{s.name.split(' (')[0]}</span>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400">True Population</span>
+                                        <span className="font-mono text-white">{populationSize}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="10" max="200" step="10"
+                                        value={populationSize}
+                                        onChange={(e) => setPopulationSize(parseInt(e.target.value))}
+                                        className="w-full accent-emerald-500"
+                                    />
+                                </div>
+
+                                <button 
+                                    onClick={generateField}
+                                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-xs font-bold text-slate-300 flex items-center justify-center gap-2 transition-all"
+                                >
+                                    <Icon name="refresh-cw" size={14}/> Reset Field
+                                </button>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="pt-4 border-t border-slate-800">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-3 block">Sampling</label>
+                                <button 
+                                    onClick={throwQuadrat}
+                                    className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-95"
+                                >
+                                    <Icon name="plus-square" size={20}/> Throw Quadrat (1m²)
+                                </button>
+                                <div className="mt-2 flex justify-between text-[10px] text-slate-500">
+                                    <span>Quadrat Size: 1m x 1m</span>
+                                    <span>Field Size: 10m x 10m</span>
+                                </div>
+                            </div>
+
+                            {/* Results */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Samples Taken</span>
+                                    <span className="text-lg font-mono font-bold text-white">{numSamples}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Average Density</span>
+                                    <span className="text-lg font-mono font-bold text-blue-400">{avgDensity.toFixed(2)} <span className="text-xs text-slate-500">/ m²</span></span>
+                                </div>
+                                <div className="h-px bg-slate-700 my-2"></div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Estimated Total</span>
+                                    <span className="text-2xl font-mono font-black text-emerald-400">{estimatedTotal.toFixed(0)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-400">Accuracy Error</span>
+                                    <span className={`text-xs font-bold ${errorPercent < 10 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                        {errorPercent.toFixed(1)}%
+                                    </span>
+                                </div>
+                                <div className="flex justify-between items-center pt-2">
+                                    <span className="text-xs text-slate-400">Show True Count?</span>
+                                    <button onClick={() => setShowActual(!showActual)} className="text-xs text-blue-400 hover:text-blue-300 font-bold">
+                                        {showActual ? 'Hide' : 'Reveal'}
+                                    </button>
+                                </div>
+                                {showActual && (
+                                    <div className="text-center text-xs text-slate-500 bg-black/20 rounded py-1">
+                                        Actual: {populationSize}
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* The Field */}
+                        <div className="flex-1 bg-[#1e293b] rounded-3xl border border-slate-700 shadow-xl relative overflow-hidden flex items-center justify-center p-4">
+                            
+                            {/* 10m x 10m Grid Visual representation */}
+                            <div 
+                                className="relative bg-[#0f172a] border-2 border-slate-600 field-grid shadow-2xl"
+                                style={{ width: FIELD_SIZE * SCALE, height: FIELD_SIZE * SCALE }}
+                            >
+                                {/* Organisms */}
+                                {plants.map(p => (
+                                    <div 
+                                        key={p.id}
+                                        className="absolute plant-pop flex items-center justify-center pointer-events-none"
+                                        style={{ 
+                                            left: p.x * SCALE, 
+                                            top: p.y * SCALE,
+                                            width: 20, height: 20,
+                                            marginLeft: -10, marginTop: -10,
+                                            color: currentInfo.color
+                                        }}
+                                    >
+                                        <Icon name={currentInfo.icon} size={16} strokeWidth={2.5} />
+                                    </div>
+                                ))}
+
+                                {/* Quadrats */}
+                                {quadrats.map((q, i) => (
+                                    <div 
+                                        key={q.id}
+                                        className="absolute quadrat-drop flex items-center justify-center"
+                                        style={{
+                                            left: q.x * SCALE,
+                                            top: q.y * SCALE,
+                                            width: QUADRAT_SIZE * SCALE,
+                                            height: QUADRAT_SIZE * SCALE
+                                        }}
+                                    >
+                                        <span className="text-[10px] font-bold text-yellow-100 bg-black/50 px-1 rounded">{i+1}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Axes Labels */}
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs text-slate-500 font-mono">10 Meters</div>
+                            <div className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-mono -rotate-90">10 Meters</div>
+
+                        </div>
+
+                        {/* Convergence Graph */}
+                        <div className="h-48 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative flex flex-col">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Estimation Convergence
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={chartData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="sample" stroke="#64748b" fontSize={10} label={{ value: 'Samples', position: 'insideBottom', offset: -5, fill: '#64748b', fontSize: 10 }} />
+                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, 'auto']} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ color: '#fff' }}
+                                        />
+                                        <ReferenceLine y={populationSize} stroke="#10b981" strokeDasharray="3 3" label={{ value: 'Actual', fill: '#10b981', fontSize: 10 }} />
+                                        <Line type="monotone" dataKey="estimate" stroke="#38bdf8" strokeWidth={2} dot={{r:2}} isAnimationActive={false} name="Estimated Total"/>
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                            {numSamples > 0 && numSamples < 5 && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <span className="text-xs text-slate-500 bg-black/80 px-3 py-1 rounded">Take more samples to see the trend!</span>
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
