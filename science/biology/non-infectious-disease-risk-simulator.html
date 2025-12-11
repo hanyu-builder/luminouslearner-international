@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Non-infectious Disease Risk Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Sliders */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #fff; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* Heartbeat Animation */
+        .heartbeat-slow { animation: beat 1.5s infinite; }
+        .heartbeat-fast { animation: beat 0.6s infinite; }
+        @keyframes beat {
+            0% { transform: scale(1); }
+            15% { transform: scale(1.15); }
+            30% { transform: scale(1); }
+            45% { transform: scale(1.15); }
+            60% { transform: scale(1); }
+        }
+        
+        /* Smoke Animation */
+        .smoke-particle { animation: smoke 3s ease-out infinite; opacity: 0; }
+        @keyframes smoke {
+            0% { transform: translateY(0) scale(0.5); opacity: 0.5; }
+            100% { transform: translateY(-50px) scale(1.5); opacity: 0; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { RadialBarChart, RadialBar, Legend, ResponsiveContainer, Tooltip } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const DISEASES = {
+            heart: {
+                id: 'heart', 
+                name: 'Cardiovascular Disease',
+                subName: 'e.g. Coronary Heart Disease',
+                icon: 'heart-pulse', color: '#ef4444',
+                factors: ['Fatty Diet (High Cholesterol)', 'Lack of Exercise', 'Smoking', 'Alcohol'],
+                prev: 'Balanced diet (Low fat), Regular exercise',
+                control: 'Angioplasty, Bypass surgery, Medication',
+                desc: 'Fatty deposits (plaque) block coronary arteries, reducing blood supply to heart muscles.'
+            },
+            diabetes: {
+                id: 'diabetes', 
+                name: 'Diabetes Mellitus',
+                subName: 'Type 2 (Non-insulin-dependent)',
+                icon: 'droplet', color: '#f59e0b',
+                factors: ['High Sugar/Fat Diet', 'Obesity', 'Lack of Exercise'],
+                prev: 'Low sugar/fat diet, Weight control',
+                control: 'Dietary control (regulate carbohydrate intake), Weight loss, Oral drugs',
+                desc: 'Body cells become resistant to insulin. Associated with lifestyle factors unlike Type 1.'
+            },
+            lung: {
+                id: 'lung', 
+                name: 'Cancer',
+                subName: 'e.g. Lung Cancer',
+                icon: 'wind', color: '#64748b',
+                factors: ['Smoking (Carcinogens)', 'Air Pollution', 'Second-hand smoke'],
+                prev: 'Do not smoke, Avoid pollutants',
+                control: 'Surgery, Chemotherapy, Radiotherapy',
+                desc: 'Uncontrolled cell division forming tumours. Smoking contains tar which is carcinogenic.'
+            },
+            liver: {
+                id: 'liver', 
+                name: 'Liver Cirrhosis',
+                subName: 'Alcohol-related',
+                icon: 'flask-conical', color: '#a855f7',
+                factors: ['Excessive Alcohol Consumption', 'Fatty Diet'],
+                prev: 'Limit alcohol intake, Healthy diet',
+                control: 'Stop drinking, Liver transplant (severe cases)',
+                desc: 'Healthy liver tissue is replaced by scar tissue due to chronic damage, impairing function.'
+            }
+        };
+
+        // --- AVATAR VISUALIZER ---
+        const HumanAvatar = ({ diet, exercise, smoking, alcohol }) => {
+            // 0 (Good) to 100 (Bad)
+            
+            // Body Shape (Obesity)
+            const bodyWidth = 80 + (diet * 0.4) + (100 - exercise) * 0.3;
+            
+            // Heart Rate / Color
+            const heartRateClass = (exercise < 30 || diet > 70) ? 'heartbeat-fast' : 'heartbeat-slow';
+            const heartColor = (diet > 80) ? '#b91c1c' : '#ef4444';
+
+            // Lungs Color
+            const lungColor = `rgb(${150 - smoking}, ${200 - smoking*1.5}, ${250 - smoking*1.5})`;
+
+            // Liver Color
+            const liverColor = `rgb(${180 - alcohol*0.5}, ${100 - alcohol}, ${180 - alcohol*0.5})`;
+
+            return (
+                <div className="relative w-full h-full flex items-center justify-center">
+                    <svg viewBox="0 0 400 500" className="w-full h-full drop-shadow-xl">
+                        
+                        {/* Smoke Effect */}
+                        {smoking > 20 && (
+                            <g transform="translate(220, 120)">
+                                {[...Array(5)].map((_, i) => (
+                                    <circle key={i} cx={0} cy={0} r={10 + i*2} fill="#94a3b8" className="smoke-particle" style={{animationDelay: `${i*0.5}s`}} />
+                                ))}
+                            </g>
+                        )}
+
+                        {/* Body Outline */}
+                        <path 
+                            d={`M 200 80 
+                               Q 240 80 240 120 
+                               L 240 130 
+                               Q ${200 + bodyWidth} 180 ${200 + bodyWidth - 20} 350 
+                               L ${200 + bodyWidth - 30} 500 
+                               L ${200 - bodyWidth + 30} 500 
+                               L ${200 - bodyWidth + 20} 350 
+                               Q ${200 - bodyWidth} 180 160 130 
+                               L 160 120 
+                               Q 160 80 200 80`} 
+                            fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="4"
+                            className="transition-all duration-500 ease-in-out"
+                        />
+
+                        {/* Head */}
+                        <circle cx="200" cy="60" r="40" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="4" />
+                        
+                        {/* Lungs */}
+                        <path d="M 190 150 Q 150 150 150 220 Q 150 260 190 250 Z" fill={lungColor} className="transition-colors duration-500" />
+                        <path d="M 210 150 Q 250 150 250 220 Q 250 260 210 250 Z" fill={lungColor} className="transition-colors duration-500" />
+
+                        {/* Heart */}
+                        <g transform="translate(200, 200)">
+                            <path d="M 0 0 C -20 -20 -40 10 0 40 C 40 10 20 -20 0 0" fill={heartColor} className={`${heartRateClass} transition-colors duration-500 origin-center`} />
+                        </g>
+
+                        {/* Liver */}
+                        <path d="M 180 260 Q 240 250 260 280 Q 240 300 180 280 Z" fill={liverColor} className="transition-colors duration-500" />
+
+                        {/* Fat Visual (Yellow layer) */}
+                        {diet > 60 && (
+                            <path 
+                                d={`M 200 300 Q ${200 + bodyWidth - 10} 300 ${200 + bodyWidth - 15} 400 L ${200 - bodyWidth + 15} 400 Q ${200 - bodyWidth + 10} 300 200 300`}
+                                fill="#fef08a" opacity="0.5"
+                            />
+                        )}
+
+                    </svg>
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            // Inputs: 0 (Good) to 100 (Bad)
+            const [diet, setDiet] = useState(20); 
+            const [exercise, setExercise] = useState(80); 
+            const [smoking, setSmoking] = useState(0);
+            const [alcohol, setAlcohol] = useState(0);
+            
+            const [selectedDisease, setSelectedDisease] = useState(null);
+
+            // Risk Calculation Logic
+            const risks = useMemo(() => {
+                const heartRisk = (diet * 0.4) + ((100 - exercise) * 0.3) + (smoking * 0.2) + (alcohol * 0.1);
+                const diabetesRisk = (diet * 0.6) + ((100 - exercise) * 0.4);
+                const lungRisk = (smoking * 0.9) + (10); 
+                const liverRisk = (alcohol * 0.8) + (diet * 0.2);
+
+                return [
+                    { name: 'Heart', fullName: 'Cardiovascular', risk: heartRisk, fill: '#ef4444', id: 'heart' },
+                    { name: 'Diabetes', fullName: 'Diabetes (Type 2)', risk: diabetesRisk, fill: '#f59e0b', id: 'diabetes' },
+                    { name: 'Lung', fullName: 'Lung Cancer', risk: lungRisk, fill: '#64748b', id: 'lung' },
+                    { name: 'Liver', fullName: 'Liver Cirrhosis', risk: liverRisk, fill: '#a855f7', id: 'liver' }
+                ];
+            }, [diet, exercise, smoking, alcohol]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar: Controls */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-emerald-400" /> Health Risk Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Lifestyle & Non-infectious Diseases</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-8">
+                            
+                            {/* Sliders */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-yellow-400 flex items-center gap-2"><Icon name="utensils" size={14}/> Unhealthy Diet</span>
+                                        <span className="font-mono">{diet}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={diet} onChange={(e) => setDiet(Number(e.target.value))}
+                                        className="w-full accent-yellow-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Balanced</span>
+                                        <span>High Fat/Sugar</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-emerald-400 flex items-center gap-2"><Icon name="dumbbell" size={14}/> Physical Activity</span>
+                                        <span className="font-mono">{exercise}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={exercise} onChange={(e) => setExercise(Number(e.target.value))}
+                                        className="w-full accent-emerald-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Sedentary</span>
+                                        <span>Active</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-slate-400 flex items-center gap-2"><Icon name="cigarette" size={14}/> Smoking</span>
+                                        <span className="font-mono">{smoking}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={smoking} onChange={(e) => setSmoking(Number(e.target.value))}
+                                        className="w-full accent-slate-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-purple-400 flex items-center gap-2"><Icon name="wine" size={14}/> Alcohol Intake</span>
+                                        <span className="font-mono">{alcohol}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={alcohol} onChange={(e) => setAlcohol(Number(e.target.value))}
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300">
+                                <div className="font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icon name="book-open" size={14}/> Learning Target</div>
+                                <p>
+                                    Discuss the causal relationships between the incidence of various non-infectious diseases and certain lifestyles.
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        <div className="flex-1 flex gap-6 min-h-0">
+                            
+                            {/* Avatar Visualization */}
+                            <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                                <HumanAvatar diet={diet} exercise={exercise} smoking={smoking} alcohol={alcohol} />
+                                <div className="absolute bottom-4 text-xs text-slate-500 font-mono">Body Response Visualizer</div>
+                            </div>
+
+                            {/* Risk Dashboard */}
+                            <div className="flex-1 flex flex-col gap-4">
+                                {/* Radial Chart */}
+                                <div className="flex-1 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col relative">
+                                    <div className="text-xs font-bold text-slate-500 uppercase mb-2">Disease Risk Meter</div>
+                                    <div className="flex-1 min-h-0">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <RadialBarChart 
+                                                innerRadius="20%" 
+                                                outerRadius="100%" 
+                                                data={risks} 
+                                                startAngle={180} 
+                                                endAngle={0}
+                                            >
+                                                <RadialBar minAngle={15} background clockWise={true} dataKey="risk" cornerRadius={10}/>
+                                                <Tooltip 
+                                                    contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                                    itemStyle={{ color: '#fff' }}
+                                                    cursor={false}
+                                                />
+                                                <Legend 
+                                                    iconSize={10} 
+                                                    layout="vertical" 
+                                                    verticalAlign="middle" 
+                                                    align="right"
+                                                    wrapperStyle={{ fontSize: '10px', color: '#94a3b8' }}
+                                                />
+                                            </RadialBarChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    {/* Clickable Risk Buttons */}
+                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                        {risks.map(r => (
+                                            <button 
+                                                key={r.id}
+                                                onClick={() => setSelectedDisease(DISEASES[r.id])}
+                                                className={`text-[10px] py-1 px-2 rounded border transition-all flex justify-between items-center
+                                                    ${selectedDisease?.id === r.id ? 'bg-slate-700 border-white text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'}
+                                                `}
+                                            >
+                                                <span className="truncate max-w-[80px]">{r.name}</span>
+                                                <span className="font-bold" style={{color: r.fill}}>{r.risk.toFixed(0)}%</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Disease Detail Card */}
+                                <AnimatePresence mode='wait'>
+                                    {selectedDisease ? (
+                                        <motion.div 
+                                            key={selectedDisease.id}
+                                            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+                                            className="h-64 bg-slate-900 rounded-2xl border border-slate-800 p-5 shadow-lg overflow-y-auto custom-scrollbar"
+                                        >
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="p-1.5 rounded-lg bg-slate-800" style={{color: selectedDisease.color}}>
+                                                    <Icon name={selectedDisease.icon} size={18}/>
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-sm font-bold text-white">{selectedDisease.name}</h3>
+                                                    <div className="text-[10px] text-slate-500">{selectedDisease.subName}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            <p className="text-xs text-slate-300 mb-3 border-b border-slate-800 pb-2">{selectedDisease.desc}</p>
+                                            
+                                            <div className="grid grid-cols-1 gap-3 text-xs">
+                                                <div>
+                                                    <span className="font-bold text-red-400 block mb-1">Risk Factors (Causes)</span>
+                                                    <ul className="list-disc pl-3 space-y-0.5 text-slate-400">
+                                                        {selectedDisease.factors.map(f => <li key={f}>{f}</li>)}
+                                                    </ul>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <span className="font-bold text-emerald-400 block mb-1">Prevention</span>
+                                                        <p className="text-slate-400">{selectedDisease.prev}</p>
+                                                    </div>
+                                                    <div>
+                                                        <span className="font-bold text-blue-400 block mb-1">Control / Treatment</span>
+                                                        <p className="text-slate-400">{selectedDisease.control}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    ) : (
+                                        <div className="h-64 bg-slate-900/50 rounded-2xl border border-slate-800 border-dashed flex flex-col items-center justify-center text-slate-500 text-center p-4">
+                                            <Icon name="mouse-pointer-click" size={24} className="mb-2 opacity-50"/>
+                                            <p className="text-xs">Select a disease above to view causes, prevention and control.</p>
+                                        </div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
