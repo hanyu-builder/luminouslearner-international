@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blood Clotting Cascade | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Blood Flow Animation */
+        .flow { animation: flow 3s linear infinite; }
+        @keyframes flow {
+            from { transform: translateX(-100%); }
+            to { transform: translateX(100%); }
+        }
+        
+        /* Fibrin Web Animation */
+        .fibrin-grow {
+            stroke-dasharray: 100;
+            stroke-dashoffset: 100;
+            animation: draw 2s ease-out forwards;
+        }
+        @keyframes draw {
+            to { stroke-dashoffset: 0; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const STAGES = [
+            { 
+                id: 'normal', 
+                title: 'Normal Blood Flow', 
+                desc: 'Blood flows smoothly through intact vessel. Platelets are inactive.',
+                action: 'Click "Injure Vessel" to start.'
+            },
+            { 
+                id: 'injury', 
+                title: 'Vessel Injury', 
+                desc: 'Damage to the vessel wall exposes collagen fibres. Vasoconstriction occurs.',
+                action: 'Platelets are detecting the injury...'
+            },
+            { 
+                id: 'platelets', 
+                title: 'Platelet Plug', 
+                desc: 'Platelets adhere to the injury site, become activated (spiky), and aggregate.',
+                action: 'Clotting factors are being released...'
+            },
+            { 
+                id: 'cascade', 
+                title: 'Clotting Cascade', 
+                desc: 'Clotting factors activate Prothrombin into Thrombin (enzyme).',
+                action: 'Thrombin is converting Fibrinogen...'
+            },
+            { 
+                id: 'fibrin', 
+                title: 'Fibrin Clot', 
+                desc: 'Thrombin converts soluble Fibrinogen into insoluble Fibrin threads. RBCs are trapped.',
+                action: 'Clot formation complete.'
+            }
+        ];
+
+        // --- COMPONENTS ---
+
+        const BloodVessel = ({ stage, setStage }) => {
+            const canvasRef = useRef(null);
+            
+            // Sim State
+            const particlesRef = useRef([]);
+            const frameRef = useRef(0);
+
+            useEffect(() => {
+                // Initialize particles
+                const p = [];
+                for(let i=0; i<30; i++) {
+                    p.push({
+                        type: Math.random() > 0.3 ? 'rbc' : 'platelet',
+                        x: Math.random() * 800,
+                        y: Math.random() * 200 + 100, // Middle channel
+                        vx: Math.random() * 2 + 1,
+                        rotation: Math.random() * 360,
+                        state: 'free' // free, stuck
+                    });
+                }
+                // Add fibrinogen (invisible initially)
+                particlesRef.current = p;
+            }, []);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const width = 800;
+                const height = 400;
+                const injuryX = 400;
+                const injuryY = 300; // Bottom wall
+                const holeSize = 60;
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+                    
+                    // --- 1. Draw Vessel Walls ---
+                    ctx.fillStyle = "#fecaca"; // Light Pink Tissue
+                    
+                    // Top Wall
+                    ctx.fillRect(0, 0, width, 100);
+                    ctx.strokeStyle = "#ef4444";
+                    ctx.lineWidth = 4;
+                    ctx.beginPath(); ctx.moveTo(0, 100); ctx.lineTo(width, 100); ctx.stroke();
+
+                    // Bottom Wall
+                    ctx.fillRect(0, 300, width, 100);
+                    
+                    if (stage === 'normal') {
+                        ctx.beginPath(); ctx.moveTo(0, 300); ctx.lineTo(width, 300); ctx.stroke();
+                    } else {
+                        // Injured Wall
+                        ctx.beginPath(); 
+                        ctx.moveTo(0, 300); 
+                        ctx.lineTo(injuryX - holeSize/2, 300);
+                        // Jagged injury
+                        ctx.lineTo(injuryX - 20, 320); 
+                        ctx.lineTo(injuryX, 310); 
+                        ctx.lineTo(injuryX + 20, 330); 
+                        ctx.lineTo(injuryX + 40, 300);
+                        ctx.lineTo(width, 300); 
+                        ctx.stroke();
+                        
+                        // Blood Leakage (Visual)
+                        if (stage === 'injury' || stage === 'platelets') {
+                            ctx.fillStyle = "rgba(239, 68, 68, 0.3)";
+                            ctx.beginPath();
+                            ctx.arc(injuryX, 320, 40 + Math.sin(Date.now()*0.01)*5, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                    }
+
+                    // --- 2. Draw Particles ---
+                    particlesRef.current.forEach(p => {
+                        // Movement logic
+                        if (p.state === 'free') {
+                            p.x += p.vx;
+                            if (p.x > width) p.x = -50; // Loop
+                            
+                            // If injured, some flow towards hole
+                            if (stage !== 'normal' && p.x > injuryX - 100 && p.x < injuryX + 100) {
+                                p.y += 0.5; // Drift down
+                            }
+                            
+                            // Stuck logic
+                            if (stage === 'platelets' || stage === 'cascade' || stage === 'fibrin') {
+                                if (p.type === 'platelet' && p.y > 280 && Math.abs(p.x - injuryX) < 50) {
+                                    p.state = 'stuck';
+                                    p.vx = 0;
+                                }
+                            }
+                            if (stage === 'fibrin') {
+                                if (p.type === 'rbc' && p.y > 260 && Math.abs(p.x - injuryX) < 60) {
+                                    p.state = 'stuck'; // Trapped in mesh
+                                    p.vx = 0;
+                                }
+                            }
+                        }
+
+                        // Render Particle
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.rotation);
+                        
+                        if (p.type === 'rbc') {
+                            // Red Blood Cell (Concave disc)
+                            ctx.fillStyle = "#ef4444";
+                            ctx.beginPath(); ctx.ellipse(0, 0, 12, 8, 0, 0, Math.PI*2); ctx.fill();
+                            ctx.fillStyle = "#b91c1c";
+                            ctx.beginPath(); ctx.ellipse(0, 0, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+                        } else {
+                            // Platelet
+                            if (p.state === 'stuck') {
+                                // Activated (Spiky)
+                                ctx.fillStyle = "#fbbf24"; // Yellow/White
+                                ctx.beginPath();
+                                for(let i=0; i<8; i++) {
+                                    ctx.lineTo(Math.cos(i*Math.PI/4)*8, Math.sin(i*Math.PI/4)*8);
+                                    ctx.lineTo(Math.cos(i*Math.PI/4 + 0.2)*3, Math.sin(i*Math.PI/4 + 0.2)*3);
+                                }
+                                ctx.fill();
+                            } else {
+                                // Inactive (Smooth)
+                                ctx.fillStyle = "#cbd5e1";
+                                ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI*2); ctx.fill();
+                            }
+                        }
+                        ctx.restore();
+                    });
+
+                    // --- 3. Fibrin Mesh (Stage 4+) ---
+                    if (stage === 'fibrin') {
+                        ctx.strokeStyle = "#fefce8"; // White/Yellowish threads
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        // Draw random web over injury
+                        for(let i=0; i<20; i++) {
+                            const startX = injuryX - 40 + Math.sin(i)*40;
+                            const startY = 300 + Math.cos(i)*20;
+                            const endX = injuryX + 40 - Math.cos(i)*40;
+                            const endY = 280 + Math.sin(i)*30;
+                            ctx.moveTo(startX, startY);
+                            ctx.lineTo(endX, endY);
+                        }
+                        ctx.stroke();
+                    }
+
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [stage]);
+
+            return <canvas ref={canvasRef} width={800} height={400} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [stageIdx, setStageIdx] = useState(0);
+            const currentStage = STAGES[stageIdx];
+
+            const nextStage = () => {
+                if (stageIdx < STAGES.length - 1) setStageIdx(s => s + 1);
+            };
+
+            const reset = () => {
+                setStageIdx(0);
+            };
+
+            // Auto-advance simulation for some steps? No, manual is better for learning.
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="droplet" className="text-red-500" /> Clotting Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Hemostasis Process</p>
+                        </div>
+
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                            
+                            {/* Progress Steps */}
+                            <div className="space-y-4 relative">
+                                <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-slate-700"></div>
+                                {STAGES.map((s, i) => (
+                                    <div key={s.id} className={`relative pl-8 transition-all duration-500 ${i <= stageIdx ? 'opacity-100' : 'opacity-30'}`}>
+                                        <div className={`absolute left-0 top-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 z-10
+                                            ${i <= stageIdx ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-500'}
+                                        `}>
+                                            {i + 1}
+                                        </div>
+                                        <div className="text-sm font-bold text-white">{s.title}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Info Card */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 mt-8 animate-in slide-in-from-bottom-4" key={stageIdx}>
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Current Event</div>
+                                <h2 className="text-lg font-bold text-red-400 mb-2">{currentStage.title}</h2>
+                                <p className="text-sm text-slate-300 leading-relaxed mb-4">
+                                    {currentStage.desc}
+                                </p>
+                                <div className="bg-slate-900/50 p-2 rounded border border-slate-600 text-xs text-emerald-400 flex items-center gap-2">
+                                    <Icon name="info" size={14}/>
+                                    {currentStage.id === 'cascade' ? 'Ca²⁺ ions and Vitamin K are required here.' : 'Observe the animation.'}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            
+                            {/* Simulation Canvas */}
+                            <BloodVessel stage={currentStage.id} />
+                            
+                            {/* Cascade Zoom Overlay (Only for Step 4) */}
+                            <AnimatePresence>
+                                {currentStage.id === 'cascade' && (
+                                    <motion.div 
+                                        initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
+                                        className="absolute top-8 right-8 bg-black/80 backdrop-blur p-4 rounded-2xl border border-yellow-500/30 shadow-2xl w-64"
+                                    >
+                                        <div className="text-xs font-bold text-yellow-400 uppercase mb-2 border-b border-yellow-500/30 pb-1">Chemical Reaction</div>
+                                        <div className="space-y-3 text-sm font-mono">
+                                            <div className="flex items-center gap-2 opacity-50">
+                                                <span className="text-slate-400">Prothrombin</span>
+                                                <Icon name="arrow-right" size={12}/>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-white font-bold pl-4">
+                                                <Icon name="zap" size={14} className="text-yellow-400"/>
+                                                <span>Thrombin</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 opacity-50 pt-2">
+                                                <span className="text-slate-400">Fibrinogen (Soluble)</span>
+                                                <Icon name="arrow-right" size={12}/>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-white font-bold pl-4">
+                                                <Icon name="grid" size={14} className="text-white"/>
+                                                <span>Fibrin (Insoluble)</span>
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {/* Controls */}
+                            <div className="absolute bottom-8 flex gap-4">
+                                {stageIdx < STAGES.length - 1 ? (
+                                    <button 
+                                        onClick={nextStage}
+                                        className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white rounded-full font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2"
+                                    >
+                                        {stageIdx === 0 ? 'Injure Vessel' : 'Next Step'} <Icon name="arrow-right" size={18}/>
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={reset}
+                                        className="px-8 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-full font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2"
+                                    >
+                                        <Icon name="rotate-ccw" size={18}/> Heal & Reset
+                                    </button>
+                                )}
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
