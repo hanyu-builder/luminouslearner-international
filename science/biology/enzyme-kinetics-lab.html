@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enzyme Kinetics Lab | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -6px; 
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Canvas Pattern */
+        .sim-canvas {
+            background-image: radial-gradient(#1e293b 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION ENGINE ---
+        const CANVAS_WIDTH = 400;
+        const CANVAS_HEIGHT = 300;
+
+        const App = () => {
+            const canvasRef = useRef(null);
+            const [mode, setMode] = useState('temp'); // temp, ph, conc
+            
+            // Parameters
+            const [temperature, setTemperature] = useState(37); // 0-100
+            const [ph, setPh] = useState(7); // 0-14
+            const [substrateConc, setSubstrateConc] = useState(50); // 0-100
+            
+            // Simulation State
+            const particlesRef = useRef([]);
+            const [rate, setRate] = useState(0);
+            
+            // Optimal Conditions (Hidden Constants)
+            const OPT_TEMP = 40;
+            const OPT_PH = 7;
+            const V_MAX = 100;
+            const KM = 20; // Michaelis constant
+
+            // --- KINETIC CALCULATIONS ---
+            const calculateRate = (t, p, s) => {
+                // 1. Temperature Factor (Bell curve skewed right)
+                // Denaturation starts > 45, complete > 60
+                let tempFactor = 0;
+                if (t < OPT_TEMP) {
+                    tempFactor = 0.1 + (t / OPT_TEMP) * 0.9; // Increasing KE
+                } else if (t <= 60) {
+                    tempFactor = 1 - Math.pow((t - OPT_TEMP) / (60 - OPT_TEMP), 2); // Denaturation drop
+                } else {
+                    tempFactor = 0; // Denatured
+                }
+
+                // 2. pH Factor (Bell curve)
+                const phDiff = Math.abs(p - OPT_PH);
+                const phFactor = Math.max(0, 1 - Math.pow(phDiff / 2.5, 2)); // Range +/- 2.5
+
+                // 3. Substrate Factor (Michaelis-Menten)
+                // V = (Vmax * [S]) / (Km + [S])
+                const subFactor = s / (KM + s);
+
+                // Combined Rate
+                return V_MAX * tempFactor * phFactor * subFactor;
+            };
+
+            // Update Rate when params change
+            useEffect(() => {
+                const r = calculateRate(temperature, ph, substrateConc);
+                setRate(r);
+            }, [temperature, ph, substrateConc]);
+
+            // --- VISUALIZER (PARTICLE SYSTEM) ---
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+
+                // Initialize particles if empty or count changed significantly
+                if (particlesRef.current.length === 0 || Math.abs(particlesRef.current.length - (10 + substrateConc)) > 5) {
+                    const newParticles = [];
+                    // Enzymes (Fixed count)
+                    for(let i=0; i<5; i++) {
+                        newParticles.push({ type: 'enzyme', x: Math.random()*CANVAS_WIDTH, y: Math.random()*CANVAS_HEIGHT, vx: 0, vy: 0, state: 'free' });
+                    }
+                    // Substrates (Based on conc)
+                    const subCount = Math.floor(substrateConc * 0.8); 
+                    for(let i=0; i<subCount; i++) {
+                        newParticles.push({ type: 'substrate', x: Math.random()*CANVAS_WIDTH, y: Math.random()*CANVAS_HEIGHT, vx: 0, vy: 0 });
+                    }
+                    particlesRef.current = newParticles;
+                }
+
+                const render = () => {
+                    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    
+                    // Speed multiplier based on Temp
+                    // 0C -> 0.1, 100C -> 3.0
+                    const speedMult = 0.2 + (temperature / 100) * 3;
+                    
+                    // Denaturation Visual: Enzymes shake/deform if high temp or extreme pH
+                    const isDenatured = (temperature > 55 || Math.abs(ph - OPT_PH) > 2.5);
+                    
+                    // Draw Particles
+                    particlesRef.current.forEach(p => {
+                        // Movement
+                        p.vx += (Math.random() - 0.5) * 0.5;
+                        p.vy += (Math.random() - 0.5) * 0.5;
+                        // Clamp velocity
+                        const v = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                        if (v > speedMult) {
+                            p.vx = (p.vx/v) * speedMult;
+                            p.vy = (p.vy/v) * speedMult;
+                        }
+                        
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        
+                        // Bounce walls
+                        if (p.x < 0 || p.x > CANVAS_WIDTH) p.vx *= -1;
+                        if (p.y < 0 || p.y > CANVAS_HEIGHT) p.vy *= -1;
+
+                        // Render
+                        if (p.type === 'enzyme') {
+                            ctx.fillStyle = isDenatured ? "#94a3b8" : "#34d399"; // Grey if dead, Green if active
+                            // Draw Pacman shape
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, 15, 0.2 * Math.PI, 1.8 * Math.PI);
+                            ctx.lineTo(p.x, p.y);
+                            ctx.fill();
+                            
+                            if (isDenatured) {
+                                // Draw X on top
+                                ctx.strokeStyle = "#ef4444";
+                                ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                ctx.moveTo(p.x-5, p.y-5); ctx.lineTo(p.x+5, p.y+5);
+                                ctx.moveTo(p.x+5, p.y-5); ctx.lineTo(p.x-5, p.y+5);
+                                ctx.stroke();
+                            }
+                        } else {
+                            ctx.fillStyle = "#facc15"; // Yellow substrate
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                    });
+                    
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [temperature, ph, substrateConc]);
+
+            // --- CHART DATA GENERATION ---
+            const generateData = () => {
+                const data = [];
+                if (mode === 'temp') {
+                    for (let t = 0; t <= 70; t+=2) {
+                        data.push({ x: t, y: calculateRate(t, ph, substrateConc) });
+                    }
+                } else if (mode === 'ph') {
+                    for (let p = 0; p <= 14; p+=0.5) {
+                        data.push({ x: p, y: calculateRate(temperature, p, substrateConc) });
+                    }
+                } else {
+                    for (let s = 0; s <= 100; s+=2) {
+                        data.push({ x: s, y: calculateRate(temperature, ph, s) });
+                    }
+                }
+                return data;
+            };
+
+            const chartData = generateData();
+            const currentX = mode === 'temp' ? temperature : mode === 'ph' ? ph : substrateConc;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar Controls */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-emerald-400" /> Enzyme Kinetics
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Factors affecting Rate of Reaction</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* Mode Select */}
+                            <div className="grid grid-cols-3 gap-1 bg-slate-800 p-1 rounded-xl">
+                                {['temp', 'ph', 'conc'].map(m => (
+                                    <button 
+                                        key={m}
+                                        onClick={() => setMode(m)}
+                                        className={`py-2 text-[10px] font-bold rounded-lg transition-all uppercase ${mode === m ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        {m === 'conc' ? '[Substrate]' : m}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Active Control */}
+                            <div className="space-y-6">
+                                <div className={mode !== 'temp' ? 'opacity-50' : ''}>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Temperature</span>
+                                        <span className="font-mono text-orange-400">{temperature}°C</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="70" 
+                                        value={temperature} 
+                                        onChange={(e) => { setTemperature(parseInt(e.target.value)); if(mode!=='temp') setMode('temp'); }} 
+                                        className="w-full accent-orange-500"
+                                    />
+                                </div>
+
+                                <div className={mode !== 'ph' ? 'opacity-50' : ''}>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">pH Level</span>
+                                        <span className="font-mono text-purple-400">{ph}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="14" step="0.1"
+                                        value={ph} 
+                                        onChange={(e) => { setPh(parseFloat(e.target.value)); if(mode!=='ph') setMode('ph'); }} 
+                                        className="w-full accent-purple-500"
+                                    />
+                                </div>
+
+                                <div className={mode !== 'conc' ? 'opacity-50' : ''}>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">[Substrate]</span>
+                                        <span className="font-mono text-blue-400">{substrateConc}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" 
+                                        value={substrateConc} 
+                                        onChange={(e) => { setSubstrateConc(parseInt(e.target.value)); if(mode!=='conc') setMode('conc'); }} 
+                                        className="w-full accent-blue-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Status Info */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Reaction Rate</span>
+                                    <span className={`text-xl font-mono font-black ${rate > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>
+                                        {rate.toFixed(1)}
+                                    </span>
+                                </div>
+                                <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                                    <div className="h-full bg-emerald-500 transition-all duration-300" style={{width: `${rate}%`}}></div>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-2">
+                                    {rate === 0 ? "Enzyme is inactive (Denatured or No Substrate)." : 
+                                     rate > 80 ? "Optimal conditions! High activity." : 
+                                     "Sub-optimal conditions."}
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden gap-4">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden sim-canvas flex flex-col items-center justify-center">
+                            <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="w-full h-full object-contain" />
+                            <div className="absolute bottom-4 text-xs text-slate-500 font-mono">Molecular View (Simplifed)</div>
+                        </div>
+
+                        {/* Graph */}
+                        <div className="h-64 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-2">
+                                Rate vs {mode === 'temp' ? 'Temperature' : mode === 'ph' ? 'pH' : 'Substrate Conc.'}
+                            </div>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                    <XAxis 
+                                        dataKey="x" 
+                                        stroke="#94a3b8" 
+                                        label={{ value: mode === 'temp' ? 'Temp (°C)' : mode === 'ph' ? 'pH' : '[S]', position: 'insideBottomRight', offset: -5, fill: '#94a3b8', fontSize: 10 }} 
+                                        type="number"
+                                        domain={['dataMin', 'dataMax']}
+                                    />
+                                    <YAxis 
+                                        stroke="#94a3b8" 
+                                        label={{ value: 'Rate', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }} 
+                                        domain={[0, 100]}
+                                    />
+                                    <Tooltip 
+                                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                        itemStyle={{ color: '#fff' }}
+                                        formatter={(value) => value.toFixed(1)}
+                                    />
+                                    <Line type="monotone" dataKey="y" stroke="#38bdf8" strokeWidth={3} dot={false} activeDot={{ r: 6, fill: '#38bdf8' }} />
+                                    {/* Current Position Indicator */}
+                                    <ReferenceLine x={currentX} stroke="#ef4444" strokeDasharray="3 3" />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
