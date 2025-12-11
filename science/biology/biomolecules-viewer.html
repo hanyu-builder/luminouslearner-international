@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biomolecules 3D Viewer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { outline: none; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- MOLECULE DATA ---
+        
+        const ATOM_COLORS = {
+            C: 0x333333, // Carbon - Black/Grey
+            H: 0xFFFFFF, // Hydrogen - White
+            O: 0xFF0000, // Oxygen - Red
+            N: 0x0000FF, // Nitrogen - Blue
+            P: 0xFFA500, // Phosphorus - Orange
+            S: 0xFFFF00  // Sulfur - Yellow
+        };
+
+        const MOLECULES = {
+            glucose: {
+                name: 'Glucose (Alpha)',
+                category: 'Carbohydrates',
+                formula: 'C₆H₁₂O₆',
+                desc: 'A monosaccharide. The primary source of energy for cells.',
+                bondType: 'Covalent',
+                // Hexagonal ring structure approx
+                atoms: [
+                    { el: 'C', x: 1, y: 0, z: 1.7 }, { el: 'C', x: 2, y: 0, z: 0 }, 
+                    { el: 'C', x: 1, y: 0, z: -1.7 }, { el: 'C', x: -1, y: 0, z: -1.7 }, 
+                    { el: 'C', x: -2, y: 0, z: 0 }, { el: 'O', x: -1, y: 0, z: 1.7 }, // Ring O
+                    { el: 'C', x: -3, y: 1.5, z: 0 }, // CH2OH group
+                    // Hydroxyls (Simplified)
+                    { el: 'O', x: 1, y: 1.5, z: 1.7 }, { el: 'O', x: 2, y: -1.5, z: 0 },
+                    { el: 'O', x: 1, y: 1.5, z: -1.7 }, { el: 'O', x: -1, y: -1.5, z: -1.7 },
+                    { el: 'O', x: -4, y: 1.5, z: 0 }
+                ],
+                bonds: [[0,1], [1,2], [2,3], [3,4], [4,5], [5,0], [4,6], [0,7], [1,8], [2,9], [3,10], [6,11]] 
+            },
+            triglyceride: {
+                name: 'Triglyceride',
+                category: 'Lipids',
+                formula: 'Fat',
+                desc: 'One glycerol + three fatty acids. Used for long-term energy storage.',
+                bondType: 'Ester Bond',
+                // E-shape
+                atoms: [
+                    // Glycerol Backbone
+                    { el: 'C', x: -4, y: 1.5, z: 0 }, { el: 'C', x: -4, y: 0, z: 0 }, { el: 'C', x: -4, y: -1.5, z: 0 },
+                    // Fatty Acid 1 (Top)
+                    { el: 'O', x: -3, y: 1.5, z: 0 }, { el: 'C', x: -2, y: 1.5, z: 0 }, { el: 'O', x: -2, y: 2.5, z: 0 },
+                    { el: 'C', x: -1, y: 1.5, z: 0 }, { el: 'C', x: 0, y: 1.8, z: 0 }, { el: 'C', x: 1, y: 1.5, z: 0 }, { el: 'C', x: 2, y: 1.8, z: 0 },
+                    // Fatty Acid 2 (Mid)
+                    { el: 'O', x: -3, y: 0, z: 0 }, { el: 'C', x: -2, y: 0, z: 0 }, { el: 'O', x: -2, y: 1, z: 0 },
+                    { el: 'C', x: -1, y: 0, z: 0 }, { el: 'C', x: 0, y: 0.3, z: 0 }, { el: 'C', x: 1, y: 0, z: 0 }, { el: 'C', x: 2, y: 0.3, z: 0 },
+                    // Fatty Acid 3 (Bot)
+                    { el: 'O', x: -3, y: -1.5, z: 0 }, { el: 'C', x: -2, y: -1.5, z: 0 }, { el: 'O', x: -2, y: -0.5, z: 0 },
+                    { el: 'C', x: -1, y: -1.5, z: 0 }, { el: 'C', x: 0, y: -1.2, z: 0 }, { el: 'C', x: 1, y: -1.5, z: 0 }, { el: 'C', x: 2, y: -1.2, z: 0 },
+                ],
+                bonds: [] // Auto-generated simple bonds for visual
+            },
+            amino_acid: {
+                name: 'Amino Acid (General)',
+                category: 'Proteins',
+                formula: 'NH₂-CHR-COOH',
+                desc: 'Building block of proteins. Contains amine and carboxyl groups.',
+                bondType: 'Peptide (when linked)',
+                atoms: [
+                    { el: 'C', x: 0, y: 0, z: 0 }, // Alpha Carbon
+                    { el: 'N', x: -1.5, y: 0.5, z: 0 }, // Amine N
+                    { el: 'C', x: 1.5, y: 0, z: 0 }, // Carboxyl C
+                    { el: 'O', x: 2.2, y: 1.2, z: 0 }, // Carboxyl O=
+                    { el: 'O', x: 2.2, y: -1.2, z: 0 }, // Carboxyl -OH
+                    { el: 'C', x: 0, y: -1.5, z: 0 }, // R-group (Simple CH3)
+                    { el: 'H', x: 0, y: 1.2, z: 0 } // Alpha H
+                ],
+                bonds: [[0,1], [0,2], [2,3], [2,4], [0,5], [0,6]]
+            },
+            dna: {
+                name: 'DNA Fragment',
+                category: 'Nucleic Acids',
+                formula: 'Double Helix',
+                desc: 'Double-stranded helix carrying genetic instructions.',
+                bondType: 'Hydrogen Bond',
+                // Procedural generation in Scene component
+                procedural: 'dna' 
+            }
+        };
+
+        // --- 3D SCENE ---
+        const BioScene = ({ moleculeId }) => {
+            const mountRef = useRef(null);
+            
+            useEffect(() => {
+                if (!mountRef.current) return;
+                const container = mountRef.current;
+                
+                // Clean up previous scene
+                while(container.firstChild) {
+                    container.removeChild(container.firstChild);
+                }
+
+                // 1. Setup
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x020617); // Dark Blue
+
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                camera.position.set(0, 5, 15);
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                container.appendChild(renderer.domElement);
+
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = true;
+                controls.autoRotateSpeed = 1.5;
+
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+                dirLight.position.set(5, 10, 7);
+                scene.add(dirLight);
+                const pointLight = new THREE.PointLight(0x38bdf8, 0.5);
+                pointLight.position.set(-5, -5, 5);
+                scene.add(pointLight);
+
+                // --- BUILD MOLECULE ---
+                const group = new THREE.Group();
+                const data = MOLECULES[moleculeId];
+
+                // Helper: Create Atom
+                const createAtom = (el, x, y, z) => {
+                    const radius = el === 'H' ? 0.3 : 0.5;
+                    const geo = new THREE.SphereGeometry(radius, 32, 32);
+                    const mat = new THREE.MeshStandardMaterial({ 
+                        color: ATOM_COLORS[el] || 0x888888,
+                        roughness: 0.3, metalness: 0.1 
+                    });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    mesh.position.set(x, y, z);
+                    group.add(mesh);
+                    return mesh;
+                };
+
+                // Helper: Create Bond
+                const createBond = (p1, p2, type='single') => {
+                    const start = new THREE.Vector3(p1.x, p1.y, p1.z);
+                    const end = new THREE.Vector3(p2.x, p2.y, p2.z);
+                    const dist = start.distanceTo(end);
+                    
+                    const geo = new THREE.CylinderGeometry(0.1, 0.1, dist, 8);
+                    const mat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    
+                    const mid = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+                    mesh.position.copy(mid);
+                    mesh.lookAt(end);
+                    mesh.rotateX(Math.PI / 2);
+                    group.add(mesh);
+                };
+
+                if (data.procedural === 'dna') {
+                    // Procedural DNA Double Helix
+                    for (let i = 0; i < 20; i++) {
+                        const angle = i * 0.5;
+                        const y = i * 0.6 - 6;
+                        const r = 2;
+                        
+                        // Strand 1
+                        const x1 = Math.cos(angle) * r;
+                        const z1 = Math.sin(angle) * r;
+                        createAtom('P', x1, y, z1);
+                        
+                        // Strand 2 (Opposite)
+                        const x2 = Math.cos(angle + Math.PI) * r;
+                        const z2 = Math.sin(angle + Math.PI) * r;
+                        createAtom('P', x2, y, z2);
+
+                        // Base Pair (Ladder Rung)
+                        const base1 = { x: x1*0.4, y: y, z: z1*0.4 };
+                        const base2 = { x: x2*0.4, y: y, z: z2*0.4 };
+                        createBond({x:x1, y, z:z1}, base1);
+                        createBond({x:x2, y, z:z2}, base2);
+                        createBond(base1, base2); // Hydrogen Bond
+
+                        // Backbone links
+                        if (i > 0) {
+                            const prevAngle = (i-1) * 0.5;
+                            const prevY = (i-1) * 0.6 - 6;
+                            // Link 1
+                            const px1 = Math.cos(prevAngle) * r;
+                            const pz1 = Math.sin(prevAngle) * r;
+                            createBond({x:x1, y, z:z1}, {x:px1, y:prevY, z:pz1});
+                            // Link 2
+                            const px2 = Math.cos(prevAngle + Math.PI) * r;
+                            const pz2 = Math.sin(prevAngle + Math.PI) * r;
+                            createBond({x:x2, y, z:z2}, {x:px2, y:prevY, z:pz2});
+                        }
+                    }
+                } else if (data.atoms) {
+                    // Static Definition
+                    data.atoms.forEach(a => createAtom(a.el, a.x, a.y, a.z));
+                    
+                    if (data.bonds) {
+                        data.bonds.forEach(pair => {
+                             if(data.atoms[pair[0]] && data.atoms[pair[1]]) {
+                                 createBond(data.atoms[pair[0]], data.atoms[pair[1]]);
+                             }
+                        });
+                    } else {
+                        // Auto-connect close atoms (simple logic for Triglyceride)
+                        for(let i=0; i<data.atoms.length; i++) {
+                            for(let j=i+1; j<data.atoms.length; j++) {
+                                const d = Math.sqrt(
+                                    Math.pow(data.atoms[i].x - data.atoms[j].x, 2) +
+                                    Math.pow(data.atoms[i].y - data.atoms[j].y, 2) +
+                                    Math.pow(data.atoms[i].z - data.atoms[j].z, 2)
+                                );
+                                if (d < 1.7) createBond(data.atoms[i], data.atoms[j]);
+                            }
+                        }
+                    }
+                }
+
+                scene.add(group);
+
+                // Animation
+                let frameId;
+                const animate = () => {
+                    frameId = requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                // Cleanup
+                const handleResize = () => {
+                    if (!container) return;
+                    const w = container.clientWidth;
+                    const h = container.clientHeight;
+                    camera.aspect = w / h;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(w, h);
+                };
+                window.addEventListener('resize', handleResize);
+
+                return () => {
+                    cancelAnimationFrame(frameId);
+                    window.removeEventListener('resize', handleResize);
+                    if (container && renderer.domElement) {
+                        container.removeChild(renderer.domElement);
+                    }
+                    // Correctly iterate through scene children to dispose of geometries and materials
+                    scene.traverse((object) => {
+                        if (object.isMesh) {
+                            if (object.geometry) object.geometry.dispose();
+                            if (object.material) {
+                                if (Array.isArray(object.material)) {
+                                    object.material.forEach(mat => mat.dispose());
+                                } else {
+                                    object.material.dispose();
+                                }
+                            }
+                        }
+                    });
+                };
+            }, [moleculeId]);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selected, setSelected] = useState('glucose');
+            const currentMol = MOLECULES[selected];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="dna" className="text-emerald-400" /> Biomolecules
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">3D Structure Viewer</p>
+                        </div>
+
+                        <div className="p-4 space-y-6 flex-1 overflow-y-auto">
+                            
+                            {/* Category: Carbs */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Carbohydrates</label>
+                                <button onClick={() => setSelected('glucose')} className={`w-full text-left p-3 rounded-xl border transition-all ${selected === 'glucose' ? 'bg-slate-800 border-emerald-500' : 'bg-slate-900/50 border-slate-700'}`}>
+                                    <span className="font-bold text-sm">Glucose</span>
+                                </button>
+                            </div>
+
+                            {/* Category: Lipids */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Lipids</label>
+                                <button onClick={() => setSelected('triglyceride')} className={`w-full text-left p-3 rounded-xl border transition-all ${selected === 'triglyceride' ? 'bg-slate-800 border-yellow-500' : 'bg-slate-900/50 border-slate-700'}`}>
+                                    <span className="font-bold text-sm">Triglyceride</span>
+                                </button>
+                            </div>
+
+                            {/* Category: Proteins */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Proteins</label>
+                                <button onClick={() => setSelected('amino_acid')} className={`w-full text-left p-3 rounded-xl border transition-all ${selected === 'amino_acid' ? 'bg-slate-800 border-blue-500' : 'bg-slate-900/50 border-slate-700'}`}>
+                                    <span className="font-bold text-sm">Amino Acid</span>
+                                </button>
+                            </div>
+
+                            {/* Category: Nucleic Acids */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1 mb-2 block">Nucleic Acids</label>
+                                <button onClick={() => setSelected('dna')} className={`w-full text-left p-3 rounded-xl border transition-all ${selected === 'dna' ? 'bg-slate-800 border-purple-500' : 'bg-slate-900/50 border-slate-700'}`}>
+                                    <span className="font-bold text-sm">DNA Helix</span>
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Legend */}
+                        <div className="p-4 bg-slate-800 border-t border-slate-700 text-[10px] flex flex-wrap gap-3 text-slate-400">
+                            <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#333]"></span> C</div>
+                            <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-white"></span> H</div>
+                            <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span> O</div>
+                            <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-600"></span> N</div>
+                            <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span> P</div>
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] flex flex-col">
+                        
+                        <div className="flex-1 relative overflow-hidden">
+                            <BioScene moleculeId={selected} />
+                            
+                            <div className="absolute bottom-6 right-6 text-slate-500 text-xs pointer-events-none select-none bg-black/40 backdrop-blur px-4 py-2 rounded-full border border-white/10">
+                                Rotate • Zoom • Pan
+                            </div>
+                        </div>
+
+                        {/* Info Panel */}
+                        <div className="h-40 bg-slate-800 border-t border-slate-700 p-6 shrink-0 flex gap-8">
+                            <div className="flex-1">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Name</div>
+                                <h2 className="text-2xl font-black text-white mb-1">{currentMol.name}</h2>
+                                <p className="text-sm text-emerald-400 font-mono">{currentMol.formula}</p>
+                            </div>
+                            <div className="flex-1 border-l border-slate-700 pl-8">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Function</div>
+                                <p className="text-sm text-slate-300 leading-relaxed">{currentMol.desc}</p>
+                            </div>
+                            <div className="flex-1 border-l border-slate-700 pl-8">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Key Bond</div>
+                                <div className="inline-block px-3 py-1 bg-slate-900 rounded border border-slate-600 text-sm font-bold text-white">
+                                    {currentMol.bondType}
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
