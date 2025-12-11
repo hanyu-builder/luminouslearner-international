@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Osmosis & Diffusion Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -6px; 
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Canvas Container */
+        .sim-canvas {
+            background-image: radial-gradient(#1e293b 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* ATP Flash Animation */
+        .atp-flash {
+            animation: flash 0.5s ease-out;
+        }
+        @keyframes flash {
+            0% { opacity: 0; transform: scale(0.5); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0; transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION ENGINE ---
+        const SOLUTE_RADIUS = 6;
+        const WATER_RADIUS = 3.5; // Water is smaller
+        const CANVAS_WIDTH = 600;
+        const CANVAS_HEIGHT = 400;
+
+        const App = () => {
+            const canvasRef = useRef(null);
+            const [mode, setMode] = useState('diffusion'); // diffusion, osmosis, active
+            const [temp, setTemp] = useState(50); // 0-100
+            const [concLeft, setConcLeft] = useState(20); // Initial Solute Count Left
+            const [concRight, setConcRight] = useState(80); // Initial Solute Count Right
+            const [poreSize, setPoreSize] = useState(5); // 0-10. 5 allows water(3.5) but not solute(6)
+            
+            const [isRunning, setIsRunning] = useState(false);
+            
+            // Data for chart
+            const [history, setHistory] = useState([]);
+            const particlesRef = useRef([]); 
+            const atpFlashRef = useRef([]); // Store visual flashes for active transport
+
+            // Initialize Particles
+            const initParticles = () => {
+                const p = [];
+                const speedBase = 0.5 + (temp / 100) * 2; 
+
+                const create = (isLeft, type) => ({
+                    x: isLeft ? Math.random() * (CANVAS_WIDTH/2 - 30) : Math.random() * (CANVAS_WIDTH/2 - 30) + CANVAS_WIDTH/2 + 30,
+                    y: Math.random() * CANVAS_HEIGHT,
+                    vx: (Math.random() - 0.5) * speedBase,
+                    vy: (Math.random() - 0.5) * speedBase,
+                    type: type, 
+                    radius: type === 'solute' ? SOLUTE_RADIUS : WATER_RADIUS,
+                    color: type === 'solute' ? '#ef4444' : '#3b82f6',
+                    trail: [] // For visual effect
+                });
+
+                // Solute Particles
+                for(let i=0; i<concLeft; i++) p.push(create(true, 'solute'));
+                for(let i=0; i<concRight; i++) p.push(create(false, 'solute'));
+
+                // Water Particles (Always fill background to simulate solution)
+                // Osmosis needs clear water movement visual
+                const waterCount = 150; 
+                for(let i=0; i<waterCount; i++) {
+                    // Distribute evenly initially
+                    p.push(create(i % 2 === 0, 'water'));
+                }
+
+                particlesRef.current = p;
+                setHistory([]);
+                atpFlashRef.current = [];
+            };
+
+            // Re-init on critical changes
+            useEffect(() => {
+                initParticles();
+                setIsRunning(false);
+            }, [mode, concLeft, concRight]); // Temp doesn't reset positions, just speed logic in loop
+
+            // Pore Size Presets update
+            useEffect(() => {
+                if (mode === 'diffusion') setPoreSize(8); // Big pores
+                if (mode === 'osmosis') setPoreSize(5); // Medium (Sem-permeable)
+                if (mode === 'active') setPoreSize(8); // Carrier proteins (simulated as big pore with pump)
+            }, [mode]);
+
+            // Animation Loop
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                let frame = 0;
+
+                const render = () => {
+                    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    const membraneX = CANVAS_WIDTH / 2;
+                    const speedMult = 0.5 + (temp / 100) * 2;
+
+                    // --- Draw Membrane ---
+                    ctx.beginPath();
+                    const gap = poreSize * 4; // Visual gap representation
+                    ctx.setLineDash([5, gap]); 
+                    ctx.moveTo(membraneX, 0);
+                    ctx.lineTo(membraneX, CANVAS_HEIGHT);
+                    ctx.lineWidth = 6;
+                    ctx.strokeStyle = '#64748b'; 
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Draw ATP Flashes (Active Transport Visual)
+                    atpFlashRef.current = atpFlashRef.current.filter(f => f.age < 20);
+                    atpFlashRef.current.forEach(f => {
+                        ctx.beginPath();
+                        ctx.arc(f.x, f.y, f.age * 1.5, 0, Math.PI * 2);
+                        ctx.fillStyle = `rgba(250, 204, 21, ${1 - f.age/20})`; // Yellow fade
+                        ctx.fill();
+                        f.age++;
+                    });
+
+                    // --- Update & Draw Particles ---
+                    let leftSolute = 0;
+                    let rightSolute = 0;
+                    let waterFlux = 0; // Positive = Right to Left
+
+                    particlesRef.current.forEach(p => {
+                        if (isRunning) {
+                            // Active Transport Logic: Pump Solutes to LEFT
+                            if (mode === 'active' && p.type === 'solute') {
+                                // Bias velocity towards left
+                                p.vx -= 0.05; 
+                                // If crossing membrane from Right to Left, consume ATP (Visual)
+                                if (Math.abs(p.x - membraneX) < 5 && p.vx < 0) {
+                                    if (Math.random() < 0.3) atpFlashRef.current.push({x: membraneX, y: p.y, age: 0});
+                                }
+                            } else {
+                                // Normal Brownian Motion
+                                // Random walk jitter
+                                p.vx += (Math.random() - 0.5) * 0.2;
+                                p.vy += (Math.random() - 0.5) * 0.2;
+                                
+                                // Clamp speed
+                                const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                                if (speed > speedMult) {
+                                    p.vx = (p.vx / speed) * speedMult;
+                                    p.vy = (p.vy / speed) * speedMult;
+                                }
+                            }
+
+                            // Move
+                            const oldX = p.x;
+                            p.x += p.vx;
+                            p.y += p.vy;
+
+                            // Wall Bounce
+                            if (p.x < p.radius || p.x > CANVAS_WIDTH - p.radius) p.vx *= -1;
+                            if (p.y < p.radius || p.y > CANVAS_HEIGHT - p.radius) p.vy *= -1;
+
+                            // Membrane Collision Logic
+                            // Crossing the membrane line?
+                            if ((oldX < membraneX && p.x >= membraneX) || (oldX > membraneX && p.x <= membraneX)) {
+                                // Check Pore Size
+                                if (p.radius > poreSize) {
+                                    // Bounce back (Impermeable)
+                                    p.x = oldX; 
+                                    p.vx *= -1; 
+                                } else {
+                                    // Permeable - Passed through!
+                                    if (p.type === 'water') {
+                                        // Track flow direction
+                                        if (p.x < membraneX) waterFlux--; // Right to Left (moving into Left)
+                                        else waterFlux++; // Left to Right
+                                    }
+                                }
+                            }
+                        }
+
+                        // Stats
+                        if (p.type === 'solute') {
+                            if (p.x < membraneX) leftSolute++; else rightSolute++;
+                        }
+
+                        // Render
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                        ctx.fillStyle = p.color;
+                        ctx.fill();
+
+                        // Trails for Water in Osmosis to show movement
+                        if (mode === 'osmosis' && p.type === 'water') {
+                            if (Math.abs(p.vx) > 0.5) { // Only fast moving ones
+                                ctx.beginPath();
+                                ctx.moveTo(p.x, p.y);
+                                ctx.lineTo(p.x - p.vx*5, p.y - p.vy*5);
+                                ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
+                                ctx.lineWidth = 2;
+                                ctx.stroke();
+                            }
+                        }
+                    });
+
+                    // --- Net Flow Indicator (Osmosis) ---
+                    if (mode === 'osmosis' && isRunning) {
+                        // Heuristic: Water moves to higher solute concentration
+                        // Draw Arrow
+                        const netDirection = leftSolute > rightSolute ? 'right' : 'left';
+                        const arrowX = membraneX;
+                        const arrowY = 50;
+                        
+                        ctx.fillStyle = "rgba(59, 130, 246, 0.8)";
+                        ctx.font = "bold 12px monospace";
+                        ctx.textAlign = "center";
+                        ctx.fillText("NET WATER FLOW", arrowX, arrowY - 20);
+
+                        // Draw arrow
+                        ctx.beginPath();
+                        ctx.moveTo(arrowX - 30, arrowY);
+                        ctx.lineTo(arrowX + 30, arrowY);
+                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+                        ctx.stroke();
+                        
+                        // Arrowhead
+                        ctx.beginPath();
+                        if (netDirection === 'left') {
+                            ctx.moveTo(arrowX - 30, arrowY);
+                            ctx.lineTo(arrowX - 20, arrowY - 10);
+                            ctx.lineTo(arrowX - 20, arrowY + 10);
+                        } else {
+                            ctx.moveTo(arrowX + 30, arrowY);
+                            ctx.lineTo(arrowX + 20, arrowY - 10);
+                            ctx.lineTo(arrowX + 20, arrowY + 10);
+                        }
+                        ctx.fill();
+                    }
+
+                    // Update Chart
+                    if (isRunning && frame % 10 === 0) {
+                        setHistory(prev => {
+                            const newData = [...prev, { time: frame, left: leftSolute, right: rightSolute }];
+                            if (newData.length > 50) newData.shift();
+                            return newData;
+                        });
+                    }
+
+                    frame++;
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [isRunning, mode, poreSize, temp]);
+
+            const handleReset = () => {
+                setIsRunning(false);
+                initParticles();
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="flask-conical" className="text-cyan-400" /> Sim Lab
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Transport Mechanisms</p>
+                        </div>
+
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Mode Select */}
+                            <div className="grid grid-cols-3 gap-1 bg-slate-800 p-1 rounded-xl">
+                                {['diffusion', 'osmosis', 'active'].map(m => (
+                                    <button 
+                                        key={m}
+                                        onClick={() => setMode(m)}
+                                        className={`py-2 text-[10px] font-bold rounded-lg transition-all uppercase ${mode === m ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                    >
+                                        {m}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Info Box */}
+                            <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700 text-xs text-slate-300">
+                                {mode === 'diffusion' && "Movement of particles from High to Low concentration. Random motion."}
+                                {mode === 'osmosis' && "Movement of WATER across semi-permeable membrane to higher solute conc."}
+                                {mode === 'active' && "Movement against concentration gradient. Requires Energy (ATP)."}
+                            </div>
+
+                            {/* Controls */}
+                            <div className="space-y-5">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Pore Size (Membrane)</span>
+                                        <span className="font-mono text-emerald-400">{poreSize}nm</span>
+                                    </div>
+                                    <input type="range" min="2" max="10" step="0.5" value={poreSize} onChange={(e) => setPoreSize(parseFloat(e.target.value))} />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Impermeable</span>
+                                        <span>Semi</span>
+                                        <span>Permeable</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Left Solute Conc.</span>
+                                        <span className="font-mono text-red-400">{concLeft}</span>
+                                    </div>
+                                    <input type="range" min="0" max="100" value={concLeft} onChange={(e) => setConcLeft(parseInt(e.target.value))} />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Right Solute Conc.</span>
+                                        <span className="font-mono text-red-400">{concRight}</span>
+                                    </div>
+                                    <input type="range" min="0" max="100" value={concRight} onChange={(e) => setConcRight(parseInt(e.target.value))} />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Temperature (KE)</span>
+                                        <span className="font-mono text-orange-400">{temp}°C</span>
+                                    </div>
+                                    <input type="range" min="0" max="100" value={temp} onChange={(e) => setTemp(parseInt(e.target.value))} />
+                                </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="grid grid-cols-2 gap-4 pt-2">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all
+                                        ${isRunning ? 'bg-yellow-600 text-white' : 'bg-green-600 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} size={18} /> {isRunning ? 'Pause' : 'Start'}
+                                </button>
+                                <button 
+                                    onClick={handleReset}
+                                    className="py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center justify-center gap-2 transition-all"
+                                >
+                                    <Icon name="rotate-ccw" size={18} /> Reset
+                                </button>
+                            </div>
+                            
+                            {/* Legend */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Key</div>
+                                <div className="space-y-2 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                        <span className="text-slate-300">Solute (Size: {SOLUTE_RADIUS})</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                                        <span className="text-slate-300">Water (Size: {WATER_RADIUS})</span>
+                                    </div>
+                                    {mode === 'active' && (
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-3 h-3 rounded-full bg-yellow-400 shadow shadow-yellow-500/50"></div>
+                                            <span className="text-slate-300">ATP Energy</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        {/* Canvas */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden sim-canvas">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT} 
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+
+                        {/* Real-time Graph */}
+                        <div className="h-40 mt-4 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex justify-between">
+                                <span>Solute Count</span>
+                                <span className="text-emerald-500 flex items-center gap-1"><Icon name="activity" size={12}/> Live Data</span>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={history}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="time" hide />
+                                        <YAxis domain={[0, 'auto']} hide />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ padding: 0 }}
+                                        />
+                                        <Line type="monotone" dataKey="left" stroke="#ef4444" strokeWidth={2} dot={false} name="Left Count" isAnimationActive={false} />
+                                        <Line type="monotone" dataKey="right" stroke="#fbbf24" strokeWidth={2} dot={false} name="Right Count" isAnimationActive={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
