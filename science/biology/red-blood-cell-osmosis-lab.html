@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Blood Cell Osmosis Lab | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Microscope Vignette */
+        .microscope-view {
+            background-color: #fdf4ff; /* Very light pinkish white mimicking light microscopy */
+            mask-image: radial-gradient(circle, black 60%, transparent 100%);
+            -webkit-mask-image: radial-gradient(circle, black 60%, transparent 100%);
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.5);
+        }
+
+        /* Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #ef4444; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CELL COMPONENT (CANVAS DRAWING LOGIC) ---
+        const CellSimulation = ({ concentration }) => {
+            const canvasRef = useRef(null);
+            const cellsRef = useRef([]);
+
+            // Init Cells
+            useEffect(() => {
+                const cells = [];
+                for(let i=0; i<8; i++) {
+                    cells.push({
+                        x: Math.random() * 400 + 100,
+                        y: Math.random() * 400 + 100,
+                        vx: (Math.random() - 0.5) * 0.5,
+                        vy: (Math.random() - 0.5) * 0.5,
+                        phase: Math.random() * Math.PI * 2, // Animation offset
+                        burst: false // Track if cell has burst
+                    });
+                }
+                cellsRef.current = cells;
+            }, []);
+
+            // Animation Loop
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const render = () => {
+                    const width = canvas.width;
+                    const height = canvas.height;
+                    ctx.clearRect(0, 0, width, height);
+                    
+                    // Background (Solution)
+                    // More solute (salt) = Darker blue dots
+                    const saltDensity = Math.floor(concentration * 5);
+                    ctx.fillStyle = "rgba(50, 100, 200, 0.2)";
+                    for(let i=0; i<saltDensity; i++) {
+                        // Pseudo-random noise based on frame + index to look like shimmering particles
+                        const x = (Math.sin(i*132.1 + Date.now()*0.001) * width + width) % width;
+                        const y = (Math.cos(i*45.9 + Date.now()*0.002) * height + height) % height;
+                        ctx.beginPath(); ctx.arc(x, y, 1, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    // Determine State based on Concentration
+                    // 0-0.8: Hypotonic (Swell -> Burst)
+                    // 0.8-1.2: Isotonic (Normal)
+                    // 1.2-5.0: Hypertonic (Shrink/Crenate)
+                    
+                    let state = 'isotonic';
+                    let sizeMultiplier = 1;
+                    let opacity = 0.8;
+                    
+                    if (concentration < 0.8) {
+                        state = 'hypotonic';
+                        // Swell: Size increases as conc decreases
+                        sizeMultiplier = 1 + (0.8 - concentration) * 1.5; 
+                        // Opacity drops as they swell (membrane stretches)
+                        opacity = Math.max(0, 0.8 - (0.8 - concentration)); 
+                    } else if (concentration > 1.2) {
+                        state = 'hypertonic';
+                        // Shrink
+                        sizeMultiplier = Math.max(0.6, 1 - (concentration - 1.2) * 0.2);
+                    }
+
+                    // Draw Cells
+                    cellsRef.current.forEach(cell => {
+                        // Movement (Brownian-ish)
+                        cell.x += cell.vx;
+                        cell.y += cell.vy;
+                        // Bounce
+                        if(cell.x < 50 || cell.x > 550) cell.vx *= -1;
+                        if(cell.y < 50 || cell.y > 550) cell.vy *= -1;
+
+                        ctx.save();
+                        ctx.translate(cell.x, cell.y);
+                        
+                        const baseRadius = 40;
+                        const currentRadius = baseRadius * sizeMultiplier;
+
+                        // If burst (Hypotonic extreme), show fragments or ghost
+                        if (state === 'hypotonic' && concentration < 0.2) {
+                            if (!cell.burst) cell.burst = true;
+                            // Draw burst effect
+                            ctx.globalAlpha = 0.2;
+                            ctx.fillStyle = "#fca5a5";
+                            ctx.beginPath();
+                            ctx.arc(0, 0, currentRadius * 1.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else {
+                            cell.burst = false;
+                            ctx.globalAlpha = opacity;
+
+                            if (state === 'hypertonic') {
+                                // CRENATION: Spiky shape
+                                ctx.fillStyle = "#ef4444";
+                                ctx.beginPath();
+                                const spikes = 12;
+                                for(let i=0; i<=spikes; i++) {
+                                    const angle = (i / spikes) * Math.PI * 2;
+                                    const r = currentRadius + Math.sin(angle * 5 + cell.phase) * 5; // Spiky
+                                    ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+                                }
+                                ctx.fill();
+                                // Inner shadow for depth
+                                ctx.fillStyle = "rgba(0,0,0,0.2)";
+                                ctx.beginPath(); ctx.arc(0,0, currentRadius*0.6, 0, Math.PI*2); ctx.fill();
+
+                            } else if (state === 'isotonic') {
+                                // NORMAL: Biconcave disk (Donut-like shading)
+                                ctx.fillStyle = "#ef4444";
+                                ctx.beginPath(); ctx.arc(0, 0, currentRadius, 0, Math.PI * 2); ctx.fill();
+                                // Central pallor (lighter center)
+                                ctx.fillStyle = "#fca5a5";
+                                ctx.beginPath(); ctx.arc(0, 0, currentRadius * 0.5, 0, Math.PI * 2); ctx.fill();
+
+                            } else if (state === 'hypotonic') {
+                                // SWELLING: Sphere (No central pallor, darker edges)
+                                ctx.fillStyle = "#ef4444"; // Lighter red as it stretches?
+                                // Actually haemoglobin dilutes, so lighter.
+                                ctx.fillStyle = `rgba(239, 68, 68, ${opacity})`; 
+                                ctx.beginPath(); ctx.arc(0, 0, currentRadius, 0, Math.PI * 2); ctx.fill();
+                                // Glossy highlight to look like a turgid sphere
+                                ctx.fillStyle = "rgba(255,255,255,0.4)";
+                                ctx.beginPath(); ctx.arc(-currentRadius*0.3, -currentRadius*0.3, currentRadius*0.2, 0, Math.PI*2); ctx.fill();
+                            }
+                        }
+
+                        // Water Flow Arrows (Visual Aid)
+                        if (state !== 'isotonic') {
+                            ctx.globalAlpha = 0.8;
+                            ctx.strokeStyle = "#3b82f6";
+                            ctx.lineWidth = 2;
+                            const arrowSize = 10 + Math.abs(1 - concentration) * 10;
+                            
+                            // Hypotonic: Water IN
+                            if (state === 'hypotonic' && concentration > 0.2) {
+                                // Arrow pointing IN
+                                for(let i=0; i<4; i++) {
+                                    const ang = (i/4)*Math.PI*2 + Date.now()*0.002;
+                                    const rOuter = currentRadius + 15;
+                                    const rInner = currentRadius - 5;
+                                    drawArrow(ctx, Math.cos(ang)*rOuter, Math.sin(ang)*rOuter, Math.cos(ang)*rInner, Math.sin(ang)*rInner);
+                                }
+                            }
+                            // Hypertonic: Water OUT
+                            if (state === 'hypertonic') {
+                                // Arrow pointing OUT
+                                for(let i=0; i<4; i++) {
+                                    const ang = (i/4)*Math.PI*2 + Date.now()*0.002;
+                                    const rInner = currentRadius + 5;
+                                    const rOuter = currentRadius + 25;
+                                    drawArrow(ctx, Math.cos(ang)*rInner, Math.sin(ang)*rInner, Math.cos(ang)*rOuter, Math.sin(ang)*rOuter);
+                                }
+                            }
+                        }
+
+                        ctx.restore();
+                    });
+
+                    animationId = requestAnimationFrame(render);
+                };
+                
+                const drawArrow = (ctx, x1, y1, x2, y2) => {
+                    const headlen = 5;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const angle = Math.atan2(dy, dx);
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+                    ctx.moveTo(x2, y2);
+                    ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+                    ctx.stroke();
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [concentration]);
+
+            return <canvas ref={canvasRef} width={600} height={600} className="w-full h-full object-contain" />;
+        };
+
+        const App = () => {
+            const [conc, setConc] = useState(1.0); // 1.0 = Isotonic (approx 0.9% saline)
+            // Range: 0.0 (Pure water) to 3.0 (Very salty)
+
+            // Determine State Info
+            let stateInfo = {
+                title: 'Isotonic',
+                desc: 'Water potential outside = inside. No net movement.',
+                effect: 'Normal Shape (Biconcave)',
+                color: 'text-emerald-400'
+            };
+
+            if (conc < 0.8) {
+                stateInfo = {
+                    title: 'Hypotonic',
+                    desc: 'Water potential outside > inside. Net water movement INTO cell.',
+                    effect: 'Swelling / Lysis (Haemolysis)',
+                    color: 'text-blue-400'
+                };
+            } else if (conc > 1.2) {
+                stateInfo = {
+                    title: 'Hypertonic',
+                    desc: 'Water potential outside < inside. Net water movement OUT of cell.',
+                    effect: 'Shrinking / Crenation',
+                    color: 'text-orange-400'
+                };
+            }
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="droplet" className="text-red-400" /> Osmosis Lab
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Red Blood Cell Behaviour</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Control */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Salt Concentration</label>
+                                
+                                <div className="relative h-12 flex items-center">
+                                    <input 
+                                        type="range" min="0" max="3" step="0.1"
+                                        value={conc} 
+                                        onChange={(e) => setConc(parseFloat(e.target.value))}
+                                        className="z-20 relative w-full cursor-pointer"
+                                    />
+                                    <div className="absolute top-1/2 left-0 right-0 h-2 -mt-1 rounded-full overflow-hidden flex opacity-30 pointer-events-none">
+                                        <div className="w-[30%] bg-blue-500"></div>
+                                        <div className="w-[20%] bg-emerald-500"></div>
+                                        <div className="w-[50%] bg-orange-500"></div>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                                    <span>Pure Water</span>
+                                    <span>0.9% Saline</span>
+                                    <span>Conc. Salt</span>
+                                </div>
+                            </div>
+
+                            {/* Presets */}
+                            <div className="grid grid-cols-3 gap-2">
+                                <button onClick={() => setConc(0)} className="p-2 bg-blue-900/30 border border-blue-500/50 rounded text-xs text-blue-300 hover:bg-blue-800/50 transition">Distilled Water</button>
+                                <button onClick={() => setConc(1.0)} className="p-2 bg-emerald-900/30 border border-emerald-500/50 rounded text-xs text-emerald-300 hover:bg-emerald-800/50 transition">0.9% Saline</button>
+                                <button onClick={() => setConc(3.0)} className="p-2 bg-orange-900/30 border border-orange-500/50 rounded text-xs text-orange-300 hover:bg-orange-800/50 transition">10% Salt Sol.</button>
+                            </div>
+
+                            {/* Info Card */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg transition-all">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Current Environment</div>
+                                <div className={`text-2xl font-black mb-2 ${stateInfo.color}`}>
+                                    {stateInfo.title}
+                                </div>
+                                <div className="text-sm text-white font-bold mb-2 border-b border-slate-700 pb-2">
+                                    Result: {stateInfo.effect}
+                                </div>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    {stateInfo.desc}
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] flex flex-col items-center justify-center p-4 overflow-hidden">
+                        
+                        {/* Microscope Viewport */}
+                        <div className="relative w-[600px] h-[600px] rounded-full border-[16px] border-slate-800 shadow-2xl overflow-hidden microscope-view flex items-center justify-center">
+                            <CellSimulation concentration={conc} />
+                            
+                            {/* Vignette Overlay */}
+                            <div className="absolute inset-0 pointer-events-none rounded-full shadow-[inset_0_0_100px_rgba(0,0,0,0.6)]"></div>
+                        </div>
+
+                        {/* Status Label */}
+                        <div className="absolute bottom-8 bg-black/60 backdrop-blur px-6 py-3 rounded-full border border-white/10 flex gap-4 items-center shadow-xl">
+                            <div className="text-right">
+                                <div className="text-[10px] text-slate-400 uppercase font-bold">Microscope View</div>
+                                <div className="text-lg font-mono font-bold text-white">400x Magnification</div>
+                            </div>
+                            <div className="h-8 w-px bg-slate-600"></div>
+                            <div className="flex items-center gap-2 text-xs font-bold text-blue-400">
+                                <Icon name="arrow-right" size={14}/> Net Water Flow
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
