@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gas Exchange Efficiency | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Particle Animations */
+        .particle { transition: all 0.5s linear; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -6px; 
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { RadialBarChart, RadialBar, Legend, ResponsiveContainer } = window.Recharts;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- SIMULATION CANVAS ---
+        const AlveolusCanvas = ({ params, isRunning }) => {
+            const canvasRef = useRef(null);
+            
+            // Simulation State refs to avoid re-renders
+            const stateRef = useRef({
+                o2Particles: [],
+                co2Particles: [],
+                bloodCells: [],
+                frame: 0
+            });
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const width = 600;
+                const height = 400;
+                
+                // Geometry
+                const alveolusCenter = { x: 300, y: 150 };
+                const capillaryY = 320;
+                
+                const render = () => {
+                    const state = stateRef.current;
+                    ctx.clearRect(0, 0, width, height);
+
+                    // --- 1. Draw Structure ---
+                    
+                    // Alveolus (Air Sac)
+                    // Radius depends on Surface Area param (0.5 to 1.5)
+                    const alvRadius = 100 * params.surfaceArea; 
+                    
+                    ctx.fillStyle = "#e0f2fe"; // Very light blue air
+                    ctx.beginPath();
+                    ctx.arc(alveolusCenter.x, alveolusCenter.y, alvRadius, 0, Math.PI, true); // Top half circle
+                    // Draw "neck"
+                    ctx.lineTo(alveolusCenter.x - alvRadius, capillaryY - 20);
+                    ctx.lineTo(alveolusCenter.x + alvRadius, capillaryY - 20);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Alveolar Wall
+                    ctx.lineWidth = params.thickness * 5; // Thickness param: 1 to 3
+                    ctx.strokeStyle = "#38bdf8";
+                    ctx.stroke();
+
+                    // Capillary (Blood Vessel)
+                    ctx.fillStyle = "#fee2e2"; // Light red plasma
+                    ctx.fillRect(0, capillaryY, width, 60);
+                    
+                    // Capillary Walls
+                    ctx.beginPath();
+                    ctx.moveTo(0, capillaryY); ctx.lineTo(width, capillaryY);
+                    ctx.moveTo(0, capillaryY + 60); ctx.lineTo(width, capillaryY + 60);
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#ef4444";
+                    ctx.stroke();
+                    
+                    // Barrier Zone (Between Alveolus and Capillary)
+                    const barrierY = capillaryY - 10;
+                    
+                    // --- 2. Particle Logic ---
+                    
+                    if (isRunning) {
+                        // Spawn O2 in Alveolus (Frequency depends on Ventilation)
+                        if (Math.random() < params.ventilation * 0.2) {
+                            state.o2Particles.push({
+                                x: alveolusCenter.x + (Math.random()-0.5)*alvRadius*1.5,
+                                y: alveolusCenter.y + (Math.random()-0.5)*50,
+                                vx: (Math.random()-0.5)*2,
+                                vy: (Math.random()-0.5)*2,
+                                loc: 'air' // air, blood
+                            });
+                        }
+
+                        // Spawn Blood Cells (RBC) carrying CO2
+                        // Speed depends on Blood Flow
+                        if (state.frame % Math.floor(20 / params.bloodFlow) === 0) {
+                            state.bloodCells.push({
+                                x: -30,
+                                y: capillaryY + 30,
+                                hasO2: false,
+                                co2Load: 1.0 // Full CO2
+                            });
+                        }
+                    }
+
+                    // Update Blood Cells
+                    const bloodSpeed = params.bloodFlow * 2;
+                    state.bloodCells.forEach((cell, i) => {
+                        cell.x += bloodSpeed;
+                        // Remove if out of screen
+                        if (cell.x > width + 30) {
+                            state.bloodCells.splice(i, 1);
+                            return;
+                        }
+                        
+                        // Gas Exchange Logic
+                        // In the exchange zone (middle)
+                        if (cell.x > alveolusCenter.x - alvRadius && cell.x < alveolusCenter.x + alvRadius) {
+                            // Diffusion Probability = (Gradient * SurfaceArea) / Thickness
+                            const efficiency = (params.gradient * params.surfaceArea) / params.thickness;
+                            
+                            if (Math.random() < 0.05 * efficiency && cell.co2Load > 0) {
+                                cell.co2Load -= 0.2; // Lose CO2
+                                // Spawn CO2 particle moving up
+                                state.co2Particles.push({
+                                    x: cell.x, y: capillaryY,
+                                    vx: (Math.random()-0.5), vy: -1 - Math.random(),
+                                    life: 100
+                                });
+                            }
+                            
+                            if (Math.random() < 0.05 * efficiency && !cell.hasO2) {
+                                // Try to grab O2 from air particles
+                                // Find closest O2 particle near barrier
+                                const o2Index = state.o2Particles.findIndex(p => p.loc === 'air' && p.y > capillaryY - 40 && Math.abs(p.x - cell.x) < 20);
+                                if (o2Index !== -1) {
+                                    state.o2Particles.splice(o2Index, 1); // Absorb O2
+                                    cell.hasO2 = true; // Become oxygenated
+                                }
+                            }
+                        }
+                        
+                        // Draw RBC
+                        ctx.beginPath();
+                        ctx.arc(cell.x, cell.y, 12, 0, Math.PI * 2);
+                        // Color shift: Blue (Deox) -> Red (Ox)
+                        if (cell.hasO2) ctx.fillStyle = "#ef4444";
+                        else ctx.fillStyle = "#3b82f6"; 
+                        
+                        ctx.fill();
+                        // Biconcave look
+                        ctx.fillStyle = "rgba(0,0,0,0.1)";
+                        ctx.beginPath(); ctx.arc(cell.x, cell.y, 6, 0, Math.PI*2); ctx.fill();
+                    });
+
+                    // Update O2 Particles
+                    for (let i = state.o2Particles.length - 1; i >= 0; i--) {
+                        const p = state.o2Particles[i];
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        
+                        // Keep in bounds roughly
+                        if(p.x < 0 || p.x > width) p.vx *= -1;
+                        if(p.y < 0) p.vy *= -1;
+                        
+                        // Diffusion into blood?
+                        if (p.y > capillaryY && p.loc === 'air') {
+                             p.vy *= -1;
+                        }
+
+                        // Draw O2 (Red Dots)
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                        ctx.fillStyle = "#ef4444";
+                        ctx.fill();
+                    }
+
+                    // Update CO2 Particles (Blue Dots moving up)
+                    for (let i = state.co2Particles.length - 1; i >= 0; i--) {
+                        const p = state.co2Particles[i];
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.life--;
+                        
+                        if (p.life <= 0 || p.y < 0) {
+                            state.co2Particles.splice(i, 1);
+                            continue;
+                        }
+
+                        // Draw CO2
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                        ctx.fillStyle = "#3b82f6";
+                        ctx.fill();
+                    }
+
+                    state.frame++;
+                    animationId = requestAnimationFrame(render);
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [params, isRunning]);
+
+            return <canvas ref={canvasRef} width={600} height={400} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [isRunning, setIsRunning] = useState(true);
+            
+            // Factors (1.0 is normal)
+            const [surfaceArea, setSurfaceArea] = useState(1.0); // 0.5 (Emphysema) to 1.5
+            const [thickness, setThickness] = useState(1.0); // 1.0 (Thin) to 3.0 (Fibrosis/Edema)
+            const [ventilation, setVentilation] = useState(1.0); // Concentration Gradient (Air)
+            const [bloodFlow, setBloodFlow] = useState(1.0); // Concentration Gradient (Blood)
+
+            // Derived Efficiency Rate (Fick's Law approximation)
+            // Rate = (Area * Gradient) / Thickness
+            // Gradient is function of Ventilation + BloodFlow
+            const gradient = (ventilation + bloodFlow) / 2;
+            const rate = (surfaceArea * gradient) / thickness;
+            
+            // Chart Data
+            const chartData = [
+                { name: 'Efficiency', uv: rate * 100, fill: rate > 0.8 ? '#10b981' : rate > 0.4 ? '#facc15' : '#ef4444' }
+            ];
+
+            // Presets
+            const setPreset = (type) => {
+                if (type === 'normal') {
+                    setSurfaceArea(1.0); setThickness(1.0); setVentilation(1.0); setBloodFlow(1.0);
+                } else if (type === 'exercise') {
+                    setSurfaceArea(1.0); setThickness(1.0); setVentilation(2.0); setBloodFlow(2.0);
+                } else if (type === 'emphysema') {
+                    setSurfaceArea(0.5); setThickness(1.0); setVentilation(0.8); setBloodFlow(1.0);
+                } else if (type === 'fibrosis') {
+                    setSurfaceArea(1.0); setThickness(2.5); setVentilation(1.0); setBloodFlow(1.0);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="wind" className="text-sky-400" /> Gas Exchange
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Alveolar Efficiency Sim</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Factors Controls */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Surface Area</span>
+                                        <span className="font-mono text-sky-400">{surfaceArea < 0.8 ? 'Low (Damaged)' : 'High (Healthy)'}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0.5" max="1.5" step="0.1"
+                                        value={surfaceArea} 
+                                        onChange={(e) => setSurfaceArea(parseFloat(e.target.value))}
+                                        className="w-full accent-sky-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Wall Thickness</span>
+                                        <span className="font-mono text-orange-400">{thickness > 1.5 ? 'Thick (Edema)' : 'Thin (Normal)'}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="1.0" max="3.0" step="0.1"
+                                        value={thickness} 
+                                        onChange={(e) => setThickness(parseFloat(e.target.value))}
+                                        className="w-full accent-orange-500"
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-400 font-bold">Concentration Gradient</span>
+                                        <span className="font-mono text-emerald-400">{gradient.toFixed(1)}x</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 mb-1">Ventilation</div>
+                                            <input className="w-full accent-emerald-500" type="range" min="0.5" max="2.0" step="0.1" value={ventilation} onChange={(e) => setVentilation(parseFloat(e.target.value))} />
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 mb-1">Blood Flow</div>
+                                            <input className="w-full accent-emerald-500" type="range" min="0.5" max="2.0" step="0.1" value={bloodFlow} onChange={(e) => setBloodFlow(parseFloat(e.target.value))} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Presets */}
+                            <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => setPreset('normal')} className="p-2 rounded bg-slate-800 border border-slate-700 text-xs hover:bg-slate-700 text-emerald-300">Normal Resting</button>
+                                <button onClick={() => setPreset('exercise')} className="p-2 rounded bg-slate-800 border border-slate-700 text-xs hover:bg-slate-700 text-yellow-300">Exercise</button>
+                                <button onClick={() => setPreset('emphysema')} className="p-2 rounded bg-slate-800 border border-slate-700 text-xs hover:bg-slate-700 text-red-300">Emphysema</button>
+                                <button onClick={() => setPreset('fibrosis')} className="p-2 rounded bg-slate-800 border border-slate-700 text-xs hover:bg-slate-700 text-orange-300">Fibrosis/Edema</button>
+                            </div>
+
+                            {/* Rate Monitor */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col items-center">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Diffusion Rate</div>
+                                <div className="h-32 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <RadialBarChart 
+                                            innerRadius="70%" 
+                                            outerRadius="100%" 
+                                            data={chartData} 
+                                            startAngle={180} 
+                                            endAngle={0}
+                                        >
+                                            <RadialBar background dataKey="uv" />
+                                        </RadialBarChart>
+                                    </ResponsiveContainer>
+                                    <div className="text-center -mt-16">
+                                        <div className="text-2xl font-black text-white">{(rate * 100).toFixed(0)}%</div>
+                                        <div className="text-[10px] text-slate-400">Efficiency</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            
+                            <AlveolusCanvas 
+                                params={{ surfaceArea, thickness, ventilation, bloodFlow, gradient }} 
+                                isRunning={isRunning} 
+                            />
+
+                            {/* Legend */}
+                            <div className="absolute bottom-6 left-6 bg-black/60 backdrop-blur px-4 py-2 rounded-lg border border-white/10 text-xs text-slate-300 space-y-1 pointer-events-none">
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500"></div> Oxygen ($O_2$)</div>
+                                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Carbon Dioxide ($CO_2$)</div>
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-red-500"></div> RBC (Deox &rarr; Ox)</div>
+                            </div>
+
+                            {/* Play/Pause */}
+                            <button 
+                                onClick={() => setIsRunning(!isRunning)}
+                                className="absolute bottom-6 right-6 p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 shadow-lg transition-all"
+                            >
+                                <Icon name={isRunning ? "pause" : "play"} size={20} fill="currentColor"/>
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
