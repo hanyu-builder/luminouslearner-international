@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glucose Regulation Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Molecule Animations */
+        .molecule { transition: all 0.5s ease; }
+        
+        .pulse-organ { animation: pulse-glow 2s infinite; }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+            50% { box-shadow: 0 0 20px 0 rgba(255, 255, 255, 0.1); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONSTANTS ---
+        const SETPOINT = 90; // mg/dL
+        const MAX_GLUCOSE = 200;
+        const MIN_GLUCOSE = 40;
+
+        // --- SIMULATION LOGIC ---
+        const App = () => {
+            // Simulation State
+            const [glucose, setGlucose] = useState(SETPOINT);
+            const [insulin, setInsulin] = useState(0);
+            const [glucagon, setGlucagon] = useState(0);
+            const [glycogen, setGlycogen] = useState(50); // Liver storage %
+            const [time, setTime] = useState(0);
+            const [isRunning, setIsRunning] = useState(true);
+            const [history, setHistory] = useState([]);
+
+            // Refs for intervals
+            const simRef = useRef(null);
+
+            // Initialize history
+            useEffect(() => {
+                const initData = [];
+                for(let i=0; i<50; i++) initData.push({ time: i, glucose: 90, insulin: 5, glucagon: 5 });
+                setHistory(initData);
+            }, []);
+
+            // Main Simulation Loop
+            useEffect(() => {
+                if (isRunning) {
+                    simRef.current = setInterval(() => {
+                        updateSimulation();
+                    }, 500); // 0.5s per tick
+                } else {
+                    clearInterval(simRef.current);
+                }
+                return () => clearInterval(simRef.current);
+            }, [isRunning, glucose, insulin, glucagon, glycogen]);
+
+            const updateSimulation = () => {
+                // 1. Pancreas Sensing & Secretion
+                let targetInsulin = 0;
+                let targetGlucagon = 0;
+
+                if (glucose > SETPOINT) {
+                    // High Glucose -> Secrete Insulin
+                    const diff = glucose - SETPOINT;
+                    targetInsulin = Math.min(100, diff * 0.8); // Proportional response
+                    targetGlucagon = 2; // Basal level
+                } else if (glucose < SETPOINT) {
+                    // Low Glucose -> Secrete Glucagon
+                    const diff = SETPOINT - glucose;
+                    targetGlucagon = Math.min(100, diff * 1.5); // Strong response to hypoglycemia
+                    targetInsulin = 2; // Basal level
+                } else {
+                    targetInsulin = 5;
+                    targetGlucagon = 5;
+                }
+
+                // Smooth hormone changes (Hormones don't appear/disappear instantly)
+                const newInsulin = insulin + (targetInsulin - insulin) * 0.2;
+                const newGlucagon = glucagon + (targetGlucagon - glucagon) * 0.2;
+
+                // 2. Liver & Cell Response
+                let glucoseChange = 0;
+                let glycogenChange = 0;
+
+                // Basal consumption (metabolism)
+                glucoseChange -= 0.5; 
+
+                // Insulin Effect: Glucose -> Glycogen & Uptake
+                if (newInsulin > 5) {
+                    const uptake = newInsulin * 0.15;
+                    glucoseChange -= uptake;
+                    // Store some as glycogen (up to limit)
+                    if (glycogen < 100) glycogenChange += uptake * 0.3; 
+                }
+
+                // Glucagon Effect: Glycogen -> Glucose
+                if (newGlucagon > 5) {
+                    if (glycogen > 0) {
+                        const release = newGlucagon * 0.1;
+                        glucoseChange += release;
+                        glycogenChange -= release * 0.5; // Efficiency loss
+                    }
+                }
+
+                // 3. Update States
+                let newGlucose = glucose + glucoseChange;
+                // Clamp values
+                newGlucose = Math.max(MIN_GLUCOSE, Math.min(MAX_GLUCOSE, newGlucose));
+                const newGlycogen = Math.max(0, Math.min(100, glycogen + glycogenChange));
+
+                setGlucose(newGlucose);
+                setInsulin(newInsulin);
+                setGlucagon(newGlucagon);
+                setGlycogen(newGlycogen);
+                setTime(t => t + 1);
+
+                // Update Graph History
+                setHistory(prev => {
+                    const newData = [...prev, { 
+                        time: time + 1, 
+                        glucose: newGlucose, 
+                        insulin: newInsulin, 
+                        glucagon: newGlucagon 
+                    }];
+                    if (newData.length > 50) newData.shift();
+                    return newData;
+                });
+            };
+
+            // Actions
+            const eatMeal = () => {
+                setGlucose(g => Math.min(MAX_GLUCOSE, g + 80));
+            };
+
+            const doExercise = () => {
+                setGlucose(g => Math.max(MIN_GLUCOSE, g - 40));
+            };
+
+            // Visual Helpers
+            const getGlucoseColor = (val) => {
+                if (val > 120) return '#ef4444'; // High - Red
+                if (val < 70) return '#f59e0b'; // Low - Orange
+                return '#10b981'; // Normal - Green
+            };
+
+            // --- CANVAS VISUALIZER ---
+            const BodyVisualizer = () => {
+                const canvasRef = useRef(null);
+                const particlesRef = useRef([]);
+
+                useEffect(() => {
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    let animationId;
+                    
+                    const render = () => {
+                        const width = canvas.width;
+                        const height = canvas.height;
+                        ctx.clearRect(0, 0, width, height);
+
+                        // --- 1. Background Organs (Schematic) ---
+                        
+                        // Blood Vessel (Center Loop)
+                        ctx.strokeStyle = "#334155";
+                        ctx.lineWidth = 40;
+                        ctx.lineCap = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(50, 150); ctx.lineTo(550, 150); // Top vessel
+                        ctx.moveTo(550, 350); ctx.lineTo(50, 350); // Bottom vessel
+                        ctx.stroke();
+                        
+                        // Inner Blood
+                        ctx.strokeStyle = "#7f1d1d";
+                        ctx.lineWidth = 34;
+                        ctx.beginPath();
+                        ctx.moveTo(50, 150); ctx.lineTo(550, 150);
+                        ctx.moveTo(550, 350); ctx.lineTo(50, 350);
+                        ctx.stroke();
+
+                        // --- 2. Particle System ---
+                        // Adjust particle count based on concentrations
+                        const targetGlucoseCount = Math.floor(glucose / 5);
+                        const targetInsulinCount = Math.floor(insulin / 2);
+                        const targetGlucagonCount = Math.floor(glucagon / 2);
+
+                        // Manage Glucose (White Squares)
+                        manageParticles(particlesRef.current, 'glucose', targetGlucoseCount);
+                        // Manage Insulin (Blue Circles)
+                        manageParticles(particlesRef.current, 'insulin', targetInsulinCount);
+                        // Manage Glucagon (Orange Triangles)
+                        manageParticles(particlesRef.current, 'glucagon', targetGlucagonCount);
+
+                        // Draw & Move Particles
+                        particlesRef.current.forEach(p => {
+                            p.x += p.vx;
+                            // Wrap around loop
+                            if (p.y < 200) { // Top vessel (Right)
+                                if (p.x > 550) { p.y = 350; p.vx = -Math.abs(p.vx); }
+                            } else { // Bottom vessel (Left)
+                                if (p.x < 50) { p.y = 150; p.vx = Math.abs(p.vx); }
+                            }
+
+                            // Draw
+                            if (p.type === 'glucose') {
+                                ctx.fillStyle = "#ffffff";
+                                ctx.fillRect(p.x-3, p.y-3, 6, 6);
+                            } else if (p.type === 'insulin') {
+                                ctx.fillStyle = "#3b82f6";
+                                ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+                            } else if (p.type === 'glucagon') {
+                                ctx.fillStyle = "#f97316";
+                                ctx.beginPath();
+                                ctx.moveTo(p.x, p.y-4); ctx.lineTo(p.x+4, p.y+3); ctx.lineTo(p.x-4, p.y+3);
+                                ctx.fill();
+                            }
+                        });
+
+                        // --- 3. Organ Interactions (Visual Cues) ---
+                        
+                        // Liver (Right)
+                        // Glycogen Storage Visual
+                        ctx.fillStyle = "#8b5cf6"; // Purple Liver
+                        ctx.beginPath(); ctx.roundRect(480, 180, 100, 140, 20); ctx.fill();
+                        ctx.fillStyle = "white"; ctx.font = "bold 12px Arial"; ctx.fillText("LIVER", 510, 200);
+                        
+                        // Glycogen Bar inside Liver
+                        ctx.fillStyle = "#4c1d95";
+                        ctx.fillRect(500, 220, 60, 80);
+                        ctx.fillStyle = "#a78bfa";
+                        ctx.fillRect(500, 300, 60, -(glycogen/100)*80);
+                        ctx.fillStyle = "#fff"; ctx.font = "10px Arial"; ctx.fillText("Glycogen", 505, 315);
+
+                        // Pancreas (Left Top)
+                        ctx.fillStyle = "#ec4899"; // Pink Pancreas
+                        ctx.beginPath(); ctx.roundRect(20, 60, 120, 60, 15); ctx.fill();
+                        ctx.fillStyle = "white"; ctx.font = "bold 12px Arial"; ctx.fillText("PANCREAS", 45, 80);
+                        // Sensors
+                        if (glucose > 100) {
+                            ctx.fillStyle = "#3b82f6"; ctx.fillText("High Glucose!", 40, 100);
+                            // Emitting Insulin visual
+                        } else if (glucose < 80) {
+                            ctx.fillStyle = "#f97316"; ctx.fillText("Low Glucose!", 40, 100);
+                        } else {
+                            ctx.fillStyle = "#fff"; ctx.fillText("Normal", 60, 100);
+                        }
+
+                        // Body Cells (Bottom Left)
+                        ctx.fillStyle = "#10b981"; // Green Cells
+                        ctx.beginPath(); ctx.roundRect(20, 380, 120, 60, 15); ctx.fill();
+                        ctx.fillStyle = "white"; ctx.font = "bold 12px Arial"; ctx.fillText("BODY CELLS", 40, 400);
+                        if (insulin > 10) {
+                             ctx.font = "10px Arial"; ctx.fillText("Taking up Glucose...", 30, 420);
+                        }
+
+                        animationId = requestAnimationFrame(render);
+                    };
+                    render();
+                    return () => cancelAnimationFrame(animationId);
+                }, [glucose, insulin, glucagon, glycogen]);
+
+                return <canvas ref={canvasRef} width={600} height={500} className="w-full h-full object-contain" />;
+            };
+
+            // Particle Manager Helper
+            const manageParticles = (arr, type, targetCount) => {
+                const current = arr.filter(p => p.type === type);
+                const diff = targetCount - current.length;
+
+                if (diff > 0) {
+                    // Add
+                    for(let i=0; i<diff; i++) {
+                        arr.push({
+                            type,
+                            x: type === 'insulin' || type === 'glucagon' ? 80 : Math.random()*500+50, // Hormones from pancreas area
+                            y: 150, // Top vessel
+                            vx: 2 + Math.random(),
+                            vy: 0
+                        });
+                    }
+                } else if (diff < 0) {
+                    // Remove
+                    let removed = 0;
+                    for(let i=arr.length-1; i>=0; i--) {
+                        if(arr[i].type === type && removed < -diff) {
+                            arr.splice(i, 1);
+                            removed++;
+                        }
+                    }
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-blue-400" /> Glucose Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Homeostasis Regulation</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Actions */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Disturbances</label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button 
+                                        onClick={eatMeal}
+                                        className="p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl flex flex-col items-center gap-2 transition-all group"
+                                    >
+                                        <Icon name="utensils" size={24} className="text-emerald-400 group-hover:scale-110 transition-transform"/>
+                                        <span className="text-xs font-bold">Eat Meal</span>
+                                        <span className="text-[10px] text-slate-500">+ Glucose</span>
+                                    </button>
+                                    <button 
+                                        onClick={doExercise}
+                                        className="p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl flex flex-col items-center gap-2 transition-all group"
+                                    >
+                                        <Icon name="dumbbell" size={24} className="text-red-400 group-hover:scale-110 transition-transform"/>
+                                        <span className="text-xs font-bold">Exercise</span>
+                                        <span className="text-[10px] text-slate-500">- Glucose</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Status Card */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-4">Blood Status</div>
+                                
+                                <div className="flex justify-between items-end mb-2">
+                                    <span className="text-sm text-slate-300">Glucose</span>
+                                    <span className="text-2xl font-mono font-black" style={{color: getGlucoseColor(glucose)}}>
+                                        {glucose.toFixed(0)} <span className="text-xs font-normal text-slate-500">mg/dL</span>
+                                    </span>
+                                </div>
+                                {/* Glucose Bar */}
+                                <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden mb-6 relative">
+                                    <div className="absolute top-0 bottom-0 w-0.5 bg-white left-[45%] z-10 opacity-50"></div> {/* Setpoint mark approx 90/200 */}
+                                    <div 
+                                        className="h-full transition-all duration-500" 
+                                        style={{ 
+                                            width: `${(glucose / MAX_GLUCOSE) * 100}%`,
+                                            backgroundColor: getGlucoseColor(glucose)
+                                        }}
+                                    ></div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4 text-xs">
+                                    <div>
+                                        <div className="text-blue-400 font-bold mb-1 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Insulin</div>
+                                        <div className="font-mono text-slate-300">{insulin.toFixed(1)} units</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-orange-400 font-bold mb-1 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-orange-500"></div> Glucagon</div>
+                                        <div className="font-mono text-slate-300">{glucagon.toFixed(1)} units</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={() => setIsRunning(!isRunning)}
+                                className={`w-full py-2 rounded-lg text-xs font-bold border transition-all
+                                    ${isRunning ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-emerald-600 text-white border-emerald-500'}
+                                `}
+                            >
+                                {isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+                            </button>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Body Visualization */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            <div className="w-full h-full relative">
+                                <BodyVisualizer />
+                                
+                                {/* Feedback Loop Diagram Overlay (Dynamic) */}
+                                <div className="absolute top-4 right-4 w-64 bg-black/60 backdrop-blur p-3 rounded-xl border border-white/10 text-xs text-slate-300">
+                                    <div className="font-bold text-white mb-2 flex items-center gap-2"><Icon name="refresh-cw" size={14}/> Feedback Loop</div>
+                                    
+                                    {glucose > 100 ? (
+                                        <div className="space-y-1 animate-in fade-in">
+                                            <div className="text-red-400 font-bold">High Blood Sugar</div>
+                                            <div>⬇ Stimulates Pancreas</div>
+                                            <div className="text-blue-400 font-bold">Insulin Secreted</div>
+                                            <div>⬇ Liver stores Glycogen</div>
+                                            <div>Blood Sugar Falls</div>
+                                        </div>
+                                    ) : glucose < 80 ? (
+                                        <div className="space-y-1 animate-in fade-in">
+                                            <div className="text-orange-400 font-bold">Low Blood Sugar</div>
+                                            <div>⬇ Stimulates Pancreas</div>
+                                            <div className="text-orange-400 font-bold">Glucagon Secreted</div>
+                                            <div>⬇ Liver releases Glucose</div>
+                                            <div>Blood Sugar Rises</div>
+                                        </div>
+                                    ) : (
+                                        <div className="text-emerald-400 italic">Homeostasis Maintained</div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Live Graph */}
+                        <div className="h-48 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col">
+                             <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex justify-between">
+                                <span>Hormone Levels & Glucose</span>
+                                <div className="flex gap-3">
+                                    <span className="flex items-center gap-1"><div className="w-2 h-1 bg-white"></div> Glucose</span>
+                                    <span className="flex items-center gap-1"><div className="w-2 h-1 bg-blue-500"></div> Insulin</span>
+                                    <span className="flex items-center gap-1"><div className="w-2 h-1 bg-orange-500"></div> Glucagon</span>
+                                </div>
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={history}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                                        <XAxis dataKey="time" hide />
+                                        <YAxis yAxisId="left" domain={[0, 200]} hide />
+                                        <YAxis yAxisId="right" orientation="right" domain={[0, 100]} hide />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ padding: 0 }}
+                                            labelStyle={{ display: 'none' }}
+                                        />
+                                        <ReferenceLine y={90} yAxisId="left" stroke="#10b981" strokeDasharray="3 3" />
+                                        <Line yAxisId="left" type="monotone" dataKey="glucose" stroke="#ffffff" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                        <Line yAxisId="right" type="monotone" dataKey="insulin" stroke="#3b82f6" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                        <Line yAxisId="right" type="monotone" dataKey="glucagon" stroke="#f97316" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
