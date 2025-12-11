@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedigree Detective | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Pedigree Lines */
+        .pedigree-line { stroke: #cbd5e1; stroke-width: 2; fill: none; }
+        
+        /* Symbol Animation */
+        .symbol { transition: all 0.3s ease; cursor: pointer; }
+        .symbol:hover { filter: drop-shadow(0 0 4px rgba(255,255,255,0.5)); transform: scale(1.1); }
+        
+        /* Modal Animation */
+        .modal-enter { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- LOGIC & DATA ---
+        const MODES = [
+            { id: 'AD', name: 'Autosomal Dominant', label: 'Dominant' },
+            { id: 'AR', name: 'Autosomal Recessive', label: 'Recessive' },
+            { id: 'XD', name: 'X-linked Dominant', label: 'X-Dominant' },
+            { id: 'XR', name: 'X-linked Recessive', label: 'X-Recessive' }
+        ];
+
+        // Pre-defined Pedigree Scenarios
+        const SCENARIOS = [
+            {
+                id: 1,
+                mode: 'AR',
+                difficulty: 'Easy',
+                // Recessive: Two unaffected parents have affected child
+                data: [
+                    // Gen I
+                    { id: '1-1', sex: 'M', affected: false, x: 200, y: 50 },
+                    { id: '1-2', sex: 'F', affected: false, x: 400, y: 50 },
+                    // Gen II
+                    { id: '2-1', sex: 'M', affected: false, x: 150, y: 200, parents: ['1-1', '1-2'] },
+                    { id: '2-2', sex: 'F', affected: true, x: 300, y: 200, parents: ['1-1', '1-2'] }, // Affected daughter
+                    { id: '2-3', sex: 'M', affected: false, x: 450, y: 200, parents: ['1-1', '1-2'] },
+                ],
+                clue: 'Look for unaffected parents having an affected child.'
+            },
+            {
+                id: 2,
+                mode: 'AD',
+                difficulty: 'Medium',
+                // Dominant: Every affected child has an affected parent
+                data: [
+                    // Gen I
+                    { id: '1-1', sex: 'M', affected: true, x: 200, y: 50 },
+                    { id: '1-2', sex: 'F', affected: false, x: 400, y: 50 },
+                    // Gen II
+                    { id: '2-1', sex: 'F', affected: true, x: 200, y: 200, parents: ['1-1', '1-2'] },
+                    { id: '2-2', sex: 'M', affected: false, x: 300, y: 200, parents: ['1-1', '1-2'] },
+                    { id: '2-3', sex: 'M', affected: true, x: 400, y: 200, parents: ['1-1', '1-2'] },
+                    // Gen III (from 2-1 & outsider)
+                    { id: '2-x', sex: 'M', affected: false, x: 100, y: 200 }, // Partner for 2-1
+                    { id: '3-1', sex: 'F', affected: true, x: 150, y: 350, parents: ['2-x', '2-1'] },
+                ],
+                clue: 'Does the trait appear in every generation?'
+            },
+            {
+                id: 3,
+                mode: 'XR',
+                difficulty: 'Hard',
+                // X-Recessive: More males affected, skipping generations
+                data: [
+                    // Gen I
+                    { id: '1-1', sex: 'M', affected: false, x: 200, y: 50 },
+                    { id: '1-2', sex: 'F', affected: false, x: 400, y: 50 }, // Carrier
+                    // Gen II
+                    { id: '2-1', sex: 'M', affected: true, x: 150, y: 200, parents: ['1-1', '1-2'] },
+                    { id: '2-2', sex: 'F', affected: false, x: 300, y: 200, parents: ['1-1', '1-2'] },
+                    { id: '2-3', sex: 'M', affected: false, x: 450, y: 200, parents: ['1-1', '1-2'] },
+                    // Gen III (from 2-2 carrier & outsider)
+                    { id: '2-y', sex: 'M', affected: false, x: 380, y: 200 }, // Partner for 2-2
+                    { id: '3-1', sex: 'M', affected: true, x: 340, y: 350, parents: ['2-y', '2-2'] }
+                ],
+                clue: 'Check the gender ratio. Are males more affected?'
+            }
+        ];
+
+        // --- COMPONENTS ---
+
+        const PedigreeChart = ({ scenario }) => {
+            const { data } = scenario;
+            
+            // Simple connection drawing logic
+            const renderConnections = () => {
+                const lines = [];
+                
+                // Find couples (Generation I & II with partners)
+                // Case 1: 1-1 & 1-2
+                const p1 = data.find(p => p.id === '1-1');
+                const p2 = data.find(p => p.id === '1-2');
+                if (p1 && p2) {
+                    // Marriage Line
+                    lines.push(<line key="m1" x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="pedigree-line" />);
+                    // Descent Line
+                    const midX = (p1.x + p2.x) / 2;
+                    const midY = p1.y;
+                    
+                    lines.push(<line key="d1" x1={midX} y1={midY} x2={midX} y2={midY + 50} className="pedigree-line" />);
+                    
+                    // Sibling bar
+                    const children = data.filter(p => p.parents && p.parents.includes('1-1'));
+                    if (children.length > 0) {
+                        const minX = Math.min(...children.map(c => c.x));
+                        const maxX = Math.max(...children.map(c => c.x));
+                        const barY = midY + 50;
+                        lines.push(<line key="s1" x1={minX} y1={barY} x2={maxX} y2={barY} className="pedigree-line" />);
+                        
+                        children.forEach(c => {
+                            lines.push(<line key={`c-${c.id}`} x1={c.x} y1={barY} x2={c.x} y2={c.y} className="pedigree-line" />);
+                        });
+                    }
+                }
+
+                // Gen II couples (for Scenario 2 & 3)
+                // Scenario 2: 2-x & 2-1
+                const p2x = data.find(p => p.id === '2-x');
+                const p21 = data.find(p => p.id === '2-1');
+                if (p2x && p21) {
+                    lines.push(<line key="m2" x1={p2x.x} y1={p2x.y} x2={p21.x} y2={p21.y} className="pedigree-line" />);
+                    const midX = (p2x.x + p21.x) / 2;
+                    const barY = 250;
+                    lines.push(<line key="d2" x1={midX} y1={p2x.y} x2={midX} y2={barY} className="pedigree-line" />);
+                    
+                    const children = data.filter(p => p.parents && p.parents.includes('2-1'));
+                     if (children.length > 0) {
+                        const minX = Math.min(...children.map(c => c.x));
+                        const maxX = Math.max(...children.map(c => c.x));
+                        lines.push(<line key="s2" x1={minX} y1={barY} x2={maxX} y2={barY} className="pedigree-line" />);
+                        children.forEach(c => {
+                            lines.push(<line key={`c2-${c.id}`} x1={c.x} y1={barY} x2={c.x} y2={c.y} className="pedigree-line" />);
+                        });
+                    }
+                }
+
+                // Scenario 3: 2-y & 2-2
+                const p2y = data.find(p => p.id === '2-y');
+                const p22 = data.find(p => p.id === '2-2');
+                if (p2y && p22) {
+                    lines.push(<line key="m3" x1={p22.x} y1={p22.y} x2={p2y.x} y2={p2y.y} className="pedigree-line" />);
+                    const midX = (p22.x + p2y.x) / 2;
+                    const barY = 250;
+                    lines.push(<line key="d3" x1={midX} y1={p22.y} x2={midX} y2={barY} className="pedigree-line" />);
+                    
+                    const children = data.filter(p => p.parents && p.parents.includes('2-2'));
+                    children.forEach(c => {
+                        lines.push(<line key={`c3-${c.id}`} x1={c.x} y1={barY} x2={c.x} y2={c.y} className="pedigree-line" />);
+                    });
+                    // Sibling bar if multiple (only 1 here)
+                    if (children.length > 0) {
+                         lines.push(<line key="s3" x1={children[0].x} y1={barY} x2={children[0].x} y2={barY} className="pedigree-line" />);
+                    }
+                }
+
+                return lines;
+            };
+
+            return (
+                <div className="w-full h-full flex items-center justify-center bg-slate-900/50 rounded-2xl border border-slate-700 relative overflow-auto">
+                    <svg width="600" height="450" viewBox="0 0 600 450">
+                        {renderConnections()}
+                        {data.map(p => (
+                            <g key={p.id} transform={`translate(${p.x}, ${p.y})`} className="symbol">
+                                {p.sex === 'M' ? (
+                                    <rect x="-15" y="-15" width="30" height="30" 
+                                        fill={p.affected ? "#ef4444" : "transparent"} 
+                                        stroke={p.affected ? "#ef4444" : "#94a3b8"} strokeWidth="3" />
+                                ) : (
+                                    <circle r="16" 
+                                        fill={p.affected ? "#ef4444" : "transparent"} 
+                                        stroke={p.affected ? "#ef4444" : "#94a3b8"} strokeWidth="3" />
+                                )}
+                                <text y="35" textAnchor="middle" fill="#64748b" fontSize="10" fontWeight="bold">{p.id}</text>
+                            </g>
+                        ))}
+                        
+                        {/* Generations */}
+                        <text x="20" y="55" fill="#475569" fontSize="12" fontWeight="bold">I</text>
+                        <text x="20" y="205" fill="#475569" fontSize="12" fontWeight="bold">II</text>
+                        {data.some(p => p.id.startsWith('3')) && <text x="20" y="355" fill="#475569" fontSize="12" fontWeight="bold">III</text>}
+                    </svg>
+                    
+                    {/* Key */}
+                    <div className="absolute top-4 right-4 bg-slate-800/80 backdrop-blur p-3 rounded-xl border border-slate-600 text-xs text-slate-300">
+                        <div className="flex items-center gap-2 mb-1"><div className="w-3 h-3 border-2 border-slate-400"></div> Male</div>
+                        <div className="flex items-center gap-2 mb-1"><div className="w-3 h-3 border-2 border-slate-400 rounded-full"></div> Female</div>
+                        <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-500"></div> Affected</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [level, setLevel] = useState(0); // Scenario index
+            const [selectedMode, setSelectedMode] = useState(null);
+            const [result, setResult] = useState(null); // 'correct', 'wrong'
+            const [showHint, setShowHint] = useState(false);
+
+            const currentScenario = SCENARIOS[level];
+
+            const checkAnswer = () => {
+                if (!selectedMode) return;
+                if (selectedMode === currentScenario.mode) {
+                    setResult('correct');
+                } else {
+                    setResult('wrong');
+                }
+            };
+
+            const nextLevel = () => {
+                if (level < SCENARIOS.length - 1) {
+                    setLevel(l => l + 1);
+                    reset();
+                } else {
+                    // Game Over state
+                    alert("Congratulations! You've solved all cases.");
+                    setLevel(0);
+                    reset();
+                }
+            };
+
+            const reset = () => {
+                setSelectedMode(null);
+                setResult(null);
+                setShowHint(false);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="search" className="text-emerald-400" /> Pedigree Detective
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Genetic Mystery Solver</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Case Info */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                                    <span>Case File #{level + 1}</span>
+                                    <span className={`px-2 py-0.5 rounded text-white ${currentScenario.difficulty === 'Easy' ? 'bg-emerald-600' : currentScenario.difficulty === 'Medium' ? 'bg-yellow-600' : 'bg-red-600'}`}>
+                                        {currentScenario.difficulty}
+                                    </span>
+                                </div>
+                                <p className="text-sm text-slate-300">
+                                    Analyze the family tree on the right. Determine the mode of inheritance for the trait shown in <span className="text-red-400 font-bold">red</span>.
+                                </p>
+                            </div>
+
+                            {/* Deduction Tool */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Mode</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {MODES.map(m => (
+                                        <button 
+                                            key={m.id}
+                                            onClick={() => setSelectedMode(m.id)}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between
+                                                ${selectedMode === m.id 
+                                                    ? 'bg-slate-800 border-emerald-500 text-white shadow-lg' 
+                                                    : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <span className="text-sm font-bold">{m.name}</span>
+                                            {selectedMode === m.id && <Icon name="check-circle" size={16} className="text-emerald-400"/>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="space-y-3">
+                                <button 
+                                    onClick={checkAnswer}
+                                    disabled={!selectedMode || result === 'correct'}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all
+                                        ${result === 'correct' ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg'}
+                                        ${!selectedMode ? 'opacity-50 cursor-not-allowed' : ''}
+                                    `}
+                                >
+                                    {result === 'correct' ? <><Icon name="check"/> Solved!</> : 'Submit Analysis'}
+                                </button>
+
+                                <button 
+                                    onClick={() => setShowHint(!showHint)}
+                                    className="w-full py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-yellow-400 rounded-xl font-bold transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="lightbulb" size={18}/> {showHint ? 'Hide Hint' : 'Need a Hint?'}
+                                </button>
+                                
+                                {showHint && (
+                                    <div className="p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-xs text-yellow-200 animate-in fade-in">
+                                        💡 {currentScenario.clue}
+                                    </div>
+                                )}
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        <div className="flex-1 flex items-center justify-center relative">
+                            <PedigreeChart scenario={currentScenario} />
+                            
+                            {/* Result Overlay */}
+                            {result && (
+                                <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 px-6 py-4 rounded-2xl shadow-2xl border flex items-center gap-4 modal-enter
+                                    ${result === 'correct' ? 'bg-emerald-900/90 border-emerald-500 text-emerald-100' : 'bg-red-900/90 border-red-500 text-red-100'}
+                                `}>
+                                    <div className={`p-2 rounded-full ${result === 'correct' ? 'bg-emerald-500' : 'bg-red-500'} text-white`}>
+                                        <Icon name={result === 'correct' ? 'check' : 'x'} size={24}/>
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-lg">{result === 'correct' ? 'Correct Diagnosis!' : 'Incorrect Analysis'}</div>
+                                        <div className="text-xs opacity-80">
+                                            {result === 'correct' ? 'Evidence supports your conclusion.' : 'Check the inheritance pattern again.'}
+                                        </div>
+                                    </div>
+                                    {result === 'correct' && (
+                                        <button onClick={nextLevel} className="ml-4 px-4 py-2 bg-white text-emerald-900 rounded-lg font-bold hover:bg-emerald-50 transition-colors">
+                                            Next Case
+                                        </button>
+                                    )}
+                                    {result === 'wrong' && (
+                                        <button onClick={() => setResult(null)} className="ml-4 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-bold transition-colors">
+                                            Retry
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
