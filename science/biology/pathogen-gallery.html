@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pathogen Gallery 3D | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js (r128) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { outline: none; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const PATHOGENS = [
+            {
+                id: 'flu',
+                name: 'Influenza Virus',
+                type: 'Virus',
+                desc: 'Enveloped RNA virus with surface spikes (Hemagglutinin & Neuraminidase). Causes flu.',
+                size: '~100 nm',
+                color: '#ef4444',
+                icon: 'virus'
+            },
+            {
+                id: 'adeno',
+                name: 'Adenovirus',
+                type: 'Virus',
+                desc: 'Non-enveloped virus with an icosahedral shape and fibers at vertices. Causes respiratory illnesses.',
+                size: '~90 nm',
+                color: '#14b8a6',
+                icon: 'hexagon'
+            },
+            {
+                id: 'phage',
+                name: 'Bacteriophage',
+                type: 'Virus',
+                desc: 'A virus that infects bacteria. Has a geometric head (capsid) and tail fibers.',
+                size: '~200 nm',
+                color: '#3b82f6',
+                icon: 'bot'
+            },
+            {
+                id: 'staph',
+                name: 'Staphylococcus',
+                type: 'Bacteria',
+                desc: 'Spherical bacteria (cocci) that cluster like grapes. Common cause of skin infections.',
+                size: '~1 µm',
+                color: '#a855f7',
+                icon: 'layout-grid'
+            },
+            {
+                id: 'ecoli',
+                name: 'E. coli',
+                type: 'Bacteria',
+                desc: 'Rod-shaped bacterium (bacillus) with flagella. Found in intestines.',
+                size: '~2 µm',
+                color: '#22c55e',
+                icon: 'align-justify'
+            },
+            {
+                id: 'vibrio',
+                name: 'Vibrio cholerae',
+                type: 'Bacteria',
+                desc: 'Comma-shaped bacterium with a single polar flagellum. Causes cholera.',
+                size: '~1.5 µm',
+                color: '#06b6d4',
+                icon: 'corner-down-right'
+            },
+            {
+                id: 'yeast',
+                name: 'Yeast',
+                type: 'Fungi',
+                desc: 'Single-celled fungus. Reproduces by budding. Larger than bacteria.',
+                size: '~4-10 µm',
+                color: '#eab308',
+                icon: 'cookie'
+            }
+        ];
+
+        // --- 3D SCENE ---
+        const PathogenScene = ({ pathogenId }) => {
+            const mountRef = useRef(null);
+            const frameIdRef = useRef(null);
+            const timeRef = useRef(0);
+
+            useEffect(() => {
+                if (!mountRef.current) return;
+                const container = mountRef.current;
+                
+                // Initial check
+                let width = container.clientWidth || 100;
+                let height = container.clientHeight || 100;
+
+                let scene, camera, renderer, controls, group;
+
+                try {
+                    // Scene Setup
+                    scene = new THREE.Scene();
+                    scene.background = new THREE.Color(0x0f172a);
+                    scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+
+                    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                    camera.position.set(0, 0, 20);
+
+                    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                    renderer.setSize(width, height);
+                    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                    
+                    while(container.firstChild) container.removeChild(container.firstChild);
+                    container.appendChild(renderer.domElement);
+
+                    controls = new THREE.OrbitControls(camera, renderer.domElement);
+                    controls.enableDamping = true;
+                    controls.autoRotate = true;
+                    controls.autoRotateSpeed = 0.8;
+
+                    // Lighting
+                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+                    scene.add(ambientLight);
+                    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+                    dirLight.position.set(10, 10, 10);
+                    scene.add(dirLight);
+                    const pointLight = new THREE.PointLight(0x60a5fa, 0.8);
+                    pointLight.position.set(-10, -10, 5);
+                    scene.add(pointLight);
+
+                    // --- MODEL BUILDER ---
+                    group = new THREE.Group();
+                    
+                    const matBase = (color) => new THREE.MeshStandardMaterial({ 
+                        color: color, roughness: 0.4, metalness: 0.2 
+                    });
+
+                    if (pathogenId === 'flu') {
+                        // Virus Body
+                        const bodyGeo = new THREE.SphereGeometry(4, 32, 32);
+                        const body = new THREE.Mesh(bodyGeo, matBase(0xef4444));
+                        group.add(body);
+                        
+                        // Spikes
+                        const spikeGeo = new THREE.CylinderGeometry(0.2, 0.2, 1.5, 8);
+                        const spikeHeadGeo = new THREE.SphereGeometry(0.5, 8, 8);
+                        const spikeMat = matBase(0xffaaaa);
+                        
+                        for(let i=0; i<60; i++) {
+                            const spikeGroup = new THREE.Group();
+                            const stalk = new THREE.Mesh(spikeGeo, spikeMat);
+                            stalk.position.y = 4.5;
+                            const head = new THREE.Mesh(spikeHeadGeo, spikeMat);
+                            head.position.y = 5.2;
+                            spikeGroup.add(stalk);
+                            spikeGroup.add(head);
+                            
+                            const phi = Math.acos(-1 + (2 * i) / 60);
+                            const theta = Math.sqrt(60 * Math.PI) * phi;
+                            
+                            const vec = new THREE.Vector3();
+                            vec.setFromSphericalCoords(1, phi, theta);
+                            spikeGroup.position.set(0,0,0);
+                            spikeGroup.lookAt(vec);
+                            
+                            group.add(spikeGroup);
+                        }
+                    } else if (pathogenId === 'adeno') {
+                        // Adenovirus - Icosahedron with fibers
+                        const bodyGeo = new THREE.IcosahedronGeometry(4, 0);
+                        const body = new THREE.Mesh(bodyGeo, matBase(0x14b8a6));
+                        group.add(body);
+                        
+                        // Fibers at vertices
+                        const fiberMat = matBase(0x99f6e4);
+                        const fiberGeo = new THREE.CylinderGeometry(0.1, 0.1, 2, 8);
+                        const knobGeo = new THREE.SphereGeometry(0.3, 8, 8);
+
+                        // Icosahedron (detail 0) has 12 vertices.
+                        const t = (1 + Math.sqrt(5)) / 2;
+                        const verts = [
+                            [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+                            [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+                            [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+                        ];
+
+                        verts.forEach(v => {
+                            const vec = new THREE.Vector3(v[0], v[1], v[2]).normalize().multiplyScalar(4);
+                            
+                            const fiberGroup = new THREE.Group();
+                            const stick = new THREE.Mesh(fiberGeo, fiberMat);
+                            stick.position.y = 1;
+                            const knob = new THREE.Mesh(knobGeo, fiberMat);
+                            knob.position.y = 2;
+                            
+                            fiberGroup.add(stick);
+                            fiberGroup.add(knob);
+                            
+                            fiberGroup.position.copy(vec);
+                            fiberGroup.lookAt(vec.clone().multiplyScalar(2));
+                            fiberGroup.rotateX(Math.PI/2); 
+                            
+                            group.add(fiberGroup);
+                        });
+
+                    } else if (pathogenId === 'phage') {
+                        // Head (Icosahedron)
+                        const headGeo = new THREE.IcosahedronGeometry(3, 0);
+                        const head = new THREE.Mesh(headGeo, matBase(0x3b82f6));
+                        head.position.y = 3;
+                        group.add(head);
+                        
+                        // Neck
+                        const neckGeo = new THREE.CylinderGeometry(0.8, 0.8, 4, 8);
+                        const neck = new THREE.Mesh(neckGeo, matBase(0x60a5fa));
+                        group.add(neck);
+                        
+                        // Base Plate
+                        const plateGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.5, 6);
+                        const plate = new THREE.Mesh(plateGeo, matBase(0x2563eb));
+                        plate.position.y = -2;
+                        group.add(plate);
+                        
+                        // Legs
+                        for(let i=0; i<6; i++) {
+                            const angle = (i/6) * Math.PI * 2;
+                            const legGroup = new THREE.Group();
+                            const leg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3), matBase(0x93c5fd));
+                            leg1.position.set(0, -1.5, 0);
+                            leg1.rotation.z = Math.PI/4;
+                            const leg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3), matBase(0x93c5fd));
+                            leg2.position.set(1.8, -2.5, 0);
+                            leg2.rotation.z = -Math.PI/4;
+                            
+                            legGroup.add(leg1);
+                            legGroup.add(leg2);
+                            
+                            legGroup.position.set(Math.cos(angle)*1.2, -2, Math.sin(angle)*1.2);
+                            legGroup.rotation.y = -angle;
+                            group.add(legGroup);
+                        }
+                    } else if (pathogenId === 'staph') {
+                        // Cluster of spheres
+                        const sphereGeo = new THREE.SphereGeometry(1.5, 16, 16);
+                        const mat = matBase(0xa855f7);
+                        
+                        const positions = [
+                            [0,0,0], [2,0,0], [-1,1.5,0], [0,-1.8,1], [1,1.5,1.5], [-1.5,-1,-1], [1.5, -1, -1.5],
+                            [0, 2.5, -1], [0, -2.5, 0], [-2, 0, 1.5], [2, 1, -1]
+                        ];
+                        
+                        positions.forEach(pos => {
+                            const sphere = new THREE.Mesh(sphereGeo, mat);
+                            sphere.position.set(...pos);
+                            group.add(sphere);
+                        });
+                    } else if (pathogenId === 'ecoli') {
+                        // Rod shape
+                        const rodLength = 5;
+                        const rodRadius = 1.5;
+                        const cylGeo = new THREE.CylinderGeometry(rodRadius, rodRadius, rodLength, 32);
+                        const body = new THREE.Mesh(cylGeo, matBase(0x22c55e));
+                        const capGeo = new THREE.SphereGeometry(rodRadius, 32, 16, 0, Math.PI*2, 0, Math.PI/2);
+                        const topCap = new THREE.Mesh(capGeo, matBase(0x22c55e));
+                        topCap.position.y = rodLength / 2;
+                        body.add(topCap);
+                        const bottomCap = new THREE.Mesh(capGeo, matBase(0x22c55e));
+                        bottomCap.position.y = -rodLength / 2;
+                        bottomCap.rotation.x = Math.PI;
+                        body.add(bottomCap);
+                        body.rotation.z = Math.PI / 2; 
+                        group.add(body);
+                        
+                        // Flagella
+                        const flagellaCount = 8;
+                        for(let i=0; i<flagellaCount; i++) {
+                            const curve = new THREE.CatmullRomCurve3([
+                                new THREE.Vector3(3.5, 0, 0),
+                                new THREE.Vector3(5, 1, 0),
+                                new THREE.Vector3(6.5, -1, 0),
+                                new THREE.Vector3(8, 0.5, 0)
+                            ]);
+                            const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.1, 8, false), matBase(0x86efac));
+                            tube.position.x = 0;
+                            tube.rotation.x = (i/flagellaCount) * Math.PI * 2;
+                            group.add(tube);
+                        }
+                        // Pili
+                        const piliGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.8);
+                        for(let i=0; i<50; i++) {
+                            const pili = new THREE.Mesh(piliGeo, matBase(0x166534));
+                            const angle = Math.random() * Math.PI * 2;
+                            const z = (Math.random() - 0.5) * 6;
+                            const r = 1.5;
+                            pili.position.set(z, Math.sin(angle)*r, Math.cos(angle)*r);
+                            pili.lookAt(z*2, Math.sin(angle)*r*2, Math.cos(angle)*r*2);
+                            pili.rotateX(Math.PI/2);
+                            group.add(pili);
+                        }
+
+                    } else if (pathogenId === 'vibrio') {
+                        // Vibrio cholerae - Curved rod (Comma)
+                        const path = new THREE.QuadraticBezierCurve3(
+                            new THREE.Vector3(-2, 0, 0),
+                            new THREE.Vector3(0, 1.5, 0),
+                            new THREE.Vector3(2, 0, 0)
+                        );
+                        const tubeGeo = new THREE.TubeGeometry(path, 20, 1.2, 16, false);
+                        const body = new THREE.Mesh(tubeGeo, matBase(0x06b6d4));
+                        
+                        // Cap ends manually
+                        const capGeo = new THREE.SphereGeometry(1.2, 16, 16);
+                        const cap1 = new THREE.Mesh(capGeo, matBase(0x06b6d4));
+                        cap1.position.set(-2, 0, 0);
+                        const cap2 = new THREE.Mesh(capGeo, matBase(0x06b6d4));
+                        cap2.position.set(2, 0, 0);
+                        
+                        group.add(body);
+                        group.add(cap1);
+                        group.add(cap2);
+
+                        // Single Flagellum
+                        const flagPath = new THREE.CatmullRomCurve3([
+                            new THREE.Vector3(2, 0, 0),
+                            new THREE.Vector3(4, 1, 0),
+                            new THREE.Vector3(6, -1, 0),
+                            new THREE.Vector3(8, 1, 0)
+                        ]);
+                        const flagMesh = new THREE.Mesh(new THREE.TubeGeometry(flagPath, 20, 0.15, 8, false), matBase(0xa5f3fc));
+                        group.add(flagMesh);
+
+                    } else if (pathogenId === 'yeast') {
+                        // Mother cell
+                        const motherGeo = new THREE.SphereGeometry(3, 32, 32);
+                        const mat = matBase(0xeab308);
+                        const mother = new THREE.Mesh(motherGeo, mat);
+                        mother.scale.set(1, 1.2, 1);
+                        group.add(mother);
+                        
+                        // Bud
+                        const budGeo = new THREE.SphereGeometry(1.5, 32, 32);
+                        const bud = new THREE.Mesh(budGeo, mat);
+                        bud.position.set(2, 2.5, 0);
+                        bud.scale.set(1, 1.2, 1);
+                        bud.rotation.z = -0.5;
+                        group.add(bud);
+                        
+                        // Scars
+                        const scarGeo = new THREE.CircleGeometry(0.5, 16);
+                        const scar = new THREE.Mesh(scarGeo, new THREE.MeshStandardMaterial({color: 0xca8a04, side: THREE.DoubleSide}));
+                        scar.position.set(-2.5, 1, 1.5);
+                        scar.lookAt(0,0,0);
+                        group.add(scar);
+                    }
+
+                    scene.add(group);
+                } catch (err) {
+                    console.error("Three.js init error:", err);
+                }
+
+                // Animation
+                const animate = () => {
+                    timeRef.current += 0.01;
+                    
+                    if (group) {
+                        group.position.y = Math.sin(timeRef.current) * 0.5;
+                        if (pathogenId === 'ecoli' || pathogenId === 'vibrio') {
+                            group.rotation.x = Math.sin(timeRef.current * 2) * 0.1;
+                        }
+                    }
+
+                    if (controls) controls.update();
+                    if (renderer && scene && camera) renderer.render(scene, camera);
+                    frameIdRef.current = requestAnimationFrame(animate);
+                };
+                animate();
+
+                // Resize Observer
+                const resizeObserver = new ResizeObserver(() => {
+                    if (container.clientWidth && container.clientHeight) {
+                        const w = container.clientWidth;
+                        const h = container.clientHeight;
+                        if (camera) {
+                            camera.aspect = w / h;
+                            camera.updateProjectionMatrix();
+                        }
+                        if (renderer) renderer.setSize(w, h);
+                    }
+                });
+                resizeObserver.observe(container);
+
+                return () => {
+                    if (frameIdRef.current) cancelAnimationFrame(frameIdRef.current);
+                    resizeObserver.disconnect();
+                    if (container && renderer && renderer.domElement) {
+                        container.removeChild(renderer.domElement);
+                    }
+                    if (renderer) renderer.dispose();
+                };
+            }, [pathogenId]);
+
+            return <div ref={mountRef} className="w-full h-full min-h-[300px]" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedId, setSelectedId] = useState('flu');
+            const currentPathogen = PATHOGENS.find(p => p.id === selectedId);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="microscope" className="text-emerald-400" /> Pathogen Gallery
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Interactive 3D Microbiology</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* List */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Organism</label>
+                                {PATHOGENS.map(p => (
+                                    <button 
+                                        key={p.id}
+                                        onClick={() => setSelectedId(p.id)}
+                                        className={`w-full p-3 rounded-xl border transition-all flex items-center gap-3 text-left
+                                            ${selectedId === p.id 
+                                                ? `bg-slate-800 border-[${p.color}] text-white shadow-lg ring-1` 
+                                                : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                        `}
+                                        style={selectedId === p.id ? { borderColor: p.color, '--tw-ring-color': p.color+'80' } : {}}
+                                    >
+                                        <div className={`p-2 rounded-lg bg-slate-900`} style={{color: p.color}}>
+                                            <Icon name={p.icon} size={20}/>
+                                        </div>
+                                        <div>
+                                            <div className="text-sm font-bold">{p.name.split(' (')[0]}</div>
+                                            <div className="text-[10px] opacity-70">{p.type}</div>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-gradient-to-b from-[#0F172A] to-[#1e293b] flex flex-col p-6 overflow-hidden">
+                        
+                        {/* 3D Viewer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            <div className="absolute inset-0">
+                                <PathogenScene pathogenId={selectedId} />
+                            </div>
+                            
+                            {/* Info Overlay */}
+                            <div className="absolute bottom-8 left-8 right-8 bg-slate-900/90 backdrop-blur p-6 rounded-2xl border border-slate-700 shadow-2xl animate-in slide-in-from-bottom-4 max-w-2xl mx-auto">
+                                <div className="flex items-start justify-between mb-2">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-xs font-bold uppercase px-2 py-0.5 rounded bg-slate-800 border border-slate-600" style={{color: currentPathogen.color}}>
+                                                {currentPathogen.type}
+                                            </span>
+                                            <span className="text-xs text-slate-500 font-mono">Size: {currentPathogen.size}</span>
+                                        </div>
+                                        <h2 className="text-2xl font-black text-white">{currentPathogen.name}</h2>
+                                    </div>
+                                </div>
+                                <p className="text-sm text-slate-300 leading-relaxed">
+                                    {currentPathogen.desc}
+                                </p>
+                            </div>
+
+                            <div className="absolute top-6 left-6 pointer-events-none">
+                                <div className="flex items-center gap-2 bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
+                                    <Icon name="box" size={14} className="text-slate-400"/>
+                                    <span className="text-xs text-slate-300 font-mono">3D View</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
