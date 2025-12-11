@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Digestive System Viewer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        canvas { outline: none; }
+        .info-panel {
+            backdrop-filter: blur(10px);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const ORGANS = {
+            mouth: {
+                name: 'Mouth',
+                desc: 'Mechanical digestion (teeth) and chemical digestion (saliva).',
+                enzymes: 'Salivary Amylase',
+                color: 0xffadad
+            },
+            oesophagus: {
+                name: 'Oesophagus',
+                desc: 'Transport food to stomach via peristalsis.',
+                enzymes: 'None',
+                color: 0xffd6a5
+            },
+            stomach: {
+                name: 'Stomach',
+                desc: 'Muscular bag. Churns food. Acidic environment (HCl).',
+                enzymes: 'Pepsin (Protease)',
+                color: 0xffca3a
+            },
+            liver: {
+                name: 'Liver',
+                desc: 'Produces Bile. Processes nutrients. Detoxification.',
+                enzymes: 'Bile (Not an enzyme)',
+                color: 0x8e44ad
+            },
+            gall_bladder: {
+                name: 'Gall Bladder',
+                desc: 'Stores bile produced by the liver.',
+                enzymes: 'None',
+                color: 0x2ecc71
+            },
+            pancreas: {
+                name: 'Pancreas',
+                desc: 'Produces pancreatic juice containing enzymes.',
+                enzymes: 'Amylase, Protease, Lipase',
+                color: 0xffa07a
+            },
+            small_intestine: {
+                name: 'Small Intestine',
+                desc: 'Main site of digestion and absorption. Villi increase surface area.',
+                enzymes: 'Maltase, Peptidases, etc.',
+                color: 0xf4a261
+            },
+            large_intestine: {
+                name: 'Large Intestine',
+                desc: 'Absorbs water. Forms faeces.',
+                enzymes: 'None',
+                color: 0xa0522d
+            }
+        };
+
+        // --- 3D SCENE ---
+        const DigestiveScene = ({ onSelect }) => {
+            const mountRef = useRef(null);
+            const sceneRef = useRef(null);
+            const meshesRef = useRef({});
+            const highlightMeshRef = useRef(null);
+
+            useEffect(() => {
+                if (!mountRef.current) return;
+
+                const container = mountRef.current;
+                // Wait for container to have dimensions
+                if (container.clientWidth === 0) return;
+
+                // 1. Setup
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+
+                try {
+                    const scene = new THREE.Scene();
+                    scene.background = new THREE.Color(0x020617); 
+                    scene.fog = new THREE.FogExp2(0x020617, 0.02);
+                    sceneRef.current = scene;
+
+                    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                    camera.position.set(0, 5, 30);
+
+                    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                    renderer.setSize(width, height);
+                    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                    
+                    while(container.firstChild) container.removeChild(container.firstChild);
+                    container.appendChild(renderer.domElement);
+
+                    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                    controls.enableDamping = true;
+                    controls.autoRotate = true;
+                    controls.autoRotateSpeed = 1.0;
+                    controls.maxPolarAngle = Math.PI / 1.5; 
+
+                    // Lights
+                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                    scene.add(ambientLight);
+                    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+                    dirLight.position.set(10, 20, 10);
+                    scene.add(dirLight);
+                    const pointLight = new THREE.PointLight(0x38bdf8, 0.5);
+                    pointLight.position.set(-10, 5, 10);
+                    scene.add(pointLight);
+
+                    // --- BUILD ORGANS (Procedural Geometry) ---
+                    
+                    const createMat = (color) => new THREE.MeshStandardMaterial({ 
+                        color: color, 
+                        roughness: 0.4, 
+                        metalness: 0.1,
+                    });
+
+                    const organGroup = new THREE.Group();
+
+                    // 1. Oesophagus (Tube)
+                    const oesGeo = new THREE.CylinderGeometry(0.6, 0.6, 8, 16);
+                    const oesMesh = new THREE.Mesh(oesGeo, createMat(ORGANS.oesophagus.color));
+                    oesMesh.position.set(0, 8, 0);
+                    oesMesh.userData = { id: 'oesophagus' };
+                    organGroup.add(oesMesh);
+
+                    // 2. Stomach (J-shape: approximated by a distorted sphere + cylinder)
+                    const stomachGroup = new THREE.Group();
+                    const stBody = new THREE.Mesh(new THREE.SphereGeometry(2.5, 32, 32), createMat(ORGANS.stomach.color));
+                    stBody.scale.set(1.2, 1.5, 1);
+                    stomachGroup.add(stBody);
+                    stomachGroup.position.set(1.5, 2, 0.5);
+                    stomachGroup.rotation.z = 0.5;
+                    stomachGroup.userData = { id: 'stomach' };
+                    // We need to set userData on children for raycast to bubble up or traverse manually
+                    stBody.userData = { id: 'stomach' }; 
+                    organGroup.add(stomachGroup);
+
+                    // 3. Liver (Large Cone/Tetrahedron)
+                    const liverGeo = new THREE.ConeGeometry(4.5, 5, 4);
+                    const liverMesh = new THREE.Mesh(liverGeo, createMat(ORGANS.liver.color));
+                    liverMesh.position.set(-2.5, 4, 1);
+                    liverMesh.rotation.z = -0.5;
+                    liverMesh.rotation.y = 0.8;
+                    liverMesh.userData = { id: 'liver' };
+                    organGroup.add(liverMesh);
+
+                    // 4. Gall Bladder (Small sphere)
+                    const gbGeo = new THREE.SphereGeometry(0.7, 16, 16);
+                    const gbMesh = new THREE.Mesh(gbGeo, createMat(ORGANS.gall_bladder.color));
+                    gbMesh.position.set(-1.5, 2, 2.5);
+                    gbMesh.userData = { id: 'gall_bladder' };
+                    organGroup.add(gbMesh);
+
+                    // 5. Pancreas (Elongated box/cylinder behind stomach)
+                    const panGeo = new THREE.BoxGeometry(4, 1, 1);
+                    const panMesh = new THREE.Mesh(panGeo, createMat(ORGANS.pancreas.color));
+                    panMesh.position.set(0.5, 1.5, -1.5);
+                    panMesh.rotation.z = 0.3;
+                    panMesh.userData = { id: 'pancreas' };
+                    organGroup.add(panMesh);
+
+                    // 6. Small Intestine (Coiled Tubes - Simplified as Torus Knots or multiple spheres)
+                    // Using a TorusKnot for "coiled" look is easiest procedural way
+                    const siGeo = new THREE.TorusKnotGeometry(1.8, 0.6, 64, 8, 2, 3);
+                    const siMesh = new THREE.Mesh(siGeo, createMat(ORGANS.small_intestine.color));
+                    siMesh.position.set(0, -3, 0);
+                    siMesh.scale.set(1, 0.8, 1);
+                    siMesh.userData = { id: 'small_intestine' };
+                    organGroup.add(siMesh);
+
+                    // 7. Large Intestine (Frame around SI)
+                    // Constructed from 3 cylinders (Top, Left, Right)
+                    const liGroup = new THREE.Group();
+                    const liMat = createMat(ORGANS.large_intestine.color);
+                    
+                    const topLi = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 7, 16), liMat);
+                    topLi.rotation.z = Math.PI / 2;
+                    topLi.position.set(0, 1, 0);
+                    liGroup.add(topLi);
+
+                    const leftLi = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 7, 16), liMat);
+                    leftLi.position.set(-3.5, -2.5, 0);
+                    liGroup.add(leftLi);
+
+                    const rightLi = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 7, 16), liMat);
+                    rightLi.position.set(3.5, -2.5, 0);
+                    liGroup.add(rightLi);
+                    
+                    liGroup.position.y = -1;
+                    // Apply userData to all children for raycasting
+                    liGroup.children.forEach(child => child.userData = { id: 'large_intestine' });
+                    
+                    organGroup.add(liGroup);
+
+                    scene.add(organGroup);
+
+                    // Interaction
+                    const raycaster = new THREE.Raycaster();
+                    const mouse = new THREE.Vector2();
+                    let hoveredObj = null;
+
+                    const onMouseMove = (event) => {
+                        event.preventDefault();
+                        const rect = renderer.domElement.getBoundingClientRect();
+                        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                        raycaster.setFromCamera(mouse, camera);
+                        // Recursively check children
+                        const intersects = raycaster.intersectObjects(organGroup.children, true);
+
+                        if (intersects.length > 0) {
+                            const obj = intersects[0].object;
+                            // Traverse up to find the group or mesh with ID
+                            let target = obj;
+                            while (!target.userData.id && target.parent) {
+                                target = target.parent;
+                            }
+
+                            if (hoveredObj !== target && target.userData.id) {
+                                if (hoveredObj) {
+                                    // Restore previous
+                                    if (hoveredObj.material && hoveredObj.userData.originalMat) {
+                                        hoveredObj.material = hoveredObj.userData.originalMat;
+                                    }
+                                }
+                                
+                                hoveredObj = target;
+                                // Store original material if not stored
+                                if (target.material && !target.userData.originalMat) {
+                                    target.userData.originalMat = target.material;
+                                }
+                                
+                                // Clone and highlight
+                                if (target.material) {
+                                    const newMat = target.material.clone();
+                                    newMat.emissive.setHex(0x333333);
+                                    target.material = newMat;
+                                }
+                                document.body.style.cursor = 'pointer';
+                            }
+                        } else {
+                            if (hoveredObj) {
+                                if (hoveredObj.material && hoveredObj.userData.originalMat) {
+                                    hoveredObj.material = hoveredObj.userData.originalMat;
+                                }
+                                hoveredObj = null;
+                            }
+                            document.body.style.cursor = 'default';
+                        }
+                    };
+
+                    const onClick = () => {
+                        if (hoveredObj) {
+                            onSelect(hoveredObj.userData.id);
+                        }
+                    };
+
+                    renderer.domElement.addEventListener('mousemove', onMouseMove);
+                    renderer.domElement.addEventListener('click', onClick);
+
+                    // Animation Loop
+                    let frameId;
+                    const animate = () => {
+                        frameId = requestAnimationFrame(animate);
+                        controls.update();
+                        renderer.render(scene, camera);
+                    };
+                    animate();
+
+                    // Resize Observer
+                    const resizeObserver = new ResizeObserver(() => {
+                        if (!container) return;
+                        const w = container.clientWidth;
+                        const h = container.clientHeight;
+                        if (w === 0 || h === 0) return;
+                        
+                        camera.aspect = w / h;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(w, h);
+                    });
+                    resizeObserver.observe(container);
+
+                    return () => {
+                        cancelAnimationFrame(frameId);
+                        resizeObserver.disconnect();
+                        renderer.domElement.removeEventListener('mousemove', onMouseMove);
+                        renderer.domElement.removeEventListener('click', onClick);
+                        if (container && renderer.domElement) {
+                            container.removeChild(renderer.domElement);
+                        }
+                        renderer.dispose();
+                    };
+                } catch (e) {
+                    console.error("Three.js Error:", e);
+                }
+            }, []);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedId, setSelectedId] = useState(null);
+            const currentOrgan = selectedId ? ORGANS[selectedId] : null;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="box" className="text-blue-400" /> 3D Digestive System
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Interactive Anatomy Model</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto">
+                            {currentOrgan ? (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-500 uppercase mb-1">Selected Organ</div>
+                                        <h2 className="text-3xl font-black text-white" style={{color: '#' + currentOrgan.color.toString(16)}}>{currentOrgan.name}</h2>
+                                    </div>
+                                    
+                                    <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                                        <p className="text-sm text-slate-300 leading-relaxed">
+                                            {currentOrgan.desc}
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                            <Icon name="flask-conical" size={14}/> Enzymes / Secretions
+                                        </div>
+                                        <div className="text-emerald-400 font-mono text-sm bg-slate-900 p-3 rounded-lg border border-slate-800">
+                                            {currentOrgan.enzymes}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-center opacity-50 space-y-4">
+                                    <div className="w-20 h-20 rounded-full bg-slate-800 flex items-center justify-center">
+                                        <Icon name="mouse-pointer-click" size={32} className="text-blue-400"/>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-white">Explore the Model</h3>
+                                        <p className="text-sm text-slate-400 mt-1">
+                                            Rotate, zoom, and click on any organ<br/>to learn about its function.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-gradient-to-b from-[#0F172A] to-[#1e293b]">
+                        <div className="absolute inset-0">
+                            <DigestiveScene onSelect={setSelectedId} />
+                        </div>
+                        
+                        {/* Overlay Controls Info */}
+                        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/80 backdrop-blur px-6 py-3 rounded-full border border-white/10 text-xs text-slate-300 pointer-events-none flex items-center gap-4 shadow-xl">
+                            <span className="flex items-center gap-1"><Icon name="move" size={14}/> Rotate</span>
+                            <span className="w-px h-3 bg-slate-600"></span>
+                            <span className="flex items-center gap-1"><Icon name="zoom-in" size={14}/> Zoom</span>
+                            <span className="w-px h-3 bg-slate-600"></span>
+                            <span className="flex items-center gap-1"><Icon name="mouse-pointer" size={14}/> Select</span>
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
