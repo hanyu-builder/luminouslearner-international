@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aseptic Technique Trainer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Draggable Card Styles */
+        .draggable-item { cursor: grab; user-select: none; }
+        .draggable-item:active { cursor: grabbing; }
+        
+        /* Flame Animation */
+        .flame {
+            animation: flicker 0.1s infinite alternate;
+            transform-origin: center bottom;
+        }
+        @keyframes flicker {
+            0% { transform: scaleY(1) skewX(-2deg); opacity: 0.9; }
+            100% { transform: scaleY(1.1) skewX(2deg); opacity: 1; }
+        }
+
+        /* Hot Loop Glow */
+        .hot-loop {
+            animation: glow-red 1s infinite alternate;
+        }
+        @keyframes glow-red {
+            from { stroke: #ef4444; filter: drop-shadow(0 0 2px red); }
+            to { stroke: #fca5a5; filter: drop-shadow(0 0 8px red); }
+        }
+        
+        /* Dust Particles */
+        .dust {
+            animation: fall 3s linear infinite;
+        }
+        @keyframes fall {
+            0% { transform: translateY(0); opacity: 0; }
+            50% { opacity: 0.5; }
+            100% { transform: translateY(50px); opacity: 0; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, Reorder, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const STEPS = [
+            { id: '1', text: 'Clean bench & wash hands', icon: 'hand-metal' },
+            { id: '2', text: 'Light Bunsen burner (Blue flame)', icon: 'flame' },
+            { id: '3', text: 'Flame loop until red hot', icon: 'zap' },
+            { id: '4', text: 'Open culture tube (Hold cap)', icon: 'test-tube-2' },
+            { id: '5', text: 'Flame tube neck', icon: 'flame' },
+            { id: '6', text: 'Dip cool loop to sample', icon: 'pipette' },
+            { id: '7', text: 'Flame tube neck & Close', icon: 'x-circle' },
+            { id: '8', text: 'Streak plate / Inoculate', icon: 'edit-3' },
+            { id: '9', text: 'Flame loop again', icon: 'zap' }
+        ];
+
+        const ERROR_INFO = {
+            0: { // bench_cap
+                title: "Contamination Risk!",
+                error: "Placing cap on bench",
+                explanation: "The bench surface is never sterile. Placing the cap down picks up dust/microbes. Always hold the cap in your little finger!"
+            },
+            1: { // hot_loop
+                title: "Bacteria Killed!",
+                error: "Using red-hot loop",
+                explanation: "Intense heat kills bacteria instantly (HISS!). You must let the loop cool near the flame before touching the colony."
+            },
+            2: { // far_flame
+                title: "Outside Sterile Zone!",
+                error: "Working too far from flame",
+                explanation: "The updraft from the Bunsen burner creates a sterile zone (~10-15cm radius). Working too far away exposes samples to falling dust."
+            },
+            3: { // open_lid
+                title: "Air Contamination!",
+                error: "Tube held vertically open",
+                explanation: "Holding a tube vertically allows dust to fall straight in. Always hold tubes at an angle and keep them open for the minimum time possible."
+            }
+        };
+
+        // Shuffle helper
+        const shuffle = (array) => {
+            let currentIndex = array.length, randomIndex;
+            let newArr = [...array];
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [newArr[currentIndex], newArr[randomIndex]] = [newArr[randomIndex], newArr[currentIndex]];
+            }
+            return newArr;
+        };
+
+        // --- COMPONENTS ---
+
+        // 1. Bunsen Burner Visual
+        const BunsenBurner = ({ isOn, isBlue }) => (
+            <div className="relative w-20 h-40 flex flex-col items-center justify-end">
+                {/* Updraft arrows visual (Sterile zone hint) */}
+                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-40 h-40 border-2 border-blue-500/20 rounded-full pointer-events-none flex items-center justify-center">
+                    <span className="text-[10px] text-blue-500/50 font-bold -mt-20">Sterile Zone</span>
+                </div>
+                
+                {/* Flame */}
+                {isOn && (
+                    <div className={`flame absolute bottom-[60px] w-8 h-24 rounded-full filter blur-sm
+                        ${isBlue ? 'bg-blue-500 shadow-[0_0_20px_#3b82f6]' : 'bg-orange-500 shadow-[0_0_20px_#f97316]'}
+                    `}>
+                        <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-16 rounded-full opacity-80 ${isBlue ? 'bg-white' : 'bg-yellow-200'}`}></div>
+                    </div>
+                )}
+                <div className="w-4 h-24 bg-slate-400 rounded-t-sm border-x border-slate-500 relative z-10"></div>
+                <div className="w-16 h-4 bg-slate-500 rounded-t-md relative z-10"></div>
+                <div className="w-20 h-2 bg-slate-600 rounded-full relative z-10"></div>
+            </div>
+        );
+
+        // 2. Loop Visual
+        const InoculatingLoop = ({ isHot, hasBacteria }) => (
+            <div className="relative w-40 h-4 flex items-center">
+                <div className="w-24 h-2 bg-slate-600 rounded-l-full"></div>
+                <div className={`w-16 h-0.5 ${isHot ? 'bg-red-500 hot-loop' : 'bg-slate-300'}`}></div>
+                <div className={`w-3 h-3 rounded-full border-2 absolute right-0 ${isHot ? 'border-red-500 hot-loop' : 'border-slate-300'} flex items-center justify-center`}>
+                    {hasBacteria && <div className="w-1.5 h-1.5 bg-yellow-200 rounded-full"></div>}
+                </div>
+            </div>
+        );
+
+        // 3. Error Spotting Scenes
+        const ErrorScene = ({ errorType, onCorrect }) => {
+            return (
+                <div className="w-full h-full flex flex-col items-center justify-center relative bg-slate-800 rounded-xl overflow-hidden p-8">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 absolute top-4 left-4">Identify the Error (Click it)</h3>
+                    
+                    {/* Scenario 0: Bench Cap */}
+                    {errorType === 0 && (
+                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
+                            <div className="relative">
+                                <div className="w-48 h-2 bg-slate-500 rounded"></div>
+                                {/* ERROR: Cap on bench */}
+                                <div className="absolute bottom-2 left-10 w-6 h-6 bg-red-500 rounded-t-md flex items-center justify-center group-hover:scale-110 transition-transform border-2 border-white/20">
+                                    <Icon name="alert-circle" size={12} className="text-white animate-bounce"/>
+                                </div>
+                                <div className="absolute bottom-10 right-0 rotate-45">
+                                    <div className="w-4 h-16 bg-blue-200/30 border border-blue-300 rounded-b-lg"></div>
+                                </div>
+                            </div>
+                            <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Cap on bench?</p>
+                        </div>
+                    )}
+
+                    {/* Scenario 1: Hot Loop */}
+                    {errorType === 1 && (
+                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
+                            <div className="flex items-center gap-2">
+                                <InoculatingLoop isHot={true} hasBacteria={false} />
+                                {/* ERROR: Touching culture with hot loop */}
+                                <div className="w-16 h-16 bg-blue-200/20 rounded-full border border-blue-300 relative flex items-center justify-center group-hover:border-red-400 transition-colors">
+                                    <span className="text-[8px] text-white">Culture</span>
+                                    <div className="absolute -top-4 right-0 text-red-500 font-bold text-xs animate-ping">HISS!</div>
+                                </div>
+                            </div>
+                             <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Is it cool?</p>
+                        </div>
+                    )}
+
+                    {/* Scenario 2: Far from Flame */}
+                    {errorType === 2 && (
+                        <div className="flex items-center gap-12 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
+                            <div className="opacity-50 grayscale">
+                                <BunsenBurner isOn={true} isBlue={true} />
+                            </div>
+                            {/* ERROR: Working way too far right */}
+                            <div className="relative">
+                                <div className="w-px h-20 bg-red-500/50 absolute -left-6 top-0 border-l-2 border-dashed border-red-400"></div>
+                                <span className="absolute -left-12 top-8 text-[10px] text-red-400 rotate-90 font-bold">Too Far</span>
+                                <div className="rotate-45">
+                                    <div className="w-4 h-16 bg-blue-200/30 border border-blue-300 rounded-b-lg"></div>
+                                </div>
+                                <InoculatingLoop isHot={false} hasBacteria={false} />
+                                {/* Falling dust */}
+                                <div className="absolute -top-10 left-4 w-1 h-1 bg-slate-400 rounded-full dust"></div>
+                                <div className="absolute -top-12 left-2 w-1 h-1 bg-slate-400 rounded-full dust" style={{animationDelay:'0.5s'}}></div>
+                            </div>
+                            <p className="absolute bottom-4 text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Outside sterile zone!</p>
+                        </div>
+                    )}
+
+                    {/* Scenario 3: Open Lid Vertical */}
+                    {errorType === 3 && (
+                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
+                            <div className="relative">
+                                {/* ERROR: Tube held vertically straight up */}
+                                <div className="w-6 h-24 bg-blue-200/30 border border-blue-300 rounded-b-lg border-t-0 relative">
+                                    <div className="absolute top-0 left-0 w-full h-2 bg-blue-300/50 rounded-full"></div> {/* Open top */}
+                                    {/* Falling dust into tube */}
+                                    <div className="absolute -top-8 left-1/2 w-1 h-1 bg-red-400 rounded-full dust"></div>
+                                    <div className="absolute -top-12 left-1/2 w-1 h-1 bg-red-400 rounded-full dust" style={{animationDelay:'1s'}}></div>
+                                </div>
+                            </div>
+                            <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Don't hold vertical!</p>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [mode, setMode] = useState('sort');
+            const [items, setItems] = useState(shuffle(STEPS));
+            const [isCorrect, setIsCorrect] = useState(false);
+            const [feedback, setFeedback] = useState("");
+            
+            const [errorLevel, setErrorLevel] = useState(0); // 0 to 3
+            const [showExplanation, setShowExplanation] = useState(null);
+
+            const checkOrder = () => {
+                const currentOrder = items.map(i => i.id).join(',');
+                const correctOrder = STEPS.map(s => s.id).join(',');
+                if (currentOrder === correctOrder) {
+                    setIsCorrect(true);
+                    setFeedback("Correct! Perfect aseptic chain.");
+                } else {
+                    setIsCorrect(false);
+                    setFeedback("Incorrect order. Think about creating a sterile zone first.");
+                }
+            };
+
+            const resetSort = () => {
+                setItems(shuffle(STEPS));
+                setIsCorrect(false);
+                setFeedback("");
+            };
+
+            const handleErrorFound = () => {
+                setShowExplanation(ERROR_INFO[errorLevel]);
+            };
+
+            const nextErrorLevel = () => {
+                setShowExplanation(null);
+                setErrorLevel(prev => (prev + 1) % 4); // Cycle 4 levels
+            };
+
+            // DnD Handlers
+            const handleDragStart = (e, index) => {
+                e.dataTransfer.setData("index", index);
+            };
+
+            const handleDragOver = (e) => {
+                e.preventDefault();
+            };
+
+            const handleDrop = (e, index) => {
+                const draggedIndex = e.dataTransfer.getData("index");
+                const newItems = [...items];
+                const draggedItem = newItems.splice(draggedIndex, 1)[0];
+                newItems.splice(index, 0, draggedItem);
+                setItems(newItems);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="flask-conical" className="text-emerald-400" /> Aseptic Trainer
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Microbiology Lab Skills</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Mode Switch */}
+                            <div className="flex bg-slate-800 p-1 rounded-xl">
+                                <button 
+                                    onClick={() => { setMode('sort'); setFeedback(""); setShowExplanation(null); }}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${mode === 'sort' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    <Icon name="list-ordered" size={14}/> Sequence
+                                </button>
+                                <button 
+                                    onClick={() => { setMode('error'); setFeedback(""); setShowExplanation(null); }}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${mode === 'error' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    <Icon name="alert-triangle" size={14}/> Debug
+                                </button>
+                            </div>
+
+                            {/* Instructions */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-300">
+                                <div className="font-bold text-emerald-400 uppercase mb-2 flex items-center gap-2"><Icon name="info" size={14}/> Mission</div>
+                                {mode === 'sort' ? (
+                                    <p>Drag and drop the steps to form the correct aseptic procedure for sub-culturing bacteria.</p>
+                                ) : (
+                                    <p>Watch the scene and click on the unsafe practice that could cause contamination. ({errorLevel + 1}/4)</p>
+                                )}
+                            </div>
+
+                            {/* Feedback (Sort Mode) */}
+                            <AnimatePresence>
+                                {feedback && mode === 'sort' && (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                                        className={`p-4 rounded-xl border text-sm font-bold flex items-start gap-3
+                                            ${feedback.includes('Correct') ? 'bg-emerald-900/20 border-emerald-500/50 text-emerald-300' : 'bg-red-900/20 border-red-500/50 text-red-300'}
+                                        `}
+                                    >
+                                        <Icon name={feedback.includes('Correct') ? "check-circle" : "x-circle"} size={20} className="shrink-0 mt-0.5"/>
+                                        {feedback}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {mode === 'sort' && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={checkOrder} className="py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold shadow-lg">Check</button>
+                                    <button onClick={resetSort} className="py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300">Reset</button>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Simulation Area */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col p-4">
+                            
+                            {mode === 'sort' ? (
+                                <div className="h-full overflow-y-auto custom-scrollbar p-2">
+                                    <ul className="space-y-2 max-w-xl mx-auto">
+                                        {items.map((item, index) => (
+                                            <li 
+                                                key={item.id}
+                                                draggable
+                                                onDragStart={(e) => handleDragStart(e, index)}
+                                                onDragOver={handleDragOver}
+                                                onDrop={(e) => handleDrop(e, index)}
+                                                className={`p-4 rounded-xl border-2 flex items-center gap-4 cursor-grab active:cursor-grabbing hover:bg-slate-800/50 transition-all
+                                                    ${isCorrect ? 'border-emerald-500/50 bg-emerald-900/10' : 'border-slate-700 bg-slate-800'}
+                                                `}
+                                            >
+                                                <div className="text-slate-500 font-mono font-bold w-6 text-right">{index + 1}.</div>
+                                                <div className="p-2 bg-slate-900 rounded-lg text-blue-400">
+                                                    <Icon name={item.icon} size={20}/>
+                                                </div>
+                                                <span className="text-sm font-bold text-slate-200">{item.text}</span>
+                                                <Icon name="grip-vertical" className="ml-auto text-slate-600" size={16}/>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ) : (
+                                <div className="relative w-full h-full">
+                                    <ErrorScene 
+                                        errorType={errorLevel} 
+                                        onCorrect={handleErrorFound}
+                                    />
+                                    
+                                    {/* Explanation Overlay */}
+                                    <AnimatePresence>
+                                        {showExplanation && (
+                                            <motion.div 
+                                                initial={{ opacity: 0, scale: 0.9 }} 
+                                                animate={{ opacity: 1, scale: 1 }} 
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8 z-10"
+                                            >
+                                                <div className="bg-slate-900 border border-slate-600 p-6 rounded-2xl shadow-2xl max-w-md w-full">
+                                                    <div className="flex items-center gap-3 mb-4 text-red-400">
+                                                        <Icon name="alert-octagon" size={32}/>
+                                                        <h2 className="text-xl font-bold">{showExplanation.title}</h2>
+                                                    </div>
+                                                    
+                                                    <div className="space-y-4">
+                                                        <div className="bg-red-900/20 p-3 rounded-lg border border-red-500/30">
+                                                            <div className="text-xs font-bold text-red-300 uppercase mb-1">Error Identified</div>
+                                                            <p className="text-sm text-white">{showExplanation.error}</p>
+                                                        </div>
+                                                        
+                                                        <div className="bg-slate-800 p-4 rounded-lg">
+                                                            <div className="text-xs font-bold text-blue-400 uppercase mb-2 flex items-center gap-2">
+                                                                <Icon name="book-open" size={14}/> Biological Explanation
+                                                            </div>
+                                                            <p className="text-sm text-slate-300 leading-relaxed">
+                                                                {showExplanation.explanation}
+                                                            </p>
+                                                        </div>
+
+                                                        <button 
+                                                            onClick={nextErrorLevel}
+                                                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg"
+                                                        >
+                                                            Next Scenario <Icon name="arrow-right" size={18}/>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </div>
+                            )}
+
+                        </div>
+
+                        {/* Visual Context (Decoration) */}
+                        <div className="h-24 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex items-center justify-around shrink-0 opacity-50 pointer-events-none">
+                             <BunsenBurner isOn={true} isBlue={true} />
+                             <div className="w-px h-12 bg-slate-700"></div>
+                             <InoculatingLoop isHot={false} hasBacteria={true} />
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
