@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Protein Synthesis Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Floating Animation */
+        .float { animation: float 3s ease-in-out infinite; }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+            100% { transform: translateY(0px); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const DNA_BASES = ['A', 'T', 'C', 'G'];
+        const RNA_BASES = ['A', 'U', 'C', 'G'];
+        
+        const CODON_TABLE = {
+            'AUG': 'Met (Start)',
+            'UUU': 'Phe', 'UUC': 'Phe',
+            'UUA': 'Leu', 'UUG': 'Leu',
+            'UCU': 'Ser', 'UCC': 'Ser', 'UCA': 'Ser', 'UCG': 'Ser',
+            'UAU': 'Tyr', 'UAC': 'Tyr',
+            'UGU': 'Cys', 'UGC': 'Cys',
+            'UGG': 'Trp',
+            'CUU': 'Leu', 'CUC': 'Leu', 'CUA': 'Leu', 'CUG': 'Leu',
+            'CCU': 'Pro', 'CCC': 'Pro', 'CCA': 'Pro', 'CCG': 'Pro',
+            'CAU': 'His', 'CAC': 'His',
+            'CAA': 'Gln', 'CAG': 'Gln',
+            'CGU': 'Arg', 'CGC': 'Arg', 'CGA': 'Arg', 'CGG': 'Arg',
+            'AUU': 'Ile', 'AUC': 'Ile', 'AUA': 'Ile',
+            'ACU': 'Thr', 'ACC': 'Thr', 'ACA': 'Thr', 'ACG': 'Thr',
+            'AAU': 'Asn', 'AAC': 'Asn',
+            'AAA': 'Lys', 'AAG': 'Lys',
+            'AGU': 'Ser', 'AGC': 'Ser',
+            'AGA': 'Arg', 'AGG': 'Arg',
+            'GUU': 'Val', 'GUC': 'Val', 'GUA': 'Val', 'GUG': 'Val',
+            'GCU': 'Ala', 'GCC': 'Ala', 'GCA': 'Ala', 'GCG': 'Ala',
+            'GAU': 'Asp', 'GAC': 'Asp',
+            'GAA': 'Glu', 'GAG': 'Glu',
+            'GGU': 'Gly', 'GGC': 'Gly', 'GGA': 'Gly', 'GGG': 'Gly',
+            'UAA': 'STOP', 'UAG': 'STOP', 'UGA': 'STOP'
+        };
+
+        const getRNAComplement = (base) => {
+            if (base === 'A') return 'U';
+            if (base === 'T') return 'A';
+            if (base === 'C') return 'G';
+            if (base === 'G') return 'C';
+            return '';
+        };
+
+        const getAnticodon = (codon) => {
+            return codon.split('').map(b => {
+                if (b === 'A') return 'U';
+                if (b === 'U') return 'A';
+                if (b === 'C') return 'G';
+                if (b === 'G') return 'C';
+                return '';
+            }).join('');
+        };
+
+        const App = () => {
+            const [stage, setStage] = useState('start'); // start, transcription, nuclear_export, translation, complete
+            const [dnaTemplate, setDnaTemplate] = useState([]);
+            const [mrnaSeq, setMrnaSeq] = useState([]);
+            const [currentBaseIdx, setCurrentBaseIdx] = useState(0);
+            const [proteinSeq, setProteinSeq] = useState([]);
+            const [currentCodonIdx, setCurrentCodonIdx] = useState(0);
+            const [message, setMessage] = useState("Press Start to begin protein synthesis.");
+            const [feedback, setFeedback] = useState(null); 
+
+            // Generate random DNA sequence
+            const generateDNA = () => {
+                const startCodon = ['T', 'A', 'C']; // Codes for AUG
+                const stopCodons = [['A', 'T', 'T'], ['A', 'T', 'C'], ['A', 'C', 'T']];
+                const middleBases = ['A', 'T', 'C', 'G'];
+                
+                let middleSeq = [];
+                for(let i=0; i<9; i++) { // 3 random amino acids
+                    middleSeq.push(middleBases[Math.floor(Math.random() * 4)]);
+                }
+                
+                const finalSeq = [...startCodon, ...middleSeq, ...stopCodons[0]];
+                setDnaTemplate(finalSeq);
+                setMrnaSeq([]);
+                setProteinSeq([]);
+                setCurrentBaseIdx(0);
+                setCurrentCodonIdx(0);
+                setStage('transcription');
+                setMessage("Transcription: Build the mRNA strand by pairing with the DNA template.");
+            };
+
+            const handleTranscriptionClick = (base) => {
+                if (stage !== 'transcription') return;
+                
+                const targetBase = dnaTemplate[currentBaseIdx];
+                const correctBase = getRNAComplement(targetBase);
+
+                if (base === correctBase) {
+                    setMrnaSeq(prev => [...prev, base]);
+                    setFeedback('correct');
+                    setTimeout(() => setFeedback(null), 300);
+                    
+                    if (currentBaseIdx < dnaTemplate.length - 1) {
+                        setCurrentBaseIdx(prev => prev + 1);
+                    } else {
+                        setMessage("Transcription Complete! mRNA is now leaving the nucleus.");
+                        setTimeout(() => setStage('nuclear_export'), 1000);
+                    }
+                } else {
+                    setFeedback('wrong');
+                    setTimeout(() => setFeedback(null), 500);
+                }
+            };
+
+            useEffect(() => {
+                if (stage === 'nuclear_export') {
+                    const timer = setTimeout(() => {
+                        setStage('translation');
+                        setMessage("Translation: Select the correct tRNA anticodon for the mRNA codon.");
+                    }, 3000);
+                    return () => clearTimeout(timer);
+                }
+            }, [stage]);
+
+            const handleTranslationClick = (anticodon) => {
+                if (stage !== 'translation') return;
+                
+                const currentCodon = mrnaSeq.slice(currentCodonIdx, currentCodonIdx + 3).join('');
+                const correctAnticodon = getAnticodon(currentCodon);
+
+                if (anticodon === correctAnticodon) {
+                    const aminoAcidFull = CODON_TABLE[currentCodon];
+                    const aminoAcid = aminoAcidFull.split(' ')[0]; // Just get 'Met', 'Phe' etc
+                    
+                    if (aminoAcid === 'STOP') {
+                        setStage('complete');
+                        setMessage("Translation Complete! The polypeptide chain is released.");
+                    } else {
+                        setProteinSeq(prev => [...prev, aminoAcid]);
+                        setFeedback('correct');
+                        setTimeout(() => setFeedback(null), 300);
+                        
+                        if (currentCodonIdx + 3 < mrnaSeq.length) {
+                            setCurrentCodonIdx(prev => prev + 3);
+                        }
+                    }
+                } else {
+                    setFeedback('wrong');
+                    setTimeout(() => setFeedback(null), 500);
+                }
+            };
+
+            const getTRNAOptions = () => {
+                if (stage !== 'translation') return [];
+                const currentCodon = mrnaSeq.slice(currentCodonIdx, currentCodonIdx + 3).join('');
+                const correct = getAnticodon(currentCodon);
+                
+                const fakes = [];
+                while(fakes.length < 2) {
+                    let fake = '';
+                    for(let i=0; i<3; i++) fake += RNA_BASES[Math.floor(Math.random()*4)];
+                    if(fake !== correct && !fakes.includes(fake)) fakes.push(fake);
+                }
+                
+                return [correct, ...fakes].sort(() => Math.random() - 0.5);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="dna" className="text-blue-400" /> Protein Synth
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Central Dogma Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Progress */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                                    <span>Current Stage</span>
+                                </div>
+                                <div className="flex gap-2">
+                                    <div className={`h-2 flex-1 rounded-full transition-colors ${stage === 'transcription' ? 'bg-blue-500 animate-pulse' : (stage !== 'start' ? 'bg-blue-500' : 'bg-slate-700')}`}></div>
+                                    <div className={`h-2 flex-1 rounded-full transition-colors ${stage === 'translation' ? 'bg-emerald-500 animate-pulse' : (stage === 'complete' ? 'bg-emerald-500' : 'bg-slate-700')}`}></div>
+                                </div>
+                                <div className="text-sm font-bold text-white capitalize">
+                                    {stage.replace('_', ' ')}
+                                </div>
+                            </div>
+
+                            {/* Instructions */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-sm text-slate-300 leading-relaxed">
+                                {message}
+                            </div>
+                            
+                            {/* Controls */}
+                            {stage === 'start' || stage === 'complete' ? (
+                                <button 
+                                    onClick={generateDNA}
+                                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="play" size={18}/> {stage === 'complete' ? 'Restart' : 'Start Simulation'}
+                                </button>
+                            ) : null}
+
+                            {/* Key */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-400 space-y-2">
+                                <div className="font-bold text-slate-300 uppercase mb-1">Base Pairing Rules</div>
+                                <div className="flex justify-between">
+                                    <span>DNA: A ↔ T, C ↔ G</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>RNA: A ↔ U, C ↔ G</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] flex flex-col overflow-hidden">
+                        
+                        <div className="flex-1 relative flex items-center justify-center p-8">
+                            
+                            {/* STAGE: TRANSCRIPTION */}
+                            {stage === 'transcription' && (
+                                <div className="w-full max-w-4xl flex flex-col items-center gap-12">
+                                    <div className="text-3xl font-black text-blue-500 uppercase tracking-widest opacity-80 mb-4">
+                                        Transcription
+                                    </div>
+                                    
+                                    {/* DNA Template Strand */}
+                                    <div className="relative flex gap-2 overflow-x-auto max-w-full p-4 border-2 border-dashed border-slate-700 rounded-xl bg-slate-900/50">
+                                        <div className="absolute -top-6 left-4 text-xs font-bold text-slate-500">DNA TEMPLATE (Nucleus)</div>
+                                        {dnaTemplate.map((base, i) => (
+                                            <div key={i} className={`w-10 h-14 rounded flex items-center justify-center font-mono font-bold text-lg border-2 transition-all
+                                                ${i === currentBaseIdx ? 'scale-110 border-yellow-400 z-10 shadow-lg bg-slate-800' : 'border-slate-600 bg-slate-900 text-slate-500'}
+                                            `}>
+                                                {base}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Growing mRNA Strand */}
+                                    <div className="flex gap-2 min-h-[3.5rem]">
+                                        {mrnaSeq.map((base, i) => (
+                                            <motion.div 
+                                                key={i} 
+                                                initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+                                                className="w-10 h-14 rounded bg-emerald-900/50 border-2 border-emerald-500 text-emerald-300 flex items-center justify-center font-mono font-bold text-lg"
+                                            >
+                                                {base}
+                                            </motion.div>
+                                        ))}
+                                        <div className="w-10 h-14 border-2 border-dashed border-emerald-500/30 rounded animate-pulse flex items-center justify-center text-emerald-500/50">?</div>
+                                    </div>
+
+                                    {/* Input Pad */}
+                                    <div className="grid grid-cols-4 gap-4 w-full max-w-md">
+                                        {RNA_BASES.map(base => (
+                                            <button
+                                                key={base}
+                                                onClick={() => handleTranscriptionClick(base)}
+                                                className={`h-16 rounded-xl bg-slate-800 hover:bg-slate-700 border-b-4 border-slate-950 active:border-b-0 active:translate-y-1 transition-all font-bold text-2xl
+                                                    ${feedback === 'wrong' ? 'border-red-500' : ''}
+                                                `}
+                                            >
+                                                {base}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* STAGE: NUCLEAR EXPORT */}
+                            {stage === 'nuclear_export' && (
+                                <div className="relative w-full h-full flex items-center justify-center">
+                                    <div className="absolute inset-0 border-8 border-slate-800 rounded-[3rem] pointer-events-none"></div>
+                                    <div className="absolute top-4 left-4 text-slate-600 font-bold">NUCLEUS</div>
+                                    <div className="absolute bottom-4 right-4 text-slate-600 font-bold">CYTOPLASM</div>
+                                    
+                                    <motion.div 
+                                        className="flex gap-1 bg-emerald-900/80 p-2 rounded-lg border border-emerald-500 shadow-2xl shadow-emerald-500/20"
+                                        initial={{ x: -200, y: -100, scale: 1 }}
+                                        animate={{ x: 200, y: 100, scale: 0.8 }}
+                                        transition={{ duration: 3, ease: "easeInOut" }}
+                                    >
+                                        {mrnaSeq.map((base, i) => (
+                                            <span key={i} className="font-mono font-bold text-emerald-300 text-xs">{base}</span>
+                                        ))}
+                                    </motion.div>
+                                </div>
+                            )}
+
+                            {/* STAGE: TRANSLATION */}
+                            {stage === 'translation' && (
+                                <div className="w-full max-w-5xl flex flex-col items-center gap-8">
+                                    <div className="text-3xl font-black text-emerald-500 uppercase tracking-widest opacity-80">
+                                        Translation
+                                    </div>
+                                    
+                                    {/* Ribosome & mRNA */}
+                                    <div className="relative p-8 bg-slate-800/50 rounded-full border border-slate-700 flex flex-col items-center">
+                                        <div className="absolute -top-4 text-xs font-bold text-slate-500 uppercase bg-slate-900 px-2">Ribosome</div>
+                                        
+                                        {/* Polypeptide Chain */}
+                                        <div className="flex gap-1 mb-8">
+                                            <AnimatePresence>
+                                                {proteinSeq.map((aa, i) => (
+                                                    <motion.div 
+                                                        key={i}
+                                                        initial={{ scale: 0, y: 20 }} animate={{ scale: 1, y: 0 }}
+                                                        className="w-12 h-12 rounded-full bg-purple-500 border-4 border-purple-700 flex items-center justify-center text-[10px] font-bold shadow-lg z-10 relative"
+                                                        style={{ marginLeft: i > 0 ? '-10px' : 0 }}
+                                                    >
+                                                        {aa}
+                                                    </motion.div>
+                                                ))}
+                                            </AnimatePresence>
+                                        </div>
+
+                                        {/* mRNA Strand */}
+                                        <div className="flex gap-1 bg-slate-900 p-2 rounded border border-slate-700">
+                                            {mrnaSeq.map((base, i) => {
+                                                const isCurrent = i >= currentCodonIdx && i < currentCodonIdx + 3;
+                                                return (
+                                                    <div key={i} className={`w-8 h-10 flex items-center justify-center font-mono font-bold transition-colors
+                                                        ${isCurrent ? 'bg-yellow-500/20 text-yellow-400 border-b-2 border-yellow-400' : 'text-slate-600'}
+                                                    `}>
+                                                        {base}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* tRNA Options */}
+                                    <div className="grid grid-cols-3 gap-6 w-full max-w-2xl">
+                                        {getTRNAOptions().map((anticodon, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => handleTranslationClick(anticodon)}
+                                                className="relative h-32 group perspective-1000"
+                                            >
+                                                {/* tRNA Visual */}
+                                                <div className="absolute inset-0 bg-indigo-600 rounded-t-3xl rounded-b-lg shadow-xl transform transition-transform group-hover:-translate-y-2 flex flex-col items-center justify-between p-2 border-b-4 border-indigo-900">
+                                                    {/* AA Load */}
+                                                    <div className="w-10 h-10 rounded-full bg-purple-400 border-2 border-purple-200 shadow-inner"></div>
+                                                    {/* Anticodon */}
+                                                    <div className="flex gap-1 bg-black/20 px-2 py-1 rounded">
+                                                        {anticodon.split('').map((b, j) => (
+                                                            <span key={j} className="font-mono font-bold text-white text-sm">{b}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* STAGE: COMPLETE */}
+                            {stage === 'complete' && (
+                                <div className="text-center space-y-6 animate-in zoom-in">
+                                    <h2 className="text-3xl font-black text-white">Protein Synthesized!</h2>
+                                    
+                                    <div className="flex justify-center gap-2 flex-wrap max-w-lg mx-auto my-8">
+                                        {proteinSeq.map((aa, i) => (
+                                            <div key={i} className="flex items-center">
+                                                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-xs font-bold shadow-lg text-white border-2 border-white/20 float">
+                                                    {aa}
+                                                </div>
+                                                {i < proteinSeq.length - 1 && <div className="w-4 h-1 bg-slate-500"></div>}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <button onClick={generateDNA} className="px-8 py-3 bg-white text-slate-900 rounded-full font-bold hover:bg-slate-200 transition-colors">
+                                        Synthesize Another
+                                    </button>
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
