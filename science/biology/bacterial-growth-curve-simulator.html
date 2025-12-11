@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bacterial Growth Curve Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+
+        /* Bacteria Pulse */
+        .bacteria-pulse { animation: pulse 0.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA & LOGIC ---
+        const PHASES = {
+            lag: { name: 'Lag Phase', color: '#facc15', desc: 'Bacteria adapting to new environment. Synthesizing enzymes. No increase in number.' },
+            log: { name: 'Log Phase', color: '#22c55e', desc: 'Exponential growth. Dividing at max rate. Nutrients are plentiful.' },
+            stationary: { name: 'Stationary Phase', color: '#38bdf8', desc: 'Nutrients depleting, waste accumulating. Growth rate equals death rate.' },
+            death: { name: 'Death Phase', color: '#ef4444', desc: 'Toxic waste buildup, nutrient exhaustion. Death rate exceeds growth rate.' }
+        };
+
+        // --- COMPONENT: PETRI DISH ---
+        const PetriDish = ({ bacteriaCount, phase, maxCapacity }) => {
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const width = 400;
+                const height = 400;
+                const centerX = width / 2;
+                const centerY = height / 2;
+                const radius = 180; // Petri dish boundary radius
+
+                // Manage Particles (Visual Scaling Logic)
+                let visualCount;
+                const threshold = 200; // 1:1 mapping up to this count
+                
+                if (bacteriaCount < threshold) {
+                    visualCount = Math.floor(bacteriaCount);
+                } else {
+                    // Logarithmic scale for larger populations
+                    const minVisual = threshold;
+                    const maxVisual = 1200; // Increased max visual particles for denser look
+                    const logCurr = Math.log10(bacteriaCount);
+                    const logMin = Math.log10(threshold);
+                    const logMax = Math.log10(maxCapacity);
+                    
+                    if (logMax > logMin) {
+                         visualCount = minVisual + ((logCurr - logMin) / (logMax - logMin)) * (maxVisual - minVisual);
+                    } else {
+                         visualCount = maxVisual;
+                    }
+                }
+                visualCount = Math.floor(visualCount);
+                
+                // Add new particles
+                if (particlesRef.current.length < visualCount) {
+                    const toAdd = visualCount - particlesRef.current.length;
+                    for(let i=0; i<toAdd; i++) {
+                        // Random pos inside circle
+                        const angle = Math.random() * Math.PI * 2;
+                        const r = Math.sqrt(Math.random()) * (radius - 10); // -10 padding
+                        particlesRef.current.push({
+                            x: centerX + r * Math.cos(angle),
+                            y: centerY + r * Math.sin(angle),
+                            vx: (Math.random()-0.5)*0.8, // Slightly faster movement
+                            vy: (Math.random()-0.5)*0.8,
+                            age: Math.floor(Math.random() * 50), 
+                            state: 'alive'
+                        });
+                    }
+                } 
+                // Remove particles
+                else if (particlesRef.current.length > visualCount) {
+                    const toRemove = particlesRef.current.length - visualCount;
+                    particlesRef.current.splice(0, toRemove);
+                }
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+
+                    // Dish Background
+                    ctx.fillStyle = "#1e293b";
+                    ctx.beginPath(); ctx.arc(centerX, centerY, radius, 0, Math.PI*2); ctx.fill();
+                    ctx.lineWidth = 8; ctx.strokeStyle = "#334155"; ctx.stroke();
+                    
+                    // Agar Gel
+                    ctx.fillStyle = "rgba(253, 224, 71, 0.1)"; 
+                    ctx.fill();
+
+                    // Draw Bacteria
+                    particlesRef.current.forEach(p => {
+                        // Update Position
+                        let nextX = p.x + p.vx;
+                        let nextY = p.y + p.vy;
+
+                        // Boundary Check (Circle Collision)
+                        const dist = Math.sqrt(Math.pow(nextX - centerX, 2) + Math.pow(nextY - centerY, 2));
+                        const limit = radius - 6; // Bacteria radius buffer
+
+                        if (dist < limit) {
+                            // Inside
+                            p.x = nextX;
+                            p.y = nextY;
+                        } else {
+                            // Bounce back
+                            p.vx = -p.vx;
+                            p.vy = -p.vy;
+                        }
+
+                        p.age++;
+
+                        // Color based on phase
+                        let color = "#22c55e"; // Log (Green)
+                        if (phase === 'lag') color = "#facc15"; // Adapting (Yellow)
+                        if (phase === 'stationary') color = "#38bdf8"; // Crowded (Blue)
+                        if (phase === 'death') color = "#ef4444"; // Dying (Red)
+
+                        ctx.fillStyle = color;
+                        
+                        // Draw
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.age * 0.02);
+                        
+                        // Animation logic
+                        const shouldAnimate = visualCount < 300 || p.age % 3 === 0;
+                        
+                        if (phase === 'log' && shouldAnimate && p.age % 50 < 25) {
+                            // Elongating / Dividing
+                            ctx.beginPath(); ctx.roundRect(-6, -2, 12, 4, 2); ctx.fill();
+                        } else {
+                            ctx.beginPath(); ctx.roundRect(-4, -2, 8, 4, 2); ctx.fill();
+                        }
+                        
+                        ctx.restore();
+                    });
+
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [bacteriaCount, phase, maxCapacity]);
+
+            return <canvas ref={canvasRef} width={400} height={400} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [time, setTime] = useState(0);
+            const [population, setPopulation] = useState(10); // Initial population
+            const [data, setData] = useState([{ time: 0, logNum: Math.log10(10), actual: 10 }]);
+            const [isRunning, setIsRunning] = useState(false);
+            const [currentPhase, setCurrentPhase] = useState('lag');
+            
+            // Parameters
+            const [temperature, setTemperature] = useState(37); // Optimal 37
+            const [nutrients, setNutrients] = useState(100); // %
+
+            // Simulation Refs
+            const simRef = useRef(null);
+            const stateRef = useRef({
+                pop: 10,
+                phaseTime: 0,
+                nutrientLevel: 100
+            });
+
+            const reset = () => {
+                setIsRunning(false);
+                setTime(0);
+                setPopulation(10);
+                setData([{ time: 0, logNum: 1, actual: 10 }]);
+                setCurrentPhase('lag');
+                stateRef.current = { pop: 10, phaseTime: 0, nutrientLevel: nutrients };
+            };
+
+            // Determine Growth Rate based on Temperature
+            const getGrowthRate = (temp) => {
+                const optimal = 37;
+                const sigma = 10;
+                const maxRate = 0.4; 
+                let rate = maxRate * Math.exp(-Math.pow(temp - optimal, 2) / (2 * Math.pow(sigma, 2)));
+                if (rate < 0.01) rate = 0;
+                return rate;
+            };
+
+            useEffect(() => {
+                if (isRunning) {
+                    simRef.current = setInterval(() => {
+                        const state = stateRef.current;
+                        const rate = getGrowthRate(temperature);
+                        let newPop = state.pop;
+                        let phase = currentPhase;
+
+                        state.phaseTime++;
+
+                        // --- Phase Logic ---
+                        const lagDuration = 20 + Math.abs(37 - temperature); 
+                        
+                        if (phase === 'lag') {
+                            if (state.phaseTime > lagDuration) {
+                                phase = 'log';
+                                state.phaseTime = 0;
+                            }
+                        }
+                        else if (phase === 'log') {
+                            const growth = newPop * rate;
+                            newPop += growth;
+                            const consumption = growth * 0.0001; 
+                            state.nutrientLevel = Math.max(0, state.nutrientLevel - consumption);
+
+                            if (state.nutrientLevel < 20 || newPop > 1000000000) { 
+                                phase = 'stationary';
+                                state.phaseTime = 0;
+                            }
+                        }
+                        else if (phase === 'stationary') {
+                            const stationaryDuration = 50 * (state.nutrientLevel / 10); 
+                            if (state.phaseTime > stationaryDuration) {
+                                phase = 'death';
+                                state.phaseTime = 0;
+                            }
+                        }
+                        else if (phase === 'death') {
+                            newPop *= 0.9;
+                            if (newPop < 10) {
+                                setIsRunning(false); 
+                            }
+                        }
+
+                        state.pop = newPop;
+                        setTime(t => t + 1);
+                        setPopulation(newPop);
+                        setCurrentPhase(phase);
+                        setData(prev => [...prev, { 
+                            time: prev.length, 
+                            logNum: Math.log10(newPop), 
+                            actual: newPop
+                        }]);
+
+                    }, 100); 
+                }
+                return () => clearInterval(simRef.current);
+            }, [isRunning, temperature, currentPhase]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="microscope" className="text-emerald-400" /> Growth Lab
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Bacterial Population Dynamics</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-8">
+                            
+                            {/* Controls */}
+                            <div className="space-y-6">
+                                {/* Temperature */}
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-slate-400 flex items-center gap-2"><Icon name="thermometer" size={14}/> Temperature</span>
+                                        <span className={`font-mono ${temperature === 37 ? 'text-emerald-400' : 'text-slate-300'}`}>{temperature}°C</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="60" step="1"
+                                        value={temperature} 
+                                        onChange={(e) => setTemperature(parseInt(e.target.value))}
+                                        className="w-full accent-emerald-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Frozen (0°C)</span>
+                                        <span>Optimal (37°C)</span>
+                                        <span>Hot (60°C)</span>
+                                    </div>
+                                </div>
+
+                                {/* Nutrient (Initial) */}
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-slate-400 flex items-center gap-2"><Icon name="utensils" size={14}/> Initial Nutrients</span>
+                                        <span className="font-mono text-yellow-400">{nutrients}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="10" max="100" step="10"
+                                        value={nutrients} 
+                                        disabled={isRunning || time > 0}
+                                        onChange={(e) => { setNutrients(parseInt(e.target.value)); stateRef.current.nutrientLevel = parseInt(e.target.value); }}
+                                        className={`w-full accent-yellow-500 ${isRunning || time > 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Current Status */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-1">Current Phase</div>
+                                <h2 className="text-xl font-black mb-2" style={{color: PHASES[currentPhase].color}}>
+                                    {PHASES[currentPhase].name}
+                                </h2>
+                                <p className="text-xs text-slate-300 leading-relaxed mb-4">
+                                    {PHASES[currentPhase].desc}
+                                </p>
+                                
+                                <div className="grid grid-cols-2 gap-4 border-t border-slate-700 pt-3">
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase">Population</div>
+                                        <div className="text-lg font-mono text-white font-bold">
+                                            {population > 1000000 ? (population/1000000).toFixed(1) + 'M' : population > 1000 ? (population/1000).toFixed(1) + 'k' : population.toFixed(0)}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase">Time</div>
+                                        <div className="text-lg font-mono text-white font-bold">{time} h</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Playback */}
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isRunning ? 'bg-slate-700 text-slate-300 border border-slate-600' : 'bg-blue-600 hover:bg-blue-500 text-white'}
+                                    `}
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} size={18} fill="currentColor"/>
+                                    {isRunning ? 'Pause' : 'Start Culture'}
+                                </button>
+                                <button 
+                                    onClick={reset}
+                                    className="px-4 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-slate-300"
+                                >
+                                    <Icon name="rotate-ccw" size={18}/>
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Petri Dish Visual */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                             <div className="absolute top-4 left-4 text-xs font-bold text-slate-500 uppercase">Microscopic View</div>
+                             <div className="w-full h-full flex items-center justify-center">
+                                <div className="w-[400px] h-[400px] relative">
+                                    <PetriDish bacteriaCount={population} phase={currentPhase} maxCapacity={1000000000} />
+                                    
+                                    {/* Environment Indicators */}
+                                    <div className="absolute top-0 right-0 flex flex-col gap-2">
+                                        <div className="bg-black/50 backdrop-blur px-2 py-1 rounded text-[10px] text-white border border-white/10">
+                                            Temp: {temperature}°C
+                                        </div>
+                                        <div className="bg-black/50 backdrop-blur px-2 py-1 rounded text-[10px] text-white border border-white/10">
+                                            Nutrients: {Math.max(0, stateRef.current.nutrientLevel).toFixed(0)}%
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
+                        </div>
+
+                        {/* Growth Graph */}
+                        <div className="h-56 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex flex-col relative">
+                            <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                                <Icon name="line-chart" size={14}/> Growth Curve (Log₁₀ Scale)
+                            </div>
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={data}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <XAxis dataKey="time" stroke="#64748b" fontSize={10} tick={false} label={{ value: 'Time (hours)', position: 'insideBottom', offset: -5, fill: '#64748b', fontSize: 10 }}/>
+                                        <YAxis 
+                                            dataKey="logNum" 
+                                            stroke="#64748b" 
+                                            fontSize={10} 
+                                            domain={[0, 10]} // Log scale 0 to 10 (1 to 10 billion)
+                                            label={{ value: 'Log No. Bacteria', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} 
+                                        />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
+                                            itemStyle={{ color: '#fff' }}
+                                            formatter={(val, name) => [name === 'logNum' ? val.toFixed(2) : val.toLocaleString(), name === 'logNum' ? 'Log Value' : 'Count']}
+                                            labelFormatter={(val) => `${val} h`}
+                                        />
+                                        {/* Phase Reference Lines */}
+                                        {/* We could dynamically add lines, but simple curve is enough */}
+                                        <Line type="monotone" dataKey="logNum" stroke="#22c55e" strokeWidth={3} dot={false} animationDuration={0} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
