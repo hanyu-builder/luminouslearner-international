@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cardiac Output Calculator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #fff; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Blood Particle Flow */
+        .blood-flow {
+            animation: flow-move linear infinite;
+        }
+        @keyframes flow-move {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONSTANTS ---
+        const PRESETS = {
+            resting: { name: 'Resting Person', hr: 75, sv: 70 },
+            exercise: { name: 'During Exercise', hr: 150, sv: 110 },
+            athlete: { name: 'Elite Athlete (Resting)', hr: 50, sv: 100 },
+            athlete_active: { name: 'Elite Athlete (Active)', hr: 180, sv: 160 }
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            // State
+            const [hr, setHr] = useState(75); // Heart Rate (bpm)
+            const [sv, setSv] = useState(70); // Stroke Volume (ml)
+            const [preset, setPreset] = useState('resting');
+
+            // Derived State
+            const co = (hr * sv) / 1000; // Cardiac Output (L/min)
+            
+            // Animation calculated values
+            const beatDuration = 60 / hr; // seconds per beat
+            
+            // Apply Preset
+            const applyPreset = (key) => {
+                setPreset(key);
+                setHr(PRESETS[key].hr);
+                setSv(PRESETS[key].sv);
+            };
+
+            // Custom adjustment clears preset
+            const handleHrChange = (val) => {
+                setHr(val);
+                setPreset('custom');
+            };
+            const handleSvChange = (val) => {
+                setSv(val);
+                setPreset('custom');
+            };
+
+            // Chart Data
+            const chartData = [
+                { name: 'Current', value: co },
+                { name: 'Max Possible', value: 35 } // Approximate max for elite athlete
+            ];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar: Controls */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-red-500" /> CO Calculator
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Cardiac Output = Stroke Volume × Heart Rate</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-8">
+                            
+                            {/* Presets */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Presets</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {Object.entries(PRESETS).map(([key, data]) => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => applyPreset(key)}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between
+                                                ${preset === key 
+                                                    ? 'bg-slate-800 border-red-500 text-white shadow-lg ring-1 ring-red-500/30' 
+                                                    : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <span className="text-xs font-bold">{data.name}</span>
+                                            {preset === key && <Icon name="check" size={14} className="text-red-400"/>}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Sliders */}
+                            <div className="space-y-6">
+                                {/* Heart Rate Slider */}
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-red-400 flex items-center gap-2"><Icon name="heart" size={14}/> Heart Rate (HR)</span>
+                                        <span className="font-mono text-white bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{hr} bpm</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="30" max="220" step="1"
+                                        value={hr} 
+                                        onChange={(e) => handleHrChange(parseInt(e.target.value))}
+                                        className="w-full accent-red-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Slow</span>
+                                        <span>Fast</span>
+                                    </div>
+                                </div>
+
+                                {/* Stroke Volume Slider */}
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-blue-400 flex items-center gap-2"><Icon name="droplet" size={14}/> Stroke Volume (SV)</span>
+                                        <span className="font-mono text-white bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{sv} ml</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="40" max="200" step="1"
+                                        value={sv} 
+                                        onChange={(e) => handleSvChange(parseInt(e.target.value))}
+                                        className="w-full accent-blue-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Weak</span>
+                                        <span>Strong</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Calculation Box */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-inner">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-3 text-center">Calculation</div>
+                                <div className="flex items-center justify-center gap-2 font-mono text-sm">
+                                    <div className="text-center">
+                                        <div className="text-blue-400 font-bold">{sv}</div>
+                                        <div className="text-[10px] text-slate-500">ml</div>
+                                    </div>
+                                    <div className="text-slate-400">×</div>
+                                    <div className="text-center">
+                                        <div className="text-red-400 font-bold">{hr}</div>
+                                        <div className="text-[10px] text-slate-500">bpm</div>
+                                    </div>
+                                    <div className="text-slate-400">=</div>
+                                    <div className="text-center">
+                                        <div className="text-emerald-400 font-bold text-xl">{(sv * hr).toLocaleString()}</div>
+                                        <div className="text-[10px] text-slate-500">ml/min</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Visualization Area */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-8">
+                            
+                            {/* Heart Animation */}
+                            <div className="relative mb-12">
+                                <motion.div
+                                    animate={{ scale: [1, 1 + (sv/300)] }}
+                                    transition={{ 
+                                        duration: beatDuration, 
+                                        repeat: Infinity, 
+                                        ease: "easeInOut", // Simulating systole/diastole
+                                        repeatType: "reverse"
+                                    }}
+                                    className="relative z-10"
+                                >
+                                    {/* Heart Shape */}
+                                    <svg width="200" height="200" viewBox="0 0 24 24" fill="#ef4444" stroke="#b91c1c" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                    </svg>
+                                    {/* SV Label */}
+                                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white font-bold font-mono text-lg drop-shadow-md">
+                                        {sv} ml
+                                    </div>
+                                </motion.div>
+
+                                {/* Beat Indicator Ring */}
+                                <motion.div
+                                    animate={{ scale: [1, 1.5], opacity: [0.5, 0] }}
+                                    transition={{ duration: beatDuration, repeat: Infinity, ease: "easeOut" }}
+                                    className="absolute top-0 left-0 w-full h-full rounded-full border-4 border-red-500/30"
+                                />
+                            </div>
+
+                            {/* Blood Flow Pipe */}
+                            <div className="w-full max-w-2xl h-24 bg-slate-800/50 rounded-xl border border-slate-700 relative overflow-hidden flex items-center">
+                                <div className="absolute left-2 text-xs text-slate-500 font-bold z-20">Output Flow</div>
+                                
+                                {/* Flow Particles */}
+                                <div className="absolute inset-0 flex items-center overflow-hidden opacity-80">
+                                    {/* Use a repeating background for flow illusion */}
+                                    <div 
+                                        className="w-[200%] h-full flex items-center gap-4 blood-flow"
+                                        style={{ 
+                                            animationDuration: `${20 / (co + 1)}s`, // Speed based on CO
+                                        }}
+                                    >
+                                        {/* Generate particles based on density (CO) */}
+                                        {Array.from({ length: 40 }).map((_, i) => (
+                                            <div 
+                                                key={i} 
+                                                className="rounded-full bg-red-500 shadow-[0_0_5px_red]"
+                                                style={{
+                                                    width: Math.max(4, Math.min(20, co)), // Size based on CO
+                                                    height: Math.max(4, Math.min(20, co)),
+                                                    opacity: 0.5 + Math.random()*0.5
+                                                }}
+                                            ></div>
+                                        ))}
+                                    </div>
+                                </div>
+                                
+                                {/* Pipe overlay */}
+                                <div className="absolute inset-0 border-y-4 border-slate-600 pointer-events-none"></div>
+                            </div>
+
+                        </div>
+
+                        {/* Stats Dashboard */}
+                        <div className="h-40 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex gap-8 items-center">
+                             
+                             <div className="flex-1 flex flex-col justify-center pl-4">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-1">Cardiac Output (CO)</div>
+                                <div className="text-5xl font-black text-white font-mono tracking-tighter">
+                                    {co.toFixed(1)} <span className="text-lg text-emerald-400 font-bold">L/min</span>
+                                </div>
+                                <div className="mt-2 text-xs text-slate-400">
+                                    Volume of blood pumped by the heart per minute.
+                                </div>
+                             </div>
+
+                             <div className="flex-1 h-full relative">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart layout="vertical" data={chartData} margin={{left: 20}}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                                        <XAxis type="number" domain={[0, 40]} hide />
+                                        <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                                        <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px'}} />
+                                        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                                            {chartData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={index === 0 ? '#10b981' : '#475569'} />
+                                            ))}
+                                        </Bar>
+                                        <ReferenceLine x={5} stroke="#3b82f6" strokeDasharray="3 3" label={{position: 'top', value: 'Avg Rest', fill: '#3b82f6', fontSize: 10}} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                             </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
