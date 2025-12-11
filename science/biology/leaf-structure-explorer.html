@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaf Structure Explorer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Cell Hover Effect */
+        .leaf-layer { transition: all 0.3s ease; cursor: pointer; }
+        .leaf-layer:hover { filter: brightness(1.2) drop-shadow(0 0 5px rgba(255,255,255,0.5)); }
+        .leaf-layer.active { filter: brightness(1.3) drop-shadow(0 0 10px #34d399); stroke: #34d399; stroke-width: 2px; }
+        .leaf-layer.dimmed { opacity: 0.3; }
+        
+        /* Info Card Animation */
+        .info-card { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Robust Icon Component
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            
+            useEffect(() => {
+                // Safety check for lucide
+                if (window.lucide && window.lucide.icons) {
+                    // Helper to convert kebab-case to PascalCase (e.g. arrow-right -> ArrowRight)
+                    const toPascalCase = (str) => 
+                        str.replace(/(^\w|-\w)/g, (g) => g.replace(/-/, "").toUpperCase());
+
+                    const pascalName = toPascalCase(name);
+                    const iconData = window.lucide.icons[pascalName];
+
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+
+            if (!svgHtml) return <span className={`inline-block ${className}`} style={{ width: size, height: size }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const STRUCTURES = {
+            cuticle: {
+                id: 'cuticle',
+                name: 'Waxy Cuticle',
+                desc: 'A transparent, waterproof layer on the top surface.',
+                func: 'Reduces water loss by evaporation; Allows light to pass through.',
+                category: ['protection']
+            },
+            upper_epidermis: {
+                id: 'upper_epidermis',
+                name: 'Upper Epidermis',
+                desc: 'A single layer of closely packed cells. No chloroplasts.',
+                func: 'Protects inner layers; Allows light to reach mesophyll.',
+                category: ['protection']
+            },
+            palisade: {
+                id: 'palisade',
+                name: 'Palisade Mesophyll',
+                desc: 'Column-shaped cells packed tightly near the top surface. Contains many chloroplasts.',
+                func: 'Main site of photosynthesis (maximises light absorption).',
+                category: ['photosynthesis']
+            },
+            spongy: {
+                id: 'spongy',
+                name: 'Spongy Mesophyll',
+                desc: 'Irregularly shaped cells with large air spaces between them. Fewer chloroplasts.',
+                func: 'Allows gas exchange (CO₂ diffusion) and some photosynthesis.',
+                category: ['photosynthesis', 'gas_exchange']
+            },
+            vascular: {
+                id: 'vascular',
+                name: 'Vascular Bundle',
+                desc: 'Contains Xylem (top) and Phloem (bottom). The "vein" of the leaf.',
+                func: 'Transport: Xylem carries water/minerals; Phloem carries sugars (food). Support.',
+                category: ['transport']
+            },
+            lower_epidermis: {
+                id: 'lower_epidermis',
+                name: 'Lower Epidermis',
+                desc: 'Bottom layer of cells. Contains many stomata guarded by guard cells.',
+                func: 'Protection; Regulation of gas exchange and water loss.',
+                category: ['protection', 'gas_exchange']
+            },
+            stoma: {
+                id: 'stoma',
+                name: 'Stoma / Guard Cells',
+                desc: 'Pores surrounded by two kidney-shaped guard cells.',
+                func: 'Controls gas exchange (CO₂ in, O₂ out) and transpiration.',
+                category: ['gas_exchange']
+            }
+        };
+
+        // --- SVG COMPONENT ---
+        const LeafCrossSection = ({ selected, filter, onSelect }) => {
+            
+            const getClass = (id) => {
+                const isActive = selected === id;
+                const isDimmed = filter && STRUCTURES[id] && !STRUCTURES[id].category.includes(filter);
+                return `leaf-layer ${isActive ? 'active' : ''} ${isDimmed ? 'dimmed' : ''}`;
+            };
+
+            return (
+                <svg viewBox="0 0 800 500" className="w-full h-full drop-shadow-2xl" preserveAspectRatio="xMidYMid meet">
+                    <defs>
+                        {/* Simple patterns defined directly to avoid complexity */}
+                        <pattern id="palisadePattern" x="0" y="0" width="30" height="80" patternUnits="userSpaceOnUse">
+                            <rect x="2" y="2" width="26" height="76" rx="5" fill="#4ade80" stroke="#15803d" strokeWidth="1"/>
+                            {/* Chloroplasts */}
+                            <circle cx="10" cy="20" r="3" fill="#14532d" opacity="0.6"/>
+                            <circle cx="20" cy="30" r="3" fill="#14532d" opacity="0.6"/>
+                            <circle cx="10" cy="50" r="3" fill="#14532d" opacity="0.6"/>
+                            <circle cx="20" cy="60" r="3" fill="#14532d" opacity="0.6"/>
+                        </pattern>
+                    </defs>
+
+                    {/* Background */}
+                    <rect width="800" height="500" fill="#f0fdf4" rx="20"/>
+
+                    {/* 1. Cuticle */}
+                    <path 
+                        d="M 50 50 L 750 50 L 750 70 L 50 70 Z" 
+                        fill="#e2e8f0" fillOpacity="0.7" stroke="#94a3b8" strokeWidth="1"
+                        className={getClass('cuticle')}
+                        onClick={() => onSelect('cuticle')}
+                    />
+
+                    {/* 2. Upper Epidermis */}
+                    <g className={getClass('upper_epidermis')} onClick={() => onSelect('upper_epidermis')}>
+                        {/* Create a row of rects */}
+                        {Array.from({ length: 14 }).map((_, i) => (
+                            <rect key={`ue-${i}`} x={50 + i*50} y="70" width="50" height="40" fill="#bae6fd" stroke="#0369a1" strokeWidth="1" />
+                        ))}
+                    </g>
+
+                    {/* 3. Palisade Mesophyll */}
+                    <rect 
+                        x="50" y="110" width="700" height="120" 
+                        fill="url(#palisadePattern)" stroke="none"
+                        className={getClass('palisade')}
+                        onClick={() => onSelect('palisade')}
+                    />
+
+                    {/* 4. Vascular Bundle (Vein) */}
+                    <g transform="translate(350, 180)" className={getClass('vascular')} onClick={() => onSelect('vascular')}>
+                        <circle cx="50" cy="50" r="65" fill="#fef3c7" stroke="#d97706" strokeWidth="3" />
+                        {/* Xylem (Top) */}
+                        <path d="M 10 50 A 40 40 0 0 1 90 50" fill="#ef4444" opacity="0.8"/>
+                        <text x="50" y="40" textAnchor="middle" fontSize="10" fontWeight="bold" fill="#7f1d1d" style={{ pointerEvents: 'none' }}>XYLEM</text>
+                        {/* Phloem (Bottom) */}
+                        <path d="M 10 50 A 40 40 0 0 0 90 50" fill="#3b82f6" opacity="0.8"/>
+                        <text x="50" y="70" textAnchor="middle" fontSize="10" fontWeight="bold" fill="#1e3a8a" style={{ pointerEvents: 'none' }}>PHLOEM</text>
+                    </g>
+
+                    {/* 5. Spongy Mesophyll */}
+                    <g className={getClass('spongy')} onClick={() => onSelect('spongy')}>
+                        {/* Scatter some circles manually to avoid complex random logic in render */}
+                        <circle cx="100" cy="280" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="160" cy="260" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="140" cy="320" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="220" cy="300" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="280" cy="260" r="25" fill="#86efac" stroke="#166534" />
+                        
+                        <circle cx="500" cy="280" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="560" cy="320" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="600" cy="260" r="25" fill="#86efac" stroke="#166534" />
+                        <circle cx="650" cy="310" r="25" fill="#86efac" stroke="#166534" />
+                    </g>
+
+                    {/* 6. Lower Epidermis & Stomata */}
+                    {/* Lower Epidermis Background Click Area */}
+                    <g className={getClass('lower_epidermis')} onClick={() => onSelect('lower_epidermis')}>
+                         {/* Left Block */}
+                         <rect x="50" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="100" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="150" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="200" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+
+                         {/* Mid Block */}
+                         <rect x="300" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="350" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="400" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="450" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+
+                         {/* Right Block */}
+                         <rect x="550" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="600" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="650" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                         <rect x="700" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
+                    </g>
+
+                    {/* Stoma 1 */}
+                    <g transform="translate(250, 380)" className={getClass('stoma')} onClick={() => onSelect('stoma')}>
+                        <path d="M 0 0 Q 15 40 25 0" fill="#22c55e" stroke="#14532d" /> {/* Left Guard */}
+                        <path d="M 50 0 Q 35 40 25 0" fill="#22c55e" stroke="#14532d" /> {/* Right Guard */}
+                        <path d="M 25 5 L 25 25" stroke="#000" strokeWidth="2" /> {/* Pore */}
+                    </g>
+
+                    {/* Stoma 2 */}
+                    <g transform="translate(500, 380)" className={getClass('stoma')} onClick={() => onSelect('stoma')}>
+                        <path d="M 0 0 Q 15 40 25 0" fill="#22c55e" stroke="#14532d" />
+                        <path d="M 50 0 Q 35 40 25 0" fill="#22c55e" stroke="#14532d" />
+                        <path d="M 25 5 L 25 25" stroke="#000" strokeWidth="2" />
+                    </g>
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedPart, setSelectedPart] = useState(null);
+            const [activeFilter, setActiveFilter] = useState(null); // photosynthesis, gas_exchange, transport
+
+            const handleSelect = (id) => {
+                setSelectedPart(id);
+                // We keep the filter active even if selecting a specific part, or we can clear it.
+                // Let's keep it for better UX (exploring within a function)
+            };
+
+            const toggleFilter = (filter) => {
+                if (activeFilter === filter) {
+                    setActiveFilter(null);
+                    setSelectedPart(null);
+                } else {
+                    setActiveFilter(filter);
+                    setSelectedPart(null); 
+                }
+            };
+
+            const currentInfo = selectedPart ? STRUCTURES[selectedPart] : null;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="leaf" className="text-emerald-400" /> Leaf Structure
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Microscopic Anatomy</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
+                            
+                            {/* Functional Filters */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Highlight Function</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    <button 
+                                        onClick={() => toggleFilter('photosynthesis')}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
+                                            ${activeFilter === 'photosynthesis' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <Icon name="sun" size={18} className={activeFilter === 'photosynthesis' ? 'text-yellow-300' : ''}/> Photosynthesis
+                                    </button>
+                                    <button 
+                                        onClick={() => toggleFilter('gas_exchange')}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
+                                            ${activeFilter === 'gas_exchange' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <Icon name="wind" size={18} className={activeFilter === 'gas_exchange' ? 'text-sky-300' : ''}/> Gas Exchange
+                                    </button>
+                                    <button 
+                                        onClick={() => toggleFilter('transport')}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
+                                            ${activeFilter === 'transport' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                        `}
+                                    >
+                                        <Icon name="droplet" size={18} className={activeFilter === 'transport' ? 'text-blue-200' : ''}/> Transport
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Parts List (Quick Select) */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Structures</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {Object.entries(STRUCTURES).map(([id, info]) => (
+                                        <button 
+                                            key={id}
+                                            onClick={() => handleSelect(id)}
+                                            className={`text-[10px] px-2 py-1 rounded border transition-colors
+                                                ${selectedPart === id ? 'bg-slate-700 border-emerald-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'}
+                                            `}
+                                        >
+                                            {info.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            <LeafCrossSection selected={selectedPart} filter={activeFilter} onSelect={handleSelect} />
+                            
+                            <div className="absolute top-6 left-6 pointer-events-none">
+                                <div className="flex items-center gap-2 bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
+                                    <Icon name="microscope" size={16} className="text-slate-400"/>
+                                    <span className="text-xs text-slate-300 font-mono">Cross-section (x400)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Info Panel Overlay */}
+                        {currentInfo && (
+                            <div className="absolute bottom-8 left-8 right-8 md:left-auto md:right-8 md:w-96 bg-slate-800/90 backdrop-blur p-6 rounded-2xl border border-slate-600 shadow-2xl info-card z-20">
+                                <div className="flex justify-between items-start mb-3">
+                                    <h2 className="text-lg font-bold text-emerald-400">{currentInfo.name}</h2>
+                                    <button onClick={() => setSelectedPart(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={18}/></button>
+                                </div>
+                                <div className="space-y-3 text-sm">
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Structure</span>
+                                        <p className="text-slate-300 leading-snug">{currentInfo.desc}</p>
+                                    </div>
+                                    <div>
+                                        <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Function</span>
+                                        <p className="text-white bg-slate-700/50 p-2 rounded border border-slate-600/50 leading-snug">
+                                            {currentInfo.func}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Filter Active Indicator */}
+                        {activeFilter && !currentInfo && (
+                            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-emerald-900/80 backdrop-blur px-6 py-3 rounded-full border border-emerald-500/50 text-emerald-200 text-sm font-bold shadow-lg flex items-center gap-2 info-card z-10">
+                                <Icon name="filter" size={16}/> 
+                                Highlighting: {activeFilter.replace('_', ' ').toUpperCase()}
+                            </div>
+                        )}
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
