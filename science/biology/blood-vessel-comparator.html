@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blood Vessel Comparator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Blood Cell Flow Animation */
+        .flow-fast { animation: flow 0.5s linear infinite; }
+        .flow-medium { animation: flow 2s linear infinite; }
+        .flow-slow { animation: flow 5s linear infinite; }
+        
+        @keyframes flow {
+            from { stroke-dashoffset: 20; }
+            to { stroke-dashoffset: 0; }
+        }
+
+        /* Pulse Animation (Artery) */
+        .pulse-wall { animation: expand 0.8s ease-in-out infinite; }
+        @keyframes expand {
+            0% { transform: scale(1); }
+            20% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        /* Fade In Out for Arrows */
+        .fade-in-out { animation: fade 2s infinite; }
+        @keyframes fade {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } = window.Recharts;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const VESSELS = {
+            artery: {
+                id: 'artery', name: 'Artery',
+                desc: 'Carries blood AWAY from heart at high pressure.',
+                features: [
+                    { label: 'Thick Wall', val: 'High', desc: 'Withstands high pressure' },
+                    { label: 'Elastic Fibres', val: 'Many', desc: 'Recoil to maintain pressure' },
+                    { label: 'Lumen', val: 'Small', desc: 'Maintains high pressure' },
+                    { label: 'Valves', val: 'None', desc: 'Pressure prevents backflow' }
+                ],
+                stats: { pressure: 100, velocity: 40, thickness: 80 },
+                color: '#ef4444'
+            },
+            vein: {
+                id: 'vein', name: 'Vein',
+                desc: 'Carries blood TOWARDS heart at low pressure.',
+                features: [
+                    { label: 'Thin Wall', val: 'Low', desc: 'Low pressure, less resistance' },
+                    { label: 'Elastic Fibres', val: 'Few', desc: 'Less recoil needed' },
+                    { label: 'Lumen', val: 'Large', desc: 'Reduces resistance to flow' },
+                    { label: 'Valves', val: 'Present', desc: 'Prevents backflow' }
+                ],
+                stats: { pressure: 10, velocity: 15, thickness: 20 },
+                color: '#3b82f6'
+            },
+            capillary: {
+                id: 'capillary', name: 'Capillary',
+                desc: 'Site of exchange between blood and tissues.',
+                features: [
+                    { label: 'Wall', val: '1-cell thick', desc: 'Short diffusion distance' },
+                    { label: 'Lumen', val: 'Very Small', desc: 'RBCs pass single file' },
+                    { label: 'Permeability', val: 'High', desc: 'Allows leakage of plasma' },
+                    { label: 'Valves', val: 'None', desc: 'Continuous flow' }
+                ],
+                stats: { pressure: 25, velocity: 1, thickness: 5 },
+                color: '#a855f7'
+            }
+        };
+
+        // --- SVG COMPONENT ---
+        const VesselCanvas = ({ type, isRunning }) => {
+            // Define markers for arrows
+            const markerDef = (
+                <defs>
+                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+                        <path d="M0,0 L0,10 L10,5 z" fill="#fff" />
+                    </marker>
+                    <pattern id="arteryFlow" width="40" height="20" patternUnits="userSpaceOnUse">
+                        <circle cx="10" cy="10" r="6" fill="#ef4444" stroke="#7f1d1d" />
+                    </pattern>
+                     <pattern id="veinFlow" width="50" height="30" patternUnits="userSpaceOnUse">
+                        <circle cx="15" cy="15" r="6" fill="#2563eb" stroke="#172554" />
+                    </pattern>
+                </defs>
+            );
+
+            // Artery: Thick wall, small lumen, pulsing
+            if (type === 'artery') {
+                return (
+                    <svg viewBox="0 0 400 300" className="w-full h-full drop-shadow-xl">
+                        {markerDef}
+                        {/* Cross Section */}
+                        <g transform="translate(100, 150)">
+                            <circle cx="0" cy="0" r="70" fill="#fca5a5" stroke="#b91c1c" strokeWidth="2" className={isRunning ? "pulse-wall" : ""} />
+                            <circle cx="0" cy="0" r="55" fill="#ef4444" stroke="#b91c1c" strokeWidth="1" className={isRunning ? "pulse-wall" : ""} style={{animationDelay: '0.1s'}} />
+                            <circle cx="0" cy="0" r="20" fill="#7f1d1d" stroke="white" strokeWidth="2" />
+                            <circle cx="0" cy="0" r="15" fill="#991b1b" opacity="0.8" />
+                        </g>
+
+                        {/* Longitudinal Section (Tube) */}
+                        <g transform="translate(220, 80)">
+                            <rect x="0" y="0" width="160" height="30" fill="#ef4444" stroke="#b91c1c" className={isRunning ? "pulse-wall" : ""} />
+                            <rect x="0" y="110" width="160" height="30" fill="#ef4444" stroke="#b91c1c" className={isRunning ? "pulse-wall" : ""} />
+                            
+                            <rect x="0" y="30" width="160" height="80" fill="url(#arteryFlow)" className={isRunning ? "flow-fast" : ""} />
+                            
+                            {/* Flow Velocity Label */}
+                            <path d="M 10 70 L 150 70" stroke="white" strokeWidth="4" strokeDasharray="10,5" className={isRunning ? "flow-fast" : ""} />
+                            <text x="80" y="60" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="drop-shadow-md">Fast High Pressure Flow</text>
+                            
+                            {/* Pulse Label */}
+                            <text x="80" y="10" textAnchor="middle" fill="#fca5a5" fontSize="10" className={isRunning ? "pulse-wall" : ""}>Pulse (Wall expands)</text>
+                        </g>
+                        
+                        <text x="200" y="280" textAnchor="middle" fill="#fca5a5" fontSize="14" fontWeight="bold">Thick muscular wall, Small lumen</text>
+                    </svg>
+                );
+            }
+
+            // Vein: Thin wall, large lumen, valves
+            if (type === 'vein') {
+                return (
+                    <svg viewBox="0 0 400 300" className="w-full h-full drop-shadow-xl">
+                        {markerDef}
+                        {/* Cross Section */}
+                        <g transform="translate(100, 150)">
+                            <circle cx="0" cy="0" r="70" fill="#bfdbfe" stroke="#1e3a8a" strokeWidth="2" />
+                            <circle cx="0" cy="0" r="65" fill="#3b82f6" stroke="#1e3a8a" strokeWidth="1" />
+                            <circle cx="0" cy="0" r="55" fill="#172554" stroke="white" strokeWidth="2" />
+                        </g>
+
+                        {/* Longitudinal Section */}
+                        <g transform="translate(220, 65)">
+                            <rect x="0" y="0" width="160" height="10" fill="#3b82f6" stroke="#1e3a8a" />
+                            <rect x="0" y="160" width="160" height="10" fill="#3b82f6" stroke="#1e3a8a" />
+                            
+                            <path d="M 60 10 L 80 85 L 100 10" fill="#60a5fa" stroke="white" strokeWidth="2" opacity="0.8" />
+                            <path d="M 60 160 L 80 85 L 100 160" fill="#60a5fa" stroke="white" strokeWidth="2" opacity="0.8" />
+                            <text x="80" y="95" textAnchor="middle" fill="#93c5fd" fontSize="10">Valve</text>
+
+                            <rect x="0" y="10" width="160" height="150" fill="url(#veinFlow)" className={isRunning ? "flow-medium" : ""} />
+                            
+                            {/* Flow Velocity Label */}
+                            <path d="M 10 70 L 150 70" stroke="white" strokeWidth="4" strokeDasharray="10,5" className={isRunning ? "flow-medium" : ""} />
+                            <text x="80" y="60" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" className="drop-shadow-md">Slow Low Pressure Flow</text>
+                        </g>
+
+                        <text x="200" y="280" textAnchor="middle" fill="#93c5fd" fontSize="14" fontWeight="bold">Thin wall, Large lumen, Valves</text>
+                    </svg>
+                );
+            }
+
+            // Capillary: Single cell wall, very small
+            if (type === 'capillary') {
+                return (
+                    <svg viewBox="0 0 400 300" className="w-full h-full drop-shadow-xl">
+                         {markerDef}
+                         {/* Cross Section */}
+                         <g transform="translate(100, 150)">
+                            <circle cx="0" cy="0" r="25" fill="none" stroke="#a855f7" strokeWidth="4" strokeDasharray="15,5" />
+                            <circle cx="0" cy="25" r="3" fill="#7e22ce" />
+                            <circle cx="0" cy="0" r="21" fill="#581c87" />
+                            <ellipse cx="0" cy="0" rx="15" ry="18" fill="#ef4444" opacity="0.8" />
+                        </g>
+
+                        {/* Longitudinal Section */}
+                        <g transform="translate(200, 120)">
+                            <rect x="0" y="0" width="180" height="5" fill="#d8b4fe" />
+                            <rect x="0" y="55" width="180" height="5" fill="#d8b4fe" />
+                            
+                            {[0, 1, 2, 3].map(i => (
+                                <ellipse key={i} cx={30 + i*45} cy={30} rx="18" ry="12" fill="#ef4444" stroke="#7f1d1d" 
+                                    className={isRunning ? "flow-slow" : ""} 
+                                    style={{transformOrigin: 'center', animationDelay: `${i*0.5}s`}}
+                                />
+                            ))}
+                            
+                            {/* Exchange Arrows with Labels */}
+                            {isRunning && (
+                                <g>
+                                    {/* Out Arrow (Green) - Moved Left */}
+                                    <path d="M 40 20 L 40 -30" stroke="#4ade80" strokeWidth="2" markerEnd="url(#arrow)" className="fade-in-out" />
+                                    <text x="40" y="-35" textAnchor="middle" fill="#4ade80" fontSize="10" fontWeight="bold">Nutrients/O₂ Out</text>
+
+                                    {/* In Arrow (Yellow) - Moved Right */}
+                                    <path d="M 120 -30 L 120 20" stroke="#facc15" strokeWidth="2" markerEnd="url(#arrow)" className="fade-in-out" style={{animationDelay:'0.5s'}} />
+                                    <text x="120" y="-35" textAnchor="middle" fill="#facc15" fontSize="10" fontWeight="bold">Waste/CO₂ In</text>
+                                </g>
+                            )}
+                            
+                            {/* Flow Label */}
+                            <text x="90" y="80" textAnchor="middle" fill="#d8b4fe" fontSize="10" fontWeight="bold">Very Slow Flow (Exchange)</text>
+                        </g>
+
+                        <text x="200" y="280" textAnchor="middle" fill="#d8b4fe" fontSize="14" fontWeight="bold">One-cell thick, RBCs single file</text>
+                    </svg>
+                );
+            }
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [selectedVessel, setSelectedVessel] = useState('artery');
+            const [isRunning, setIsRunning] = useState(true);
+
+            const currentData = VESSELS[selectedVessel];
+
+            const chartData = [
+                { name: 'Pressure', value: currentData.stats.pressure, full: 100, fill: '#ef4444' },
+                { name: 'Velocity', value: currentData.stats.velocity, full: 50, fill: '#3b82f6' },
+                { name: 'Wall Thickness', value: currentData.stats.thickness, full: 100, fill: '#a855f7' }
+            ];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-red-500" /> Vessel Comparator
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Structure & Function</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Select Vessel */}
+                            <div className="grid grid-cols-3 gap-2">
+                                {Object.values(VESSELS).map(v => (
+                                    <button 
+                                        key={v.id}
+                                        onClick={() => setSelectedVessel(v.id)}
+                                        className={`py-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-1
+                                            ${selectedVessel === v.id ? 'bg-slate-800 text-white border border-slate-600 shadow-lg' : 'bg-slate-900 text-slate-500 border border-transparent hover:bg-slate-800'}
+                                        `}
+                                        style={{borderColor: selectedVessel === v.id ? v.color : 'transparent'}}
+                                    >
+                                        <div className="w-3 h-3 rounded-full" style={{backgroundColor: v.color}}></div>
+                                        {v.name.split(' (')[0]}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Info Panel */}
+                            <div className="space-y-6 animate-in fade-in slide-in-from-left-4" key={selectedVessel}>
+                                <div>
+                                    <h2 className="text-2xl font-black mb-1" style={{color: currentData.color}}>{currentData.name}</h2>
+                                    <p className="text-sm text-slate-300 leading-relaxed">{currentData.desc}</p>
+                                </div>
+
+                                {/* Features List */}
+                                <div className="space-y-3">
+                                    {currentData.features.map((f, i) => (
+                                        <div key={i} className="flex justify-between items-center p-2 rounded bg-slate-800/50 border border-slate-700">
+                                            <div>
+                                                <div className="text-xs text-slate-400 font-bold uppercase">{f.label}</div>
+                                                <div className="text-[10px] text-slate-500">{f.desc}</div>
+                                            </div>
+                                            <div className="text-sm font-mono font-bold text-white">{f.val}</div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Stats Chart */}
+                                <div className="h-40 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart layout="vertical" data={chartData} margin={{left: 40}}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                                            <XAxis type="number" hide domain={[0, 100]} />
+                                            <YAxis dataKey="name" type="category" width={80} tick={{fontSize: 10, fill: '#94a3b8'}} />
+                                            <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px'}} />
+                                            <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={15}>
+                                                {chartData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.fill} />
+                                                ))}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-gradient-to-b from-[#0F172A] to-[#1e293b] flex flex-col p-8 overflow-hidden">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            
+                            <div className="w-full h-full max-w-2xl p-4">
+                                <VesselCanvas type={selectedVessel} isRunning={isRunning} />
+                            </div>
+
+                            {/* Play/Pause */}
+                            <button 
+                                onClick={() => setIsRunning(!isRunning)}
+                                className="absolute bottom-6 right-6 p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 shadow-lg transition-all z-10"
+                            >
+                                <Icon name={isRunning ? "pause" : "play"} size={20} fill="currentColor"/>
+                            </button>
+                            
+                            <div className="absolute bottom-6 left-6 text-xs text-slate-500 font-mono">
+                                View: Cross-section & Longitudinal
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
