@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dialysis Principle Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Membrane Pores */
+        .membrane-pore {
+            background-image: radial-gradient(circle, #334155 1px, transparent 1px);
+            background-size: 8px 8px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const PARTICLES = {
+            urea: { id: 'urea', name: 'Urea', color: '#fbbf24', size: 4, diffusable: true },
+            glucose: { id: 'glucose', name: 'Glucose', color: '#34d399', size: 6, diffusable: true },
+            rbc: { id: 'rbc', name: 'Red Blood Cell', color: '#ef4444', size: 12, diffusable: false },
+            protein: { id: 'protein', name: 'Protein', color: '#a78bfa', size: 10, diffusable: false }
+        };
+
+        // --- SIMULATION CANVAS ---
+        const DialysisCanvas = ({ flowType, isRunning, bloodUreaLevel }) => {
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]); // Stores all active particles
+
+            // Dimensions
+            const width = 800;
+            const height = 400;
+            const membraneY = 200; // Center line
+
+            // Init or Reset Particles
+            useEffect(() => {
+                const p = [];
+                // Initial Blood Particles (Top Half)
+                // High Urea, Normal Glucose, RBCs, Proteins
+                for(let i=0; i<40; i++) p.push(createParticle('urea', 'blood'));
+                for(let i=0; i<30; i++) p.push(createParticle('glucose', 'blood'));
+                for(let i=0; i<15; i++) p.push(createParticle('rbc', 'blood'));
+                for(let i=0; i<10; i++) p.push(createParticle('protein', 'blood'));
+
+                // Initial Dialysate Particles (Bottom Half)
+                // No Urea, Normal Glucose (to prevent loss), No Cells/Proteins
+                // We need a continuous stream, but for init state:
+                for(let i=0; i<30; i++) p.push(createParticle('glucose', 'dialysate'));
+
+                particlesRef.current = p;
+            }, []); // Run once on mount
+
+            const createParticle = (type, location) => {
+                // Location: 'blood' (Top, y < 200) or 'dialysate' (Bottom, y > 200)
+                const yBase = location === 'blood' ? 50 : 250;
+                return {
+                    id: Math.random(),
+                    type,
+                    x: Math.random() * width,
+                    y: yBase + Math.random() * 100,
+                    vx: 0, 
+                    vy: (Math.random()-0.5)*2, // Brownian motion Y
+                    zone: location
+                };
+            };
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+
+                // Flow Speeds
+                const bloodSpeed = 2;
+                const dialysateSpeed = flowType === 'counter' ? -2 : 2; // Counter-current moves left
+
+                const render = () => {
+                    ctx.clearRect(0, 0, width, height);
+
+                    // --- 1. Backgrounds ---
+                    // Blood Channel (Top)
+                    ctx.fillStyle = "#1e1b4b"; // Dark Blue
+                    ctx.fillRect(0, 0, width, membraneY);
+                    
+                    // Dialysate Channel (Bottom)
+                    ctx.fillStyle = "#0f766e"; // Teal/Greenish
+                    ctx.fillRect(0, membraneY, width, height - membraneY);
+
+                    // Membrane (Line with holes)
+                    ctx.strokeStyle = "#94a3b8";
+                    ctx.lineWidth = 4;
+                    ctx.setLineDash([10, 10]); // Dashed line simulates pores
+                    ctx.beginPath();
+                    ctx.moveTo(0, membraneY);
+                    ctx.lineTo(width, membraneY);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // --- 2. Flow Arrows (Visual Guide) ---
+                    // Blood Flow (Left to Right)
+                    ctx.fillStyle = "rgba(239, 68, 68, 0.1)";
+                    ctx.font = "bold 40px Inter";
+                    ctx.fillText("BLOOD FLOW ➤", 250, 100);
+
+                    // Dialysate Flow
+                    ctx.fillStyle = "rgba(45, 212, 191, 0.1)";
+                    if (flowType === 'counter') {
+                        ctx.fillText("◄ DIALYSATE FLOW", 200, 300);
+                    } else {
+                        ctx.fillText("DIALYSATE FLOW ➤", 200, 300);
+                    }
+
+                    // --- 3. Particle Logic ---
+                    
+                    // Spawning (Simulate continuous flow)
+                    if (isRunning) {
+                        // Spawn Blood components at Left
+                        if (Math.random() < 0.1) {
+                            // High Urea input
+                            particlesRef.current.push({ ...createParticle('urea', 'blood'), x: 0 });
+                            particlesRef.current.push({ ...createParticle('glucose', 'blood'), x: 0 });
+                            if(Math.random()<0.3) particlesRef.current.push({ ...createParticle('rbc', 'blood'), x: 0 });
+                        }
+                        
+                        // Spawn Dialysate components
+                        // If Counter: Spawn at Right moving Left
+                        // If Concurrent: Spawn at Left moving Right
+                        if (Math.random() < 0.1) {
+                            const xStart = flowType === 'counter' ? width : 0;
+                            particlesRef.current.push({ ...createParticle('glucose', 'dialysate'), x: xStart });
+                            // Dialysate has NO Urea initially
+                        }
+                    }
+
+                    // Update & Draw
+                    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+                        const p = particlesRef.current[i];
+                        const info = PARTICLES[p.type];
+
+                        // 1. Bulk Flow (X-axis)
+                        if (p.y < membraneY) {
+                            // Blood Channel
+                            p.x += bloodSpeed;
+                        } else {
+                            // Dialysate Channel
+                            p.x += dialysateSpeed;
+                        }
+
+                        // 2. Diffusion (Y-axis Random Walk + Concentration Gradient Simulation)
+                        // This is a simplified physics model.
+                        // Real diffusion is random walk. Net movement depends on concentration.
+                        // Here we just do random walk, and the boundary check handles the rest.
+                        
+                        if (isRunning) {
+                            p.y += (Math.random() - 0.5) * 2; // Random jitter
+                        }
+
+                        // 3. Membrane Interaction
+                        // Check if crossing membrane line
+                        // If non-diffusable (RBC/Protein), bounce back
+                        // If diffusable, allow cross
+                        
+                        // Boundary buffer
+                        const buffer = info.size + 2;
+
+                        if (!info.diffusable) {
+                            // Bounce off membrane
+                            if (p.y > membraneY - buffer && p.y < membraneY + buffer) {
+                                if (p.y < membraneY) p.y = membraneY - buffer;
+                                else p.y = membraneY + buffer;
+                            }
+                        }
+                        
+                        // 4. Cleanup (Out of bounds)
+                        if (p.x < -50 || p.x > width + 50) {
+                            particlesRef.current.splice(i, 1);
+                            continue;
+                        }
+
+                        // Draw
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, info.size, 0, Math.PI * 2);
+                        ctx.fillStyle = info.color;
+                        ctx.fill();
+                        // Stroke for visibility
+                        ctx.strokeStyle = "rgba(0,0,0,0.3)";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                    
+                    // Count Urea remaining in Blood at outlet (Right side)
+                    // This is just visual for now, stats logic can be separate
+
+                    animationId = requestAnimationFrame(render);
+                };
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [flowType, isRunning]);
+
+            return <canvas ref={canvasRef} width={800} height={400} className="w-full h-full object-contain bg-slate-900 rounded-xl border border-slate-700" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [flowType, setFlowType] = useState('counter'); // counter, concurrent
+            const [isRunning, setIsRunning] = useState(true);
+            const [bloodUrea, setBloodUrea] = useState(100); // Simulated Level
+            
+            // Simulate efficiency
+            useEffect(() => {
+                let interval;
+                if (isRunning) {
+                    interval = setInterval(() => {
+                        setBloodUrea(prev => {
+                            // Counter current is more efficient, drops lower
+                            const decay = flowType === 'counter' ? 0.98 : 0.995;
+                            const min = flowType === 'counter' ? 10 : 40; // Concurrent hits equilibrium (50%) so higher min
+                            return Math.max(min, prev * decay);
+                        });
+                    }, 100);
+                }
+                return () => clearInterval(interval);
+            }, [isRunning, flowType]);
+
+            // Reset on mode change
+            useEffect(() => {
+                setBloodUrea(100);
+                setIsRunning(true);
+            }, [flowType]);
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="activity" className="text-teal-400" /> Dialysis Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Haemodialysis Principles</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Flow Control */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Flow Direction</label>
+                                <div className="flex flex-col gap-2">
+                                    <button 
+                                        onClick={() => setFlowType('counter')}
+                                        className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between group
+                                            ${flowType === 'counter' 
+                                                ? 'bg-slate-800 border-emerald-500 text-white shadow-lg' 
+                                                : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                        `}
+                                    >
+                                        <div>
+                                            <div className="text-sm font-bold">Counter-Current Flow</div>
+                                            <div className="text-[10px] opacity-70">Maintains concentration gradient. High efficiency.</div>
+                                        </div>
+                                        {flowType === 'counter' && <Icon name="check-circle" size={16} className="text-emerald-400"/>}
+                                    </button>
+                                    
+                                    <button 
+                                        onClick={() => setFlowType('concurrent')}
+                                        className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between group
+                                            ${flowType === 'concurrent' 
+                                                ? 'bg-slate-800 border-yellow-500 text-white shadow-lg' 
+                                                : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                        `}
+                                    >
+                                        <div>
+                                            <div className="text-sm font-bold">Concurrent Flow</div>
+                                            <div className="text-[10px] opacity-70">Equilibrium reached quickly. Low efficiency.</div>
+                                        </div>
+                                        {flowType === 'concurrent' && <Icon name="check-circle" size={16} className="text-yellow-400"/>}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Monitor */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
+                                    <Icon name="bar-chart-3" size={14}/> Blood Urea Monitor
+                                </div>
+                                
+                                <div className="relative h-4 bg-slate-900 rounded-full overflow-hidden mb-2">
+                                    <div 
+                                        className={`absolute top-0 bottom-0 left-0 transition-all duration-300 ${bloodUrea > 40 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                        style={{ width: `${bloodUrea}%` }}
+                                    ></div>
+                                </div>
+                                <div className="flex justify-between text-xs font-mono">
+                                    <span>Clean (0%)</span>
+                                    <span className="text-white font-bold">{bloodUrea.toFixed(0)}% Toxic</span>
+                                </div>
+                            </div>
+                            
+                            {/* Legend */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Particles</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {Object.values(PARTICLES).map(p => (
+                                        <div key={p.id} className="flex items-center gap-2 p-2 rounded bg-slate-800/50 border border-slate-700/50">
+                                            <div className="w-3 h-3 rounded-full shrink-0" style={{backgroundColor: p.color}}></div>
+                                            <span className="text-[10px] text-slate-300">{p.name.split(' (')[0]}</span>
+                                            {!p.diffusable && <Icon name="ban" size={10} className="text-red-400 ml-auto"/>}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-800">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg
+                                        ${isRunning ? 'bg-slate-700 text-slate-300 border border-slate-600' : 'bg-blue-600 text-white border border-blue-500 hover:bg-blue-500'}
+                                    `}
+                                >
+                                    <Icon name={isRunning ? "pause" : "play"} size={18} fill="currentColor"/>
+                                    {isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        {/* Visualizer */}
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
+                            <DialysisCanvas 
+                                flowType={flowType} 
+                                isRunning={isRunning} 
+                                bloodUreaLevel={bloodUrea}
+                            />
+                        </div>
+
+                        {/* Info Banner */}
+                        <div className="h-24 bg-blue-900/20 rounded-2xl border border-blue-500/30 p-4 flex items-start gap-4">
+                             <div className="p-2 bg-blue-500/20 rounded-lg text-blue-400 shrink-0">
+                                <Icon name="info" size={24}/>
+                             </div>
+                             <div>
+                                <h3 className="text-sm font-bold text-blue-300 mb-1">Why Counter-Current?</h3>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    In counter-current flow, the concentration gradient is maintained along the <strong>entire length</strong> of the membrane. 
+                                    Even as blood becomes cleaner, it meets fresh dialysate, ensuring urea continues to diffuse out.
+                                </p>
+                             </div>
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
