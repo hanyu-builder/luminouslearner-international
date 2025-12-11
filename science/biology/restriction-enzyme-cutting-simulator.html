@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restriction Enzyme Tool | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* DNA Base Styling */
+        .base-A { color: #ef4444; } /* Red */
+        .base-T { color: #3b82f6; } /* Blue */
+        .base-C { color: #eab308; } /* Yellow */
+        .base-G { color: #22c55e; } /* Green */
+        
+        /* Cut Line Animation */
+        .cut-line {
+            stroke-dasharray: 10;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -20; }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        // Enzymes
+        // cutTop: index after which the cut happens in 5'-3' strand (0-indexed)
+        // cutBottom: index after which the cut happens in 3'-5' strand (relative to start of site)
+        const ENZYMES = [
+            { 
+                id: 'EcoRI', 
+                name: 'EcoRI', 
+                seq: 'GAATTC', 
+                cutTop: 1, // G | AATTC
+                cutBottom: 5, // CTTAA | G
+                type: 'Sticky Ends',
+                desc: 'Creates 5\' overhangs (AATT)',
+                source: 'Escherichia coli'
+            },
+            { 
+                id: 'BamHI', 
+                name: 'BamHI', 
+                seq: 'GGATCC', 
+                cutTop: 1, // G | GATCC
+                cutBottom: 5, // CCTAG | G
+                type: 'Sticky Ends',
+                desc: 'Creates 5\' overhangs (GATC)',
+                source: 'Bacillus amyloliquefaciens'
+            },
+            { 
+                id: 'HindIII', 
+                name: 'HindIII', 
+                seq: 'AAGCTT', 
+                cutTop: 1, // A | AGCTT
+                cutBottom: 5, // TTCGA | A
+                type: 'Sticky Ends',
+                desc: 'Creates 5\' overhangs (AGCT)',
+                source: 'Haemophilus influenzae'
+            },
+            { 
+                id: 'SmaI', 
+                name: 'SmaI', 
+                seq: 'CCCGGG', 
+                cutTop: 3, // CCC | GGG
+                cutBottom: 3, // GGG | CCC
+                type: 'Blunt Ends',
+                desc: 'Creates flush cuts (No overhang)',
+                source: 'Serratia marcescens'
+            }
+        ];
+
+        const DEFAULT_DNA = "GCTAGAATTCGTAGGATCCATGCCTAAGCTTGCATCCCGGGATCGA";
+
+        // --- COMPONENTS ---
+
+        const DNAStrand = ({ sequence, label, cutIndex = -1, isBottom = false }) => {
+            return (
+                <div className="flex font-mono text-xl tracking-[0.2em] relative select-none">
+                    <div className="absolute -left-8 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-bold">{label}</div>
+                    {sequence.split('').map((base, i) => (
+                        <div key={i} className={`relative px-1 ${isBottom ? 'text-slate-400' : 'text-white'}`}>
+                            <span className={`base-${base} font-black`}>{base}</span>
+                            {/* Cut Marker for main view */}
+                            {cutIndex === i + 1 && (
+                                <div className="absolute top-0 bottom-0 -left-[1px] w-[2px] bg-red-500 h-full z-10 animate-pulse"></div>
+                            )}
+                        </div>
+                    ))}
+                    <div className="absolute -right-8 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-bold">{isBottom ? "5'" : "3'"}</div>
+                </div>
+            );
+        };
+
+        const FragmentVisualizer = ({ sequence, enzyme }) => {
+            // Logic to split the sequence based on enzyme cut sites
+            const regex = new RegExp(enzyme.seq, 'g');
+            const sites = [];
+            let match;
+            while ((match = regex.exec(sequence)) !== null) {
+                sites.push(match.index);
+            }
+
+            if (sites.length === 0) {
+                return (
+                    <div className="text-slate-400 text-sm p-4 text-center">No recognition sites found for {enzyme.name}.</div>
+                );
+            }
+
+            // We will render the sequence in chunks (Fragments)
+            // For each cut site, we split.
+            // Sticky End Logic:
+            // The Top strand splits at 'cutTop'.
+            // The Bottom strand splits at 'cutBottom'.
+            // This creates overlapping regions.
+            
+            // Let's build a list of fragment objects
+            // Each fragment needs: topSequence, bottomSequence, leftOverhang, rightOverhang
+            
+            const fragments = [];
+            let currentStart = 0;
+
+            // Add start of seq to first cut
+            // But we need to handle the loop
+            // Simplified: Just break the string at the cut points defined by enzyme relative to the sites
+            
+            // Start of a fragment is defined by previous cut's end.
+            // End of a fragment is defined by next cut's start.
+            
+            // Let's iterate through the sequence and build fragments visually
+            
+            // Site 0: index 5 (for example)
+            // Cut is at 5 + cutTop (Top), 5 + cutBottom (Bottom)
+            
+            let prevTopCut = 0;
+            let prevBotCut = 0;
+
+            // Add a virtual site at the end
+            const allSites = [...sites, sequence.length];
+            // Sort just in case
+            
+            // We need to construct the full complementary sequence first
+            const compSeq = sequence.split('').map(b => b === 'A' ? 'T' : b === 'T' ? 'A' : b === 'C' ? 'G' : 'G').join('');
+
+            // Let's render fragments
+            const renderedFrags = [];
+
+            // 1. Initial Fragment (Start to first cut)
+            // Top ends at site[0] + cutTop
+            // Bot ends at site[0] + cutBottom
+            let lastTopCut = 0;
+            let lastBotCut = 0;
+
+            allSites.forEach((siteIdx, i) => {
+                // If it's the real end (sequence length), cuts are at the end
+                const isEnd = i === sites.length;
+                const currentTopCut = isEnd ? sequence.length : siteIdx + enzyme.cutTop;
+                const currentBotCut = isEnd ? sequence.length : siteIdx + enzyme.cutBottom;
+
+                const topPart = sequence.slice(lastTopCut, currentTopCut);
+                const botPart = compSeq.slice(lastBotCut, currentBotCut);
+
+                // Determine offset for visualization alignment
+                // If lastBotCut < lastTopCut, bottom strand starts later (Right overhang from previous)
+                // If lastBotCut > lastTopCut, bottom strand starts earlier (Left overhang from previous)
+                
+                const topOffset = Math.max(0, lastBotCut - lastTopCut);
+                const botOffset = Math.max(0, lastTopCut - lastBotCut);
+
+                renderedFrags.push(
+                    <motion.div 
+                        key={i}
+                        layout
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.2 }}
+                        className="bg-slate-800 p-4 rounded-xl border border-slate-600 shadow-xl flex flex-col font-mono text-lg tracking-[0.2em]"
+                    >
+                        <div className="flex text-white">
+                            <span style={{width: `${topOffset * 0.61}em`}}></span>
+                            {topPart.split('').map((b,k)=><span key={k} className={`base-${b}`}>{b}</span>)}
+                        </div>
+                        <div className="flex h-3 relative my-1">
+                             <div className="w-full h-px bg-slate-700 absolute top-1/2"></div>
+                        </div>
+                        <div className="flex text-slate-400">
+                             <span style={{width: `${botOffset * 0.61}em`}}></span>
+                             {botPart.split('').map((b,k)=><span key={k} className={`base-${b}`}>{b}</span>)}
+                        </div>
+                        <div className="text-[10px] text-center text-slate-500 mt-2 font-sans tracking-normal">
+                            Fragment {i+1} ({Math.max(topPart.length, botPart.length)} bp)
+                        </div>
+                    </motion.div>
+                );
+
+                lastTopCut = currentTopCut;
+                lastBotCut = currentBotCut;
+            });
+
+            return (
+                <div className="flex flex-wrap gap-6 justify-center items-start mt-8">
+                    {renderedFrags}
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [sequence, setSequence] = useState(DEFAULT_DNA);
+            const [selectedEnzyme, setSelectedEnzyme] = useState(ENZYMES[0]);
+            const [isCutting, setIsCutting] = useState(false);
+            const [isCutComplete, setIsCutComplete] = useState(false);
+
+            const handleCut = () => {
+                setIsCutting(true);
+                setIsCutComplete(false);
+                setTimeout(() => {
+                    setIsCutting(false);
+                    setIsCutComplete(true);
+                }, 1500); // Animation duration
+            };
+
+            const reset = () => {
+                setIsCutComplete(false);
+                setIsCutting(false);
+            };
+
+            // Calculate stats
+            const cutCount = (sequence.match(new RegExp(selectedEnzyme.seq, 'g')) || []).length;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="scissors" className="text-blue-500" /> Enzyme Tool
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Restriction Digestion Simulator</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Enzyme Selector */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Enzyme</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {ENZYMES.map(enz => (
+                                        <button 
+                                            key={enz.id}
+                                            onClick={() => { setSelectedEnzyme(enz); reset(); }}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all group relative overflow-hidden
+                                                ${selectedEnzyme.id === enz.id 
+                                                    ? 'bg-blue-600 border-blue-500 text-white shadow-lg' 
+                                                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                            `}
+                                        >
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-bold">{enz.name}</span>
+                                                <span className="text-[10px] uppercase bg-black/20 px-2 py-0.5 rounded">{enz.type}</span>
+                                            </div>
+                                            <div className="font-mono text-xs opacity-80 tracking-widest">
+                                                {enz.seq.slice(0, enz.cutTop)}
+                                                <span className="text-yellow-300 mx-0.5">▼</span>
+                                                {enz.seq.slice(enz.cutTop)}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Action */}
+                            <div className="pt-4 border-t border-slate-800">
+                                <button 
+                                    onClick={handleCut}
+                                    disabled={isCutting || isCutComplete}
+                                    className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg text-lg
+                                        ${isCutting || isCutComplete 
+                                            ? 'bg-slate-700 text-slate-500 cursor-not-allowed' 
+                                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'}
+                                    `}
+                                >
+                                    {isCutting ? <Icon name="loader-2" className="animate-spin"/> : <Icon name="scissors" />}
+                                    {isCutting ? 'Digesting...' : isCutComplete ? 'Digestion Complete' : 'Cut DNA'}
+                                </button>
+                                {isCutComplete && (
+                                    <button onClick={reset} className="w-full mt-3 py-2 text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1">
+                                        <Icon name="rotate-ccw" size={14}/> Reset Sequence
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Stats */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-3">Digestion Stats</div>
+                                <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-2">
+                                    <span className="text-sm text-slate-300">Recognition Site</span>
+                                    <span className="font-mono text-blue-400">{selectedEnzyme.seq}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-sm text-slate-300">Sites Found</span>
+                                    <span className="font-bold text-white bg-blue-600 px-2 py-0.5 rounded">{cutCount}</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-8 overflow-y-auto custom-scrollbar gap-8">
+                        
+                        {/* Title / Header */}
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl font-black text-white mb-1">DNA Digestion Simulation</h2>
+                                <p className="text-sm text-slate-400">Visualizing phosphodiester bond cleavage</p>
+                            </div>
+                            <div className="flex gap-4 text-xs font-mono text-slate-500">
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-500 rounded-sm"></div> A</div>
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-blue-500 rounded-sm"></div> T</div>
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-yellow-500 rounded-sm"></div> C</div>
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-green-500 rounded-sm"></div> G</div>
+                            </div>
+                        </div>
+
+                        {/* Visualization Area */}
+                        <div className="flex-1 bg-slate-900/50 rounded-3xl border border-slate-800 shadow-xl relative min-h-[400px] flex flex-col items-center justify-center p-8">
+                            
+                            {!isCutComplete ? (
+                                // PRE-CUT VIEW
+                                <div className="relative">
+                                    {/* Scan Effect */}
+                                    {isCutting && (
+                                        <motion.div 
+                                            className="absolute top-0 bottom-0 w-2 bg-blue-500/50 shadow-[0_0_20px_#3b82f6] z-20"
+                                            initial={{ left: '0%' }}
+                                            animate={{ left: '100%' }}
+                                            transition={{ duration: 1.5, ease: "linear" }}
+                                        />
+                                    )}
+                                    
+                                    <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 shadow-2xl">
+                                        <DNAStrand sequence={sequence} label="Sequence" />
+                                        
+                                        {/* Highlight Sites */}
+                                        {(() => {
+                                            const matches = [];
+                                            let match;
+                                            const regex = new RegExp(selectedEnzyme.seq, 'g');
+                                            while ((match = regex.exec(sequence)) !== null) {
+                                                matches.push(match.index);
+                                            }
+                                            return matches.map((idx, i) => (
+                                                <div 
+                                                    key={i}
+                                                    className="absolute top-0 bottom-0 border-2 border-yellow-500/50 rounded pointer-events-none"
+                                                    style={{ 
+                                                        left: `calc(${idx} * 1ch + 24px + ${idx*8}px)`, // Approx char width logic - strictly illustration here
+                                                        // A better way for the "Pre-cut" is just the string, which DNAStrand handles.
+                                                        // The highlight is conceptual here.
+                                                        display: 'none'
+                                                    }}
+                                                ></div>
+                                            ));
+                                        })()}
+                                    </div>
+
+                                    {/* Scissors Icon Animation */}
+                                    {isCutting && (
+                                        <motion.div 
+                                            className="absolute top-1/2 -translate-y-1/2 text-red-500 drop-shadow-lg z-30"
+                                            initial={{ left: '0%' }}
+                                            animate={{ left: '100%' }}
+                                            transition={{ duration: 1.5, ease: "linear" }}
+                                        >
+                                            <Icon name="scissors" size={32} className="-rotate-90"/>
+                                        </motion.div>
+                                    )}
+                                </div>
+                            ) : (
+                                // POST-CUT VIEW (Fragments)
+                                <motion.div 
+                                    initial={{ opacity: 0, scale: 0.95 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    className="w-full"
+                                >
+                                    <FragmentVisualizer sequence={sequence} enzyme={selectedEnzyme} />
+                                    
+                                    <div className="mt-12 text-center">
+                                        <div className="inline-block bg-slate-800 px-6 py-3 rounded-full border border-slate-600 text-sm text-slate-300">
+                                            Result: <span className="text-white font-bold">{cutCount + 1} Fragments</span> generated with <span className={`font-bold ${selectedEnzyme.type.includes('Sticky') ? 'text-yellow-400' : 'text-blue-400'}`}>{selectedEnzyme.type}</span>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            )}
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
