@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enzyme Lock & Key Model | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { outline: none; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- 3D SCENE ---
+        const EnzymeScene = ({ activeSubstrate, onReactionComplete }) => {
+            const mountRef = useRef(null);
+            const sceneRef = useRef(null);
+            const enzymeRef = useRef(null);
+            const substrateRef = useRef(null);
+            const productsRef = useRef([]);
+            const animationState = useRef('idle'); // idle, binding, reacting, releasing, bouncing
+            const activeSiteMeshRef = useRef(null);
+
+            useEffect(() => {
+                if (!mountRef.current) return;
+
+                const container = mountRef.current;
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x020617); 
+                sceneRef.current = scene;
+
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+                camera.position.set(0, 5, 20);
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                container.appendChild(renderer.domElement);
+
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.autoRotate = false; 
+                controls.enablePan = false;
+                
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                scene.add(ambientLight);
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+                dirLight.position.set(5, 10, 7);
+                scene.add(dirLight);
+                const pointLight = new THREE.PointLight(0x38bdf8, 0.8);
+                pointLight.position.set(-5, 0, 5);
+                scene.add(pointLight);
+
+                // --- BUILD ENZYME (Pac-Man Style with Square Notch) ---
+                // We create a shape and extrude it
+                const shape = new THREE.Shape();
+                // Draw a circle with a square cutout on the right
+                const radius = 4;
+                const notchSize = 2.2;
+                
+                shape.moveTo(0, radius);
+                // Top arc
+                shape.absarc(0, 0, radius, Math.PI/2, Math.PI/6, true); // Clockwise to notch top
+                // Notch Top
+                shape.lineTo(radius - 1, notchSize/2);
+                // Notch Back
+                shape.lineTo(radius - notchSize - 1, notchSize/2);
+                shape.lineTo(radius - notchSize - 1, -notchSize/2);
+                // Notch Bottom
+                shape.lineTo(radius - 1, -notchSize/2);
+                // Bottom arc
+                shape.absarc(0, 0, radius, -Math.PI/6, -Math.PI*1.5, true); 
+                
+                const extrudeSettings = { depth: 3, bevelEnabled: true, bevelSegments: 2, steps: 2, bevelSize: 0.2, bevelThickness: 0.2 };
+                const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                geometry.center(); // Center the geometry
+
+                const material = new THREE.MeshStandardMaterial({ 
+                    color: 0x6366f1, // Indigo
+                    roughness: 0.4, 
+                    metalness: 0.1 
+                });
+                
+                const enzyme = new THREE.Mesh(geometry, material);
+                enzyme.rotation.z = 0; // Notch pointing right
+                enzymeRef.current = enzyme;
+                scene.add(enzyme);
+
+                // Active Site Highlight (Visual cue)
+                const siteGeo = new THREE.BoxGeometry(0.2, notchSize, 3.2);
+                const siteMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xfacc15, emissiveIntensity: 0.5 });
+                const activeSite = new THREE.Mesh(siteGeo, siteMat);
+                activeSite.position.set(-0.5, 0, 0); // Inside the notch
+                activeSiteMeshRef.current = activeSite;
+                enzyme.add(activeSite);
+
+                // Helper: Create Products
+                const createProducts = (x, y, z) => {
+                    // Split square into two rectangles
+                    const p1 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.9, 2), new THREE.MeshStandardMaterial({ color: 0x4ade80 })); 
+                    p1.position.set(x, y + 0.6, z);
+                    const p2 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.9, 2), new THREE.MeshStandardMaterial({ color: 0x4ade80 })); 
+                    p2.position.set(x, y - 0.6, z);
+                    
+                    scene.add(p1);
+                    scene.add(p2);
+                    productsRef.current = [p1, p2];
+                };
+
+                // Animation Loop
+                let frameId;
+                const animate = () => {
+                    frameId = requestAnimationFrame(animate);
+                    
+                    // Gentle floating for Enzyme
+                    if (enzymeRef.current) {
+                        enzymeRef.current.position.y = Math.sin(Date.now() * 0.001) * 0.2;
+                        enzymeRef.current.rotation.y = Math.sin(Date.now() * 0.0005) * 0.1;
+                    }
+
+                    const sub = substrateRef.current;
+                    
+                    if (sub && animationState.current !== 'idle') {
+                        
+                        if (animationState.current === 'binding') {
+                            // Move substrate into the notch (Target approx x=1.5, y=0)
+                            // Initial pos was 10,0,0
+                            const target = new THREE.Vector3(1.2, 0, 0); // Fits into notch
+                            sub.position.lerp(target, 0.08);
+                            
+                            // Align rotation
+                            sub.rotation.x = THREE.MathUtils.lerp(sub.rotation.x, 0, 0.1);
+                            sub.rotation.y = THREE.MathUtils.lerp(sub.rotation.y, 0, 0.1);
+                            sub.rotation.z = THREE.MathUtils.lerp(sub.rotation.z, 0, 0.1);
+
+                            if (sub.position.distanceTo(target) < 0.1) {
+                                animationState.current = 'reacting';
+                                // Flash active site
+                                activeSite.material.emissiveIntensity = 2;
+                                setTimeout(() => {
+                                    activeSite.material.emissiveIntensity = 0.5;
+                                    animationState.current = 'releasing';
+                                    
+                                    // Transform to products
+                                    scene.remove(sub);
+                                    createProducts(1.2, 0, 0);
+                                    substrateRef.current = null;
+                                }, 800);
+                            }
+                        } else if (animationState.current === 'bouncing') {
+                            // Move close then bounce away
+                            const target = new THREE.Vector3(3.5, 0, 0); // Hit edge
+                            if (sub.position.x > 3.6) {
+                                sub.position.x -= 0.2; // Move in
+                            } else {
+                                // Bounce logic
+                                sub.position.x += 0.3; // Fly out
+                                sub.position.y += 0.1;
+                                sub.rotation.z += 0.1;
+                                
+                                if (sub.position.x > 15) {
+                                    scene.remove(sub);
+                                    substrateRef.current = null;
+                                    animationState.current = 'idle';
+                                    if (onReactionComplete) onReactionComplete(false);
+                                }
+                            }
+                        }
+                    }
+
+                    // Product Release Animation
+                    if (animationState.current === 'releasing' && productsRef.current.length > 0) {
+                        const [p1, p2] = productsRef.current;
+                        p1.position.x += 0.15;
+                        p1.position.y += 0.05;
+                        p1.rotation.z += 0.05;
+
+                        p2.position.x += 0.15;
+                        p2.position.y -= 0.05;
+                        p2.rotation.z -= 0.05;
+
+                        if (p1.position.x > 15) {
+                            animationState.current = 'idle';
+                            productsRef.current.forEach(p => scene.remove(p));
+                            productsRef.current = [];
+                            if (onReactionComplete) onReactionComplete(true);
+                        }
+                    }
+
+                    controls.update();
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                // Cleanup
+                const handleResize = () => {
+                    if (!container) return;
+                    const w = container.clientWidth;
+                    const h = container.clientHeight;
+                    camera.aspect = w / h;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(w, h);
+                };
+                window.addEventListener('resize', handleResize);
+
+                return () => {
+                    cancelAnimationFrame(frameId);
+                    window.removeEventListener('resize', handleResize);
+                    if (container && renderer.domElement) container.removeChild(renderer.domElement);
+                };
+            }, []);
+
+            // Trigger New Substrate Logic
+            useEffect(() => {
+                if (!sceneRef.current || !activeSubstrate) return;
+
+                // Clean up old
+                if (substrateRef.current) sceneRef.current.remove(substrateRef.current);
+                productsRef.current.forEach(p => sceneRef.current.remove(p));
+                productsRef.current = [];
+
+                // Create Shape
+                let geo, color;
+                if (activeSubstrate.shape === 'square') {
+                    geo = new THREE.BoxGeometry(2, 2, 2);
+                    color = 0xef4444; // Red (Correct)
+                    animationState.current = 'binding';
+                } else if (activeSubstrate.shape === 'circle') {
+                    geo = new THREE.SphereGeometry(1.2, 32, 32);
+                    color = 0xf97316; // Orange (Wrong)
+                    animationState.current = 'bouncing';
+                } else {
+                    // Triangle
+                    geo = new THREE.ConeGeometry(1.5, 2, 4);
+                    color = 0xeab308; // Yellow (Wrong)
+                    animationState.current = 'bouncing';
+                }
+
+                const mat = new THREE.MeshStandardMaterial({ color: color });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(12, 0, 0); // Start far right
+                // Random initial rotation
+                mesh.rotation.set(Math.random(), Math.random(), Math.random());
+                
+                sceneRef.current.add(mesh);
+                substrateRef.current = mesh;
+
+            }, [activeSubstrate]);
+
+            return <div ref={mountRef} className="w-full h-full" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [substrate, setSubstrate] = useState(null);
+            const [feedback, setFeedback] = useState(null); // { type: 'success'|'fail', msg: '' }
+            const [isProcessing, setIsProcessing] = useState(false);
+
+            const handleSelectSubstrate = (shape) => {
+                if (isProcessing) return; 
+                setIsProcessing(true);
+                // Force a re-render even if same shape is clicked? 
+                // We use object to ensure new reference triggers effect
+                setSubstrate({ shape, id: Date.now() }); 
+                setFeedback(null);
+            };
+
+            const handleReactionEnd = (success) => {
+                setIsProcessing(false);
+                if (success) {
+                    setFeedback({ type: 'success', msg: 'Reaction Successful! Substrate fits the active site.' });
+                } else {
+                    setFeedback({ type: 'fail', msg: 'Reaction Failed. Shape does not match the active site.' });
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="lock" className="text-emerald-400" /> Enzyme Lab
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Lock & Key Model</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Instruction */}
+                            <div className="text-sm text-slate-300">
+                                This enzyme (blue) has a specific <strong>Active Site</strong> (yellow). Select a substrate to see if it reacts.
+                            </div>
+
+                            {/* Substrate Selector */}
+                            <div className="space-y-4">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Substrate</label>
+                                <div className="grid grid-cols-1 gap-3">
+                                    <button 
+                                        onClick={() => handleSelectSubstrate('square')}
+                                        disabled={isProcessing}
+                                        className="p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-emerald-500 rounded-xl flex items-center gap-4 transition-all group disabled:opacity-50"
+                                    >
+                                        <div className="w-8 h-8 bg-red-500 rounded-sm shadow-md group-hover:scale-110 transition-transform"></div>
+                                        <div className="text-left">
+                                            <div className="font-bold text-sm">Substrate A</div>
+                                            <div className="text-[10px] text-slate-400">Square Shape</div>
+                                        </div>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => handleSelectSubstrate('circle')}
+                                        disabled={isProcessing}
+                                        className="p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-orange-500 rounded-xl flex items-center gap-4 transition-all group disabled:opacity-50"
+                                    >
+                                        <div className="w-8 h-8 bg-orange-500 rounded-full shadow-md group-hover:scale-110 transition-transform"></div>
+                                        <div className="text-left">
+                                            <div className="font-bold text-sm">Substrate B</div>
+                                            <div className="text-[10px] text-slate-400">Spherical Shape</div>
+                                        </div>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => handleSelectSubstrate('triangle')}
+                                        disabled={isProcessing}
+                                        className="p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-yellow-500 rounded-xl flex items-center gap-4 transition-all group disabled:opacity-50"
+                                    >
+                                        <div className="w-0 h-0 border-l-[16px] border-l-transparent border-r-[16px] border-r-transparent border-b-[32px] border-b-yellow-500 shadow-md group-hover:scale-110 transition-transform"></div>
+                                        <div className="text-left">
+                                            <div className="font-bold text-sm">Substrate C</div>
+                                            <div className="text-[10px] text-slate-400">Triangular Shape</div>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {/* Concept Note */}
+                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300">
+                                <div className="flex items-center gap-2 mb-2 text-blue-400 font-bold uppercase">
+                                    <Icon name="book-open" size={14} /> Key Concept
+                                </div>
+                                <p className="leading-relaxed">
+                                    Enzymes are <strong>specific</strong>. Only a substrate with a complementary shape can fit into the enzyme's <strong>active site</strong> to trigger a reaction.
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 relative bg-[#020617] flex flex-col">
+                        
+                        <div className="flex-1 relative overflow-hidden">
+                            <EnzymeScene activeSubstrate={substrate} onReactionComplete={handleReactionEnd} />
+                            
+                            {/* View Controls Hint */}
+                            <div className="absolute bottom-6 right-6 text-slate-500 text-xs pointer-events-none select-none bg-black/40 backdrop-blur px-4 py-2 rounded-full border border-white/10">
+                                3D View (Orbital)
+                            </div>
+                            
+                            {/* Enzyme Label */}
+                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center justify-center h-full w-full">
+                                <div className="absolute top-[30%] left-[20%] text-slate-500 text-xs font-bold bg-black/50 px-2 py-1 rounded">ENZYME</div>
+                            </div>
+                        </div>
+
+                        {/* Feedback Panel */}
+                        <div className="h-32 bg-slate-900 border-t border-slate-800 p-6 flex items-center justify-center">
+                            {feedback ? (
+                                <div className={`flex items-center gap-4 p-4 rounded-2xl border animate-in slide-in-from-bottom-4 
+                                    ${feedback.type === 'success' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' : 'bg-red-900/30 border-red-500/50 text-red-400'}
+                                `}>
+                                    <div className={`p-2 rounded-full ${feedback.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                                        <Icon name={feedback.type === 'success' ? 'check' : 'x'} size={24} />
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-lg">{feedback.type === 'success' ? 'Perfect Match!' : 'Mismatch!'}</div>
+                                        <div className="text-sm opacity-80">{feedback.msg}</div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-slate-500 text-sm flex items-center gap-2">
+                                    <Icon name="mouse-pointer-click" size={16}/> Select a substrate to start the experiment
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
