@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eye Defects Corrector | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Light Glow */
+        .light-ray { filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.5)); }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- CONSTANTS ---
+        const DEFECTS = {
+            normal: { name: 'Normal Vision', desc: 'Light focuses directly on the retina.', eyeballScale: 1.0 },
+            myopia: { name: 'Short-sightedness (Myopia)', desc: 'Eyeball too long. Light focuses IN FRONT of retina.', eyeballScale: 1.25 }, 
+            hypermetropia: { name: 'Long-sightedness (Hypermetropia)', desc: 'Eyeball too short. Light focuses BEHIND retina.', eyeballScale: 0.75 }
+        };
+
+        const LENSES = {
+            none: { name: 'No Lens', type: 'none', icon: 'circle-off', desc: 'No correction applied.' },
+            concave: { name: 'Concave Lens', type: 'diverging', icon: 'minus-circle', desc: 'Diverges light rays. Pushes focal point back.' },
+            convex: { name: 'Convex Lens', type: 'converging', icon: 'plus-circle', desc: 'Converges light rays. Pulls focal point forward.' }
+        };
+
+        // --- VISUALIZER COMPONENT ---
+        const EyeCorrectorCanvas = ({ defect, lens }) => {
+            // Config
+            const width = 600;
+            const height = 400;
+            const cx = width / 2 + 50; // Eye center shifted right
+            const cy = height / 2;
+
+            // Eye Params
+            // Normal retina X position (relative to cx)
+            const baseRadius = 80;
+            // Eyeball elongation/shortening based on defect
+            const eyeScaleX = DEFECTS[defect].eyeballScale;
+            const retinaX = cx + baseRadius * eyeScaleX; 
+
+            // Focal Point Calculation
+            // Adjusted Base focal length to perfectly match normal eye (cx - 60 + 140 = cx + 80)
+            const eyePower = 140; 
+            
+            // Lens Correction Factor (Calibrated)
+            // Concave (+) pushes focus back, Convex (-) pulls focus forward
+            let correction = 0;
+            if (lens === 'concave') correction = 35; // Matches the shift of Myopia (1.25x)
+            if (lens === 'convex') correction = -35; // Matches the shift of Hypermetropia (0.75x)
+
+            // Current Focus Position
+            const lensX = cx - 60; // Position of eye lens
+            // If normal, focus is on retina. If defect, focus shifts. Lens corrects it back.
+            let focalX;
+            
+            if (defect === 'normal') {
+                focalX = retinaX; // Always focused if normal, ignoring lens for simplicity or we can simulate bad glasses too? 
+                // Let's make bad glasses blur normal vision
+                if (lens === 'concave') focalX += 35;
+                if (lens === 'convex') focalX -= 35;
+            } else if (defect === 'myopia') {
+                // Focus is short (in front)
+                // Myopia retina is at cx + 80*1.25 = cx + 100
+                // Normal focus distance is 140. 
+                // We want focus to be at retina ONLY if corrected.
+                // Uncorrected focus for Myopia: The eye power is "too strong" for the length, or length too long.
+                // Let's say focus is at standard 140 distance from lens.
+                focalX = lensX + eyePower; 
+                // Retina is at lensX + 60 + 80*1.25 = lensX + 160.
+                // Wait, math: cx = lensX + 60. Retina = cx + 80*scale.
+                // Retina = lensX + 60 + 80*scale.
+                // Normal: scale=1. Retina = lensX + 140. Focus = lensX + 140. Match.
+                // Myopia: scale=1.25. Retina = lensX + 160. Focus = lensX + 140. (Short).
+                // Correction (+20) -> Focus = 160. Match.
+                focalX = lensX + eyePower + correction;
+            } else if (defect === 'hypermetropia') {
+                // Hyper: scale=0.75. Retina = lensX + 60 + 60 = lensX + 120.
+                // Focus = lensX + 140. (Behind).
+                // Correction (-20) -> Focus = 120. Match.
+                focalX = lensX + eyePower + correction;
+            }
+            
+            // Determine Status (Blurry vs Sharp)
+            // Stricter tolerance
+            const isFocused = Math.abs(focalX - retinaX) < 5;
+
+            // Ray Paths
+            const objectX = 20;
+            const rays = [-30, -15, 0, 15, 30]; // Y offsets
+
+            // Lens Visuals
+            const corrLensX = lensX - 60; // Position of corrective lens
+
+            return (
+                <svg viewBox="0 0 600 400" className="w-full h-full drop-shadow-2xl overflow-visible">
+                    
+                    {/* --- OBJECT --- */}
+                    <g transform={`translate(${objectX}, ${cy})`}>
+                        <Icon name="tree-pine" size={60} className="text-emerald-400 -translate-y-1/2"/>
+                        <text y="50" fontSize="10" fill="#64748b" textAnchor="middle">Object</text>
+                    </g>
+
+                    {/* --- CORRECTIVE LENS --- */}
+                    {lens !== 'none' && (
+                        <g transform={`translate(${corrLensX}, ${cy})`}>
+                            {lens === 'concave' ? (
+                                // Concave Shape ) (
+                                <path d="M -5 -40 Q 10 0 -5 40 L 5 40 Q -10 0 5 -40 Z" fill="rgba(255,255,255,0.2)" stroke="#38bdf8" strokeWidth="2" />
+                            ) : (
+                                // Convex Shape ()
+                                <path d="M 0 -40 Q 15 0 0 40 Q -15 0 0 -40 Z" fill="rgba(255,255,255,0.2)" stroke="#facc15" strokeWidth="2" />
+                            )}
+                            <text y="-50" textAnchor="middle" fill="#94a3b8" fontSize="10">{lens === 'concave' ? 'Concave' : 'Convex'}</text>
+                        </g>
+                    )}
+
+                    {/* --- EYE --- */}
+                    <g>
+                        {/* Sclera (Deformed by defect) */}
+                        <ellipse cx={cx} cy={cy} rx={baseRadius * eyeScaleX} ry={baseRadius} fill="#1e293b" stroke="#94a3b8" strokeWidth="3" />
+                        
+                        {/* Cornea */}
+                        <path d={`M ${cx - baseRadius * eyeScaleX} ${cy - 40} Q ${cx - baseRadius * eyeScaleX - 30} ${cy} ${cx - baseRadius * eyeScaleX} ${cy + 40}`} fill="none" stroke="#94a3b8" strokeWidth="3" />
+
+                        {/* Lens */}
+                        <ellipse cx={lensX} cy={cy} rx="10" ry="35" fill="#bfdbfe" stroke="#60a5fa" strokeWidth="2" />
+
+                        {/* Retina Marker */}
+                        <path d={`M ${retinaX - 5} ${cy - 40} Q ${retinaX + 10} ${cy} ${retinaX - 5} ${cy + 40}`} fill="none" stroke="#f472b6" strokeWidth="4" />
+                        <text x={retinaX + 15} y={cy} fill="#f472b6" fontSize="10" dominantBaseline="middle">Retina</text>
+                        
+                        {/* Optic Nerve */}
+                        <path d={`M ${retinaX} ${cy-10} L ${retinaX+40} ${cy-10} M ${retinaX} ${cy+10} L ${retinaX+40} ${cy+10}`} stroke="#94a3b8" strokeWidth="2" />
+                    </g>
+
+                    {/* --- LIGHT RAYS --- */}
+                    <g className="light-ray" style={{ mixBlendMode: 'screen' }}>
+                        {rays.map((yOffset, i) => {
+                            // Path logic:
+                            // 1. Object -> Corrective Lens (Straight)
+                            // 2. Corrective Lens -> Eye Lens (Diverged/Converged)
+                            // 3. Eye Lens -> Focal Point (Converged)
+
+                            // Step 1: Object to Corrector
+                            const p1 = { x: objectX + 20, y: cy + yOffset };
+                            const p2 = { x: lens === 'none' ? lensX : corrLensX, y: cy + yOffset }; // If no lens, go straight to eye lens
+
+                            // Step 2: Effect of Corrector
+                            let p3Y = p2.y;
+                            if (lens === 'concave') {
+                                // Diverge: y moves away from center
+                                p3Y += yOffset * 0.3; 
+                            } else if (lens === 'convex') {
+                                // Converge: y moves towards center
+                                p3Y -= yOffset * 0.3;
+                            }
+                            const p3 = { x: lensX, y: p3Y };
+
+                            // Step 3: Eye Lens to Focus
+                            // All rays meet at focalX, cy
+                            const pFocus = { x: focalX, y: cy };
+                            
+                            // Step 4: Extend to Retina logic
+                            // Calculate slope to extend
+                            const slope = (pFocus.y - p3.y) / (pFocus.x - p3.x);
+                            
+                            // Where does it hit the retina X line?
+                            // y - y1 = m(x - x1) -> y = m(x - x1) + y1
+                            const yAtRetina = p3.y + slope * (retinaX - p3.x);
+                            
+                            // If focal point is BEFORE retina (Myopia), lines cross and expand again
+                            // If focal point is AFTER retina (Hyper), lines hit retina before crossing
+
+                            // Construct path
+                            // We draw line to focus, but clamp visually at retina if it goes past? 
+                            // Or draw line to retina through focus?
+                            // Let's draw to retina for visualization consistency
+                            
+                            const pathD = lens === 'none' 
+                                ? `M ${p1.x} ${p1.y} L ${p3.x} ${p3.y} L ${retinaX} ${yAtRetina}`
+                                : `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} L ${p3.x} ${p3.y} L ${retinaX} ${yAtRetina}`;
+
+                            return (
+                                <motion.path 
+                                    key={i}
+                                    d={pathD}
+                                    stroke={isFocused ? "#4ade80" : "#facc15"} 
+                                    strokeWidth={isFocused ? 2 : 1}
+                                    strokeDasharray={isFocused ? "0" : "4,4"}
+                                    fill="none"
+                                    initial={{ pathLength: 0, opacity: 0 }}
+                                    animate={{ pathLength: 1, opacity: isFocused ? 1 : 0.6 }}
+                                    transition={{ duration: 1, delay: i * 0.1 }}
+                                />
+                            );
+                        })}
+                        
+                        {/* Focal Point Marker */}
+                        <motion.circle 
+                            cx={focalX} cy={cy} r="4" 
+                            fill={isFocused ? "#4ade80" : "#ef4444"}
+                            animate={{ cx: focalX }}
+                        />
+                        <text x={focalX} y={cy + 20} textAnchor="middle" fill={isFocused ? "#4ade80" : "#ef4444"} fontSize="10" fontWeight="bold">Focus</text>
+                    </g>
+
+                    {/* Result Indicator */}
+                    <g transform="translate(50, 350)">
+                        <rect width="140" height="40" rx="8" fill={isFocused ? "rgba(22, 163, 74, 0.2)" : "rgba(220, 38, 38, 0.2)"} stroke={isFocused ? "#16a34a" : "#dc2626"} />
+                        <text x="70" y="25" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold">
+                            {isFocused ? "CLEAR IMAGE" : "BLURRY IMAGE"}
+                        </text>
+                    </g>
+
+                </svg>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [defect, setDefect] = useState('normal');
+            const [lens, setLens] = useState('none');
+            const [showHint, setShowHint] = useState(false);
+
+            // Auto-reset lens when changing defect
+            useEffect(() => {
+                setLens('none');
+                setShowHint(false);
+            }, [defect]);
+
+            const currentDefect = DEFECTS[defect];
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="eye" className="text-blue-400" /> Vision Corrector
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Optics & Correction Sim</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Defect Selector */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">1. Eye Condition</label>
+                                <div className="flex flex-col gap-2">
+                                    {Object.entries(DEFECTS).map(([key, info]) => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => setDefect(key)}
+                                            className={`w-full text-left p-3 rounded-xl border transition-all
+                                                ${defect === key ? 'bg-slate-800 border-blue-500 text-white shadow-lg' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                            `}
+                                        >
+                                            <span className="text-sm font-bold block">{info.name}</span>
+                                            <span className="text-[10px] opacity-70">{info.desc}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Lens Selector */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">2. Apply Lens</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {Object.entries(LENSES).map(([key, info]) => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => setLens(key)}
+                                            disabled={defect === 'normal'}
+                                            className={`p-2 rounded-xl border flex flex-col items-center gap-1 transition-all
+                                                ${lens === key ? 'bg-slate-800 border-yellow-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+                                                ${defect === 'normal' ? 'opacity-30 cursor-not-allowed' : ''}
+                                            `}
+                                        >
+                                            <Icon name={info.icon} size={16}/>
+                                            <span className="text-[10px] font-bold">{info.name.split(' ')[0]}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                {lens !== 'none' && (
+                                    <p className="text-xs text-yellow-200 bg-yellow-900/20 p-2 rounded border border-yellow-500/30 animate-in fade-in">
+                                        <span className="font-bold">Effect:</span> {LENSES[lens].desc}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Hint Button */}
+                            {defect !== 'normal' && (
+                                <button 
+                                    onClick={() => setShowHint(!showHint)}
+                                    className="w-full py-2 text-xs text-slate-500 hover:text-white flex items-center justify-center gap-2"
+                                >
+                                    <Icon name="help-circle" size={14}/> {showHint ? 'Hide Hint' : 'Need Help?'}
+                                </button>
+                            )}
+                            
+                            {showHint && (
+                                <div className="bg-emerald-900/20 p-3 rounded-lg border border-emerald-500/30 text-xs text-emerald-300 animate-in slide-in-from-top-2">
+                                    {defect === 'myopia' ? "Focus is too short. Need to DIVERGE rays (push focus back)." : "Focus is too long. Need to CONVERGE rays (pull focus forward)."}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
+                            
+                            <div className="w-full h-full max-w-3xl p-4">
+                                <EyeCorrectorCanvas defect={defect} lens={lens} />
+                            </div>
+
+                            <div className="absolute bottom-6 left-6 text-xs text-slate-500 font-mono bg-black/40 px-3 py-1 rounded-full border border-white/10 pointer-events-none">
+                                Ray Diagram View
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
