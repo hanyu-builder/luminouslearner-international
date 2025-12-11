@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Pollution Index Visualizer | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Framer Motion -->
+    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #fff; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Smoke Animation */
+        .smoke { animation: rise 3s infinite ease-in; opacity: 0; }
+        @keyframes rise {
+            0% { transform: translateY(0) scale(1); opacity: 0.6; }
+            100% { transform: translateY(-50px) scale(2); opacity: 0; }
+        }
+        
+        /* Car Animation */
+        .car-move { animation: drive linear infinite; }
+        @keyframes drive {
+            from { transform: translateX(-50px); }
+            to { transform: translateX(650px); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+                    const iconData = window.lucide.icons[pascalName];
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- DATA ---
+        const POLLUTANTS = {
+            no2: { name: 'Nitrogen Dioxide (NO₂)', source: 'Traffic, Power Plants', health: 'Irritates lungs, lowers resistance to respiratory infection.' },
+            so2: { name: 'Sulphur Dioxide (SO₂)', source: 'Factories (burning coal/oil)', health: 'Respiratory illness, aggravates asthma.' },
+            pm: { name: 'Particulates (PM10/2.5)', source: 'Construction, Diesel exhaust', health: 'Penetrates deep into lungs, heart problems.' },
+            o3: { name: 'Ozone (O₃)', source: 'Photochemical reaction (Sun + NOx + VOCs)', health: 'Irritates eyes/nose, reduces lung function.' },
+            co: { name: 'Carbon Monoxide (CO)', source: 'Incomplete combustion (Traffic)', health: 'Reduces oxygen carrying capacity of blood.' }
+        };
+
+        const AQHI_LEVELS = [
+            { level: 'Low', range: [1, 3], color: '#34d399', text: 'No response required.' },
+            { level: 'Moderate', range: [4, 6], color: '#facc15', text: 'No response required.' },
+            { level: 'High', range: [7, 7], color: '#f97316', text: 'Children/Elderly: Reduce outdoor exertion.' },
+            { level: 'Very High', range: [8, 10], color: '#ef4444', text: 'General Public: Reduce outdoor exertion.' },
+            { level: 'Serious', range: [11, 99], color: '#000000', text: 'Avoid outdoor exertion.' } // Black displayed as dark grey for visibility
+        ];
+
+        // --- COMPONENTS ---
+        const CityScene = ({ traffic, industry, weather, onSelectSource }) => {
+            // Visual adjustments based on params
+            // Smog opacity: 0 to 0.8
+            const totalPollution = (traffic + industry) / 200; 
+            const smogOpacity = Math.min(0.8, totalPollution);
+            const skyColor = `rgba(113, 113, 106, ${smogOpacity})`; // Greyish overlay
+
+            // Traffic Calculation
+            const carCount = Math.floor(traffic / 10); 
+            const carSpeed = 5000 / (traffic + 10); // Faster updates not needed, CSS anim duration
+
+            return (
+                <div className="relative w-full h-full overflow-hidden bg-sky-200 rounded-3xl border-4 border-slate-800 shadow-2xl">
+                    
+                    {/* Sky Gradient Base */}
+                    <div className={`absolute inset-0 bg-gradient-to-b from-sky-300 to-sky-100 transition-colors duration-1000`} 
+                         style={{ filter: `grayscale(${totalPollution}) brightness(${1 - totalPollution*0.3})` }}></div>
+
+                    {/* Sun */}
+                    <motion.div 
+                        className="absolute top-10 right-10 w-20 h-20 bg-yellow-400 rounded-full shadow-[0_0_50px_rgba(250,204,21,0.8)]"
+                        animate={{ scale: weather === 'sunny' ? 1.1 : 1 }}
+                        transition={{ repeat: Infinity, duration: 2, repeatType: "reverse" }}
+                    />
+
+                    {/* Smog Overlay */}
+                    <div className="absolute inset-0 pointer-events-none transition-colors duration-1000 z-20" style={{ backgroundColor: skyColor }}></div>
+
+                    {/* --- SCENE SVG --- */}
+                    <svg viewBox="0 0 600 400" className="absolute inset-0 w-full h-full z-10">
+                        
+                        {/* Background City Silhouette */}
+                        <path d="M 0 300 L 50 200 L 100 300 L 150 150 L 200 300 L 250 180 L 300 300 L 600 300 L 600 400 L 0 400 Z" fill="#94a3b8" opacity="0.5" />
+
+                        {/* Factory (Industry Source) */}
+                        <g transform="translate(400, 200)" onClick={() => onSelectSource('industry')} className="cursor-pointer hover:brightness-110">
+                            <rect x="0" y="50" width="80" height="100" fill="#475569" />
+                            <rect x="10" y="0" width="20" height="50" fill="#334155" /> {/* Chimney 1 */}
+                            <rect x="50" y="10" width="20" height="40" fill="#334155" /> {/* Chimney 2 */}
+                            {/* Windows */}
+                            <rect x="10" y="70" width="15" height="15" fill="#fef08a" opacity={industry > 20 ? 1 : 0.3} />
+                            <rect x="50" y="70" width="15" height="15" fill="#fef08a" opacity={industry > 20 ? 1 : 0.3} />
+                            
+                            {/* Smoke Particles */}
+                            {industry > 10 && (
+                                <g>
+                                    {[...Array(Math.ceil(industry/20))].map((_, i) => (
+                                        <circle key={`s1-${i}`} cx="20" cy="-10" r={10 + i*2} fill="#1f2937" className="smoke" style={{animationDelay: `${i*0.5}s`, animationDuration: `${300/industry}s`}} />
+                                    ))}
+                                    {[...Array(Math.ceil(industry/30))].map((_, i) => (
+                                        <circle key={`s2-${i}`} cx="60" cy="0" r={8 + i*2} fill="#374151" className="smoke" style={{animationDelay: `${i*0.8}s`, animationDuration: `${300/industry}s`}} />
+                                    ))}
+                                </g>
+                            )}
+                            
+                            <text x="40" y="130" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">FACTORY</text>
+                        </g>
+
+                        {/* Road (Traffic Source) */}
+                        <rect x="0" y="350" width="600" height="50" fill="#334155" />
+                        <line x1="0" y1="375" x2="600" y2="375" stroke="#fef08a" strokeWidth="2" strokeDasharray="20,20" />
+                        
+                        {/* Cars */}
+                        <g onClick={() => onSelectSource('traffic')} className="cursor-pointer">
+                             {/* We use animation delay to simulate multiple cars */}
+                             {[...Array(Math.ceil(traffic/20))].map((_, i) => (
+                                <g key={i} className="car-move" style={{animationDuration: `${5 + i}s`, animationDelay: `-${i*2}s`}}>
+                                    <rect x="0" y="355" width="40" height="15" rx="5" fill={['#ef4444', '#3b82f6', '#eab308'][i%3]} />
+                                    <circle cx="10" cy="370" r="5" fill="black" />
+                                    <circle cx="30" cy="370" r="5" fill="black" />
+                                    {/* Exhaust */}
+                                    {traffic > 30 && <circle cx="-5" cy="365" r="3" fill="grey" opacity="0.5" className="smoke" />}
+                                </g>
+                             ))}
+                        </g>
+                        <text x="300" y="390" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">TRAFFIC</text>
+
+                        {/* Pollutant Labels (Floating) */}
+                        {industry > 30 && <text x="420" y="180" fill="#fbbf24" fontSize="12" fontWeight="bold">SO₂, PM</text>}
+                        {traffic > 30 && <text x="100" y="340" fill="#fbbf24" fontSize="12" fontWeight="bold">NO₂, CO</text>}
+
+                    </svg>
+
+                </div>
+            );
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [traffic, setTraffic] = useState(30); // 0-100
+            const [industry, setIndustry] = useState(20); // 0-100
+            const [selectedSource, setSelectedSource] = useState(null);
+
+            // Calculate Pollutant Levels (Arbitrary Units)
+            const levels = useMemo(() => {
+                return {
+                    no2: traffic * 0.8 + industry * 0.2,
+                    co: traffic * 0.9,
+                    pm: traffic * 0.4 + industry * 0.8,
+                    so2: industry * 0.9,
+                    o3: (traffic * 0.5 + industry * 0.2) * 0.8 // Sun interaction assumed
+                };
+            }, [traffic, industry]);
+
+            // Calculate AQHI
+            // Simplified: Max of normalized pollutants / 10
+            const aqhiValue = useMemo(() => {
+                const maxPollutant = Math.max(levels.no2, levels.pm, levels.so2, levels.o3);
+                // Map 0-100 scale to 1-11
+                let val = Math.ceil(maxPollutant / 9);
+                if (val < 1) val = 1;
+                if (val > 11) val = 11;
+                return val;
+            }, [levels]);
+
+            const currentAQHI = AQHI_LEVELS.find(l => aqhiValue >= l.range[0] && aqhiValue <= l.range[1]) || AQHI_LEVELS[4];
+            const aqhiColor = currentAQHI.color;
+            const isSerious = aqhiValue >= 11;
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar: Controls & Info */}
+                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="cloud-fog" className="text-slate-400" /> Pollution Viz
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Air Quality Health Index (AQHI)</p>
+                        </div>
+
+                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-8">
+                            
+                            {/* AQHI Meter */}
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 text-center shadow-lg">
+                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Current AQHI</div>
+                                <div className="relative w-32 h-32 mx-auto flex items-center justify-center rounded-full border-8 transition-colors duration-500"
+                                     style={{ borderColor: aqhiColor, backgroundColor: `${aqhiColor}20` }}>
+                                    <div className="text-5xl font-black" style={{ color: isSerious ? 'white' : aqhiColor }}>
+                                        {aqhiValue >= 11 ? '10+' : aqhiValue}
+                                    </div>
+                                </div>
+                                <div className="mt-4 font-bold text-lg" style={{ color: isSerious ? 'white' : aqhiColor }}>
+                                    {currentAQHI.level} Risk
+                                </div>
+                                <p className="mt-2 text-xs text-slate-400 border-t border-slate-700 pt-2">
+                                    {currentAQHI.text}
+                                </p>
+                            </div>
+
+                            {/* Sliders */}
+                            <div className="space-y-6">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-blue-400 flex items-center gap-2"><Icon name="car" size={14}/> Road Traffic</span>
+                                        <span className="font-mono">{traffic}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={traffic} onChange={(e) => setTraffic(Number(e.target.value))}
+                                        className="w-full accent-blue-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Light</span>
+                                        <span>Heavy Jam</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="font-bold text-orange-400 flex items-center gap-2"><Icon name="factory" size={14}/> Industrial Activity</span>
+                                        <span className="font-mono">{industry}%</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="0" max="100" value={industry} onChange={(e) => setIndustry(Number(e.target.value))}
+                                        className="w-full accent-orange-500"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Shutdown</span>
+                                        <span>Full Power</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Pollutant Breakdown */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs">
+                                <div className="font-bold text-slate-400 uppercase mb-3">Pollutant Levels</div>
+                                <div className="space-y-2">
+                                    {Object.entries(levels).map(([key, val]) => (
+                                        <div key={key} className="flex items-center gap-2">
+                                            <span className="w-10 font-bold uppercase text-slate-500">{key}</span>
+                                            <div className="flex-1 h-2 bg-slate-900 rounded-full overflow-hidden">
+                                                <div className="h-full rounded-full transition-all duration-300" 
+                                                     style={{ 
+                                                         width: `${Math.min(100, val)}%`,
+                                                         backgroundColor: val > 80 ? '#ef4444' : val > 40 ? '#facc15' : '#10b981'
+                                                     }}></div>
+                                            </div>
+                                            <span className="w-8 text-right font-mono">{val.toFixed(0)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
+                        
+                        <div className="flex-1 flex flex-col min-h-0">
+                            
+                            {/* City Visualization */}
+                            <div className="flex-[2] bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden p-4 flex items-center justify-center">
+                                <CityScene traffic={traffic} industry={industry} weather="sunny" onSelectSource={setSelectedSource} />
+                            </div>
+
+                            {/* Detail Panel (Bottom) */}
+                            <div className="flex-1 mt-4 bg-slate-900 rounded-2xl border border-slate-800 p-5 shadow-lg relative">
+                                <AnimatePresence mode='wait'>
+                                    {selectedSource ? (
+                                        <motion.div 
+                                            key={selectedSource}
+                                            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
+                                            className="h-full flex flex-col"
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                                    {selectedSource === 'traffic' ? <Icon name="car" className="text-blue-400"/> : <Icon name="factory" className="text-orange-400"/>}
+                                                    {selectedSource === 'traffic' ? 'Roadside Emission Source' : 'Industrial Emission Source'}
+                                                </h3>
+                                                <button onClick={() => setSelectedSource(null)} className="text-slate-500 hover:text-white"><Icon name="x" size={20}/></button>
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 gap-4 text-sm mt-2">
+                                                <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                                    <div className="text-xs font-bold text-slate-500 uppercase mb-1">Major Pollutants</div>
+                                                    {selectedSource === 'traffic' ? (
+                                                        <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                                                            <li><strong>NO₂</strong> (Nitrogen Dioxide)</li>
+                                                            <li><strong>CO</strong> (Carbon Monoxide)</li>
+                                                            <li><strong>PM2.5</strong> (Fine Particulates)</li>
+                                                        </ul>
+                                                    ) : (
+                                                        <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                                                            <li><strong>SO₂</strong> (Sulphur Dioxide)</li>
+                                                            <li><strong>PM10</strong> (Suspended Particulates)</li>
+                                                            <li><strong>NO₂</strong> (Nitrogen Dioxide)</li>
+                                                        </ul>
+                                                    )}
+                                                </div>
+                                                <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                                    <div className="text-xs font-bold text-slate-500 uppercase mb-1">Health Impact</div>
+                                                    <p className="text-slate-300 leading-relaxed text-xs">
+                                                        {selectedSource === 'traffic' 
+                                                            ? "Irritates respiratory system, reduces oxygen carrying capacity of blood (CO), risks of heart and lung diseases."
+                                                            : "Causes acid rain, aggravates asthma and bronchitis (SO₂), particulates damage lung tissues permanently."}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    ) : (
+                                        <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center">
+                                            <Icon name="mouse-pointer-click" size={32} className="mb-2 opacity-50"/>
+                                            <p className="text-sm">Click on the <strong>Road</strong> or <strong>Factory</strong> in the diagram to analyze emission sources.</p>
+                                        </div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
