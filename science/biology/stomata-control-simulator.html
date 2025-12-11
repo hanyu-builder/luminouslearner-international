@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stomata Control Simulator | LuminousLearner</title>
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#1e293b', 
+                            950: '#0F172A', // LuminousLearner Dark Mode Background
+                        },
+                        emerald: {
+                            450: '#10b981',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            background: #38bdf8; cursor: pointer; margin-top: -8px; 
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+
+        /* Water Flow Animation */
+        .flow-arrow {
+            animation: flow 1s infinite linear;
+        }
+        @keyframes flow {
+            to { stroke-dashoffset: -10; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const Icon = ({ name, className = "", size = 20 }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    // Helper to convert kebab-case to PascalCase
+                    const toPascalCase = (str) => str.replace(/(^\w|-\w)/g, (g) => g.replace(/-/, "").toUpperCase());
+                    const pascalName = toPascalCase(name);
+                    const iconData = window.lucide.icons[pascalName];
+                    
+                    if (iconData && typeof window.lucide.createElement === 'function') {
+                        const svgElement = window.lucide.createElement(iconData);
+                        svgElement.setAttribute('class', className);
+                        svgElement.setAttribute('width', size);
+                        svgElement.setAttribute('height', size);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className, size]);
+            if (!svgHtml) return <span className={`inline-block ${className}`} style={{width:size, height:size}}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        // --- STOMATA COMPONENT ---
+        const StomaCanvas = ({ turgidity }) => { // turgidity 0 (Flaccid/Closed) to 1 (Turgid/Open)
+            const canvasRef = useRef(null);
+            
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationId;
+                
+                const render = () => {
+                    const width = canvas.width;
+                    const height = canvas.height;
+                    const cx = width / 2;
+                    const cy = height / 2;
+                    
+                    ctx.clearRect(0, 0, width, height);
+                    
+                    // --- Draw Epidermal Cells (Background) ---
+                    ctx.fillStyle = "#f0fdf4"; // Very light green
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.strokeStyle = "#86efac";
+                    ctx.lineWidth = 2;
+                    // Draw simple cell outlines
+                    ctx.beginPath();
+                    // Top Left
+                    ctx.moveTo(0, 0); ctx.lineTo(cx-80, cy-100); ctx.lineTo(cx, cy-120); ctx.lineTo(cx+80, cy-100); ctx.lineTo(width, 0);
+                    ctx.stroke();
+                    // ... simplified background grid
+                    
+                    // --- Draw Guard Cells ---
+                    // Shape depends on turgidity.
+                    // Flaccid: Straight inner walls, closed pore.
+                    // Turgid: Curved inner walls, open pore.
+                    
+                    // Bending factor: 0 (Straight) -> 40 (Curved)
+                    const bend = turgidity * 45; 
+                    const poreWidth = turgidity * 40; // Opening size
+
+                    const cellLength = 180;
+                    const cellWidth = 60;
+                    
+                    // Left Guard Cell
+                    ctx.save();
+                    ctx.translate(cx - 10 - poreWidth/2, cy);
+                    
+                    // Outer Wall (Thinner)
+                    ctx.beginPath();
+                    ctx.moveTo(0, -cellLength/2);
+                    // Outer curve bulges more when turgid
+                    ctx.bezierCurveTo(-cellWidth - bend/2, -cellLength/4, -cellWidth - bend/2, cellLength/4, 0, cellLength/2);
+                    
+                    // Inner Wall (Thicker, less elastic)
+                    // When turgid, ends stay put, middle pulls away
+                    ctx.bezierCurveTo(-10 - bend, cellLength/4, -10 - bend, -cellLength/4, 0, -cellLength/2);
+                    
+                    ctx.fillStyle = "#4ade80"; // Green
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#166534";
+                    ctx.stroke();
+                    
+                    // Draw Thick Inner Wall highlight
+                    ctx.beginPath();
+                    ctx.moveTo(0, -cellLength/2);
+                    ctx.bezierCurveTo(-10 - bend, cellLength/4, -10 - bend, -cellLength/4, 0, cellLength/2);
+                    ctx.lineWidth = 8; // Thicker inner wall
+                    ctx.strokeStyle = "rgba(22, 101, 52, 0.3)";
+                    ctx.stroke();
+
+                    // Chloroplasts (Green dots)
+                    ctx.fillStyle = "#14532d";
+                    for(let i=0; i<5; i++) {
+                        const yPos = (i-2) * 30;
+                        const xOffset = -25 - (bend * 0.5 * Math.cos(yPos/cellLength * Math.PI));
+                        ctx.beginPath(); ctx.arc(xOffset, yPos, 4, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    ctx.restore();
+
+                    // Right Guard Cell (Mirror)
+                    ctx.save();
+                    ctx.translate(cx + 10 + poreWidth/2, cy);
+                    ctx.scale(-1, 1); // Mirror
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(0, -cellLength/2);
+                    ctx.bezierCurveTo(-cellWidth - bend/2, -cellLength/4, -cellWidth - bend/2, cellLength/4, 0, cellLength/2);
+                    ctx.bezierCurveTo(-10 - bend, cellLength/4, -10 - bend, -cellLength/4, 0, -cellLength/2);
+                    
+                    ctx.fillStyle = "#4ade80"; 
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "#166534";
+                    ctx.stroke();
+
+                    // Inner Wall
+                    ctx.beginPath();
+                    ctx.moveTo(0, -cellLength/2);
+                    ctx.bezierCurveTo(-10 - bend, cellLength/4, -10 - bend, -cellLength/4, 0, cellLength/2);
+                    ctx.lineWidth = 8; 
+                    ctx.strokeStyle = "rgba(22, 101, 52, 0.3)";
+                    ctx.stroke();
+                    
+                    // Chloroplasts
+                    ctx.fillStyle = "#14532d";
+                    for(let i=0; i<5; i++) {
+                        const yPos = (i-2) * 30;
+                        const xOffset = -25 - (bend * 0.5 * Math.cos(yPos/cellLength * Math.PI));
+                        ctx.beginPath(); ctx.arc(xOffset, yPos, 4, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    ctx.restore();
+
+                    // --- Visual Indicators ---
+                    
+                    // Potassium Ions (K+)
+                    // Turgid = High K+ inside; Flaccid = Low K+
+                    const kCount = Math.floor(turgidity * 15) + 5;
+                    ctx.fillStyle = "#eab308"; // Yellow K+
+                    // Draw K+ inside cells (Simplified positions)
+                    // ... (visual noise)
+                    
+                    // H2O Flow Arrows
+                    if (turgidity > 0.1) {
+                        // Water IN arrows
+                        ctx.strokeStyle = "#3b82f6";
+                        ctx.lineWidth = 3;
+                        const arrowLen = 20 * turgidity;
+                        
+                        // Left In
+                        drawArrow(ctx, cx - 80, cy, cx - 50, cy);
+                        // Right In
+                        drawArrow(ctx, cx + 80, cy, cx + 50, cy);
+                    } else {
+                        // Water OUT arrows
+                        ctx.strokeStyle = "#3b82f6";
+                        ctx.lineWidth = 3;
+                        // Left Out
+                        drawArrow(ctx, cx - 50, cy, cx - 80, cy);
+                        // Right Out
+                        drawArrow(ctx, cx + 50, cy, cx + 80, cy);
+                    }
+
+                    animationId = requestAnimationFrame(render);
+                };
+                
+                const drawArrow = (ctx, x1, y1, x2, y2) => {
+                    const headlen = 8;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const angle = Math.atan2(dy, dx);
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+                    ctx.moveTo(x2, y2);
+                    ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+                    ctx.stroke();
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationId);
+            }, [turgidity]);
+
+            return <canvas ref={canvasRef} width={500} height={400} className="w-full h-full object-contain" />;
+        };
+
+        // --- MAIN APP ---
+        const App = () => {
+            const [potassium, setPotassium] = useState(0.5); // 0 to 1
+            // Turgidity follows K+ concentration (water follows salt)
+            const turgidity = potassium; 
+
+            // Conditions Logic
+            const handleLight = () => {
+                // Light -> Pump K+ In -> Turgid -> Open
+                setPotassium(0.9);
+            };
+
+            const handleDark = () => {
+                // Dark -> K+ Out -> Flaccid -> Close
+                setPotassium(0.1);
+            };
+
+            const handleDrought = () => {
+                // Drought -> ABA -> K+ Out -> Close
+                setPotassium(0.0);
+            };
+
+            return (
+                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
+                    
+                    {/* Sidebar */}
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <Icon name="leaf" className="text-emerald-400" /> Stomata Sim
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Plant Physiology</p>
+                        </div>
+
+                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                            
+                            {/* Sliders */}
+                            <div className="space-y-4">
+                                <div className="flex justify-between text-xs font-bold uppercase">
+                                    <span className="text-slate-500">K⁺ Concentration</span>
+                                    <span className="text-yellow-400 font-mono">{(potassium * 100).toFixed(0)}%</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="1" step="0.01"
+                                    value={potassium} 
+                                    onChange={(e) => setPotassium(parseFloat(e.target.value))}
+                                    className="w-full accent-emerald-500"
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500">
+                                    <span>Low (Hypotonic Env)</span>
+                                    <span>High (Hypertonic Env)</span>
+                                </div>
+                            </div>
+
+                            {/* Environmental Triggers */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Conditions</label>
+                                <button 
+                                    onClick={handleLight}
+                                    className="w-full p-3 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-500/50 rounded-xl flex items-center gap-3 transition-all text-yellow-200"
+                                >
+                                    <Icon name="sun" size={18}/>
+                                    <span>Daytime (Light)</span>
+                                </button>
+                                <button 
+                                    onClick={handleDark}
+                                    className="w-full p-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl flex items-center gap-3 transition-all text-slate-300"
+                                >
+                                    <Icon name="moon" size={18}/>
+                                    <span>Night (Darkness)</span>
+                                </button>
+                                <button 
+                                    onClick={handleDrought}
+                                    className="w-full p-3 bg-red-900/30 hover:bg-red-900/50 border border-red-500/50 rounded-xl flex items-center gap-3 transition-all text-red-300"
+                                >
+                                    <Icon name="droplet-off" size={18}/>
+                                    <span>Drought Stress</span>
+                                </button>
+                            </div>
+
+                            {/* Explanation */}
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-300 space-y-2">
+                                <div className="font-bold text-slate-400 uppercase mb-1">Mechanism</div>
+                                <p>
+                                    <strong>K⁺ In</strong> &rarr; Water Potential ↓ &rarr; Water Enters (Osmosis) &rarr; Turgid &rarr; <strong>OPEN</strong>
+                                </p>
+                                <p>
+                                    <strong>K⁺ Out</strong> &rarr; Water Potential ↑ &rarr; Water Leaves &rarr; Flaccid &rarr; <strong>CLOSED</strong>
+                                </p>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Main Stage */}
+                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+                        
+                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-8">
+                            
+                            {/* Status Badge */}
+                            <div className={`absolute top-8 px-4 py-2 rounded-full border font-bold text-sm flex items-center gap-2
+                                ${turgidity > 0.5 ? 'bg-emerald-900/80 border-emerald-500 text-emerald-400' : 'bg-rose-900/80 border-rose-500 text-rose-400'}
+                            `}>
+                                <div className={`w-2 h-2 rounded-full ${turgidity > 0.5 ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`}></div>
+                                Stoma: {turgidity > 0.2 ? (turgidity > 0.8 ? 'Fully Open' : 'Partially Open') : 'Closed'}
+                            </div>
+
+                            <StomaCanvas turgidity={turgidity} />
+
+                            {/* Labels */}
+                            <div className="absolute bottom-8 flex gap-8 text-xs text-slate-500 font-mono pointer-events-none">
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-[#4ade80] border border-[#166534]"></div> Guard Cell</div>
+                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-[#14532d]"></div> Chloroplast</div>
+                                <div className="flex items-center gap-2"><div className="w-8 h-1 bg-[#166534] opacity-30"></div> Thick Inner Wall</div>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
