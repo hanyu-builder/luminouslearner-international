@@ -62,22 +62,18 @@
         // --- Initialization ---
         useEffect(() => {
             initParticles();
-        }, []); // Run once on mount
+        }, []); 
 
         const initParticles = () => {
-            const ps = [];
-            // Create a pool of water particles
-            for(let i=0; i<400; i++) {
-                ps.push(createWaterParticle());
-            }
-            simState.current.particles = ps;
+            // Initial fill handled in loop now
+            simState.current.particles = [];
         };
 
         const createWaterParticle = (reset = false) => {
-            // If reset, place randomly in water. If new (recycling), place at bottom
             const width = simState.current.waterWidth;
             const centerX = CANVAS_WIDTH / 2;
-            const startX = centerX - width/2;
+            const halfWidth = width / 2;
+            const startX = centerX - halfWidth;
             
             return {
                 x: startX + Math.random() * width,
@@ -95,9 +91,25 @@
             if (!ctx) return;
             const state = simState.current;
 
-            // 0. Update Water Dimensions based on state
+            // 0. Update Water Dimensions & Particle Count based on Surface Area
+            // LOGIC FIX: Scale particle count with surface area to simulate more surface exposure
             const targetWidth = 100 + (surfaceArea / 100) * 400; // 100px to 500px
             state.waterWidth = targetWidth;
+            
+            const targetParticleCount = Math.floor(150 + (surfaceArea / 100) * 400); // 150 to 550 particles
+
+            // Add particles if needed
+            if (state.particles.length < targetParticleCount) {
+                for(let i=0; i < 5; i++) { // Add a few per frame to be smooth
+                    if(state.particles.length < targetParticleCount) {
+                        state.particles.push(createWaterParticle(true));
+                    }
+                }
+            } 
+            // Remove particles if needed
+            else if (state.particles.length > targetParticleCount) {
+                 state.particles.splice(0, state.particles.length - targetParticleCount);
+            }
 
             // 1. Clear Canvas
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -106,14 +118,12 @@
             drawEnvironment(ctx, state.waterWidth);
 
             // 3. Humidity Logic (Air Particles)
-            // Target air particle count based on humidity slider
             const targetAirParticles = Math.floor((humidity / 100) * 150);
             
-            // Adjust count
             if (state.airParticles.length < targetAirParticles) {
                 state.airParticles.push({
                     x: Math.random() * CANVAS_WIDTH,
-                    y: Math.random() * WATER_LEVEL, // Only in air
+                    y: Math.random() * WATER_LEVEL,
                     vx: (Math.random() - 0.5) * 0.5,
                     vy: (Math.random() - 0.5) * 0.5
                 });
@@ -121,7 +131,6 @@
                 state.airParticles.pop();
             }
 
-            // Draw & Move Air Particles
             ctx.fillStyle = 'rgba(200, 200, 200, 0.3)';
             state.airParticles.forEach(p => {
                 p.x += p.vx;
@@ -136,58 +145,53 @@
 
 
             // 4. Water Particle Logic
-            // Speed factor based on Temperature
-            // Temp 0 -> 0.2 speed, Temp 100 -> 3.0 speed
             const speedFactor = 0.2 + (temperature / 100) * 2.8; 
-            const escapeEnergyThreshold = 1.1 - (temperature / 150); // Lower threshold at high temp
+            const escapeEnergyThreshold = 1.1 - (temperature / 150);
 
             const centerX = CANVAS_WIDTH / 2;
             const halfWidth = state.waterWidth / 2;
 
             state.particles.forEach(p => {
-                // Determine Bounds
                 const left = centerX - halfWidth;
                 const right = centerX + halfWidth;
 
                 if (p.state === 'liquid') {
-                    // Movement
                     p.x += p.vx * speedFactor;
                     p.y += p.vy * speedFactor;
 
-                    // Walls (Container)
+                    // Walls
                     if (p.x < left) { p.x = left; p.vx *= -1; }
                     if (p.x > right) { p.x = right; p.vx *= -1; }
                     if (p.y > CANVAS_HEIGHT) { p.y = CANVAS_HEIGHT; p.vy *= -1; }
                     
                     // Surface Interaction
                     if (p.y < WATER_LEVEL) {
-                        // Check for escape!
-                        // Needs high energy AND lucky roll (Humidity reduces luck)
-                        // Humidity factor: 0% -> 1.0 chance, 100% -> 0.1 chance
                         const humidityBlock = (humidity / 100) * 0.9; 
                         
-                        // Purely kinetic probability
                         if (p.energy * speedFactor > escapeEnergyThreshold && Math.random() > humidityBlock) {
                             p.state = 'gas';
                             state.escapedCount++;
                         } else {
-                            // Bounced back by surface tension or air pressure
                             p.y = WATER_LEVEL;
                             p.vy *= -1;
                         }
                     }
                 } else {
-                    // Gas State (Evaporated)
+                    // Gas State
                     p.x += p.vx * speedFactor;
-                    p.y += p.vy * speedFactor - 0.5; // Natural rise
-                    p.energy *= 0.99; // Cool down / slow down visual
+                    p.y += p.vy * speedFactor - 0.5;
+                    p.energy *= 0.99;
 
-                    // Fade out logic visually handled in draw, technically just reset if off screen
+                    // Recycle
                     if (p.y < -10 || p.x < -50 || p.x > CANVAS_WIDTH + 50) {
-                         // Recycle particle to bottom of liquid
-                         Object.assign(p, createWaterParticle());
-                         // Ensure x is within current width
-                         p.x = centerX - halfWidth + Math.random() * state.waterWidth;
+                         // Reset to liquid
+                         const newP = createWaterParticle();
+                         p.x = newP.x;
+                         p.y = newP.y;
+                         p.state = 'liquid';
+                         p.vx = newP.vx;
+                         p.vy = newP.vy;
+                         p.energy = newP.energy;
                     }
                 }
             });
@@ -196,24 +200,20 @@
             state.particles.forEach(p => {
                 ctx.beginPath();
                 if (p.state === 'liquid') {
-                    ctx.fillStyle = `rgba(59, 130, 246, 0.8)`; // Blue-500
+                    ctx.fillStyle = `rgba(59, 130, 246, 0.8)`;
                     ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
                 } else {
-                    // Gas: Lighter, fading
                     const opacity = Math.max(0, 1 - (WATER_LEVEL - p.y) / 200);
-                    ctx.fillStyle = `rgba(147, 197, 253, ${opacity})`; // Blue-300
+                    ctx.fillStyle = `rgba(147, 197, 253, ${opacity})`;
                     ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
                 }
                 ctx.fill();
             });
 
-            // 6. Rate Calculation (Every 0.5s)
+            // 6. Rate Calculation (Smoothed)
             if (time - state.lastRateCheck > 500) {
-                // Particles escaped in last 0.5s * 2 = Particles/sec
-                // Smoothing
                 const currentRate = state.escapedCount * 2;
                 setEvapRate(prev => Math.round(prev * 0.7 + currentRate * 0.3));
-                
                 state.escapedCount = 0;
                 state.lastRateCheck = time;
             }
@@ -235,7 +235,7 @@
             ctx.lineTo(centerX + halfWidth, WATER_LEVEL - 20);
             ctx.stroke();
 
-            // Draw Water Bulk (Behind particles for depth)
+            // Draw Water Bulk
             ctx.fillStyle = 'rgba(30, 64, 175, 0.2)';
             ctx.fillRect(centerX - halfWidth, WATER_LEVEL, width, CANVAS_HEIGHT - WATER_LEVEL);
             
@@ -247,11 +247,10 @@
             ctx.lineTo(centerX + halfWidth, WATER_LEVEL);
             ctx.stroke();
 
-            // Sun/Heat Source Visual
+            // Sun/Heat Visual
             const sunOpacity = 0.2 + (temperature / 100) * 0.8;
             const sunColor = temperature > 80 ? '#ef4444' : '#fbbf24';
             
-            // Draw Sun/Heater Glow
             const gradient = ctx.createRadialGradient(CANVAS_WIDTH - 60, 60, 10, CANVAS_WIDTH - 60, 60, 80);
             gradient.addColorStop(0, `${sunColor}${Math.floor(sunOpacity*255).toString(16).padStart(2,'0')}`);
             gradient.addColorStop(1, 'rgba(0,0,0,0)');
