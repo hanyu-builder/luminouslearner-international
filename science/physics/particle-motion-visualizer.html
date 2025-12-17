@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Motion Visualizer | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #10b981;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } = window.Recharts;
+
+    // --- Physics Constants ---
+    const CANVAS_WIDTH = 600;
+    const CANVAS_HEIGHT = 400;
+    const PARTICLE_RADIUS = 4;
+    
+    const STATE_CONFIG = {
+        SOLID: { color: '#3b82f6', bondStrength: 0.8, damping: 0.9, lattice: true },
+        LIQUID: { color: '#22c55e', bondStrength: 0.1, damping: 0.98, lattice: false, gravity: 0.1 },
+        GAS: { color: '#ef4444', bondStrength: 0, damping: 1, lattice: false, gravity: 0 }
+    };
+
+    const App = () => {
+        // --- State ---
+        const [mode, setMode] = useState('SOLID'); // SOLID, LIQUID, GAS
+        const [temperature, setTemperature] = useState(20); // 0 to 100
+        const [particleCount, setParticleCount] = useState(100);
+        const [energyData, setEnergyData] = useState([]);
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const particlesRef = useRef([]);
+
+        // Initialize Particles based on Mode
+        const initParticles = useCallback(() => {
+            const particles = [];
+            const cols = Math.floor(Math.sqrt(particleCount * (CANVAS_WIDTH/CANVAS_HEIGHT)));
+            const rows = Math.ceil(particleCount / cols);
+            const spacingX = CANVAS_WIDTH / (cols + 1);
+            const spacingY = CANVAS_HEIGHT / (rows + 1);
+
+            for (let i = 0; i < particleCount; i++) {
+                let x, y, vx, vy, originX, originY;
+
+                if (mode === 'SOLID') {
+                    // Lattice arrangement
+                    const r = Math.floor(i / cols);
+                    const c = i % cols;
+                    originX = spacingX * (c + 1);
+                    originY = spacingY * (r + 1) + 50; // Center vertically somewhat
+                    x = originX;
+                    y = originY;
+                    vx = (Math.random() - 0.5);
+                    vy = (Math.random() - 0.5);
+                } else if (mode === 'LIQUID') {
+                    // Random bottom half
+                    x = Math.random() * (CANVAS_WIDTH - 20) + 10;
+                    y = CANVAS_HEIGHT - Math.random() * (CANVAS_HEIGHT / 2) - 10;
+                    vx = (Math.random() - 0.5) * 2;
+                    vy = (Math.random() - 0.5) * 2;
+                    originX = x; originY = y;
+                } else {
+                    // Random everywhere
+                    x = Math.random() * (CANVAS_WIDTH - 20) + 10;
+                    y = Math.random() * (CANVAS_HEIGHT - 20) + 10;
+                    vx = (Math.random() - 0.5) * 5;
+                    vy = (Math.random() - 0.5) * 5;
+                    originX = x; originY = y;
+                }
+
+                particles.push({ x, y, vx, vy, originX, originY });
+            }
+            particlesRef.current = particles;
+        }, [mode, particleCount]);
+
+        useEffect(() => {
+            initParticles();
+            setEnergyData([]); // Reset graph on mode change
+        }, [initParticles]);
+
+        // --- Physics Loop ---
+        const updatePhysics = () => {
+            const config = STATE_CONFIG[mode];
+            const speedMultiplier = (temperature / 50) + 0.1; // Temp affects KE
+            
+            let totalKE = 0;
+
+            particlesRef.current.forEach(p => {
+                // 1. Update Velocity based on State Logic
+                if (mode === 'SOLID') {
+                    // Spring force towards origin (Vibration)
+                    const dx = p.originX - p.x;
+                    const dy = p.originY - p.y;
+                    p.vx += dx * config.bondStrength * 0.1;
+                    p.vy += dy * config.bondStrength * 0.1;
+                    
+                    // Add random "Thermal Kick" based on temperature
+                    if (Math.random() < 0.1) {
+                        p.vx += (Math.random() - 0.5) * speedMultiplier;
+                        p.vy += (Math.random() - 0.5) * speedMultiplier;
+                    }
+                    
+                    p.vx *= config.damping;
+                    p.vy *= config.damping;
+
+                } else if (mode === 'LIQUID') {
+                    // Gravity
+                    p.vy += config.gravity;
+                    
+                    // Simple container bounds
+                    if (p.x < PARTICLE_RADIUS) { p.x = PARTICLE_RADIUS; p.vx *= -0.5; }
+                    if (p.x > CANVAS_WIDTH - PARTICLE_RADIUS) { p.x = CANVAS_WIDTH - PARTICLE_RADIUS; p.vx *= -0.5; }
+                    if (p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) { p.y = CANVAS_HEIGHT - PARTICLE_RADIUS; p.vy *= -0.5; }
+                    
+                    // Thermal Movement
+                    p.vx += (Math.random() - 0.5) * speedMultiplier * 0.2;
+                    p.vy += (Math.random() - 0.5) * speedMultiplier * 0.2;
+
+                    // Repulsion from neighbors (Simple collision avoidance)
+                    particlesRef.current.forEach(other => {
+                         if (p === other) return;
+                         const dx = p.x - other.x;
+                         const dy = p.y - other.y;
+                         const dist = Math.sqrt(dx*dx + dy*dy);
+                         if (dist < PARTICLE_RADIUS * 2.5 && dist > 0) {
+                             const force = (PARTICLE_RADIUS * 2.5 - dist) * 0.05;
+                             p.vx += (dx / dist) * force;
+                             p.vy += (dy / dist) * force;
+                         }
+                    });
+                    
+                    p.vx *= config.damping;
+                    p.vy *= config.damping;
+
+                } else { // GAS
+                    // No gravity, perfectly elastic collisions with walls
+                    if (p.x < PARTICLE_RADIUS || p.x > CANVAS_WIDTH - PARTICLE_RADIUS) p.vx *= -1;
+                    if (p.y < PARTICLE_RADIUS || p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) p.vy *= -1;
+                    
+                    // Keep bounds
+                    p.x = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_WIDTH - PARTICLE_RADIUS, p.x));
+                    p.y = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_HEIGHT - PARTICLE_RADIUS, p.y));
+
+                    // Normalize speed to match temperature (Thermostat)
+                    const currentSpeed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                    const targetSpeed = speedMultiplier * 4; 
+                    // Gently nudge towards target speed
+                    p.vx = p.vx * 0.99 + p.vx/currentSpeed * targetSpeed * 0.01; 
+                    p.vy = p.vy * 0.99 + p.vy/currentSpeed * targetSpeed * 0.01;
+                }
+
+                // 2. Update Position
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // 3. Calc Energy for Stats
+                totalKE += 0.5 * (p.vx*p.vx + p.vy*p.vy);
+            });
+
+            // Update Graph Data (every 10 frames approx)
+            if (Math.random() < 0.1) {
+                setEnergyData(prev => {
+                    const newData = [...prev, { time: prev.length, ke: (totalKE / particleCount).toFixed(2) }];
+                    if (newData.length > 50) newData.shift();
+                    return newData;
+                });
+            }
+        };
+
+        const draw = () => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const config = STATE_CONFIG[mode];
+
+            // Clear Canvas
+            ctx.fillStyle = '#0f172a'; // Slate 900
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Draw Container Border
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Draw Particles
+            ctx.fillStyle = config.color;
+            particlesRef.current.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, PARTICLE_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw bonds for Solid
+                if (mode === 'SOLID') {
+                     ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
+                     ctx.lineWidth = 1;
+                     // Draw subtle line to origin
+                     ctx.beginPath();
+                     ctx.moveTo(p.x, p.y);
+                     ctx.lineTo(p.originX, p.originY);
+                     ctx.stroke();
+                }
+            });
+        };
+
+        const animate = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(animate);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(animate);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [mode, temperature, particleCount]); // Re-bind when these change
+
+        // --- Render ---
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 font-sans">
+                {/* Header */}
+                <header className="mb-6 flex items-center space-x-3 border-b border-slate-700 pb-4">
+                    <div className="p-2 bg-blue-500/10 rounded-lg">
+                        <i data-lucide="atom" className="w-8 h-8 text-blue-400"></i>
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-white tracking-tight">Particle Motion Visualizer</h1>
+                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
+                    </div>
+                </header>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    
+                    {/* Left Column: Controls */}
+                    <div className="lg:col-span-1 space-y-6">
+                        
+                        {/* State Selector */}
+                        <div className="grid grid-cols-3 gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700">
+                            {['SOLID', 'LIQUID', 'GAS'].map(state => (
+                                <button
+                                    key={state}
+                                    onClick={() => setMode(state)}
+                                    className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                                        mode === state 
+                                        ? `bg-${STATE_CONFIG[state].color.replace('#','hex-')} text-white shadow-lg` // Simplified active class logic
+                                        : 'text-slate-400 hover:bg-slate-700'
+                                    }`}
+                                    style={{ backgroundColor: mode === state ? STATE_CONFIG[state].color : '' }}
+                                >
+                                    {state}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Sliders */}
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 backdrop-blur-sm">
+                            <h2 className="text-blue-400 font-semibold mb-4 flex items-center">
+                                <i data-lucide="thermometer" className="w-4 h-4 mr-2"></i> Conditions
+                            </h2>
+                            
+                            {/* Temperature */}
+                            <div className="mb-6">
+                                <div className="flex justify-between mb-2 text-sm">
+                                    <span className="text-slate-300">Temperature (Energy)</span>
+                                    <span className="text-blue-300 font-mono">{temperature}°C</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="100" step="1"
+                                    value={temperature}
+                                    onChange={(e) => setTemperature(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                    style={{ background: `linear-gradient(to right, #3b82f6 0%, #ef4444 100%)` }}
+                                />
+                                <div className="flex justify-between text-xs text-slate-500 mt-1">
+                                    <span>Cold</span>
+                                    <span>Hot</span>
+                                </div>
+                            </div>
+
+                            {/* Particle Count */}
+                            <div>
+                                <div className="flex justify-between mb-2 text-sm">
+                                    <span className="text-slate-300">Particle Count</span>
+                                    <span className="text-slate-300 font-mono">{particleCount}</span>
+                                </div>
+                                <input 
+                                    type="range" min="50" max="300" step="10"
+                                    value={particleCount}
+                                    onChange={(e) => setParticleCount(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Live Data */}
+                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
+                             <h3 className="text-slate-400 text-xs uppercase mb-2">Observation</h3>
+                             <p className="text-sm text-slate-300">
+                                {mode === 'SOLID' && "Particles vibrate in fixed positions. They maintain a regular lattice structure. High potential energy storage in bonds."}
+                                {mode === 'LIQUID' && "Particles slide past each other but stay close. Bonds are breaking and reforming continuously."}
+                                {mode === 'GAS' && "Particles move freely at high speeds. Kinetic energy dominates. Collisions with walls create pressure."}
+                             </p>
+                        </div>
+                    </div>
+
+                    {/* Right Column: Visualization */}
+                    <div className="lg:col-span-2 space-y-6">
+                        
+                        {/* Canvas Container */}
+                        <div className="relative rounded-xl border border-slate-700 overflow-hidden shadow-2xl bg-slate-950">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-auto block"
+                            />
+                            {/* Overlay Text */}
+                            <div className="absolute top-4 right-4 bg-slate-900/80 px-3 py-1 rounded border border-slate-700 text-xs font-mono text-slate-400">
+                                State: <span style={{color: STATE_CONFIG[mode].color}}>{mode}</span>
+                            </div>
+                        </div>
+
+                        {/* Real-time Graph */}
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 h-64">
+                            <h3 className="text-slate-300 text-sm font-semibold mb-4 flex items-center">
+                                <i data-lucide="activity" className="w-4 h-4 mr-2"></i> 
+                                Average Kinetic Energy vs Time
+                            </h3>
+                            <div className="w-full h-full pb-6">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={energyData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                        <YAxis 
+                                            domain={[0, 'auto']} 
+                                            stroke="#94a3b8" 
+                                            label={{ value: 'Avg KE', angle: -90, position: 'insideLeft', fill: '#64748b' }}
+                                        />
+                                        <XAxis hide={true} />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
+                                            itemStyle={{ color: STATE_CONFIG[mode].color }}
+                                        />
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="ke" 
+                                            stroke={STATE_CONFIG[mode].color} 
+                                            strokeWidth={2} 
+                                            dot={false}
+                                            isAnimationActive={false} 
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    setTimeout(() => lucide.createIcons(), 100);
+</script>
+</body>
+</html>
