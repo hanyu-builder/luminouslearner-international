@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greenhouse Effect Simulator | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 20px; height: 20px;
+            border-radius: 50%; background: #10b981; cursor: pointer; border: 2px solid #ffffff;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Physics Constants
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 500;
+    const GROUND_Y = 420;
+    const ATMOSPHERE_TOP = 100;
+    const SUN_X = 100;
+    const SUN_Y = 80;
+
+    const App = () => {
+        const [ghgConcentration, setGhgConcentration] = useState(20); // 0 to 100
+        const [temperature, setTemperature] = useState(15); // Celsius (Start at Earth avg)
+        const [particles, setParticles] = useState([]);
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const particlesRef = useRef([]); 
+        const energyTrappedRef = useRef(0);
+
+        // Initialize / Reset
+        useEffect(() => {
+            particlesRef.current = [];
+            energyTrappedRef.current = 0;
+        }, []);
+
+        // Simulation Loop
+        const updatePhysics = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // 1. Clear & Draw Background
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw Sky (Gradient based on GHG - dirtier sky?)
+            const skyGradient = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+            skyGradient.addColorStop(0, '#020617'); // Space
+            skyGradient.addColorStop(0.4, '#1e3a8a'); // Upper Atmos
+            skyGradient.addColorStop(1, '#60a5fa'); // Lower Atmos
+            ctx.fillStyle = skyGradient;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, GROUND_Y);
+
+            // Draw Ground
+            const groundGradient = ctx.createLinearGradient(0, GROUND_Y, 0, CANVAS_HEIGHT);
+            groundGradient.addColorStop(0, '#166534'); // Grass
+            groundGradient.addColorStop(1, '#14532d'); // Soil
+            ctx.fillStyle = groundGradient;
+            ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+
+            // Draw Sun
+            ctx.fillStyle = '#facc15';
+            ctx.shadowBlur = 40;
+            ctx.shadowColor = '#facc15';
+            ctx.beginPath();
+            ctx.arc(SUN_X, SUN_Y, 40, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Draw Atmosphere Haze (Visualizing GHG Layer)
+            const alpha = ghgConcentration / 200;
+            ctx.fillStyle = `rgba(200, 200, 200, ${alpha})`;
+            ctx.fillRect(0, ATMOSPHERE_TOP, CANVAS_WIDTH, GROUND_Y - ATMOSPHERE_TOP);
+
+            // Draw GHG Molecules (Visual dots)
+            const moleculeCount = Math.floor(ghgConcentration * 1.5);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            // We don't track molecule positions for performance, just random static drawing effect 
+            // or we could, but let's simulate collision probabilistically instead.
+            // Let's draw some static visual hints
+            for(let i=0; i<moleculeCount; i++) {
+                // Use a pseudo-random based on index to keep them static frame-to-frame without state
+                const rx = (Math.sin(i * 123.45) * 0.5 + 0.5) * CANVAS_WIDTH;
+                const ry = ATMOSPHERE_TOP + (Math.cos(i * 67.89) * 0.5 + 0.5) * (GROUND_Y - ATMOSPHERE_TOP);
+                ctx.beginPath();
+                ctx.arc(rx, ry, 2, 0, Math.PI*2);
+                ctx.fill();
+            }
+
+            // 2. Manage Particles
+            // Spawn Sun Rays (Yellow - Shortwave)
+            if (Math.random() < 0.3) {
+                particlesRef.current.push({
+                    x: SUN_X + (Math.random() - 0.5) * 60,
+                    y: SUN_Y + 40,
+                    vx: 1 + Math.random(),
+                    vy: 2 + Math.random(),
+                    type: 'sunlight',
+                    life: 1
+                });
+            }
+
+            // Update Particles
+            const newParticles = [];
+            let currentEnergy = 0;
+
+            particlesRef.current.forEach(p => {
+                // Move
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Physics per type
+                if (p.type === 'sunlight') {
+                    // Sunlight passes through atmosphere (mostly)
+                    if (p.y >= GROUND_Y) {
+                        // Hit Ground: Absorbed and re-emitted as IR
+                        // Spawn 1 or 2 IR particles moving UP
+                        if (Math.random() > 0.2) { // Albedo effect (some absorbed)
+                             newParticles.push({
+                                x: p.x,
+                                y: GROUND_Y - 5,
+                                vx: (Math.random() - 0.5) * 2,
+                                vy: -1.5 - Math.random(), // Moving UP
+                                type: 'infrared',
+                                life: 1
+                            });
+                        }
+                        return; // Remove sunlight particle
+                    }
+                } else if (p.type === 'infrared') {
+                    // Infrared (Longwave) interacts with GHG
+                    // Check if in atmosphere zone
+                    if (p.y < GROUND_Y && p.y > ATMOSPHERE_TOP) {
+                        // Collision chance based on Concentration
+                        const collisionChance = ghgConcentration / 4000; 
+                        if (Math.random() < collisionChance) {
+                            // Absorbed and Re-radiated!
+                            // Random direction
+                            p.vx = (Math.random() - 0.5) * 3;
+                            p.vy = (Math.random() - 0.5) * 3;
+                            p.reRadiated = true;
+                        }
+                    }
+
+                    // Count energy if near ground (Trapped Heat)
+                    if (p.y > GROUND_Y - 100) {
+                        currentEnergy += 1;
+                    }
+
+                    // Boundaries
+                    if (p.y < -50) return; // Escaped to space
+                    if (p.y > GROUND_Y) {
+                         p.y = GROUND_Y;
+                         p.vy *= -1; // Bounce off ground
+                    }
+                    if (p.x < 0 || p.x > CANVAS_WIDTH) p.vx *= -1;
+                }
+
+                newParticles.push(p);
+            });
+
+            particlesRef.current = newParticles;
+
+            // 3. Draw Particles
+            particlesRef.current.forEach(p => {
+                ctx.beginPath();
+                if (p.type === 'sunlight') {
+                    ctx.fillStyle = '#facc15'; // Yellow
+                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                } else {
+                    ctx.fillStyle = '#ef4444'; // Red
+                    // Draw wavy line for IR? Or just circle
+                    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                    // Visual flair for re-radiated particles
+                    if (p.reRadiated) {
+                         ctx.shadowBlur = 5;
+                         ctx.shadowColor = 'red';
+                    } else {
+                        ctx.shadowBlur = 0;
+                    }
+                }
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // 4. Update Temperature Logic (Smoothed)
+            // Base temp (-18C without atmosphere) + Factor of trapped particles
+            // Simple model: Target Temp calculated from GHG slider mainly, plus some fluctuation from particles
+            const targetTemp = -18 + (ghgConcentration * 0.6); 
+            // Smoothly interpolate
+            setTemperature(prev => prev + (targetTemp - prev) * 0.05);
+
+            requestRef.current = requestAnimationFrame(updatePhysics);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(updatePhysics);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [ghgConcentration]);
+
+        return (
+            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200">
+                {/* Navbar */}
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-emerald-500/20 p-2 rounded-lg">
+                            <i data-lucide="globe" className="w-6 h-6 text-emerald-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Greenhouse Effect Model</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Environmental Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-6 space-y-6">
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        
+                        {/* Control Panel */}
+                        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 h-fit">
+                            <h2 className="text-emerald-400 font-bold mb-6 flex items-center">
+                                <i data-lucide="settings-2" className="w-5 h-5 mr-2"></i> Atmosphere Settings
+                            </h2>
+
+                            {/* Concentration Slider */}
+                            <div className="mb-8">
+                                <div className="flex justify-between items-end mb-2">
+                                    <label className="text-slate-300 font-medium text-sm">Greenhouse Gases (CO₂, CH₄)</label>
+                                    <span className="text-emerald-400 font-mono font-bold">{ghgConcentration}%</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="100" step="1"
+                                    value={ghgConcentration}
+                                    onChange={(e) => setGhgConcentration(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500 mt-2 font-mono uppercase">
+                                    <span>None (-18°C)</span>
+                                    <span>Modern Day</span>
+                                    <span>Runaway</span>
+                                </div>
+                            </div>
+
+                            {/* Thermometer Display */}
+                            <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 flex items-center justify-between mb-6">
+                                <div>
+                                    <div className="text-slate-400 text-xs uppercase tracking-wider mb-1">Global Avg Temp</div>
+                                    <div className={`text-4xl font-bold font-mono transition-colors duration-500 ${temperature > 25 ? 'text-red-400' : temperature > 10 ? 'text-emerald-400' : 'text-blue-400'}`}>
+                                        {temperature.toFixed(1)}°C
+                                    </div>
+                                    <div className="text-slate-500 text-xs mt-1">
+                                        {temperature < -10 ? 'Ice Age' : temperature > 25 ? 'Extreme Heat' : 'Habitable'}
+                                    </div>
+                                </div>
+                                <div className="h-24 w-6 bg-slate-700 rounded-full relative overflow-hidden border border-slate-600">
+                                    <div 
+                                        className={`absolute bottom-0 w-full transition-all duration-500 ${temperature > 20 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                        style={{height: `${Math.min(100, Math.max(0, (temperature + 20) / 60 * 100))}%`}}
+                                    ></div>
+                                </div>
+                            </div>
+
+                            {/* Legend */}
+                            <div className="space-y-3 text-xs text-slate-400 border-t border-slate-700 pt-4">
+                                <div className="flex items-center">
+                                    <div className="w-3 h-3 rounded-full bg-yellow-400 mr-2 shadow-[0_0_5px_rgba(250,204,21,0.5)]"></div>
+                                    <span><strong>Sunlight (Shortwave):</strong> Passes through atmosphere freely.</span>
+                                </div>
+                                <div className="flex items-center">
+                                    <div className="w-3 h-3 rounded-full bg-red-500 mr-2 shadow-[0_0_5px_rgba(239,68,68,0.5)]"></div>
+                                    <span><strong>Infrared (Longwave):</strong> Emitted by Earth, trapped by gases.</span>
+                                </div>
+                                <div className="flex items-center">
+                                    <div className="w-3 h-3 rounded-full border border-slate-500 mr-2 bg-slate-700"></div>
+                                    <span><strong>Atmosphere Haze:</strong> Represents density of CO₂, Methane, etc.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Canvas */}
+                        <div className="lg:col-span-2 bg-black rounded-2xl border border-slate-700 overflow-hidden relative shadow-2xl">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full block object-contain bg-slate-950"
+                            />
+                            
+                            {/* Overlay Labels */}
+                            <div className="absolute top-4 left-4 bg-black/50 px-3 py-1 rounded text-xs text-slate-300 backdrop-blur-sm border border-slate-700">
+                                Outer Space
+                            </div>
+                            <div className="absolute top-1/2 left-4 bg-blue-900/30 px-3 py-1 rounded text-xs text-blue-200 backdrop-blur-sm border border-blue-500/30">
+                                Atmosphere
+                            </div>
+                            <div className="absolute bottom-4 left-4 bg-green-900/50 px-3 py-1 rounded text-xs text-green-200 backdrop-blur-sm border border-green-500/30">
+                                Earth Surface
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    if (typeof lucide !== 'undefined') {
+        setTimeout(() => lucide.createIcons(), 100);
+    }
+</script>
+</body>
+</html>
