@@ -49,14 +49,17 @@
         const [showVectors, setShowVectors] = useState(true);
         const [playbackSpeed, setPlaybackSpeed] = useState(1.0); // 1.0 or 0.2
 
-        // Physics State Refs
+        // Physics State Refs (Mutable source of truth for animation loop)
+        const simStateRef = useRef('idle'); // Fixed: Ref for loop access
+        const playbackSpeedRef = useRef(1.0); // Fixed: Ref for loop access
+        
         const busRef = useRef({ x: 50, v: 0 });
-        const personARef = useRef({ x: 0, v: 0, state: 'sitting' }); // Relative to bus
-        const personBRef = useRef({ x: 0, v: 0, state: 'standing' }); // Relative to bus
-        const ballRef = useRef({ x: 0, v: 0 }); // Relative to bus
+        const personARef = useRef({ x: 0, v: 0, state: 'sitting' });
+        const personBRef = useRef({ x: 0, v: 0, state: 'standing' });
+        const ballRef = useRef({ x: 0, v: 0 });
         const roadOffsetRef = useRef(0);
         
-        const historyRef = useRef([]); // For graph {t, vBus, vPersonB}
+        const historyRef = useRef([]); 
         const timeRef = useRef(0);
         const requestRef = useRef();
 
@@ -66,24 +69,31 @@
         const ACCEL = 0.1;
         const BUS_START_X = 100;
 
+        // --- Sync Refs with State ---
+        useEffect(() => {
+            playbackSpeedRef.current = playbackSpeed;
+        }, [playbackSpeed]);
+
         // --- Logic ---
         const resetSim = () => {
             setSimState('idle');
+            simStateRef.current = 'idle'; // Sync Ref
             setSpeed(0);
             busRef.current = { x: BUS_START_X, v: 0 };
-            personARef.current = { x: 50, v: 0, state: 'sitting' }; // Held
-            personBRef.current = { x: 200, v: 0, state: 'standing' }; // Loose
-            ballRef.current = { x: 300, v: 0 }; // Loose
+            personARef.current = { x: 50, v: 0, state: 'sitting' };
+            personBRef.current = { x: 200, v: 0, state: 'standing' };
+            ballRef.current = { x: 300, v: 0 };
             roadOffsetRef.current = 0;
             timeRef.current = 0;
             historyRef.current = [];
             cancelAnimationFrame(requestRef.current);
-            draw(); // Initial draw
+            draw(); 
         };
 
         const startDriving = () => {
             if (simState === 'idle') {
                 setSimState('moving');
+                simStateRef.current = 'moving'; // Sync Ref immediately
                 loop();
             }
         };
@@ -91,63 +101,48 @@
         const applyBrakes = () => {
             if (simState === 'moving') {
                 setSimState('braking');
+                simStateRef.current = 'braking'; // Sync Ref immediately
             }
         };
 
         const loop = () => {
-            const dt = 1 * playbackSpeed;
+            // Use Ref values inside the loop to avoid stale closures
+            const currentState = simStateRef.current;
+            const currentPlaybackSpeed = playbackSpeedRef.current;
+
+            const dt = 1 * currentPlaybackSpeed;
             timeRef.current += dt;
 
             // 1. Bus Physics
-            if (simState === 'moving') {
+            if (currentState === 'moving') {
                 if (busRef.current.v < CRUISE_SPEED) busRef.current.v += ACCEL * dt;
-            } else if (simState === 'braking') {
+            } else if (currentState === 'braking') {
                 if (busRef.current.v > 0) {
                     busRef.current.v -= BRAKE_DECEL * dt;
                     if (busRef.current.v < 0) busRef.current.v = 0;
                 }
             }
 
-            // Move Road (Visual relative motion)
+            // Move Road
             roadOffsetRef.current -= busRef.current.v * dt;
 
-            // 2. Objects Physics (Relative to Bus)
-            // Person A (Holding on): Moves with bus effectively (v_rel = 0) unless crash
-            // Person B (Inertia): Keeps moving at OLD speed relative to ground
-            // v_rel_new = v_ground - v_bus_new
-            // v_ground is constant for inertial object once braking starts
-            
-            // Let's track Ground Velocities for clarity physics
-            // V_ground_personB = initially V_bus. 
-            // When braking, V_ground_personB stays constant (Newton's 1st Law).
-            // V_rel = V_ground_personB - V_bus.
-            // Pos_rel += V_rel
-            
-            if (simState === 'moving') {
-                // Accelerating phase: Friction pulls them along
-                // Assume static friction holds them in place relative to bus
+            // 2. Objects Physics
+            if (currentState === 'moving') {
                 personBRef.current.v_ground = busRef.current.v;
                 ballRef.current.v_ground = busRef.current.v;
-            } else if (simState === 'braking') {
-                // Braking phase: 
-                // Person A held: V_ground matches Bus (Force applied by hand)
+            } else if (currentState === 'braking') {
+                // Newton's 1st Law: v_ground stays constant for loose objects
                 
-                // Person B (No friction/Loose): V_ground stays at Cruise Speed!
-                // Ball: V_ground stays at Cruise Speed
-                
-                // Update Relative Positions
-                // dx = (V_obj_ground - V_bus) * dt
                 const dX_B = (personBRef.current.v_ground - busRef.current.v) * dt;
                 personBRef.current.x += dX_B;
 
                 const dX_Ball = (ballRef.current.v_ground - busRef.current.v) * dt;
                 ballRef.current.x += dX_Ball;
 
-                // Collision detection (Front of bus is at width approx)
-                // Bus internal width ~ 350
+                // Collision
                 if (personBRef.current.x > 330) {
                     personBRef.current.x = 330;
-                    personBRef.current.v_ground = 0; // Bonk!
+                    personBRef.current.v_ground = 0;
                     personBRef.current.state = 'crashed';
                 }
                 if (ballRef.current.x > 360) {
@@ -156,11 +151,9 @@
                 }
             }
 
-            // Sync React State for UI
             setSpeed(busRef.current.v);
 
-            // Record History
-            if (timeRef.current % 5 < 1) { // Throttle
+            if (timeRef.current % 5 < 1) {
                 historyRef.current.push({
                     t: timeRef.current,
                     vBus: busRef.current.v,
@@ -170,7 +163,8 @@
 
             draw();
 
-            if (busRef.current.v > 0 || simState === 'moving' || (simState === 'braking' && personBRef.current.state !== 'crashed' && personBRef.current.v_ground > 0)) {
+            // Continue loop condition
+            if (busRef.current.v > 0 || currentState === 'moving' || (currentState === 'braking' && personBRef.current.state !== 'crashed' && personBRef.current.v_ground > 0)) {
                 requestRef.current = requestAnimationFrame(loop);
             }
         };
@@ -181,13 +175,15 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
 
+            // Use Ref value for rendering logic too
+            const currentState = simStateRef.current;
+
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // 1. Draw Background (Sky & City)
-            ctx.fillStyle = '#87ceeb'; // Sky
+            // 1. Draw Background
+            ctx.fillStyle = '#87ceeb';
             ctx.fillRect(0, 0, CANVAS_WIDTH, GROUND_Y);
             
-            // Moving buildings (Parallax)
             ctx.fillStyle = '#cbd5e1';
             const bgOffset = roadOffsetRef.current * 0.5;
             for(let i=0; i<10; i++) {
@@ -199,46 +195,36 @@
             // 2. Draw Road
             ctx.fillStyle = '#334155';
             ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
-            // Stripes
             ctx.fillStyle = '#ffffff';
             const stripeOffset = roadOffsetRef.current % 100;
             for(let i=0; i<CANVAS_WIDTH/50; i++) {
                 ctx.fillRect(i * 100 + stripeOffset, GROUND_Y + 30, 40, 10);
             }
 
-            // 3. Draw Bus (Static on screen x, but we simulate motion via background)
+            // 3. Draw Bus
             const bx = busRef.current.x;
-            const by = GROUND_Y - BUS_HEIGHT - 10; // Wheels offset
+            const by = GROUND_Y - BUS_HEIGHT - 10;
             
-            // Bus Body
-            ctx.fillStyle = '#f59e0b'; // Amber
+            ctx.fillStyle = '#f59e0b';
             ctx.fillRect(bx, by, BUS_WIDTH, BUS_HEIGHT);
-            // Windows
-            ctx.fillStyle = '#e0f2fe'; // Glass
-            ctx.fillRect(bx + 20, by + 20, 80, 60); // Driver
-            ctx.fillRect(bx + 120, by + 20, 200, 60); // Passenger area
-            // Wheels
+            ctx.fillStyle = '#e0f2fe';
+            ctx.fillRect(bx + 20, by + 20, 80, 60);
+            ctx.fillRect(bx + 120, by + 20, 200, 60);
             ctx.fillStyle = '#1e293b';
             ctx.beginPath(); ctx.arc(bx + 80, GROUND_Y - 10, 25, 0, Math.PI*2); ctx.fill();
             ctx.beginPath(); ctx.arc(bx + 320, GROUND_Y - 10, 25, 0, Math.PI*2); ctx.fill();
 
-            // 4. Draw Objects (Inside Bus)
-            // Coordinates are relative to bus top-left (bx, by)
-            
-            // Person A (Holding on)
+            // 4. Draw Objects
             drawPerson(ctx, bx + personARef.current.x, by + BUS_HEIGHT - 10, '#10b981', false, false);
-            // Strap for Person A
             ctx.beginPath();
-            ctx.moveTo(bx + personARef.current.x, by + BUS_HEIGHT - 90); // Head roughly
-            ctx.lineTo(bx + personARef.current.x + 10, by + 10); // Ceiling
+            ctx.moveTo(bx + personARef.current.x, by + BUS_HEIGHT - 90);
+            ctx.lineTo(bx + personARef.current.x + 10, by + 10);
             ctx.strokeStyle = '#64748b';
             ctx.lineWidth = 3;
             ctx.stroke();
 
-            // Person B (Loose)
             drawPerson(ctx, bx + personBRef.current.x, by + BUS_HEIGHT - 10, '#ef4444', personBRef.current.state === 'crashed', true);
 
-            // Ball
             const ballX = bx + ballRef.current.x;
             const ballY = by + BUS_HEIGHT - 10;
             ctx.beginPath();
@@ -246,14 +232,11 @@
             ctx.fillStyle = '#3b82f6';
             ctx.fill();
 
-            // 5. Vectors (Forces/Velocity)
-            if (showVectors && simState !== 'idle') {
-                // Bus Velocity
+            // 5. Vectors
+            if (showVectors && currentState !== 'idle') {
                 drawVector(ctx, bx + BUS_WIDTH/2, by - 30, busRef.current.v * 10, '#f59e0b', 'v_bus');
                 
-                // Person B Inertia Velocity
-                if (simState === 'braking') {
-                    // Draw vector relative to ground (long)
+                if (currentState === 'braking') {
                     drawVector(ctx, bx + personBRef.current.x, by + 40, personBRef.current.v_ground * 10, '#ef4444', 'Inertia');
                 }
             }
@@ -265,33 +248,24 @@
             ctx.lineWidth = 4;
             
             if (isCrashed) {
-                // Faceplant
                 ctx.beginPath();
                 ctx.moveTo(x, footY);
-                ctx.lineTo(x + 40, footY); // Body flat
+                ctx.lineTo(x + 40, footY);
                 ctx.stroke();
-                ctx.beginPath(); ctx.arc(x + 50, footY - 5, 8, 0, Math.PI*2); ctx.fill(); // Head
+                ctx.beginPath(); ctx.arc(x + 50, footY - 5, 8, 0, Math.PI*2); ctx.fill();
             } else {
-                // Standing
                 ctx.beginPath();
                 ctx.moveTo(x, footY); 
-                ctx.lineTo(x, footY - 40); // Legs
-                ctx.lineTo(x, footY - 80); // Body
+                ctx.lineTo(x, footY - 40);
+                ctx.lineTo(x, footY - 80);
                 ctx.stroke();
-                ctx.beginPath(); ctx.arc(x, footY - 90, 10, 0, Math.PI*2); ctx.fill(); // Head
+                ctx.beginPath(); ctx.arc(x, footY - 90, 10, 0, Math.PI*2); ctx.fill();
                 
-                // Arms
                 ctx.beginPath();
                 ctx.moveTo(x, footY - 70);
-                if (!isLoose) ctx.lineTo(x + 10, footY - 100); // Holding up
-                else ctx.lineTo(x + 10, footY - 50); // Hanging down
+                if (!isLoose) ctx.lineTo(x + 10, footY - 100);
+                else ctx.lineTo(x + 10, footY - 50);
                 ctx.stroke();
-
-                // Lean effect when braking?
-                if (simState === 'braking' && isLoose) {
-                    // Already moving forward, maybe tilt?
-                    // Simplified for this demo
-                }
             }
         };
 
@@ -303,7 +277,6 @@
             ctx.strokeStyle = color;
             ctx.lineWidth = 3;
             ctx.stroke();
-            // Arrowhead
             ctx.beginPath();
             ctx.moveTo(x + len, y);
             ctx.lineTo(x + len - 5, y - 5);
@@ -317,15 +290,15 @@
 
         useEffect(() => {
             draw();
+            if (window.lucide) window.lucide.createIcons();
             return () => cancelAnimationFrame(requestRef.current);
         }, []);
 
-        // Graph Component
         const Graph = () => {
             const h = 100;
             const w = 300;
             const maxV = CRUISE_SPEED + 2;
-            const maxT = timeRef.current > 50 ? timeRef.current : 50; // Dynamic scale
+            const maxT = timeRef.current > 50 ? timeRef.current : 50;
 
             const mapX = t => (t / maxT) * w;
             const mapY = v => h - (v / maxV) * h;
@@ -333,12 +306,10 @@
             return (
                 <div className="w-full h-full bg-slate-900 border border-slate-700 rounded relative overflow-hidden">
                     <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-                        {/* Bus Velocity Line (Amber) */}
                         <polyline 
                             points={historyRef.current.map(d => `${mapX(d.t)},${mapY(d.vBus)}`).join(' ')}
                             fill="none" stroke="#f59e0b" strokeWidth="2"
                         />
-                        {/* Person B Velocity Line (Red) */}
                         <polyline 
                             points={historyRef.current.map(d => `${mapX(d.t)},${mapY(d.vPerson)}`).join(' ')}
                             fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4 2"
