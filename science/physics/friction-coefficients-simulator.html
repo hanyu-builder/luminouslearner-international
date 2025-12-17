@@ -53,6 +53,7 @@
         const [boxDist, setBoxDist] = useState(50); // Position on ramp (pixels from top)
         const [velocity, setVelocity] = useState(0);
         const [simState, setSimState] = useState('static'); // static, sliding, finished
+        const [isReleased, setIsReleased] = useState(false); // New: Logic for "Let go"
         
         // Physics Calculations
         const angleRad = angle * (Math.PI / 180);
@@ -64,73 +65,82 @@
         // Refs
         const requestRef = useRef();
         const lastTimeRef = useRef(0);
+        // FIX: Use Ref for physics state to avoid stale closure issues in animation loop
+        const physicsRef = useRef({ dist: 50, vel: 0 });
 
         // --- Physics Loop ---
         const updatePhysics = (time) => {
             const dt = (time - lastTimeRef.current) / 1000;
             lastTimeRef.current = time;
 
-            // Check State
-            if (gravityParallel > maxFriction && simState !== 'finished') {
+            // Only run physics if Released
+            if (isReleased && gravityParallel > maxFriction && simState !== 'finished') {
                 if (simState === 'static') setSimState('sliding');
                 
-                // Kinetic Friction is usually lower, let's assume mu_k = 0.8 * mu_s for realism
+                // Kinetic Friction
                 const mu_k = mu * 0.8;
                 const kineticFriction = mu_k * normalForce;
                 const netForce = gravityParallel - kineticFriction;
-                const acceleration = netForce / MASS; // a = F/m
+                const acceleration = netForce / MASS;
 
-                setVelocity(v => v + acceleration * dt * 20); // Scale up for pixels
-                setBoxDist(d => d + velocity * dt + 0.5 * acceleration * dt * dt * 20);
+                // Update Physics Ref (Source of Truth)
+                physicsRef.current.vel += acceleration * dt * 20; // Scale up for pixels
+                physicsRef.current.dist += physicsRef.current.vel * dt;
+
+                // Sync to State (For Rendering)
+                setVelocity(physicsRef.current.vel);
+                setBoxDist(physicsRef.current.dist);
             } else {
                 if (simState === 'sliding') {
-                    // If angle reduced while sliding, friction might stop it
-                    // Simplified: if sliding, keep sliding unless v=0 (not handling stop logic here for simplicity)
+                    // sliding continues logic if needed
                 } else {
+                    // Not released OR friction holds it
                     setSimState('static');
                     setVelocity(0);
+                    // Also sync ref to be sure (though static shouldn't drift)
+                    physicsRef.current.vel = 0;
                 }
             }
 
             // Boundary Check
-            if (boxDist > RAMP_LENGTH - BOX_SIZE) {
+            if (physicsRef.current.dist > RAMP_LENGTH - BOX_SIZE) {
+                physicsRef.current.dist = RAMP_LENGTH - BOX_SIZE;
+                physicsRef.current.vel = 0;
                 setBoxDist(RAMP_LENGTH - BOX_SIZE);
-                setSimState('finished');
                 setVelocity(0);
-            } else if (simState !== 'finished') {
+                setSimState('finished');
+            } else if (simState !== 'finished' && isReleased) {
                 requestRef.current = requestAnimationFrame(updatePhysics);
             }
         };
 
-        // Start/Stop Loop based on state changes
-        useEffect(() => {
-            // If condition met, start loop
-            if (gravityParallel > maxFriction && simState !== 'finished') {
-                if (!requestRef.current) {
-                    lastTimeRef.current = performance.now();
-                    requestRef.current = requestAnimationFrame(updatePhysics);
-                }
-            } else {
-                // If angle reduced back to safe zone, stop sliding instantly (simplified physics)
-                // In reality it would decelerate.
-                if (simState === 'static') {
-                    cancelAnimationFrame(requestRef.current);
-                    requestRef.current = null;
-                }
-            }
-            return () => {
-                cancelAnimationFrame(requestRef.current);
-                requestRef.current = null;
-            };
-        }, [angle, mu, simState, gravityParallel, maxFriction]);
+        // Start Loop Trigger
+        const handleRelease = () => {
+            if (isReleased) return; // Already released
+            setIsReleased(true);
+            lastTimeRef.current = performance.now();
+            requestRef.current = requestAnimationFrame(updatePhysics);
+        };
 
         const resetSim = () => {
             setBoxDist(50);
             setVelocity(0);
+            
+            // FIX: Reset Physics Ref
+            physicsRef.current = { dist: 50, vel: 0 };
+            
             setSimState('static');
+            setIsReleased(false); // Reset release state
             cancelAnimationFrame(requestRef.current);
             requestRef.current = null;
         };
+
+        // Auto-reset if parameters change
+        useEffect(() => {
+            if (isReleased) {
+                resetSim();
+            }
+        }, [angle, mu]);
 
         // --- Rendering ---
         const canvasRef = useRef(null);
@@ -153,15 +163,14 @@
             ctx.lineTo(endX, PIVOT_Y);
             ctx.closePath();
             
-            // Texture based on Mu (Roughness)
             const roughness = Math.floor(mu * 255);
-            ctx.fillStyle = `rgb(${200-roughness}, ${200-roughness}, ${200-roughness})`; // Darker = Rougher
+            ctx.fillStyle = `rgb(${200-roughness}, ${200-roughness}, ${200-roughness})`;
             ctx.fill();
             ctx.strokeStyle = '#94a3b8';
             ctx.lineWidth = 4;
             ctx.stroke();
 
-            // Draw Angle Arc
+            // Angle
             ctx.beginPath();
             ctx.strokeStyle = '#facc15';
             ctx.lineWidth = 2;
@@ -172,71 +181,56 @@
             ctx.fillText(`${angle}°`, PIVOT_X + 60, PIVOT_Y - 10);
 
             // 2. Draw Box
-            // Box position is calculated from Top-Left of ramp vector? 
-            // Let's say boxDist is from the TOP (endX, endY) downwards.
-            
             const startX = endX;
             const startY = endY;
             
-            // Vector down the slope
             const dx = -Math.cos(angleRad) * boxDist;
             const dy = Math.sin(angleRad) * boxDist;
             
             const boxCenterX = startX + dx;
             const boxCenterY = startY + dy;
 
-            // Box needs to be rotated
             ctx.save();
             ctx.translate(boxCenterX, boxCenterY);
-            ctx.rotate(-angleRad); // Rotate to align with slope
+            ctx.rotate(-angleRad);
             
-            // Draw Box relative to center
-            // Box sits ON the line. Center Y needs offset -BOX_SIZE/2
             ctx.fillStyle = '#3b82f6';
             ctx.fillRect(-BOX_SIZE/2, -BOX_SIZE, BOX_SIZE, BOX_SIZE);
             
-            // Mass Text
             ctx.fillStyle = 'white';
             ctx.font = 'bold 12px sans-serif';
             ctx.fillText("m", -5, -BOX_SIZE/2 + 4);
             
             ctx.restore();
 
-            // 3. Draw Force Vectors (at Box Center)
-            // Need absolute coordinates for center of mass
-            const comOffsetX = -Math.sin(angleRad) * (BOX_SIZE/2); // Normal offset X
-            const comOffsetY = -Math.cos(angleRad) * (BOX_SIZE/2); // Normal offset Y
+            // 3. Draw Forces
+            const comOffsetX = -Math.sin(angleRad) * (BOX_SIZE/2); 
+            const comOffsetY = -Math.cos(angleRad) * (BOX_SIZE/2);
             const comX = boxCenterX + comOffsetX;
             const comY = boxCenterY + comOffsetY;
 
             const scale = 2; 
 
-            // Gravity (Straight Down)
             drawArrow(ctx, comX, comY, 0, mg * scale, '#94a3b8', 'mg');
-
-            // Normal Force (Perpendicular Up)
-            // Angle: -90 - angle? No. Normal to slope. 
-            // Slope is angleRad up from horizontal left.. wait.
-            // Slope vector is (-cos, sin). Normal vector is (sin, cos)?
-            // Slope angle is (180 + angle) mathematically from positive X.
-            // Normal direction: -PI/2 - angleRad
             drawArrow(ctx, comX, comY, -Math.PI/2 - angleRad, normalForce * scale, '#10b981', 'N');
-
-            // Parallel Gravity Component (Down Slope)
             drawArrow(ctx, comX, comY, Math.PI - angleRad, gravityParallel * scale, '#ef4444', 'mg sinθ');
 
-            // Friction (Up Slope)
-            // Magnitude: min(maxFriction, gravityParallel) if static
-            // If sliding, kinetic friction.
             let currentFriction = 0;
-            if (simState === 'static') {
-                currentFriction = gravityParallel; // Matches gravity to hold it
+            // Logic for visual friction arrow
+            if (!isReleased) {
+                // Ideally matches gravity to be static, limited by max
+                // Just visualize max potential for clarity? Or actual static?
+                // Let's show max static potential as a ghost, and actual static as solid?
+                // For simplicity: Show Max Static if held
+                currentFriction = maxFriction; 
+            } else if (simState === 'static') {
+                currentFriction = gravityParallel; 
             } else {
-                currentFriction = mu * 0.8 * normalForce; // Kinetic
+                currentFriction = mu * 0.8 * normalForce;
             }
-            drawArrow(ctx, comX, comY, -angleRad, currentFriction * scale, '#f59e0b', 'f');
+            drawArrow(ctx, comX, comY, -angleRad, currentFriction * scale, '#f59e0b', isReleased ? 'f' : 'f_max');
 
-        }, [angle, mu, boxDist, simState]);
+        }, [angle, mu, boxDist, simState, isReleased]);
 
         const drawArrow = (ctx, x, y, angle, len, color, label) => {
             if (len < 1) return;
@@ -250,7 +244,6 @@
             ctx.lineTo(toX, toY);
             ctx.stroke();
 
-            // Arrowhead
             const headLen = 6;
             ctx.beginPath();
             ctx.fillStyle = color;
@@ -264,20 +257,23 @@
             ctx.fillText(label, toX + 5, toY);
         };
 
-        // Init icons
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
         });
 
-        // Determine status message
+        // Status Logic
         let statusColor = 'text-slate-400';
-        let statusText = 'Static Equilibrium';
-        if (gravityParallel > maxFriction) {
+        let statusText = 'Ready to Release';
+        
+        if (!isReleased) {
+            statusText = 'HELD IN PLACE (Adjust & Release)';
+            statusColor = 'text-blue-400';
+        } else if (gravityParallel > maxFriction) {
             statusColor = 'text-red-400';
             statusText = 'SLIDING! (mg sinθ > f_max)';
-        } else if (gravityParallel > maxFriction * 0.95) {
-            statusColor = 'text-yellow-400';
-            statusText = 'Critical Point! (About to slip)';
+        } else {
+            statusColor = 'text-emerald-400';
+            statusText = 'STATIC (Friction wins)';
         }
 
         return (
@@ -313,48 +309,72 @@
                         </div>
 
                         {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col gap-6">
                             
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
-                                    <span>Coefficient of Friction (μ)</span>
-                                    <span className="text-emerald-400">{mu.toFixed(2)}</span>
-                                </label>
-                                <input 
-                                    type="range" min="0.1" max="1.0" step="0.05"
-                                    value={mu}
-                                    onChange={(e) => {
-                                        setMu(Number(e.target.value));
-                                        resetSim();
-                                    }}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                                    <span>Ice (0.1)</span>
-                                    <span>Wood (0.5)</span>
-                                    <span>Rubber (1.0)</span>
+                            <div className="flex flex-wrap gap-8 items-center">
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
+                                        <span>Coefficient of Friction (μ)</span>
+                                        <span className="text-emerald-400">{mu.toFixed(2)}</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.1" max="1.0" step="0.05"
+                                        value={mu}
+                                        onChange={(e) => {
+                                            setMu(Number(e.target.value));
+                                            setIsReleased(false); // Reset on change
+                                        }}
+                                        disabled={isReleased && simState === 'sliding'}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                    />
+                                    <div className="flex justify-between text-xs text-slate-500 mt-1">
+                                        <span>Ice (0.1)</span>
+                                        <span>Wood (0.5)</span>
+                                        <span>Rubber (1.0)</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
+                                        <span>Ramp Angle (θ)</span>
+                                        <span className="text-yellow-400">{angle}°</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0" max="60" step="1"
+                                        value={angle}
+                                        onChange={(e) => {
+                                            setAngle(Number(e.target.value));
+                                            setIsReleased(false); // Reset on change
+                                        }}
+                                        disabled={isReleased && simState === 'sliding'}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                    />
                                 </div>
                             </div>
 
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
-                                    <span>Ramp Angle (θ)</span>
-                                    <span className="text-yellow-400">{angle}°</span>
-                                </label>
-                                <input 
-                                    type="range" min="0" max="60" step="1"
-                                    value={angle}
-                                    onChange={(e) => setAngle(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
-
+                            {/* Release Button */}
                             <button 
-                                onClick={resetSim}
-                                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors flex items-center shadow-lg"
+                                onClick={handleRelease}
+                                disabled={isReleased}
+                                className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center transition-all ${
+                                    isReleased 
+                                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed' 
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                                }`}
                             >
-                                <i data-lucide="rotate-ccw" className="w-5 h-5 mr-2"></i> Reset Box
+                                <i data-lucide={isReleased ? "lock" : "play"} className="w-6 h-6 mr-2"></i>
+                                {isReleased ? "Experiment Running / Finished" : "Release Box (放手)"}
                             </button>
+                            
+                            {isReleased && (
+                                <button 
+                                    onClick={resetSim}
+                                    className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-bold transition-colors"
+                                >
+                                    Reset to Start
+                                </button>
+                            )}
+
                         </div>
                     </div>
 
