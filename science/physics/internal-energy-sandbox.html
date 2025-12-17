@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internal Energy Sandbox | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Prop-types (Required for Recharts UMD) -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+
+    <!-- Recharts (Pinned version) -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #10b981;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+    const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } = window.Recharts;
+
+    // --- Physics Constants ---
+    const CANVAS_WIDTH = 500;
+    const CANVAS_HEIGHT = 350;
+    const PARTICLE_RADIUS = 5;
+
+    const STATE_CONFIG = {
+        SOLID: { 
+            color: '#3b82f6', 
+            basePE: 20, // Low PE
+            damping: 0.9,
+            moveType: 'vibrate'
+        },
+        LIQUID: { 
+            color: '#22c55e', 
+            basePE: 50, // Medium PE
+            damping: 0.95,
+            moveType: 'flow'
+        },
+        GAS: { 
+            color: '#ef4444', 
+            basePE: 100, // High PE
+            damping: 1.0,
+            moveType: 'fly'
+        }
+    };
+
+    const App = () => {
+        // --- State ---
+        const [mass, setMass] = useState(50); // Number of particles
+        const [temperature, setTemperature] = useState(50); // Affects Speed (KE)
+        const [state, setState] = useState('SOLID'); // Affects Behavior & PE
+        const [particles, setParticles] = useState([]);
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // --- Energy Calculations ---
+        // KE = 0.5 * m * v^2 (Simulated by Temperature)
+        // PE = Based on State
+        // Total U = (KE + PE) * Mass Factor
+        const kineticEnergyPerParticle = useMemo(() => temperature * 1.5, [temperature]);
+        const potentialEnergyPerParticle = useMemo(() => STATE_CONFIG[state].basePE, [state]);
+        
+        const totalKE = Math.round(kineticEnergyPerParticle * mass);
+        const totalPE = Math.round(potentialEnergyPerParticle * mass);
+        const totalU = totalKE + totalPE;
+
+        const chartData = [
+            {
+                name: 'System Energy',
+                PE: totalPE,
+                KE: totalKE,
+            }
+        ];
+
+        // --- Particle Initialization ---
+        useEffect(() => {
+            const newParticles = [];
+            const cols = Math.floor(Math.sqrt(mass * (CANVAS_WIDTH/CANVAS_HEIGHT)));
+            const spacing = CANVAS_WIDTH / (cols + 2);
+
+            for (let i = 0; i < mass; i++) {
+                // Initial Grid Position for Solids
+                const r = Math.floor(i / cols);
+                const c = i % cols;
+                const originX = 50 + c * spacing;
+                const originY = 50 + r * spacing;
+
+                newParticles.push({
+                    x: originX,
+                    y: originY,
+                    vx: (Math.random() - 0.5),
+                    vy: (Math.random() - 0.5),
+                    originX: originX,
+                    originY: originY
+                });
+            }
+            setParticles(newParticles);
+        }, [mass]); // Re-init if mass changes
+
+        // --- Physics Loop ---
+        const updatePhysics = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Container Box
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            const config = STATE_CONFIG[state];
+            // Speed factor based on temperature
+            const speed = (temperature / 20) + 0.2;
+
+            particles.forEach(p => {
+                
+                // --- Movement Logic ---
+                if (config.moveType === 'vibrate') {
+                    // Solid: Spring force to origin + Thermal Jiggle
+                    const k = 0.1; // Spring constant
+                    const ax = (p.originX - p.x) * k;
+                    const ay = (p.originY - p.y) * k;
+                    
+                    p.vx += ax;
+                    p.vy += ay;
+                    
+                    // Thermal kick
+                    if (Math.random() < 0.1) {
+                        p.vx += (Math.random() - 0.5) * speed;
+                        p.vy += (Math.random() - 0.5) * speed;
+                    }
+                    
+                    p.vx *= 0.9; // High damping for solid
+                    p.vy *= 0.9;
+
+                } else if (config.moveType === 'flow') {
+                    // Liquid: Gravity + Containment + Sliding
+                    p.vy += 0.1; // Gravity
+                    
+                    // Thermal movement
+                    p.vx += (Math.random() - 0.5) * speed * 0.5;
+                    p.vy += (Math.random() - 0.5) * speed * 0.5;
+
+                    // Bounds (Bottom half of container usually)
+                    if (p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) {
+                        p.y = CANVAS_HEIGHT - PARTICLE_RADIUS;
+                        p.vy *= -0.5;
+                    }
+                    if (p.x < PARTICLE_RADIUS || p.x > CANVAS_WIDTH - PARTICLE_RADIUS) p.vx *= -0.5;
+
+                    p.vx *= 0.95;
+                    p.vy *= 0.95;
+
+                } else {
+                    // Gas: Free flight + Elastic Collisions
+                    // Normalize velocity to match temperature
+                    const currSpeed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                    if (currSpeed === 0) { p.vx = speed; p.vy = speed; }
+                    else {
+                        p.vx = (p.vx / currSpeed) * speed * 2;
+                        p.vy = (p.vy / currSpeed) * speed * 2;
+                    }
+
+                    // Bounds
+                    if (p.x < PARTICLE_RADIUS || p.x > CANVAS_WIDTH - PARTICLE_RADIUS) p.vx *= -1;
+                    if (p.y < PARTICLE_RADIUS || p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) p.vy *= -1;
+                }
+
+                // Update Position
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Keep inside canvas (safety)
+                p.x = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_WIDTH - PARTICLE_RADIUS, p.x));
+                p.y = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_HEIGHT - PARTICLE_RADIUS, p.y));
+
+                // Draw
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, PARTICLE_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = config.color;
+                ctx.fill();
+            });
+
+            requestRef.current = requestAnimationFrame(updatePhysics);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(updatePhysics);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [state, temperature, particles]);
+
+        // --- Render UI ---
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
+                {/* Header */}
+                <header className="mb-8 flex items-center space-x-3 border-b border-slate-700 pb-4">
+                    <div className="p-2 bg-amber-500/10 rounded-lg">
+                        <i data-lucide="zap" className="w-8 h-8 text-amber-400"></i>
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-white tracking-tight">Internal Energy Sandbox</h1>
+                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
+                    </div>
+                </header>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* LEFT: Controls (4 cols) */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 backdrop-blur-sm">
+                            <h2 className="text-emerald-400 font-semibold mb-6 flex items-center">
+                                <i data-lucide="sliders" className="w-4 h-4 mr-2"></i> System Variables
+                            </h2>
+
+                            {/* Mass Slider */}
+                            <div className="mb-6">
+                                <div className="flex justify-between mb-2 text-sm">
+                                    <span className="text-slate-300 flex items-center">
+                                        <i data-lucide="scale" className="w-3 h-3 mr-1"></i> Mass (Particles)
+                                    </span>
+                                    <span className="text-emerald-300 font-mono">{mass}</span>
+                                </div>
+                                <input 
+                                    type="range" min="10" max="200" step="10"
+                                    value={mass}
+                                    onChange={(e) => setMass(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                />
+                            </div>
+
+                            {/* Temperature Slider */}
+                            <div className="mb-6">
+                                <div className="flex justify-between mb-2 text-sm">
+                                    <span className="text-slate-300 flex items-center">
+                                        <i data-lucide="thermometer" className="w-3 h-3 mr-1"></i> Temperature
+                                    </span>
+                                    <span className="text-amber-300 font-mono">{temperature}°C</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="100" step="1"
+                                    value={temperature}
+                                    onChange={(e) => setTemperature(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                />
+                            </div>
+
+                            {/* State Selector */}
+                            <div className="mb-2">
+                                <div className="text-slate-300 text-sm mb-2 flex items-center">
+                                    <i data-lucide="layers" className="w-3 h-3 mr-1"></i> State of Matter
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {['SOLID', 'LIQUID', 'GAS'].map(s => (
+                                        <button
+                                            key={s}
+                                            onClick={() => setState(s)}
+                                            className={`py-2 rounded-lg text-xs font-bold transition-all border ${
+                                                state === s 
+                                                ? `bg-${STATE_CONFIG[s].color.replace('#','hex-')} border-${STATE_CONFIG[s].color.replace('#','hex-')} text-white shadow-md` 
+                                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                                            }`}
+                                            style={{ 
+                                                backgroundColor: state === s ? STATE_CONFIG[s].color : '',
+                                                borderColor: state === s ? STATE_CONFIG[s].color : ''
+                                            }}
+                                        >
+                                            {s}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Concept Note */}
+                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-sm text-slate-300">
+                            <p className="mb-2"><strong className="text-amber-400">Kinetic Energy (KE):</strong> Changed by Temperature (Speed).</p>
+                            <p><strong className="text-purple-400">Potential Energy (PE):</strong> Changed by State (Bonds).</p>
+                        </div>
+
+                    </div>
+
+                    {/* RIGHT: Visuals (8 cols) */}
+                    <div className="lg:col-span-8 space-y-6">
+                        
+                        {/* Simulation View */}
+                        <div className="bg-slate-950 rounded-xl border border-slate-700 overflow-hidden relative h-[350px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT} 
+                                className="w-full h-full block"
+                            />
+                            <div className="absolute top-3 right-3 bg-slate-900/80 px-3 py-1 rounded border border-slate-600 text-xs font-mono text-slate-400">
+                                View: Microscopic
+                            </div>
+                        </div>
+
+                        {/* Energy Graph */}
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 h-64">
+                            <h3 className="text-slate-300 text-sm font-semibold mb-4 flex items-center">
+                                <i data-lucide="bar-chart-2" className="w-4 h-4 mr-2"></i> 
+                                Total Internal Energy (U) Breakdown
+                            </h3>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart layout="vertical" data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={false} />
+                                    <XAxis type="number" stroke="#94a3b8" />
+                                    <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} hide />
+                                    <Tooltip 
+                                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
+                                        cursor={{fill: 'transparent'}}
+                                    />
+                                    <Legend />
+                                    <Bar dataKey="PE" name="Potential Energy (State)" stackId="a" fill="#8b5cf6" radius={[0, 0, 0, 0]} />
+                                    <Bar dataKey="KE" name="Kinetic Energy (Temp)" stackId="a" fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    setTimeout(() => lucide.createIcons(), 100);
+</script>
+</body>
+</html>
