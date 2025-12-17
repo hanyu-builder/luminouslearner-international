@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Charles's Law Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; background: #f97316; cursor: pointer; border: 2px solid #ffffff;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 300;
+    const CANVAS_HEIGHT = 450; // Taller for piston movement
+    const CYLINDER_WIDTH = 180;
+    const CYLINDER_BOTTOM = 380;
+    const PARTICLE_COUNT = 50;
+
+    const App = () => {
+        // State
+        const [tempC, setTempC] = useState(25); // Celsius (-200 to 200)
+        const [showExtrapolation, setShowExtrapolation] = useState(false);
+        const [volume, setVolume] = useState(0); // Calculated
+        const [particles, setParticles] = useState([]);
+
+        const canvasRef = useRef(null);
+        const graphCanvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // Initialize Particles
+        useEffect(() => {
+            const ps = [];
+            for(let i=0; i<PARTICLE_COUNT; i++) {
+                ps.push({
+                    x: Math.random() * (CYLINDER_WIDTH - 20),
+                    y: Math.random() * 200,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: (Math.random() - 0.5) * 2,
+                    phase: Math.random() * Math.PI * 2
+                });
+            }
+            setParticles(ps);
+        }, []);
+
+        // Calculate Volume based on Charles's Law
+        // V = V0 * (T_k / T0_k)
+        // Let's assume V=100 units at 0°C (273K)
+        // V = 100 * ( (273+t) / 273 )
+        useEffect(() => {
+            const tempK = tempC + 273.15;
+            // Limit minimum physical volume (particles take space)
+            const v = Math.max(10, 50 * (tempK / 273.15)); 
+            setVolume(v);
+        }, [tempC]);
+
+        // --- Physics Loop ---
+        const updatePhysics = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Map Volume to Height
+            // Let's say Volume 50 = 150px height
+            const cylinderHeight = volume * 3.0; 
+            const pistonY = CYLINDER_BOTTOM - cylinderHeight;
+
+            // 1. Clear & Draw
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            const centerX = CANVAS_WIDTH / 2;
+            const leftX = centerX - CYLINDER_WIDTH / 2;
+
+            // Draw Cylinder (Glass)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 4;
+            // Draw gas area
+            ctx.fillRect(leftX, pistonY, CYLINDER_WIDTH, cylinderHeight);
+            // Draw walls (Open top)
+            ctx.beginPath();
+            ctx.moveTo(leftX, 50);
+            ctx.lineTo(leftX, CYLINDER_BOTTOM);
+            ctx.lineTo(leftX + CYLINDER_WIDTH, CYLINDER_BOTTOM);
+            ctx.lineTo(leftX + CYLINDER_WIDTH, 50);
+            ctx.stroke();
+
+            // Draw Piston (Moves freely)
+            ctx.fillStyle = '#475569'; // Dark grey
+            ctx.fillRect(leftX + 2, pistonY - 15, CYLINDER_WIDTH - 4, 15); // Piston head
+            
+            // Draw Weight on Piston (To show constant pressure)
+            ctx.fillStyle = '#fbbf24'; // Gold weight
+            ctx.fillRect(centerX - 20, pistonY - 45, 40, 30);
+            ctx.fillStyle = '#000';
+            ctx.font = '10px sans-serif';
+            ctx.fillText("P", centerX - 3, pistonY - 26);
+
+            // Draw Thermometer / Heat Source
+            if (tempC > 25) {
+                // Flame
+                const intensity = (tempC - 25) / 200;
+                ctx.fillStyle = `rgba(239, 68, 68, ${intensity})`;
+                ctx.beginPath();
+                ctx.moveTo(centerX - 20, CYLINDER_BOTTOM + 5);
+                ctx.lineTo(centerX, CYLINDER_BOTTOM - 15);
+                ctx.lineTo(centerX + 20, CYLINDER_BOTTOM + 5);
+                ctx.fill();
+            } else if (tempC < 0) {
+                // Ice
+                const intensity = Math.abs(tempC) / 200;
+                ctx.fillStyle = `rgba(56, 189, 248, ${intensity})`;
+                ctx.fillRect(leftX, CYLINDER_BOTTOM + 2, CYLINDER_WIDTH, 10);
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#bae6fd';
+                ctx.fillText("❄️ Cooling ❄️", centerX - 35, CYLINDER_BOTTOM + 25);
+            }
+
+            // 2. Particle Physics
+            // Speed depends on Temp (KE ~ T)
+            // Scale: 273K = speed 1.0
+            const tempK = tempC + 273.15;
+            const speedFactor = Math.sqrt(Math.max(0, tempK)) / 12;
+
+            ctx.fillStyle = tempC > 50 ? '#f87171' : tempC < 0 ? '#60a5fa' : '#a855f7';
+
+            particles.forEach(p => {
+                p.x += p.vx * speedFactor;
+                p.y += p.vy * speedFactor;
+
+                // Walls (Left/Right)
+                if (p.x < leftX + 5) { p.x = leftX + 5; p.vx *= -1; }
+                if (p.x > leftX + CYLINDER_WIDTH - 5) { p.x = leftX + CYLINDER_WIDTH - 5; p.vx *= -1; }
+
+                // Floor / Piston
+                if (p.y > CYLINDER_BOTTOM - 5) { p.y = CYLINDER_BOTTOM - 5; p.vy *= -1; }
+                if (p.y < pistonY + 5) { 
+                    p.y = pistonY + 5; 
+                    p.vy *= -1; 
+                    // Add slight jitter to piston to show collision?
+                }
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            requestRef.current = requestAnimationFrame(updatePhysics);
+        };
+
+        // --- Graph Drawing ---
+        useEffect(() => {
+            const ctx = graphCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            const w = ctx.canvas.width;
+            const h = ctx.canvas.height;
+            const padding = 40;
+
+            // Clear
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, w, h);
+
+            // Axes
+            // X-Axis: Temp (-300 to 200)
+            // Y-Axis: Volume (0 to 100)
+            const xMin = -300, xMax = 200;
+            const yMin = 0, yMax = 100;
+
+            const mapX = (t) => padding + ((t - xMin) / (xMax - xMin)) * (w - 2 * padding);
+            const mapY = (v) => h - padding - ((v - yMin) / (yMax - yMin)) * (h - 2 * padding);
+
+            // Draw Grid/Axes
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1;
+            
+            // X Axis line (at Y=0 volume? No, graph usually puts axis at bottom)
+            // Let's draw axes box
+            ctx.strokeRect(padding, padding, w - 2 * padding, h - 2 * padding);
+
+            // Zero degree line
+            const zeroX = mapX(0);
+            ctx.strokeStyle = '#64748b';
+            ctx.setLineDash([2, 4]);
+            ctx.beginPath(); ctx.moveTo(zeroX, padding); ctx.lineTo(zeroX, h - padding); ctx.stroke();
+            
+            // -273 line
+            const absZeroX = mapX(-273.15);
+            ctx.strokeStyle = '#ef4444';
+            ctx.beginPath(); ctx.moveTo(absZeroX, padding); ctx.lineTo(absZeroX, h - padding); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText("-273°C", absZeroX, h - 25);
+            ctx.fillText("0°C", zeroX, h - 25);
+            ctx.fillText("200°C", mapX(200), h - 25);
+            ctx.fillText("Temperature (°C)", w/2, h - 10);
+            
+            ctx.save();
+            ctx.translate(15, h/2);
+            ctx.rotate(-Math.PI/2);
+            ctx.fillText("Volume (L)", 0, 0);
+            ctx.restore();
+
+            // Draw Theoretical Line (V = kT)
+            // V at 0C = 50. V at -273 = 0.
+            ctx.beginPath();
+            ctx.strokeStyle = '#fb923c'; // Orange
+            ctx.lineWidth = 2;
+            
+            // Draw solid line from current T back to some point, or whole line?
+            // "Show Extrapolation" logic
+            const currentX = mapX(tempC);
+            const currentY = mapY(volume);
+            
+            // Solid line (simulated range)
+            ctx.moveTo(mapX(200), mapY(50 * (473.15/273.15))); // Top right roughly
+            
+            // Let's just draw the line based on the formula used: V = 50 * (T_k / 273.15)
+            // Point 1: T=200
+            const t1 = 200;
+            const v1 = 50 * ((200+273.15)/273.15);
+            // Point 2: T = -200 (limit of sim control)
+            const t2 = -200;
+            const v2 = 50 * ((-200+273.15)/273.15);
+
+            ctx.beginPath();
+            ctx.moveTo(mapX(t1), mapY(v1));
+            
+            if (showExtrapolation) {
+                // Draw all the way to -273
+                ctx.lineTo(mapX(t2), mapY(v2)); // Solid part
+                ctx.stroke();
+
+                // Dashed extrapolation part
+                ctx.beginPath();
+                ctx.strokeStyle = '#ef4444';
+                ctx.setLineDash([5, 5]);
+                ctx.moveTo(mapX(t2), mapY(v2));
+                ctx.lineTo(mapX(-273.15), mapY(0));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            } else {
+                ctx.lineTo(mapX(t2), mapY(v2));
+                ctx.stroke();
+            }
+
+            // Current Point Dot
+            ctx.beginPath();
+            ctx.arc(currentX, currentY, 6, 0, Math.PI*2);
+            ctx.fillStyle = '#fb923c';
+            ctx.fill();
+            ctx.stroke();
+
+        }, [tempC, volume, showExtrapolation]);
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(updatePhysics);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [tempC, volume]);
+
+        return (
+            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-orange-500/20 p-2 rounded-lg">
+                            <i data-lucide="thermometer-sun" className="w-6 h-6 text-orange-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Charles's Law Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Gas Laws
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    {/* Left: Cylinder */}
+                    <div className="lg:col-span-5 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-xl flex flex-col items-center">
+                            <h2 className="text-orange-400 font-bold mb-4 w-full flex items-center">
+                                <i data-lucide="beaker" className="w-5 h-5 mr-2"></i> Experiment Setup
+                            </h2>
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-auto"
+                            />
+                            <div className="text-xs text-slate-500 mt-2 flex justify-between w-full px-8">
+                                <span>Weight = Constant P</span>
+                                <span>Volume Varies</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Controls & Graph */}
+                    <div className="lg:col-span-7 space-y-6">
+                        
+                        {/* Dashboard */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-orange-500"></div>
+                                <div className="text-slate-400 text-xs uppercase tracking-wider mb-1">Temperature (T)</div>
+                                <div className="text-3xl font-bold text-white font-mono">{tempC}°C</div>
+                                <div className="text-sm text-orange-400">{(tempC + 273.15).toFixed(2)} K</div>
+                            </div>
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-center relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                                <div className="text-slate-400 text-xs uppercase tracking-wider mb-1">Volume (V)</div>
+                                <div className="text-3xl font-bold text-white font-mono">{volume.toFixed(1)}<span className="text-sm ml-1 text-slate-500">L</span></div>
+                                <div className="text-xs text-slate-500 mt-1">V / T(K) = {(volume / (tempC+273.15)).toFixed(3)}</div>
+                            </div>
+                        </div>
+
+                        {/* Slider */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <label className="flex justify-between text-sm mb-4 text-slate-300 font-bold">
+                                <span>Adjust Heat Source</span>
+                                <span className={tempC > 0 ? "text-red-400" : "text-blue-400"}>
+                                    {tempC > 0 ? "Heating" : "Cooling"}
+                                </span>
+                            </label>
+                            <input 
+                                type="range" min="-200" max="200" step="1"
+                                value={tempC}
+                                onChange={(e) => setTempC(Number(e.target.value))}
+                                className="w-full h-3 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                            />
+                            <div className="flex justify-between text-xs text-slate-500 mt-2">
+                                <span>-200°C (Deep Freeze)</span>
+                                <span>25°C</span>
+                                <span>200°C (Oven)</span>
+                            </div>
+                        </div>
+
+                        {/* Graph */}
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-xl relative">
+                            <div className="flex justify-between items-center mb-2">
+                                <h3 className="text-white font-bold text-sm">Volume vs. Temperature Graph</h3>
+                                <button 
+                                    onClick={() => setShowExtrapolation(!showExtrapolation)}
+                                    className={`text-xs px-3 py-1 rounded border transition-colors ${showExtrapolation ? 'bg-red-500/20 text-red-400 border-red-500' : 'bg-slate-700 text-slate-400 border-slate-600'}`}
+                                >
+                                    {showExtrapolation ? "Hide Extrapolation" : "Show Absolute Zero"}
+                                </button>
+                            </div>
+                            <canvas 
+                                ref={graphCanvasRef} 
+                                width={600} 
+                                height={350}
+                                className="w-full h-full block rounded-xl bg-slate-900"
+                            />
+                            {showExtrapolation && (
+                                <div className="absolute bottom-12 left-12 bg-slate-800/90 p-2 rounded border border-red-500/50 text-xs text-red-300 max-w-[200px]">
+                                    <strong>Absolute Zero (-273.15°C):</strong><br/>
+                                    The theoretical point where gas volume would become zero because particles stop moving.
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    if (typeof lucide !== 'undefined') {
+        setTimeout(() => lucide.createIcons(), 100);
+    }
+</script>
+</body>
+</html>
