@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conduction Rate Sim | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Prop-types (Required for Recharts UMD) -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+
+    <!-- Recharts (Pinned version) -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; background: #10b981; cursor: pointer;
+        }
+        canvas {
+            image-rendering: pixelated; /* Makes the heat map look sharper */
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } = window.Recharts;
+
+    // --- Physics Constants ---
+    const ROD_LENGTH = 50; // Number of segments
+    const DT = 0.1; // Time step
+    const DX = 1; // Space step
+    const HOT_TEMP = 100;
+    const ROOM_TEMP = 20;
+    const WAX_MELT_TEMP = 45; // Temp at which wax drops
+
+    // Material Database (Approx Thermal Diffusivity alpha * scaling factor)
+    // alpha = k / (rho * c)
+    const MATERIALS = {
+        "Copper": { name: "Copper", alpha: 1.1, color: "#d97706" }, // High alpha
+        "Aluminum": { name: "Aluminum", alpha: 0.84, color: "#94a3b8" },
+        "Iron": { name: "Iron", alpha: 0.23, color: "#475569" },
+        "Steel": { name: "Steel", alpha: 0.13, color: "#334155" },
+        "Glass": { name: "Glass (Insulator)", alpha: 0.0034, color: "#38bdf8" } // Very slow
+    };
+
+    const App = () => {
+        // --- State ---
+        const [materialA, setMaterialA] = useState("Copper");
+        const [materialB, setMaterialB] = useState("Iron");
+        const [isRunning, setIsRunning] = useState(false);
+        const [time, setTime] = useState(0);
+        
+        // Simulation Data (Arrays of temperature)
+        const tempARef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
+        const tempBRef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
+        
+        // Graph Data
+        const [graphData, setGraphData] = useState([]);
+        
+        // Wax Beads State [boolean, boolean, boolean] for positions 25%, 50%, 75%
+        const [waxA, setWaxA] = useState([true, true, true]);
+        const [waxB, setWaxB] = useState([true, true, true]);
+
+        const requestRef = useRef();
+
+        // --- Helper: Heat Equation Solver ---
+        // Explicit Finite Difference Method: T_new[i] = T[i] + r * (T[i+1] - 2T[i] + T[i-1])
+        // r = alpha * dt / dx^2
+        const solveHeatStep = (tempArray, alpha) => {
+            const r = alpha * DT / (DX * DX);
+            const newTemps = [...tempArray];
+            
+            // Boundary Condition: Left end is HOT
+            newTemps[0] = HOT_TEMP; 
+
+            // Internal nodes
+            for (let i = 1; i < ROD_LENGTH - 1; i++) {
+                newTemps[i] = tempArray[i] + r * (tempArray[i+1] - 2*tempArray[i] + tempArray[i-1]);
+            }
+
+            // Boundary Condition: Right end is Insulated (dT/dx = 0) -> T[last] = T[last-1]
+            // Or Open to air (simplified as insulated for this 1D demo to allow heat buildup)
+            newTemps[ROD_LENGTH - 1] = newTemps[ROD_LENGTH - 2]; 
+
+            return newTemps;
+        };
+
+        // --- Physics Loop ---
+        const animate = () => {
+            if (!isRunning) return;
+
+            // Update Rod A
+            tempARef.current = solveHeatStep(tempARef.current, MATERIALS[materialA].alpha);
+            
+            // Update Rod B
+            tempBRef.current = solveHeatStep(tempBRef.current, MATERIALS[materialB].alpha);
+
+            // Update Time
+            setTime(t => t + DT);
+
+            // Update Wax Drops
+            checkWax(tempARef.current, setWaxA);
+            checkWax(tempBRef.current, setWaxB);
+
+            // Update Graph (throttled slightly visually, but here run every frame for smoothness)
+            // We record the temperature at the END of the rod (index 45 approx)
+            const probeIndex = ROD_LENGTH - 5;
+            
+            // Optimization: Only update React state for graph every 10 frames to save performance
+            // But for React state updates inside rAF, simpler to just set it. 
+            // To prevent React re-render flooding, we might throttle chart data in a real app.
+            // Here we rely on React 18 batching.
+            
+            // NOTE: Updating graphData state every frame will kill performance.
+            // Let's use a ref for data and only trigger re-render occasionally or use a separate interval.
+        };
+
+        // Separate Loop for Chart Update (Frequency: 10Hz)
+        useEffect(() => {
+            let interval;
+            if (isRunning) {
+                interval = setInterval(() => {
+                    setGraphData(prev => {
+                        const probeIndex = ROD_LENGTH - 5;
+                        const newData = {
+                            time: time.toFixed(1),
+                            "Rod A": tempARef.current[probeIndex].toFixed(1),
+                            "Rod B": tempBRef.current[probeIndex].toFixed(1)
+                        };
+                        // Keep last 50 points or grow? Let's grow but limit total points if needed
+                        if (prev.length > 60) {
+                             // Simple shifting window
+                             return [...prev.slice(1), newData];
+                        }
+                        return [...prev, newData];
+                    });
+                }, 100);
+            }
+            return () => clearInterval(interval);
+        }, [isRunning, time]); // Time dependency ensures fresh closure? No, ref is better.
+
+        // Main Animation Loop
+        useEffect(() => {
+            if (isRunning) {
+                requestRef.current = requestAnimationFrame(animate);
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [isRunning, materialA, materialB]); // Dependencies needed
+
+        const checkWax = (temps, setWax) => {
+            const posIndices = [Math.floor(ROD_LENGTH * 0.25), Math.floor(ROD_LENGTH * 0.5), Math.floor(ROD_LENGTH * 0.75)];
+            
+            setWax(prev => {
+                const next = [...prev];
+                let changed = false;
+                posIndices.forEach((idx, i) => {
+                    if (prev[i] && temps[idx] >= WAX_MELT_TEMP) {
+                        next[i] = false;
+                        changed = true;
+                    }
+                });
+                return changed ? next : prev;
+            });
+        };
+
+        const handleReset = () => {
+            setIsRunning(false);
+            setTime(0);
+            tempARef.current = new Array(ROD_LENGTH).fill(ROOM_TEMP);
+            tempBRef.current = new Array(ROD_LENGTH).fill(ROOM_TEMP);
+            setGraphData([]);
+            setWaxA([true, true, true]);
+            setWaxB([true, true, true]);
+        };
+
+        // --- Visualizer Components ---
+        
+        // Heat Map Canvas
+        const RodVisual = ({ temps, waxState, materialName }) => {
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width;
+                const h = canvas.height;
+                const segW = w / ROD_LENGTH;
+
+                // Draw Rod
+                for (let i = 0; i < ROD_LENGTH; i++) {
+                    const temp = temps[i];
+                    // Map Temp to Color (Blue 20C -> Red 100C)
+                    // 20 -> 240 (blue hue), 100 -> 0 (red hue)
+                    const ratio = Math.min(1, Math.max(0, (temp - ROOM_TEMP) / (HOT_TEMP - ROOM_TEMP)));
+                    // Simple Heat Gradient: Blue -> Red -> White
+                    // Using HSL: 240 -> 0
+                    const hue = 240 - (ratio * 240);
+                    const lightness = 50 + (ratio * 10); // get brighter
+                    
+                    ctx.fillStyle = `hsl(${hue}, 80%, ${lightness}%)`;
+                    ctx.fillRect(i * segW, 10, segW + 1, h - 20); // +1 to remove gaps
+                }
+                
+                // Draw Material Label
+                ctx.fillStyle = "white";
+                ctx.font = "12px monospace";
+                ctx.fillText(materialName, 10, h - 5);
+
+            }, [temps, materialName]); // Re-draw when temps change
+
+            return (
+                <div className="relative w-full h-24 bg-slate-900 border border-slate-700 rounded-lg mb-4 overflow-hidden">
+                    <canvas ref={canvasRef} width={600} height={96} className="w-full h-full" />
+                    
+                    {/* Wax Beads Overlay */}
+                    <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                        {[0.25, 0.5, 0.75].map((pos, i) => (
+                            <div 
+                                key={i}
+                                className={`absolute top-1/2 w-4 h-4 rounded-full border-2 border-slate-800 shadow-md transform -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ${waxState[i] ? 'bg-yellow-400 opacity-100' : 'bg-transparent opacity-0 translate-y-10'}`}
+                                style={{ left: `${pos * 100}%` }}
+                            >
+                                {waxState[i] && <div className="w-1 h-1 bg-white absolute top-1 left-1 rounded-full opacity-50"></div>}
+                            </div>
+                        ))}
+                    </div>
+                    
+                    {/* Heat Source */}
+                    <div className="absolute left-0 top-0 h-full w-2 bg-red-500 blur-sm animate-pulse"></div>
+                </div>
+            );
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
+                {/* Header */}
+                <header className="mb-8 flex items-center space-x-3 border-b border-slate-700 pb-4">
+                    <div className="p-2 bg-rose-500/10 rounded-lg">
+                        <i data-lucide="flame" className="w-8 h-8 text-rose-400"></i>
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-white tracking-tight">Conduction Rate Simulator</h1>
+                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
+                    </div>
+                </header>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    
+                    {/* Controls */}
+                    <div className="space-y-6">
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
+                            <h2 className="text-emerald-400 font-semibold mb-6 flex items-center">
+                                <i data-lucide="sliders" className="w-4 h-4 mr-2"></i> Settings
+                            </h2>
+
+                            {/* Material A Selector */}
+                            <div className="mb-4">
+                                <label className="text-xs text-slate-400 block mb-1">Top Rod (Rod A)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {Object.keys(MATERIALS).filter(m => m !== 'Glass').map(m => (
+                                        <button
+                                            key={m}
+                                            onClick={() => { handleReset(); setMaterialA(m); }}
+                                            className={`py-2 px-3 rounded text-xs font-bold transition-all border ${
+                                                materialA === m 
+                                                ? 'bg-slate-600 border-emerald-500 text-white' 
+                                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                                            }`}
+                                        >
+                                            {m}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Material B Selector */}
+                            <div className="mb-6">
+                                <label className="text-xs text-slate-400 block mb-1">Bottom Rod (Rod B)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {Object.keys(MATERIALS).filter(m => m !== 'Glass').map(m => (
+                                        <button
+                                            key={m}
+                                            onClick={() => { handleReset(); setMaterialB(m); }}
+                                            className={`py-2 px-3 rounded text-xs font-bold transition-all border ${
+                                                materialB === m 
+                                                ? 'bg-slate-600 border-emerald-500 text-white' 
+                                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                                            }`}
+                                        >
+                                            {m}
+                                        </button>
+                                    ))}
+                                    {/* Glass Special Button */}
+                                    <button
+                                        onClick={() => { handleReset(); setMaterialB('Glass'); }}
+                                        className={`col-span-2 py-2 px-3 rounded text-xs font-bold transition-all border ${
+                                            materialB === 'Glass' 
+                                            ? 'bg-slate-600 border-emerald-500 text-white' 
+                                            : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                                        }`}
+                                    >
+                                        Glass (Insulator)
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex space-x-3">
+                                <button 
+                                    onClick={() => setIsRunning(!isRunning)}
+                                    className={`flex-1 py-3 rounded-lg font-bold flex items-center justify-center transition-colors ${isRunning ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-emerald-500 text-white hover:bg-emerald-400'}`}
+                                >
+                                    {isRunning ? <><i data-lucide="pause" className="w-4 h-4 mr-2"></i> Pause</> : <><i data-lucide="play" className="w-4 h-4 mr-2"></i> Start Heating</>}
+                                </button>
+                                <button 
+                                    onClick={handleReset}
+                                    className="px-4 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600"
+                                >
+                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Legend */}
+                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-xs text-slate-400 space-y-2">
+                            <div className="flex items-center">
+                                <div className="w-3 h-3 bg-red-500 mr-2 rounded-full"></div>
+                                <span>Heat Source (100°C)</span>
+                            </div>
+                            <div className="flex items-center">
+                                <div className="w-3 h-3 bg-yellow-400 mr-2 rounded-full border border-slate-600"></div>
+                                <span>Wax Bead (Melts at {WAX_MELT_TEMP}°C)</span>
+                            </div>
+                            <div className="flex items-center">
+                                <div className="w-20 h-3 bg-gradient-to-r from-red-500 to-blue-500 mr-2 rounded"></div>
+                                <span>Temperature Gradient</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Simulation Area */}
+                    <div className="lg:col-span-2 space-y-6">
+                        
+                        {/* Visualizer */}
+                        <div className="bg-slate-950 border border-slate-700 rounded-xl p-6 relative">
+                            <div className="absolute top-2 right-4 text-xs font-mono text-slate-500">
+                                Time: {time.toFixed(1)}s
+                            </div>
+                            
+                            <div className="mb-2 flex justify-between text-xs text-slate-400 px-1">
+                                <span>Heat Source</span>
+                                <span>Cold End</span>
+                            </div>
+
+                            <RodVisual temps={tempARef.current} waxState={waxA} materialName={materialA} />
+                            <RodVisual temps={tempBRef.current} waxState={waxB} materialName={materialB} />
+                        </div>
+
+                        {/* Graph */}
+                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 h-64">
+                            <h3 className="text-slate-300 text-sm font-semibold mb-4 flex items-center">
+                                <i data-lucide="line-chart" className="w-4 h-4 mr-2"></i> 
+                                Temperature at Far End (x={ROD_LENGTH})
+                            </h3>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={graphData}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                    <XAxis 
+                                        dataKey="time" 
+                                        label={{ value: 'Time (s)', position: 'insideBottom', offset: -5, fill: '#64748b' }} 
+                                        tick={{fill: '#64748b'}}
+                                    />
+                                    <YAxis 
+                                        domain={[20, 100]} 
+                                        label={{ value: 'Temp (°C)', angle: -90, position: 'insideLeft', fill: '#64748b' }} 
+                                        tick={{fill: '#64748b'}}
+                                    />
+                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155' }} />
+                                    <Legend />
+                                    <Line type="monotone" dataKey="Rod A" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} name={`${materialA} (End)`} />
+                                    <Line type="monotone" dataKey="Rod B" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} name={`${materialB} (End)`} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    setTimeout(() => lucide.createIcons(), 100);
+</script>
+</body>
+</html>
