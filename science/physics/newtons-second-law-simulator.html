@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Newton's 2nd Law Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .slider-thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .slider-thumb-orange::-webkit-slider-thumb { background: #f97316; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 300;
+    const TRACK_Y = 200;
+    const PIXELS_PER_METER = 50; 
+
+    const App = () => {
+        // --- State ---
+        const [force, setForce] = useState(10); // Newtons
+        const [mass, setMass] = useState(2.0);  // kg
+        
+        // Sim State
+        const [simState, setSimState] = useState('idle'); // idle, running, finished
+        const [time, setTime] = useState(0);
+        const [position, setPosition] = useState(0);
+        const [velocity, setVelocity] = useState(0);
+        const [acceleration, setAcceleration] = useState(0);
+
+        // Refs
+        const requestRef = useRef();
+        const startTimeRef = useRef(0);
+        const physicsRef = useRef({ x: 0, v: 0 }); // Mutable state for loop
+        const historyRef = useRef([]); // For graph {t, v}
+
+        // --- Physics Engine ---
+        // Calculate theoretical acceleration immediately when inputs change
+        useEffect(() => {
+            setAcceleration(force / mass);
+        }, [force, mass]);
+
+        const startSim = () => {
+            if (simState === 'running') return;
+            setSimState('running');
+            physicsRef.current = { x: 0, v: 0 };
+            historyRef.current = [];
+            startTimeRef.current = Date.now();
+            loop();
+        };
+
+        const resetSim = () => {
+            setSimState('idle');
+            cancelAnimationFrame(requestRef.current);
+            setTime(0);
+            setPosition(0);
+            setVelocity(0);
+            historyRef.current = [];
+            physicsRef.current = { x: 0, v: 0 };
+        };
+
+        const loop = () => {
+            const now = Date.now();
+            const dt = 0.016; // Fixed step for smoother physics calc roughly 60fps
+            // Or use real time delta, but for simple sim fixed dt is stable
+            
+            const currentAcc = force / mass; // a = F/m
+            
+            // Update Physics
+            physicsRef.current.v += currentAcc * dt;
+            physicsRef.current.x += physicsRef.current.v * dt;
+            
+            // Update Time
+            // We use accumulated dt for consistency with physics integration
+            const t = historyRef.current.length * dt;
+
+            // Stop Condition (End of track)
+            // Track length approx 14 meters (700px / 50)
+            if (physicsRef.current.x > 14) {
+                setSimState('finished');
+                return;
+            }
+
+            // Record History
+            if (historyRef.current.length % 5 === 0) { // Throttle for graph
+                historyRef.current.push({ t: t, v: physicsRef.current.v });
+            } else {
+                // Just increment time logic for the next frame
+                historyRef.current.push({ t: t, v: physicsRef.current.v }); // Push all for smoothness? let's stick to simple
+            }
+
+            // Sync UI
+            setTime(t);
+            setPosition(physicsRef.current.x);
+            setVelocity(physicsRef.current.v);
+
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        useEffect(() => {
+            return () => cancelAnimationFrame(requestRef.current);
+        }, []);
+
+        // --- Init Icons ---
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // --- Canvas Rendering ---
+        const canvasRef = useRef(null);
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Track
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, TRACK_Y, CANVAS_WIDTH, 10);
+            // Ticks
+            ctx.fillStyle = '#64748b';
+            ctx.font = '10px monospace';
+            for (let i = 0; i <= 15; i++) {
+                const x = 50 + i * PIXELS_PER_METER;
+                ctx.fillRect(x, TRACK_Y, 2, 10);
+                ctx.fillText(`${i}m`, x - 5, TRACK_Y + 25);
+            }
+
+            // 2. Draw Cart
+            const cartX = 50 + position * PIXELS_PER_METER;
+            const cartY = TRACK_Y - 40;
+            const cartWidth = 60 + mass * 5; // Visual size scales slightly with mass
+            
+            // Wheels
+            ctx.fillStyle = '#1e293b';
+            ctx.beginPath(); ctx.arc(cartX + 15, TRACK_Y - 5, 10, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(cartX + cartWidth - 15, TRACK_Y - 5, 10, 0, Math.PI*2); ctx.fill();
+
+            // Body
+            ctx.fillStyle = '#3b82f6'; // Blue
+            ctx.fillRect(cartX, cartY, cartWidth, 40);
+            
+            // Mass Text
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(`${mass}kg`, cartX + cartWidth/2 - 12, cartY + 25);
+
+            // 3. Draw Force Vector (Rocket/Thrust)
+            if (force > 0) {
+                const arrowLen = force * 3; // Scale for visual
+                const arrowY = cartY + 20;
+                const arrowStartX = cartX + cartWidth;
+                const arrowEndX = arrowStartX + arrowLen;
+
+                // Shaft
+                ctx.strokeStyle = '#f97316'; // Orange
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(arrowStartX, arrowY);
+                ctx.lineTo(arrowEndX, arrowY);
+                ctx.stroke();
+
+                // Head
+                ctx.fillStyle = '#f97316';
+                ctx.beginPath();
+                ctx.moveTo(arrowEndX, arrowY);
+                ctx.lineTo(arrowEndX - 10, arrowY - 6);
+                ctx.lineTo(arrowEndX - 10, arrowY + 6);
+                ctx.fill();
+
+                // Label
+                ctx.fillStyle = '#f97316';
+                ctx.fillText(`F = ${force}N`, arrowStartX + 10, arrowY - 10);
+            }
+
+            // 4. Draw Acceleration Vector (Ghosted)
+            if (acceleration > 0) {
+                const accLen = acceleration * 10; 
+                const accY = cartY - 30;
+                const accStartX = cartX + cartWidth / 2;
+                const accEndX = accStartX + accLen;
+
+                ctx.strokeStyle = '#10b981'; // Emerald
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.beginPath();
+                ctx.moveTo(accStartX, accY);
+                ctx.lineTo(accEndX, accY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Head
+                ctx.fillStyle = '#10b981';
+                ctx.beginPath();
+                ctx.moveTo(accEndX, accY);
+                ctx.lineTo(accEndX - 6, accY - 4);
+                ctx.lineTo(accEndX - 6, accY + 4);
+                ctx.fill();
+
+                ctx.fillText(`a = ${acceleration.toFixed(2)} m/s²`, accStartX, accY - 8);
+            }
+
+        }, [position, force, mass, acceleration]);
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                {/* Header */}
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-2 rounded-lg">
+                            <i data-lucide="rocket" className="w-6 h-6 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Newton's 2nd Law Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Dynamics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Controls & Graph */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="sliders" className="w-5 h-5 mr-2 text-slate-400"></i>
+                                Parameters
+                            </h2>
+
+                            {/* Force Slider */}
+                            <div className="mb-6">
+                                <div className="flex justify-between mb-2">
+                                    <label className="text-sm font-bold text-slate-300">Force (F)</label>
+                                    <span className="font-mono text-orange-400">{force} N</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="50" step="1"
+                                    value={force}
+                                    onChange={(e) => setForce(Number(e.target.value))}
+                                    disabled={simState === 'running'}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb slider-thumb-orange"
+                                />
+                            </div>
+
+                            {/* Mass Slider */}
+                            <div className="mb-8">
+                                <div className="flex justify-between mb-2">
+                                    <label className="text-sm font-bold text-slate-300">Mass (m)</label>
+                                    <span className="font-mono text-blue-400">{mass} kg</span>
+                                </div>
+                                <input 
+                                    type="range" min="1.0" max="10.0" step="0.5"
+                                    value={mass}
+                                    onChange={(e) => setMass(Number(e.target.value))}
+                                    disabled={simState === 'running'}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb slider-thumb-blue"
+                                />
+                            </div>
+
+                            <button 
+                                onClick={simState === 'running' || simState === 'finished' ? resetSim : startSim}
+                                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center transition-all ${
+                                    simState === 'running' 
+                                    ? 'bg-red-500/20 text-red-400 border border-red-500/50' 
+                                    : simState === 'finished' 
+                                        ? 'bg-slate-700 hover:bg-slate-600 text-white'
+                                        : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg'
+                                }`}
+                            >
+                                <i data-lucide={simState === 'running' || simState === 'finished' ? "rotate-ccw" : "play"} className="w-5 h-5 mr-2"></i>
+                                {simState === 'running' ? 'Reset' : simState === 'finished' ? 'Reset' : 'Start Simulation'}
+                            </button>
+                        </div>
+
+                        {/* Graph: Velocity vs Time */}
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 h-64 relative">
+                            <div className="absolute top-2 left-3 text-xs text-slate-400 font-bold uppercase">Velocity (m/s)</div>
+                            <div className="absolute bottom-2 right-3 text-xs text-slate-400 font-bold uppercase">Time (s)</div>
+                            
+                            {/* Simple Graph Renderer */}
+                            <svg width="100%" height="100%" viewBox="0 0 300 200" className="overflow-visible">
+                                {/* Axes */}
+                                <line x1="30" y1="180" x2="290" y2="180" stroke="#475569" strokeWidth="1" />
+                                <line x1="30" y1="180" x2="30" y2="20" stroke="#475569" strokeWidth="1" />
+                                
+                                {/* Dynamic Line */}
+                                {historyRef.current.length > 1 && (
+                                    <polyline 
+                                        fill="none" 
+                                        stroke="#10b981" 
+                                        strokeWidth="2"
+                                        points={historyRef.current.map((pt, i) => {
+                                            // Scale: T max ~ 5s? V max ~ 20 m/s?
+                                            // Auto-scaling logic simplified
+                                            const maxT = Math.max(5, historyRef.current[historyRef.current.length-1].t);
+                                            const maxV = Math.max(10, acceleration * maxT);
+                                            
+                                            const x = 30 + (pt.t / maxT) * 260;
+                                            const y = 180 - (pt.v / maxV) * 160;
+                                            return `${x},${y}`;
+                                        }).join(' ')}
+                                    />
+                                )}
+                            </svg>
+                        </div>
+
+                    </div>
+
+                    {/* Right: Simulation & Formula */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        
+                        {/* Formula Display */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col md:flex-row items-center justify-between">
+                            <div>
+                                <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Newton's 2nd Law</h3>
+                                <div className="text-3xl font-mono font-bold text-white">F = m × a</div>
+                            </div>
+                            <div className="h-8 w-px bg-slate-700 hidden md:block"></div>
+                            <div className="flex gap-8 text-center mt-4 md:mt-0">
+                                <div>
+                                    <div className="text-2xl font-bold text-emerald-400 font-mono">{acceleration.toFixed(2)}</div>
+                                    <div className="text-[10px] text-slate-500 uppercase">Accel (m/s²)</div>
+                                </div>
+                                <div className="text-xl font-bold text-slate-600 self-center">=</div>
+                                <div>
+                                    <div className="text-2xl font-bold text-orange-400 font-mono">{force}</div>
+                                    <div className="text-[10px] text-slate-500 uppercase">Force (N)</div>
+                                </div>
+                                <div className="text-xl font-bold text-slate-600 self-center">/</div>
+                                <div>
+                                    <div className="text-2xl font-bold text-blue-400 font-mono">{mass}</div>
+                                    <div className="text-[10px] text-slate-500 uppercase">Mass (kg)</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Visual Simulation Canvas */}
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 flex-1 relative overflow-hidden shadow-inner min-h-[300px]">
+                            <div className="absolute top-4 left-4 text-xs font-mono text-slate-500">
+                                Time: {time.toFixed(2)}s | Pos: {position.toFixed(2)}m
+                            </div>
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+
+                        {/* Info Box */}
+                        <div className="bg-emerald-900/10 border border-emerald-500/20 p-4 rounded-xl text-sm text-emerald-200/80">
+                            <p className="flex items-start gap-2">
+                                <i data-lucide="info" className="w-4 h-4 mt-0.5 shrink-0"></i>
+                                <span>
+                                    <strong>Observation Tip:</strong> Try doubling the Force ($F$) while keeping Mass ($m$) constant. What happens to the Acceleration ($a$)? Then, try doubling the Mass while keeping Force constant.
+                                </span>
+                            </p>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
