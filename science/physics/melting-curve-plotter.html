@@ -55,16 +55,19 @@
     const CONTAINER_HEIGHT = 200;
 
     const App = () => {
-        // State
-        const [time, setTime] = useState(0);
-        const [temp, setTemp] = useState(-20);
+        // UI State (Only for display rendering)
+        const [displayTime, setDisplayTime] = useState(0);
+        const [displayTemp, setDisplayTemp] = useState(-20);
         const [heating, setHeating] = useState(false);
         const [power, setPower] = useState(50); // Heater power
         const [stateLabel, setStateLabel] = useState("Solid (Ice)");
         const [resetFlag, setResetFlag] = useState(0);
 
-        // Simulation Refs (Mutable state for loop)
+        // Simulation Refs (The Source of Truth for Physics)
+        // Fixed: Moved temp and time INTO ref to avoid stale closure issues
         const simState = useRef({
+            currentTime: 0,      // Internal Time
+            currentTemp: -20,    // Internal Temp
             energy: 0,           // Total added energy
             latentBuffer: 0,     // Energy accumulator for phase changes
             phase: 'SOLID',      // SOLID, MELTING, LIQUID, BOILING, GAS
@@ -102,36 +105,47 @@
                     });
                 }
             }
+            // Reset Simulation State
             simState.current = {
+                currentTime: 0,
+                currentTemp: -20,
                 energy: 0,
                 latentBuffer: 0,
                 phase: 'SOLID',
                 history: [{t: 0, T: -20}],
                 particles: ps
             };
-            setTime(0);
-            setTemp(-20);
+            
+            // Reset UI
+            setDisplayTime(0);
+            setDisplayTemp(-20);
             setStateLabel("Solid (Ice)");
             setHeating(false);
+            
+            // Initial Draw
+            setTimeout(() => {
+                drawParticles();
+                drawGraph();
+            }, 50);
         };
 
         // --- Main Simulation Loop ---
         const updatePhysics = () => {
-            if (!heating) return;
+            if (!heating) return; // Guard
 
             const state = simState.current;
             const heatInput = power * 0.05; // Energy per frame
             
-            // 1. Temperature & Phase Logic
-            let newTemp = temp;
+            // 1. Temperature & Phase Logic (Using Ref values, not State)
+            let temp = state.currentTemp;
             let phase = state.phase;
 
             if (phase === 'SOLID') {
                 // Q = mcΔT
                 const dT = heatInput / C_SOLID;
-                newTemp += dT;
-                if (newTemp >= MP) {
-                    newTemp = MP;
+                temp += dT;
+                if (temp >= MP) {
+                    temp = MP;
                     state.phase = 'MELTING';
                     state.latentBuffer = 0;
                 }
@@ -145,9 +159,9 @@
             } 
             else if (phase === 'LIQUID') {
                 const dT = heatInput / C_LIQUID;
-                newTemp += dT;
-                if (newTemp >= BP) {
-                    newTemp = BP;
+                temp += dT;
+                if (temp >= BP) {
+                    temp = BP;
                     state.phase = 'BOILING';
                     state.latentBuffer = 0;
                 }
@@ -160,23 +174,27 @@
             } 
             else if (phase === 'GAS') {
                 const dT = heatInput / C_GAS;
-                newTemp += dT;
+                temp += dT;
                 // Cap temp
-                if (newTemp > 140) setHeating(false);
+                if (temp > 140) setHeating(false);
             }
 
-            // Update React State occasionally (for UI numbers)
-            setTemp(newTemp);
+            // Update Ref State
+            state.currentTemp = temp;
+            state.currentTime += 1;
+
+            // Sync with UI State (Throttle or just set)
+            setDisplayTemp(state.currentTemp);
+            setDisplayTime(state.currentTime);
             setStateLabel(formatPhase(state.phase));
-            setTime(prev => prev + 1);
 
             // Update History for Graph
-            if (time % 5 === 0) { // Record every 5th frame to save memory
-                state.history.push({ t: time, T: newTemp });
+            if (state.currentTime % 5 === 0) { // Record every 5th frame
+                state.history.push({ t: state.currentTime, T: state.currentTemp });
             }
 
             // 2. Particle Animation Logic
-            updateParticles(state.phase, newTemp);
+            updateParticles(state.phase, state.currentTemp);
 
             // 3. Render Graph & Particles
             drawParticles();
@@ -187,7 +205,7 @@
             }
         };
 
-        // Start/Stop Loop
+        // Start/Stop Loop Management
         useEffect(() => {
             if (heating) {
                 requestRef.current = requestAnimationFrame(updatePhysics);
@@ -195,7 +213,7 @@
                 cancelAnimationFrame(requestRef.current);
             }
             return () => cancelAnimationFrame(requestRef.current);
-        }, [heating, power]); // Restart loop if power changes to use new value
+        }, [heating, power]); 
 
         const formatPhase = (p) => {
             switch(p) {
@@ -211,54 +229,43 @@
         // --- Visual Logic ---
         const updateParticles = (phase, T) => {
             const ps = simState.current.particles;
-            // Vibration magnitude depends on T (Kelvin-ish, simply T + 30)
             const vibration = (T + 40) * 0.05; 
 
             ps.forEach(p => {
                 if (phase === 'SOLID' || phase === 'MELTING') {
-                    // Vibrate around base
                     p.x = p.baseX + (Math.random() - 0.5) * vibration;
                     p.y = p.baseY + (Math.random() - 0.5) * vibration;
                     
-                    // If melting, some particles start to break free? 
-                    // Simplified: Keep grid but increase jitter heavily
                     if (phase === 'MELTING') {
+                        // Jitter more to show breaking bonds
                         p.x += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
                         p.y += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
                     }
                 } 
                 else if (phase === 'LIQUID' || phase === 'BOILING') {
-                    // Brownian motion at bottom
                     p.vx += (Math.random() - 0.5);
                     p.vy += (Math.random() - 0.5) + 0.05; // Gravity
                     
-                    // Dampen
                     p.vx *= 0.95;
                     p.vy *= 0.95;
                     
                     p.x += p.vx;
                     p.y += p.vy;
 
-                    // Floor/Walls
                     if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
                     if (p.x < 5) { p.x = 5; p.vx *= -0.5; }
                     if (p.x > CONTAINER_WIDTH - 5) { p.x = CONTAINER_WIDTH - 5; p.vx *= -0.5; }
                     
-                    // Liquid Level (Roughly)
-                    if (p.y < CONTAINER_HEIGHT - 80) { p.vy += 0.2; } // Push down
+                    if (p.y < CONTAINER_HEIGHT - 80) { p.vy += 0.2; } 
                 } 
                 else if (phase === 'GAS') {
-                    // Fly freely
                     p.vx += (Math.random() - 0.5) * 0.5;
                     p.vy += (Math.random() - 0.5) * 0.5;
-                    
-                    // Less gravity
-                    p.vy -= 0.05; // Float up
+                    p.vy -= 0.05; 
                     
                     p.x += p.vx;
                     p.y += p.vy;
 
-                    // Bounce off walls
                     if (p.y < 5) { p.y = 5; p.vy *= -1; }
                     if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
                     if (p.x < 5) { p.x = 5; p.vx *= -1; }
@@ -272,7 +279,6 @@
             if (!ctx) return;
             ctx.clearRect(0, 0, CONTAINER_WIDTH, CONTAINER_HEIGHT);
 
-            // Draw Beaker
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.lineWidth = 2;
             ctx.beginPath();
@@ -288,12 +294,11 @@
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
                 
-                // Color based on Phase/Temp
-                if (phase === 'SOLID') ctx.fillStyle = '#60a5fa'; // Blue
+                if (phase === 'SOLID') ctx.fillStyle = '#60a5fa'; 
                 else if (phase === 'MELTING') ctx.fillStyle = '#818cf8';
-                else if (phase === 'LIQUID') ctx.fillStyle = '#34d399'; // Green
-                else if (phase === 'BOILING') ctx.fillStyle = '#facc15'; // Yellow
-                else ctx.fillStyle = '#f87171'; // Red (Gas)
+                else if (phase === 'LIQUID') ctx.fillStyle = '#34d399'; 
+                else if (phase === 'BOILING') ctx.fillStyle = '#facc15'; 
+                else ctx.fillStyle = '#f87171'; 
                 
                 ctx.fill();
             });
@@ -305,21 +310,18 @@
             const w = ctx.canvas.width;
             const h = ctx.canvas.height;
             
-            // Background
             ctx.fillStyle = '#1e293b';
             ctx.fillRect(0, 0, w, h);
 
-            // Axes
             const padding = 40;
             ctx.strokeStyle = '#94a3b8';
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(padding, 10);
-            ctx.lineTo(padding, h - padding); // Y axis
-            ctx.lineTo(w - 10, h - padding); // X axis
+            ctx.lineTo(padding, h - padding); 
+            ctx.lineTo(w - 10, h - padding); 
             ctx.stroke();
 
-            // Labels
             ctx.fillStyle = '#94a3b8';
             ctx.font = '10px Inter';
             ctx.fillText("Time →", w - 40, h - 10);
@@ -329,7 +331,6 @@
             ctx.fillText("Temp (°C)", 0, 0);
             ctx.restore();
 
-            // Y-Axis Markers (-20, 0, 100)
             const mapY = (t) => h - padding - ((t + 20) / 160) * (h - padding - 20);
             const drawTick = (val) => {
                 const y = mapY(val);
@@ -340,16 +341,14 @@
             drawTick(0);
             drawTick(100);
 
-            // Plot Data
             const history = simState.current.history;
             if (history.length < 2) return;
 
-            // X scale needs to adapt as time grows, or fixed? Let's fix for demo (~2000 frames max)
             const maxTime = Math.max(2000, history[history.length-1].t + 500);
             const mapX = (t) => padding + (t / maxTime) * (w - padding - 20);
 
             ctx.beginPath();
-            ctx.strokeStyle = '#f472b6'; // Pink Line
+            ctx.strokeStyle = '#f472b6'; 
             ctx.lineWidth = 3;
             ctx.moveTo(mapX(history[0].t), mapY(history[0].T));
             
@@ -358,7 +357,6 @@
             }
             ctx.stroke();
 
-            // Draw current dot
             const last = history[history.length-1];
             ctx.beginPath();
             ctx.arc(mapX(last.t), mapY(last.T), 4, 0, Math.PI*2);
@@ -393,8 +391,8 @@
                                         {stateLabel}
                                     </div>
                                 </div>
-                                <div className={`text-4xl font-mono font-bold ${temp > 90 ? 'text-red-400' : temp > 0 ? 'text-emerald-400' : 'text-blue-400'}`}>
-                                    {Math.round(temp)}°C
+                                <div className={`text-4xl font-mono font-bold ${displayTemp > 90 ? 'text-red-400' : displayTemp > 0 ? 'text-emerald-400' : 'text-blue-400'}`}>
+                                    {Math.round(displayTemp)}°C
                                 </div>
                             </div>
                             
