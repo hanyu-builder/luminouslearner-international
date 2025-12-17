@@ -71,6 +71,7 @@
         // Simulation Data (Arrays of temperature)
         const tempARef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
         const tempBRef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
+        const frameCountRef = useRef(0);
         
         // Graph Data
         const [graphData, setGraphData] = useState([]);
@@ -113,69 +114,59 @@
             // Update Rod B
             tempBRef.current = solveHeatStep(tempBRef.current, MATERIALS[materialB].alpha);
 
-            // Update Time
-            setTime(t => t + DT);
-
             // Update Wax Drops
             checkWax(tempARef.current, setWaxA);
             checkWax(tempBRef.current, setWaxB);
 
-            // Update Graph (throttled slightly visually, but here run every frame for smoothness)
-            // We record the temperature at the END of the rod (index 45 approx)
-            const probeIndex = ROD_LENGTH - 5;
-            
-            // Optimization: Only update React state for graph every 10 frames to save performance
-            // But for React state updates inside rAF, simpler to just set it. 
-            // To prevent React re-render flooding, we might throttle chart data in a real app.
-            // Here we rely on React 18 batching.
-            
-            // NOTE: Updating graphData state every frame will kill performance.
-            // Let's use a ref for data and only trigger re-render occasionally or use a separate interval.
-        };
+            // Update Time State (This triggers re-render, creating the animation loop effect)
+            setTime(t => {
+                const newTime = t + DT;
+                frameCountRef.current++;
 
-        // Separate Loop for Chart Update (Frequency: 10Hz)
-        useEffect(() => {
-            let interval;
-            if (isRunning) {
-                interval = setInterval(() => {
+                // Update Graph Data every 5 frames (approx 0.5s sim time) to avoid React overload
+                if (frameCountRef.current % 5 === 0) {
                     setGraphData(prev => {
-                        const probeIndex = ROD_LENGTH - 5;
+                        const probeIndex = ROD_LENGTH - 5; // Measure near end
                         const newData = {
-                            time: time.toFixed(1),
+                            time: newTime.toFixed(1),
                             "Rod A": tempARef.current[probeIndex].toFixed(1),
                             "Rod B": tempBRef.current[probeIndex].toFixed(1)
                         };
-                        // Keep last 50 points or grow? Let's grow but limit total points if needed
-                        if (prev.length > 60) {
-                             // Simple shifting window
+                        
+                        // Limit graph history to last ~50 points to keep chart performant
+                        if (prev.length > 50) {
                              return [...prev.slice(1), newData];
                         }
                         return [...prev, newData];
                     });
-                }, 100);
-            }
-            return () => clearInterval(interval);
-        }, [isRunning, time]); // Time dependency ensures fresh closure? No, ref is better.
+                }
+                return newTime;
+            });
 
-        // Main Animation Loop
+            // Recursive Call for Next Frame
+            requestRef.current = requestAnimationFrame(animate);
+        };
+
+        // Main Animation Loop Effect
         useEffect(() => {
             if (isRunning) {
                 requestRef.current = requestAnimationFrame(animate);
             }
             return () => cancelAnimationFrame(requestRef.current);
-        }, [isRunning, materialA, materialB]); // Dependencies needed
+        }, [isRunning, materialA, materialB]); // Restart if material changes
 
         const checkWax = (temps, setWax) => {
             const posIndices = [Math.floor(ROD_LENGTH * 0.25), Math.floor(ROD_LENGTH * 0.5), Math.floor(ROD_LENGTH * 0.75)];
             
             setWax(prev => {
-                const next = [...prev];
+                // Only update state if something changed to avoid unnecessary renders
                 let changed = false;
-                posIndices.forEach((idx, i) => {
-                    if (prev[i] && temps[idx] >= WAX_MELT_TEMP) {
-                        next[i] = false;
+                const next = prev.map((isAttached, i) => {
+                    if (isAttached && temps[posIndices[i]] >= WAX_MELT_TEMP) {
                         changed = true;
+                        return false;
                     }
+                    return isAttached;
                 });
                 return changed ? next : prev;
             });
@@ -189,6 +180,7 @@
             setGraphData([]);
             setWaxA([true, true, true]);
             setWaxB([true, true, true]);
+            frameCountRef.current = 0;
         };
 
         // --- Visualizer Components ---
@@ -243,8 +235,8 @@
                         ))}
                     </div>
                     
-                    {/* Heat Source */}
-                    <div className="absolute left-0 top-0 h-full w-2 bg-red-500 blur-sm animate-pulse"></div>
+                    {/* Heat Source Overlay */}
+                    <div className="absolute left-0 top-0 h-full w-2 bg-red-500 blur-sm animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]"></div>
                 </div>
             );
         };
@@ -342,7 +334,7 @@
                         {/* Legend */}
                         <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-xs text-slate-400 space-y-2">
                             <div className="flex items-center">
-                                <div className="w-3 h-3 bg-red-500 mr-2 rounded-full"></div>
+                                <div className="w-3 h-3 bg-red-500 mr-2 rounded-full shadow-[0_0_5px_red]"></div>
                                 <span>Heat Source (100°C)</span>
                             </div>
                             <div className="flex items-center">
@@ -350,7 +342,7 @@
                                 <span>Wax Bead (Melts at {WAX_MELT_TEMP}°C)</span>
                             </div>
                             <div className="flex items-center">
-                                <div className="w-20 h-3 bg-gradient-to-r from-red-500 to-blue-500 mr-2 rounded"></div>
+                                <div className="w-20 h-3 bg-gradient-to-r from-blue-700 to-red-500 mr-2 rounded"></div>
                                 <span>Temperature Gradient</span>
                             </div>
                         </div>
@@ -366,8 +358,8 @@
                             </div>
                             
                             <div className="mb-2 flex justify-between text-xs text-slate-400 px-1">
-                                <span>Heat Source</span>
-                                <span>Cold End</span>
+                                <span>Heat Source (Left)</span>
+                                <span>Cold End (Right)</span>
                             </div>
 
                             <RodVisual temps={tempARef.current} waxState={waxA} materialName={materialA} />
