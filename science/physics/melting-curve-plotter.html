@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Melting Curve Plotter | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; background: #f59e0b; cursor: pointer; border: 2px solid #ffffff;
+        }
+        canvas { touch-action: none; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- Physics Constants for "Mock Substance" (Water-like) ---
+    const MP = 0;   // Melting Point
+    const BP = 100; // Boiling Point
+    
+    // Relative specific heats (for slope)
+    const C_SOLID = 0.8;
+    const C_LIQUID = 1.0; 
+    const C_GAS = 0.5;
+
+    // Relative Latent Heats (for plateau duration)
+    const L_FUSION = 80;    // Energy to melt
+    const L_VAPOR = 300;    // Energy to boil (usually much larger)
+
+    const PARTICLE_COUNT = 100;
+    const CONTAINER_WIDTH = 300;
+    const CONTAINER_HEIGHT = 200;
+
+    const App = () => {
+        // State
+        const [time, setTime] = useState(0);
+        const [temp, setTemp] = useState(-20);
+        const [heating, setHeating] = useState(false);
+        const [power, setPower] = useState(50); // Heater power
+        const [stateLabel, setStateLabel] = useState("Solid (Ice)");
+        const [resetFlag, setResetFlag] = useState(0);
+
+        // Simulation Refs (Mutable state for loop)
+        const simState = useRef({
+            energy: 0,           // Total added energy
+            latentBuffer: 0,     // Energy accumulator for phase changes
+            phase: 'SOLID',      // SOLID, MELTING, LIQUID, BOILING, GAS
+            history: [{t: 0, T: -20}], // Data for graph
+            particles: []        // Visual particles
+        });
+        
+        const requestRef = useRef();
+        const particleCanvasRef = useRef(null);
+        const graphCanvasRef = useRef(null);
+
+        // Initialize Particles
+        useEffect(() => {
+            initParticles();
+        }, [resetFlag]);
+
+        const initParticles = () => {
+            const ps = [];
+            const rows = 10;
+            const cols = 10;
+            const spacing = 20;
+            const startX = (CONTAINER_WIDTH - cols * spacing) / 2 + 10;
+            const startY = CONTAINER_HEIGHT - rows * spacing - 10;
+
+            for(let r=0; r<rows; r++) {
+                for(let c=0; c<cols; c++) {
+                    ps.push({
+                        baseX: startX + c * spacing,
+                        baseY: startY + r * spacing,
+                        x: startX + c * spacing,
+                        y: startY + r * spacing,
+                        vx: 0, 
+                        vy: 0,
+                        phaseOffset: Math.random() * Math.PI * 2
+                    });
+                }
+            }
+            simState.current = {
+                energy: 0,
+                latentBuffer: 0,
+                phase: 'SOLID',
+                history: [{t: 0, T: -20}],
+                particles: ps
+            };
+            setTime(0);
+            setTemp(-20);
+            setStateLabel("Solid (Ice)");
+            setHeating(false);
+        };
+
+        // --- Main Simulation Loop ---
+        const updatePhysics = () => {
+            if (!heating) return;
+
+            const state = simState.current;
+            const heatInput = power * 0.05; // Energy per frame
+            
+            // 1. Temperature & Phase Logic
+            let newTemp = temp;
+            let phase = state.phase;
+
+            if (phase === 'SOLID') {
+                // Q = mcΔT
+                const dT = heatInput / C_SOLID;
+                newTemp += dT;
+                if (newTemp >= MP) {
+                    newTemp = MP;
+                    state.phase = 'MELTING';
+                    state.latentBuffer = 0;
+                }
+            } 
+            else if (phase === 'MELTING') {
+                // Q = mLf (Temp const)
+                state.latentBuffer += heatInput;
+                if (state.latentBuffer >= L_FUSION) {
+                    state.phase = 'LIQUID';
+                }
+            } 
+            else if (phase === 'LIQUID') {
+                const dT = heatInput / C_LIQUID;
+                newTemp += dT;
+                if (newTemp >= BP) {
+                    newTemp = BP;
+                    state.phase = 'BOILING';
+                    state.latentBuffer = 0;
+                }
+            } 
+            else if (phase === 'BOILING') {
+                state.latentBuffer += heatInput;
+                if (state.latentBuffer >= L_VAPOR) {
+                    state.phase = 'GAS';
+                }
+            } 
+            else if (phase === 'GAS') {
+                const dT = heatInput / C_GAS;
+                newTemp += dT;
+                // Cap temp
+                if (newTemp > 140) setHeating(false);
+            }
+
+            // Update React State occasionally (for UI numbers)
+            setTemp(newTemp);
+            setStateLabel(formatPhase(state.phase));
+            setTime(prev => prev + 1);
+
+            // Update History for Graph
+            if (time % 5 === 0) { // Record every 5th frame to save memory
+                state.history.push({ t: time, T: newTemp });
+            }
+
+            // 2. Particle Animation Logic
+            updateParticles(state.phase, newTemp);
+
+            // 3. Render Graph & Particles
+            drawParticles();
+            drawGraph();
+
+            if (heating) {
+                requestRef.current = requestAnimationFrame(updatePhysics);
+            }
+        };
+
+        // Start/Stop Loop
+        useEffect(() => {
+            if (heating) {
+                requestRef.current = requestAnimationFrame(updatePhysics);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [heating, power]); // Restart loop if power changes to use new value
+
+        const formatPhase = (p) => {
+            switch(p) {
+                case 'SOLID': return 'Solid (Heating)';
+                case 'MELTING': return 'Melting (Phase Change)';
+                case 'LIQUID': return 'Liquid (Heating)';
+                case 'BOILING': return 'Boiling (Phase Change)';
+                case 'GAS': return 'Gas (Heating)';
+                default: return p;
+            }
+        };
+
+        // --- Visual Logic ---
+        const updateParticles = (phase, T) => {
+            const ps = simState.current.particles;
+            // Vibration magnitude depends on T (Kelvin-ish, simply T + 30)
+            const vibration = (T + 40) * 0.05; 
+
+            ps.forEach(p => {
+                if (phase === 'SOLID' || phase === 'MELTING') {
+                    // Vibrate around base
+                    p.x = p.baseX + (Math.random() - 0.5) * vibration;
+                    p.y = p.baseY + (Math.random() - 0.5) * vibration;
+                    
+                    // If melting, some particles start to break free? 
+                    // Simplified: Keep grid but increase jitter heavily
+                    if (phase === 'MELTING') {
+                        p.x += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
+                        p.y += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
+                    }
+                } 
+                else if (phase === 'LIQUID' || phase === 'BOILING') {
+                    // Brownian motion at bottom
+                    p.vx += (Math.random() - 0.5);
+                    p.vy += (Math.random() - 0.5) + 0.05; // Gravity
+                    
+                    // Dampen
+                    p.vx *= 0.95;
+                    p.vy *= 0.95;
+                    
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    // Floor/Walls
+                    if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
+                    if (p.x < 5) { p.x = 5; p.vx *= -0.5; }
+                    if (p.x > CONTAINER_WIDTH - 5) { p.x = CONTAINER_WIDTH - 5; p.vx *= -0.5; }
+                    
+                    // Liquid Level (Roughly)
+                    if (p.y < CONTAINER_HEIGHT - 80) { p.vy += 0.2; } // Push down
+                } 
+                else if (phase === 'GAS') {
+                    // Fly freely
+                    p.vx += (Math.random() - 0.5) * 0.5;
+                    p.vy += (Math.random() - 0.5) * 0.5;
+                    
+                    // Less gravity
+                    p.vy -= 0.05; // Float up
+                    
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    // Bounce off walls
+                    if (p.y < 5) { p.y = 5; p.vy *= -1; }
+                    if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
+                    if (p.x < 5) { p.x = 5; p.vx *= -1; }
+                    if (p.x > CONTAINER_WIDTH - 5) { p.x = CONTAINER_WIDTH - 5; p.vx *= -1; }
+                }
+            });
+        };
+
+        const drawParticles = () => {
+            const ctx = particleCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            ctx.clearRect(0, 0, CONTAINER_WIDTH, CONTAINER_HEIGHT);
+
+            // Draw Beaker
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, CONTAINER_HEIGHT);
+            ctx.lineTo(CONTAINER_WIDTH, CONTAINER_HEIGHT);
+            ctx.lineTo(CONTAINER_WIDTH, 0);
+            ctx.stroke();
+
+            const phase = simState.current.phase;
+
+            simState.current.particles.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                
+                // Color based on Phase/Temp
+                if (phase === 'SOLID') ctx.fillStyle = '#60a5fa'; // Blue
+                else if (phase === 'MELTING') ctx.fillStyle = '#818cf8';
+                else if (phase === 'LIQUID') ctx.fillStyle = '#34d399'; // Green
+                else if (phase === 'BOILING') ctx.fillStyle = '#facc15'; // Yellow
+                else ctx.fillStyle = '#f87171'; // Red (Gas)
+                
+                ctx.fill();
+            });
+        };
+
+        const drawGraph = () => {
+            const ctx = graphCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            const w = ctx.canvas.width;
+            const h = ctx.canvas.height;
+            
+            // Background
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, w, h);
+
+            // Axes
+            const padding = 40;
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(padding, 10);
+            ctx.lineTo(padding, h - padding); // Y axis
+            ctx.lineTo(w - 10, h - padding); // X axis
+            ctx.stroke();
+
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter';
+            ctx.fillText("Time →", w - 40, h - 10);
+            ctx.save();
+            ctx.translate(10, h/2);
+            ctx.rotate(-Math.PI/2);
+            ctx.fillText("Temp (°C)", 0, 0);
+            ctx.restore();
+
+            // Y-Axis Markers (-20, 0, 100)
+            const mapY = (t) => h - padding - ((t + 20) / 160) * (h - padding - 20);
+            const drawTick = (val) => {
+                const y = mapY(val);
+                ctx.fillText(val, 10, y + 3);
+                ctx.beginPath(); ctx.moveTo(padding-5, y); ctx.lineTo(padding, y); ctx.stroke();
+            };
+            drawTick(-20);
+            drawTick(0);
+            drawTick(100);
+
+            // Plot Data
+            const history = simState.current.history;
+            if (history.length < 2) return;
+
+            // X scale needs to adapt as time grows, or fixed? Let's fix for demo (~2000 frames max)
+            const maxTime = Math.max(2000, history[history.length-1].t + 500);
+            const mapX = (t) => padding + (t / maxTime) * (w - padding - 20);
+
+            ctx.beginPath();
+            ctx.strokeStyle = '#f472b6'; // Pink Line
+            ctx.lineWidth = 3;
+            ctx.moveTo(mapX(history[0].t), mapY(history[0].T));
+            
+            for(let i=1; i<history.length; i++) {
+                ctx.lineTo(mapX(history[i].t), mapY(history[i].T));
+            }
+            ctx.stroke();
+
+            // Draw current dot
+            const last = history[history.length-1];
+            ctx.beginPath();
+            ctx.arc(mapX(last.t), mapY(last.T), 4, 0, Math.PI*2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-pink-500/20 p-2 rounded-lg">
+                            <i data-lucide="activity" className="w-6 h-6 text-pink-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Melting Curve Plotter</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Thermal Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    {/* Left: Controls & Visuals */}
+                    <div className="lg:col-span-5 space-y-6">
+                        {/* Status Card */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
+                            <div className="flex justify-between items-start mb-6">
+                                <div>
+                                    <div className="text-slate-400 text-xs uppercase tracking-wider mb-1">Current State</div>
+                                    <div className="text-2xl font-bold text-white flex items-center gap-2">
+                                        {stateLabel}
+                                    </div>
+                                </div>
+                                <div className={`text-4xl font-mono font-bold ${temp > 90 ? 'text-red-400' : temp > 0 ? 'text-emerald-400' : 'text-blue-400'}`}>
+                                    {Math.round(temp)}°C
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-4">
+                                <button 
+                                    onClick={() => setHeating(!heating)}
+                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center transition-all ${
+                                        heating 
+                                        ? 'bg-red-500/20 text-red-400 border border-red-500/50' 
+                                        : 'bg-emerald-500 hover:bg-emerald-400 text-slate-900'
+                                    }`}
+                                >
+                                    <i data-lucide={heating ? "pause" : "play"} className="w-5 h-5 mr-2"></i>
+                                    {heating ? "Pause Heating" : "Start Heating"}
+                                </button>
+                                
+                                <button 
+                                    onClick={() => setResetFlag(f => f+1)}
+                                    className="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 text-sm font-medium transition-colors"
+                                >
+                                    Reset Experiment
+                                </button>
+                            </div>
+
+                            <div className="mt-6 pt-6 border-t border-slate-700">
+                                <label className="flex justify-between text-sm mb-2 text-slate-300">
+                                    <span>Bunsen Burner Power</span>
+                                    <span className="text-orange-400">{power}%</span>
+                                </label>
+                                <input 
+                                    type="range" min="10" max="100" 
+                                    value={power} onChange={(e) => setPower(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Particle View */}
+                        <div className="bg-black rounded-2xl border border-slate-700 overflow-hidden relative shadow-2xl flex flex-col items-center p-4">
+                            <div className="text-slate-500 text-xs mb-2 font-mono w-full text-left">MICROSCOPIC VIEW</div>
+                            <canvas 
+                                ref={particleCanvasRef} 
+                                width={CONTAINER_WIDTH} 
+                                height={CONTAINER_HEIGHT}
+                                className="bg-slate-900/50 rounded-lg border border-slate-800"
+                            />
+                            {/* Burner Flame */}
+                            <div className={`mt-2 w-16 h-8 bg-orange-500 blur-md rounded-full transition-opacity duration-300 ${heating ? 'opacity-100' : 'opacity-0'}`}></div>
+                            <div className={`-mt-6 w-8 h-4 bg-yellow-300 blur-sm rounded-full transition-opacity duration-300 ${heating ? 'opacity-100' : 'opacity-0'}`}></div>
+                        </div>
+                    </div>
+
+                    {/* Right: Graph */}
+                    <div className="lg:col-span-7 bg-slate-800 rounded-2xl border border-slate-700 p-1 overflow-hidden shadow-xl flex flex-col">
+                        <div className="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+                            <h3 className="font-bold text-white flex items-center">
+                                <i data-lucide="line-chart" className="w-4 h-4 mr-2 text-pink-400"></i>
+                                Temperature vs. Time Graph
+                            </h3>
+                            <div className="flex gap-4 text-xs">
+                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-blue-400 mr-2"></div>Solid</div>
+                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-emerald-400 mr-2"></div>Liquid</div>
+                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-yellow-400 mr-2"></div>Gas</div>
+                            </div>
+                        </div>
+                        <div className="flex-1 relative bg-slate-900">
+                            <canvas 
+                                ref={graphCanvasRef} 
+                                width={600} 
+                                height={400}
+                                className="w-full h-full block"
+                            />
+                            {/* Overlay hints */}
+                            {stateLabel.includes("Phase Change") && (
+                                <div className="absolute top-4 right-4 bg-yellow-500/10 border border-yellow-500/50 text-yellow-200 px-3 py-2 rounded-lg text-sm animate-pulse">
+                                    Adding Latent Heat... Temp stays constant!
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    if (typeof lucide !== 'undefined') {
+        setTimeout(() => lucide.createIcons(), 100);
+    }
+</script>
+</body>
+</html>
