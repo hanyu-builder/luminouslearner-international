@@ -53,7 +53,7 @@
         const [boxDist, setBoxDist] = useState(50); // Position on ramp (pixels from top)
         const [velocity, setVelocity] = useState(0);
         const [simState, setSimState] = useState('static'); // static, sliding, finished
-        const [isReleased, setIsReleased] = useState(false); // New: Logic for "Let go"
+        const [isReleased, setIsReleased] = useState(false); 
         
         // Physics Calculations
         const angleRad = angle * (Math.PI / 180);
@@ -65,19 +65,29 @@
         // Refs
         const requestRef = useRef();
         const lastTimeRef = useRef(0);
-        // FIX: Use Ref for physics state to avoid stale closure issues in animation loop
+        
+        // --- Mutable Refs for Physics Loop (Prevents Stale Closures) ---
         const physicsRef = useRef({ dist: 50, vel: 0 });
+        const isReleasedRef = useRef(false); // Ref for immediate loop access
+        const simStateRef = useRef('static'); // Ref for immediate loop access
 
         // --- Physics Loop ---
         const updatePhysics = (time) => {
             const dt = (time - lastTimeRef.current) / 1000;
             lastTimeRef.current = time;
 
+            // Use Refs for logic inside the loop
+            const released = isReleasedRef.current;
+            const currentState = simStateRef.current;
+
             // Only run physics if Released
-            if (isReleased && gravityParallel > maxFriction && simState !== 'finished') {
-                if (simState === 'static') setSimState('sliding');
+            if (released && gravityParallel > maxFriction && currentState !== 'finished') {
+                if (currentState === 'static') {
+                    setSimState('sliding');
+                    simStateRef.current = 'sliding';
+                }
                 
-                // Kinetic Friction
+                // Kinetic Friction (Assume 0.8 of static)
                 const mu_k = mu * 0.8;
                 const kineticFriction = mu_k * normalForce;
                 const netForce = gravityParallel - kineticFriction;
@@ -91,13 +101,13 @@
                 setVelocity(physicsRef.current.vel);
                 setBoxDist(physicsRef.current.dist);
             } else {
-                if (simState === 'sliding') {
+                if (currentState === 'sliding') {
                     // sliding continues logic if needed
                 } else {
                     // Not released OR friction holds it
                     setSimState('static');
+                    simStateRef.current = 'static';
                     setVelocity(0);
-                    // Also sync ref to be sure (though static shouldn't drift)
                     physicsRef.current.vel = 0;
                 }
             }
@@ -108,16 +118,23 @@
                 physicsRef.current.vel = 0;
                 setBoxDist(RAMP_LENGTH - BOX_SIZE);
                 setVelocity(0);
+                
                 setSimState('finished');
-            } else if (simState !== 'finished' && isReleased) {
+                simStateRef.current = 'finished';
+            } else if (simStateRef.current !== 'finished' && released) {
+                // Continue loop
                 requestRef.current = requestAnimationFrame(updatePhysics);
             }
         };
 
         // Start Loop Trigger
         const handleRelease = () => {
-            if (isReleased) return; // Already released
+            if (isReleasedRef.current) return; // Already released
+            
+            // Update State AND Ref
             setIsReleased(true);
+            isReleasedRef.current = true;
+            
             lastTimeRef.current = performance.now();
             requestRef.current = requestAnimationFrame(updatePhysics);
         };
@@ -126,11 +143,15 @@
             setBoxDist(50);
             setVelocity(0);
             
-            // FIX: Reset Physics Ref
+            // Reset Refs
             physicsRef.current = { dist: 50, vel: 0 };
+            isReleasedRef.current = false;
+            simStateRef.current = 'static';
             
+            // Reset State
             setSimState('static');
-            setIsReleased(false); // Reset release state
+            setIsReleased(false);
+            
             cancelAnimationFrame(requestRef.current);
             requestRef.current = null;
         };
@@ -218,10 +239,6 @@
             let currentFriction = 0;
             // Logic for visual friction arrow
             if (!isReleased) {
-                // Ideally matches gravity to be static, limited by max
-                // Just visualize max potential for clarity? Or actual static?
-                // Let's show max static potential as a ghost, and actual static as solid?
-                // For simplicity: Show Max Static if held
                 currentFriction = maxFriction; 
             } else if (simState === 'static') {
                 currentFriction = gravityParallel; 
@@ -322,7 +339,8 @@
                                         value={mu}
                                         onChange={(e) => {
                                             setMu(Number(e.target.value));
-                                            setIsReleased(false); // Reset on change
+                                            setIsReleased(false); 
+                                            isReleasedRef.current = false;
                                         }}
                                         disabled={isReleased && simState === 'sliding'}
                                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
@@ -344,7 +362,8 @@
                                         value={angle}
                                         onChange={(e) => {
                                             setAngle(Number(e.target.value));
-                                            setIsReleased(false); // Reset on change
+                                            setIsReleased(false);
+                                            isReleasedRef.current = false;
                                         }}
                                         disabled={isReleased && simState === 'sliding'}
                                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
