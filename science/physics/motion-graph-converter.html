@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion Graph Converter | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        canvas { touch-action: none; }
+        .graph-grid {
+            background-image: 
+                linear-gradient(to right, #334155 1px, transparent 1px),
+                linear-gradient(to bottom, #334155 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 600;
+    const GRAPH_HEIGHT = 180;
+    const TIME_TOTAL = 10; // seconds
+    const POINTS_COUNT = 6; // Control points (t=0, 2, 4, 6, 8, 10)
+
+    const App = () => {
+        // --- State ---
+        // Control points: array of {t, s}. t is fixed, s is variable.
+        const [controlPoints, setControlPoints] = useState(
+            Array.from({ length: POINTS_COUNT }, (_, i) => ({
+                t: i * (TIME_TOTAL / (POINTS_COUNT - 1)),
+                s: i === 0 ? 0 : 20 + i * 10 // Initial slope
+            }))
+        );
+        
+        const [time, setTime] = useState(0);
+        const [isPlaying, setIsPlaying] = useState(false);
+        const [draggingIdx, setDraggingIdx] = useState(null);
+
+        // Calculated Data (High resolution for smooth graphs)
+        const [graphData, setGraphData] = useState({ s: [], v: [], a: [] });
+
+        const canvasRefS = useRef(null);
+        const canvasRefV = useRef(null);
+        const canvasRefA = useRef(null);
+        const requestRef = useRef();
+
+        // --- Math Helpers (Cubic Spline / Catmull-Rom would be smoother, simple implementation here) ---
+        // For educational clarity, we'll use Monotone Cubic Interpolation to avoid overshooting
+        const calculateGraphData = () => {
+            const steps = 200;
+            const dt = TIME_TOTAL / steps;
+            
+            // 1. Interpolate S (Displacement)
+            // Using a simple monotonic interpolation or just linear for basics? 
+            // Physics graphs usually need curves. Let's implement a basic cubic spline solver.
+            
+            // Simple approach: Map points to a smooth curve array
+            const sData = [];
+            const vData = [];
+            const aData = [];
+
+            // Helper to get S at any t using basic cubic interpolation between control points
+            const getS = (t) => {
+                // Find segment
+                const segmentWidth = TIME_TOTAL / (POINTS_COUNT - 1);
+                const idx = Math.min(POINTS_COUNT - 2, Math.floor(t / segmentWidth));
+                const t0 = controlPoints[idx].t;
+                const t1 = controlPoints[idx+1].t;
+                const s0 = controlPoints[idx].s;
+                const s1 = controlPoints[idx+1].s;
+                
+                // Local t (0 to 1)
+                const localT = (t - t0) / (t1 - t0);
+                
+                // Simple Cubic Ease-in-out for smooth connections (Not perfect spline but good enough for demo)
+                // s = s0 + (s1-s0) * (3t^2 - 2t^3)
+                // This forces slope 0 at control points which is limiting.
+                // Let's use Catmull-Rom logic for tangents.
+                
+                const p0 = controlPoints[Math.max(0, idx - 1)];
+                const p1 = controlPoints[idx];
+                const p2 = controlPoints[idx + 1];
+                const p3 = controlPoints[Math.min(POINTS_COUNT - 1, idx + 2)];
+
+                // Catmull-Rom Spline
+                const t2 = localT * localT;
+                const t3 = t2 * localT;
+
+                const v0 = (p2.s - p0.s) * 0.5;
+                const v1 = (p3.s - p1.s) * 0.5;
+
+                // Hermite Basis
+                const h1 = 2*t3 - 3*t2 + 1;
+                const h2 = -2*t3 + 3*t2;
+                const h3 = t3 - 2*t2 + localT;
+                const h4 = t3 - t2;
+
+                return h1*p1.s + h2*p2.s + h3*v0 + h4*v1;
+            };
+
+            // Generate S array
+            for (let i = 0; i <= steps; i++) {
+                const t = (i / steps) * TIME_TOTAL;
+                sData.push(getS(t));
+            }
+
+            // Generate V array (Numerical Derivative dS/dt)
+            for (let i = 0; i < sData.length; i++) {
+                if (i === 0) vData.push((sData[1] - sData[0]) / dt);
+                else if (i === sData.length - 1) vData.push((sData[i] - sData[i-1]) / dt);
+                else vData.push((sData[i+1] - sData[i-1]) / (2 * dt)); // Central difference
+            }
+
+            // Generate A array (Numerical Derivative dV/dt)
+            for (let i = 0; i < vData.length; i++) {
+                if (i === 0) aData.push((vData[1] - vData[0]) / dt);
+                else if (i === vData.length - 1) aData.push((vData[i] - vData[i-1]) / dt);
+                else aData.push((vData[i+1] - vData[i-1]) / (2 * dt));
+            }
+
+            setGraphData({ s: sData, v: vData, a: aData });
+        };
+
+        useEffect(() => {
+            calculateGraphData();
+        }, [controlPoints]);
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRefS.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Find closest control point X
+            const clickT = (x / CANVAS_WIDTH) * TIME_TOTAL;
+            const closestIdx = controlPoints.reduce((bestIdx, pt, idx) => {
+                return Math.abs(pt.t - clickT) < Math.abs(controlPoints[bestIdx].t - clickT) ? idx : bestIdx;
+            }, 0);
+
+            // Check if close enough in X (tolerance)
+            if (Math.abs(controlPoints[closestIdx].t - clickT) < 0.5) {
+                setDraggingIdx(closestIdx);
+            }
+        };
+
+        const handleMouseMove = (e) => {
+            if (draggingIdx === null) return;
+            
+            const rect = canvasRefS.current.getBoundingClientRect();
+            let y = e.clientY - rect.top;
+            
+            // Map Y to S (0 to 100 range)
+            // Canvas Y: 0 (top) -> Height (bottom)
+            // S: 100 (top) -> 0 (bottom)
+            // But let's allow negative? Let's say range -20 to 120
+            const sRange = 140;
+            const sOffset = 20; // starts at -20
+            const s = sRange - (y / GRAPH_HEIGHT) * sRange - sOffset;
+
+            setControlPoints(prev => {
+                const next = [...prev];
+                next[draggingIdx] = { ...next[draggingIdx], s: s };
+                return next;
+            });
+        };
+
+        const handleMouseUp = () => {
+            setDraggingIdx(null);
+        };
+
+        // --- Animation ---
+        useEffect(() => {
+            if (isPlaying) {
+                const startTime = Date.now() - time * 1000;
+                const loop = () => {
+                    const now = Date.now();
+                    let t = (now - startTime) / 1000;
+                    if (t > TIME_TOTAL) {
+                        t = TIME_TOTAL;
+                        setIsPlaying(false);
+                    }
+                    setTime(t);
+                    if (t < TIME_TOTAL) requestRef.current = requestAnimationFrame(loop);
+                };
+                requestRef.current = requestAnimationFrame(loop);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [isPlaying]);
+
+        // --- Drawing Helper ---
+        const drawGraph = (ctx, data, color, label, unit, minVal, maxVal, showControlPoints = false) => {
+            ctx.clearRect(0, 0, CANVAS_WIDTH, GRAPH_HEIGHT);
+            
+            // Grid
+            // ...handled by CSS mostly, but lets draw Zero line
+            const zeroY = GRAPH_HEIGHT - ((0 - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, zeroY);
+            ctx.lineTo(CANVAS_WIDTH, zeroY);
+            ctx.stroke();
+
+            // Label
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px sans-serif';
+            ctx.fillText(`${label} (${unit})`, 10, 20);
+
+            // Curve
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            
+            const stepX = CANVAS_WIDTH / (data.length - 1);
+            
+            data.forEach((val, i) => {
+                const x = i * stepX;
+                const y = GRAPH_HEIGHT - ((val - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Control Points (Only for S-graph)
+            if (showControlPoints) {
+                controlPoints.forEach((p, i) => {
+                    const x = (p.t / TIME_TOTAL) * CANVAS_WIDTH;
+                    const y = GRAPH_HEIGHT - ((p.s - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
+                    
+                    ctx.fillStyle = i === draggingIdx ? '#fff' : color;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 6, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                });
+            }
+
+            // Time Indicator Line
+            const timeX = (time / TIME_TOTAL) * CANVAS_WIDTH;
+            ctx.strokeStyle = '#fbbf24'; // Amber
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(timeX, 0);
+            ctx.lineTo(timeX, GRAPH_HEIGHT);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Current Value Dot
+            // Interpolate current val
+            const idx = Math.floor((time / TIME_TOTAL) * (data.length - 1));
+            const currentVal = data[idx] || 0;
+            const curY = GRAPH_HEIGHT - ((currentVal - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.arc(timeX, curY, 4, 0, Math.PI*2);
+            ctx.fill();
+            
+            // Value Text
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillText(currentVal.toFixed(1), timeX + 5, curY - 5);
+        };
+
+        // --- Render Loop ---
+        useEffect(() => {
+            if (!canvasRefS.current || !canvasRefV.current || !canvasRefA.current) return;
+
+            const ctxS = canvasRefS.current.getContext('2d');
+            const ctxV = canvasRefV.current.getContext('2d');
+            const ctxA = canvasRefA.current.getContext('2d');
+
+            drawGraph(ctxS, graphData.s, '#3b82f6', '位移 Displacement', 'm', -20, 120, true);
+            drawGraph(ctxV, graphData.v, '#10b981', '速度 Velocity', 'm/s', -30, 30);
+            drawGraph(ctxA, graphData.a, '#ef4444', '加速度 Acceleration', 'm/s²', -20, 20);
+
+        }, [graphData, time, draggingIdx, controlPoints]);
+
+        // Car position calculation
+        const getCarPos = () => {
+            const idx = Math.floor((time / TIME_TOTAL) * (graphData.s.length - 1));
+            return graphData.s[idx] || 0;
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200"
+                 onMouseMove={handleMouseMove}
+                 onMouseUp={handleMouseUp}
+                 onMouseLeave={handleMouseUp}
+            >
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="activity" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Motion Graph Converter</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Kinematics
+                    </div>
+                </nav>
+
+                <main className="max-w-5xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    
+                    {/* Left: Graphs */}
+                    <div className="lg:col-span-8 space-y-2">
+                        {/* S-T Graph */}
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative group">
+                            <div className="absolute top-2 right-2 text-xs text-blue-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
+                                Drag points to edit
+                            </div>
+                            <canvas 
+                                ref={canvasRefS} 
+                                width={CANVAS_WIDTH} 
+                                height={GRAPH_HEIGHT}
+                                onMouseDown={handleMouseDown}
+                                className="w-full h-auto cursor-ns-resize graph-grid bg-slate-950"
+                            />
+                        </div>
+
+                        {/* V-T Graph */}
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative">
+                            <div className="absolute top-2 right-2 text-xs text-emerald-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
+                                Slope of S-T
+                            </div>
+                            <canvas 
+                                ref={canvasRefV} 
+                                width={CANVAS_WIDTH} 
+                                height={GRAPH_HEIGHT}
+                                className="w-full h-auto graph-grid bg-slate-950"
+                            />
+                        </div>
+
+                        {/* A-T Graph */}
+                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative">
+                            <div className="absolute top-2 right-2 text-xs text-red-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
+                                Slope of V-T
+                            </div>
+                            <canvas 
+                                ref={canvasRefA} 
+                                width={CANVAS_WIDTH} 
+                                height={GRAPH_HEIGHT}
+                                className="w-full h-auto graph-grid bg-slate-950"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Right: Visualization & Controls */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        {/* Simulation Visual */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h3 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="car" className="w-5 h-5 mr-2 text-yellow-400"></i>
+                                Motion Visualizer
+                            </h3>
+                            <div className="bg-slate-900 rounded-xl h-64 relative border border-slate-800 overflow-hidden">
+                                {/* Track lines */}
+                                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-700 border-l border-dashed border-slate-600"></div>
+                                <div className="absolute top-1/2 left-0 right-0 h-px bg-slate-700"></div>
+                                
+                                {/* 0m Marker */}
+                                <div className="absolute left-2 bottom-4 text-xs text-slate-500">0m</div>
+                                <div className="absolute left-1/2 bottom-4 w-full border-b border-slate-700"></div>
+
+                                {/* Car */}
+                                <div 
+                                    className="absolute left-1/2 w-12 h-20 -ml-6 bg-indigo-600 rounded-lg shadow-[0_0_15px_rgba(79,70,229,0.5)] flex items-center justify-center transition-transform duration-75 ease-linear"
+                                    style={{
+                                        bottom: '20px', 
+                                        transform: `translateY(${-getCarPos() * 2}px)` // Scale: 1m = 2px
+                                    }}
+                                >
+                                    <i data-lucide="chevrons-up" className="text-white/50 w-6 h-6"></i>
+                                </div>
+                                <div className="absolute bottom-2 right-2 text-xs font-mono text-indigo-300">
+                                    Pos: {getCarPos().toFixed(1)}m
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="space-y-3">
+                            <button 
+                                onClick={() => setIsPlaying(!isPlaying)}
+                                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
+                            >
+                                <i data-lucide={isPlaying ? "pause" : "play"} className="w-5 h-5 mr-2"></i>
+                                {isPlaying ? "Pause Simulation" : "Start Simulation"}
+                            </button>
+                            
+                            <button 
+                                onClick={() => {
+                                    setIsPlaying(false);
+                                    setTime(0);
+                                }}
+                                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium border border-slate-700 transition-colors flex items-center justify-center"
+                            >
+                                <i data-lucide="rotate-ccw" className="w-4 h-4 mr-2"></i>
+                                Reset Time
+                            </button>
+                        </div>
+
+                        {/* Info */}
+                        <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl text-xs text-blue-200">
+                            <p className="mb-2 font-bold"><i data-lucide="info" className="w-3 h-3 inline mr-1"></i> How to use:</p>
+                            <ul className="list-disc pl-4 space-y-1 text-slate-400">
+                                <li>Drag the <strong>dots</strong> on the top graph (s-t) to change the displacement.</li>
+                                <li>The Velocity (v) and Acceleration (a) graphs calculate automatically.</li>
+                                <li>Press Play to see the car move according to your graph!</li>
+                            </ul>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    if (typeof lucide !== 'undefined') {
+        setTimeout(() => lucide.createIcons(), 100);
+    }
+</script>
+</body>
+</html>
