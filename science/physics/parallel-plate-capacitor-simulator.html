@@ -44,16 +44,12 @@
     const CANVAS_HEIGHT = 500;
     const CENTER_X = CANVAS_WIDTH / 2;
     const CENTER_Y = CANVAS_HEIGHT / 2;
+    const PLATE_WIDTH = 600;
+    const PLATE_X_START = (CANVAS_WIDTH - PLATE_WIDTH) / 2;
+    const PLATE_X_END = PLATE_X_START + PLATE_WIDTH;
     
-    // Physics Constants
-    const PIXELS_PER_METER = 2000; // Scale: 100px = 5cm = 0.05m
-    const ELEMENTARY_CHARGE = 1.6e-19;
-    const ELECTRON_MASS = 9.1e-31;
-    const PROTON_MASS = 1.67e-27;
-    
-    // Simulation scaling factors to make motion visible
-    const TIME_STEP = 0.5; 
-    const FORCE_SCALE = 1e-12; // Scale forces to visible pixels
+    // Simulation scaling factors
+    const TIME_STEP = 1.0; 
 
     const App = () => {
         // --- State ---
@@ -61,7 +57,7 @@
         const [separation, setSeparation] = useState(10); // cm
         const [showField, setShowField] = useState(true);
         const [showPotential, setShowPotential] = useState(false);
-        const [particles, setParticles] = useState([]); // {x, y, vx, vy, type: 'e'|'p', trail: []}
+        const [particles, setParticles] = useState([]); // {x, y, vx, vy, type: 'e'|'p', trail: [], hit: false}
 
         // Calculated
         const [electricField, setElectricField] = useState(0); // V/m (N/C)
@@ -79,43 +75,78 @@
         // Particle Loop
         const loop = () => {
             setParticles(prevParticles => {
-                return prevParticles.map(p => {
-                    // Calculate Force F = qE
-                    const d_meters = separation / 100;
-                    const E = voltage / d_meters;
-                    
-                    // Direction: E points from + to -.
-                    // If V > 0: Top +, Bottom -. E points Down (positive Y in canvas).
-                    // If V < 0: Top -, Bottom +. E points Up (negative Y).
-                    
-                    // Particle Charge q
-                    // Proton: +, follows E
-                    // Electron: -, opposes E
-                    
-                    let dirY = 0;
-                    if (p.type === 'p') dirY = 1; // +q
-                    else dirY = -1; // -q
-                    
-                    // Acceleration a = F/m = (qE)/m
-                    // Visual approximation
-                    // Force strength proportional to E
-                    const a_mag = (E * 0.005); // Visual acceleration factor
-                    
-                    const ay = a_mag * dirY; 
+                const sepPx = separation * 20; 
+                const plateTopY = CENTER_Y - sepPx / 2;
+                const plateBottomY = CENTER_Y + sepPx / 2;
 
+                return prevParticles.map(p => {
+                    // If already hit something, stop updating
+                    if (p.hit) return p;
+
+                    let ax = 0;
+                    let ay = 0;
+
+                    // Only apply Electric Force if inside the plates horizontally
+                    if (p.x >= PLATE_X_START && p.x <= PLATE_X_END) {
+                        const d_meters = separation / 100;
+                        const E = voltage / d_meters;
+                        
+                        // Direction: E points from + to -
+                        // V > 0: Top +, E points Down (+Y)
+                        // V < 0: Top -, E points Up (-Y)
+                        const eFieldDir = voltage >= 0 ? 1 : -1;
+                        
+                        // Charge: Proton (+) follows E, Electron (-) opposes E
+                        const chargeSign = p.type === 'p' ? 1 : -1;
+                        
+                        // Mass factor for visual: Electron is much lighter -> higher accel
+                        // We use a fake mass ratio for better visualization (not 1836:1, maybe 4:1)
+                        const massFactor = p.type === 'p' ? 1.0 : 0.25; 
+
+                        // Acceleration Magnitude
+                        const a_mag = (Math.abs(E) * 0.005) / massFactor;
+                        
+                        ay = a_mag * eFieldDir * chargeSign;
+                    }
+
+                    const newVx = p.vx + ax * TIME_STEP;
                     const newVy = p.vy + ay * TIME_STEP;
-                    const newX = p.x + p.vx * TIME_STEP;
+                    const newX = p.x + newVx * TIME_STEP;
                     const newY = p.y + newVy * TIME_STEP;
                     
+                    // Collision Check with Plates
+                    let hit = false;
+                    let finalY = newY;
+                    
+                    // Only check collision if within horizontal range of plates
+                    if (newX >= PLATE_X_START && newX <= PLATE_X_END) {
+                        if (newY <= plateTopY) {
+                            hit = true;
+                            finalY = plateTopY + 4; // Stick to surface
+                        } else if (newY >= plateBottomY) {
+                            hit = true;
+                            finalY = plateBottomY - 4; // Stick to surface
+                        }
+                    }
+
                     // Update Trail
                     const newTrail = [...p.trail];
-                    if (newTrail.length === 0 || Math.hypot(newX - newTrail[newTrail.length-1].x, newY - newTrail[newTrail.length-1].y) > 10) {
-                        newTrail.push({x: newX, y: newY});
+                    // Add point every few frames or if distance is large enough
+                    if (newTrail.length === 0 || Math.hypot(newX - newTrail[newTrail.length-1].x, newY - newTrail[newTrail.length-1].y) > 5) {
+                        newTrail.push({x: newX, y: hit ? finalY : newY});
                     }
-                    if (newTrail.length > 50) newTrail.shift();
+                    if (newTrail.length > 100) newTrail.shift();
 
-                    return { ...p, x: newX, y: newY, vx: p.vx, vy: newVy, trail: newTrail };
-                }).filter(p => p.x < CANVAS_WIDTH + 50 && p.y > -50 && p.y < CANVAS_HEIGHT + 50); // Remove off-screen
+                    return { 
+                        ...p, 
+                        x: newX, 
+                        y: hit ? finalY : newY, 
+                        vx: hit ? 0 : newVx, 
+                        vy: hit ? 0 : newVy, 
+                        trail: newTrail,
+                        hit: hit
+                    };
+                }).filter(p => p.x < CANVAS_WIDTH + 100 && p.y > -100 && p.y < CANVAS_HEIGHT + 100); 
             });
             
             requestRef.current = requestAnimationFrame(loop);
@@ -134,41 +165,32 @@
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
             // Calculate Plate Geometry
-            const sepPx = separation * 20; // 1cm = 20px visual scaling for plate gap
+            const sepPx = separation * 20; // 1cm = 20px
             const plateTopY = CENTER_Y - sepPx / 2;
             const plateBottomY = CENTER_Y + sepPx / 2;
-            const plateWidth = 600;
-            const plateX = (CANVAS_WIDTH - plateWidth) / 2;
 
             // 1. Draw Field Lines (Background)
             if (showField && Math.abs(electricField) > 1) {
                 ctx.save();
-                // Clip to region between plates
                 ctx.beginPath();
-                ctx.rect(plateX, plateTopY, plateWidth, sepPx);
+                ctx.rect(PLATE_X_START, plateTopY, PLATE_WIDTH, sepPx);
                 ctx.clip();
                 
                 const spacing = 40;
                 const arrowSize = 6;
                 const opacity = Math.min(1, Math.abs(voltage) / 500 + 0.2);
-                
-                // Determine direction
-                // V > 0: Top +, Bottom -. E points Down.
-                // V < 0: Top -, Bottom +. E points Up.
                 const isDown = voltage > 0;
                 
                 ctx.strokeStyle = `rgba(234, 179, 8, ${opacity})`; // Yellow
                 ctx.fillStyle = `rgba(234, 179, 8, ${opacity})`;
                 ctx.lineWidth = 2;
                 
-                for (let x = plateX + 20; x < plateX + plateWidth; x += spacing) {
-                    // Draw Line
+                for (let x = PLATE_X_START + 20; x < PLATE_X_END; x += spacing) {
                     ctx.beginPath();
-                    ctx.moveTo(x, plateTopY + 10);
-                    ctx.lineTo(x, plateBottomY - 10);
+                    ctx.moveTo(x, plateTopY + 5);
+                    ctx.lineTo(x, plateBottomY - 5);
                     ctx.stroke();
                     
-                    // Draw Arrows
                     for (let y = plateTopY + 30; y < plateBottomY; y += 40) {
                         ctx.beginPath();
                         if (isDown) {
@@ -186,7 +208,7 @@
                 ctx.restore();
             }
 
-            // 2. Draw Equipotential Lines (Dotted)
+            // 2. Draw Equipotential Lines
             if (showPotential) {
                 const lines = 4;
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
@@ -195,29 +217,29 @@
                 for(let i=1; i<=lines; i++) {
                     const y = plateTopY + (sepPx / (lines+1)) * i;
                     ctx.beginPath();
-                    ctx.moveTo(plateX, y);
-                    ctx.lineTo(plateX + plateWidth, y);
+                    ctx.moveTo(PLATE_X_START, y);
+                    ctx.lineTo(PLATE_X_END, y);
                     ctx.stroke();
                 }
                 ctx.setLineDash([]);
             }
 
             // 3. Draw Plates
-            const topColor = voltage > 0 ? '#ef4444' : voltage < 0 ? '#3b82f6' : '#94a3b8'; // Red+, Blue-, Grey0
+            const topColor = voltage > 0 ? '#ef4444' : voltage < 0 ? '#3b82f6' : '#94a3b8';
             const botColor = voltage > 0 ? '#3b82f6' : voltage < 0 ? '#ef4444' : '#94a3b8';
             
             // Top Plate
             ctx.fillStyle = topColor;
-            ctx.fillRect(plateX, plateTopY - 10, plateWidth, 10);
+            ctx.fillRect(PLATE_X_START, plateTopY - 10, PLATE_WIDTH, 10);
             ctx.fillStyle = 'rgba(255,255,255,0.5)';
             ctx.font = 'bold 20px monospace';
-            ctx.fillText(voltage > 0 ? '+++++' : voltage < 0 ? '-----' : '', plateX + 10, plateTopY - 20);
+            ctx.fillText(voltage > 0 ? '+++++' : voltage < 0 ? '-----' : '', PLATE_X_START + 10, plateTopY - 20);
 
             // Bottom Plate
             ctx.fillStyle = botColor;
-            ctx.fillRect(plateX, plateBottomY, plateWidth, 10);
+            ctx.fillRect(PLATE_X_START, plateBottomY, PLATE_WIDTH, 10);
             ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.fillText(voltage > 0 ? '-----' : voltage < 0 ? '+++++' : '', plateX + 10, plateBottomY + 30);
+            ctx.fillText(voltage > 0 ? '-----' : voltage < 0 ? '+++++' : '', PLATE_X_START + 10, plateBottomY + 30);
 
             // 4. Draw Particles
             particles.forEach(p => {
@@ -245,6 +267,15 @@
                 ctx.font = '10px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText(p.type === 'p' ? '+' : '-', p.x, p.y+3);
+
+                // Hit Effect
+                if (p.hit) {
+                    ctx.strokeStyle = 'yellow';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 10 + Math.sin(Date.now()/100)*2, 0, Math.PI*2);
+                    ctx.stroke();
+                }
             });
         };
 
@@ -254,14 +285,14 @@
 
         // --- Actions ---
         const fire = (type) => {
-            const startY = CENTER_Y;
             setParticles(prev => [...prev, {
                 x: 50,
-                y: startY,
+                y: CENTER_Y,
                 vx: 5, // Initial horizontal velocity
                 vy: 0,
                 type: type,
-                trail: []
+                trail: [],
+                hit: false
             }]);
         };
 
@@ -306,7 +337,7 @@
                                     <span className="text-slate-400">Electric Field ($E$)</span>
                                     <span className="text-yellow-400 font-mono font-bold">{electricField.toFixed(0)} V/m</span>
                                 </div>
-                                <div className="text-[10px] text-slate-500">Uniform field direction: {voltage > 0 ? "Down" : voltage < 0 ? "Up" : "None"}</div>
+                                <div className="text-[10px] text-slate-500">Uniform field only between plates</div>
                             </div>
                         </div>
 
