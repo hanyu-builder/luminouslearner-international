@@ -52,13 +52,17 @@
         const [soundEnabled, setSoundEnabled] = useState(false);
         
         // Real-time Data
-        const [obsFreq, setObsFreq] = useState(0); // Frequency heard by observer
+        const [obsFreq, setObsFreq] = useState(0); 
         const [isApproaching, setIsApproaching] = useState(false);
 
         const canvasRef = useRef(null);
         const requestRef = useRef();
         const lastTimeRef = useRef(0);
         
+        // --- Animation Refs (Source of Truth) ---
+        const isPlayingRef = useRef(false);
+        const paramsRef = useRef({ sourceSpeed: 0.5, frequency: 2.0 });
+
         // Physics Objects
         const stateRef = useRef({
             waves: [], // {x, y, r, timeCreated}
@@ -73,18 +77,28 @@
         const gainNodeRef = useRef(null);
         const pannerRef = useRef(null);
 
+        // --- Sync Refs ---
+        useEffect(() => {
+            isPlayingRef.current = isPlaying;
+            paramsRef.current = { sourceSpeed, frequency };
+        }, [isPlaying, sourceSpeed, frequency]);
+
         // --- Logic ---
         const resetSim = () => {
             setIsPlaying(false);
             cancelAnimationFrame(requestRef.current);
+            
             stateRef.current = {
                 waves: [],
                 sourceX: 100, // Start from left
                 lastEmitTime: 0,
                 observerX: CANVAS_WIDTH * 0.75
             };
+            
             stopSound();
-            draw();
+            
+            // Force redraw reset state
+            setTimeout(() => draw(), 50);
         };
 
         const togglePlay = () => {
@@ -93,6 +107,7 @@
                 stopSound();
             } else {
                 setIsPlaying(true);
+                isPlayingRef.current = true; // Set ref immediately for loop
                 lastTimeRef.current = performance.now();
                 if (soundEnabled) startSound();
                 requestRef.current = requestAnimationFrame(loop);
@@ -116,8 +131,8 @@
             const gain = ctx.createGain();
             const panner = ctx.createStereoPanner();
 
-            osc.type = 'sawtooth'; // Richer sound for engine effect
-            osc.frequency.value = 220; // Base pitch
+            osc.type = 'sawtooth'; 
+            osc.frequency.value = 220; 
             
             osc.connect(gain);
             gain.connect(panner);
@@ -147,14 +162,10 @@
             const approaching = dist > 0;
             setIsApproaching(approaching);
 
-            // Doppler Formula: f' = f * (v / (v - vs))  [Approaching]
-            //                f' = f * (v / (v + vs))  [Receding]
+            const vSound = 340; 
+            const vSourceReal = vS * vSound; 
             
-            const vSound = 340; // Use real physics units for audio calculation
-            const vSourceReal = vS * vSound; // Map Mach to real speed
-            
-            // Base freq (Hz)
-            const baseF = 200 + frequency * 50; 
+            const baseF = 200 + paramsRef.current.frequency * 50; 
 
             let factor = 1;
             if (approaching) {
@@ -163,43 +174,38 @@
                 factor = vSound / (vSound + vSourceReal);
             }
             
-            // Limit extreme shifts (sonic boom singularity)
             if (factor > 4) factor = 4;
             if (factor < 0) factor = 0;
 
             const newFreq = baseF * factor;
             setObsFreq(newFreq);
 
-            // Update Oscillator
             oscRef.current.frequency.setTargetAtTime(newFreq, audioCtxRef.current.currentTime, 0.1);
-
-            // Update Panner (Left to Right)
-            // Map screen x to -1 (left) to 1 (right)
+            
             const panVal = Math.max(-1, Math.min(1, (sX - CANVAS_WIDTH/2) / (CANVAS_WIDTH/2)));
             pannerRef.current.pan.setTargetAtTime(panVal, audioCtxRef.current.currentTime, 0.1);
 
-            // Update Volume (Distance attenuation)
             const vol = Math.max(0, 1 - Math.abs(dist) / 600);
             gainNodeRef.current.gain.setTargetAtTime(vol * 0.5, audioCtxRef.current.currentTime, 0.1);
         };
 
         // --- Physics Loop ---
         const loop = (timestamp) => {
-            if (!isPlaying) return;
+            if (!isPlayingRef.current) return;
 
             const dt = (timestamp - lastTimeRef.current) / 1000;
             lastTimeRef.current = timestamp;
 
             const state = stateRef.current;
+            const { sourceSpeed, frequency } = paramsRef.current; // Use latest params
 
             // 1. Move Source
-            const vPx = sourceSpeed * SPEED_OF_SOUND; // pixels per second
+            const vPx = sourceSpeed * SPEED_OF_SOUND; 
             state.sourceX += vPx * dt;
 
             // Loop source
             if (state.sourceX > CANVAS_WIDTH + 100) {
                 state.sourceX = -50;
-                // Clear waves to avoid confusion on wrap
                 state.waves = [];
             }
 
@@ -218,23 +224,23 @@
                 w.r += SPEED_OF_SOUND * dt;
             });
 
-            // Remove old waves
             state.waves = state.waves.filter(w => w.r < CANVAS_WIDTH * 1.5);
 
-            // 4. Update Audio
+            // 4. Update Audio / UI Data
+            const vSound = 340;
+            const vSourceReal = sourceSpeed * vSound;
+            const baseF = 200 + frequency * 50; 
+            const dist = state.observerX - state.sourceX;
+            const approaching = dist > 0;
+            
+            setIsApproaching(approaching); // This might cause render, but it's okay
+            
+            let factor = approaching ? vSound / (vSound - vSourceReal) : vSound / (vSound + vSourceReal);
+            if (factor > 4) factor = 4; if (factor < 0) factor = 0; 
+            setObsFreq(baseF * factor);
+
             if (soundEnabled) {
                 updateAudio(state.sourceX, state.observerX, sourceSpeed);
-            } else {
-                // Just calc freq for display
-                const vSound = 340;
-                const vSourceReal = sourceSpeed * vSound;
-                const baseF = 200 + frequency * 50; 
-                const dist = state.observerX - state.sourceX;
-                const approaching = dist > 0;
-                setIsApproaching(approaching);
-                let factor = approaching ? vSound / (vSound - vSourceReal) : vSound / (vSound + vSourceReal);
-                if (factor > 4) factor = 4; if (factor < 0) factor = 0; // Singularity check
-                setObsFreq(baseF * factor);
             }
 
             draw();
@@ -261,7 +267,6 @@
             // 2. Observer
             const obsX = state.observerX;
             ctx.fillStyle = '#cbd5e1';
-            // Simple Ear Icon representation
             ctx.beginPath();
             ctx.arc(obsX, CENTER_Y, 20, 0, Math.PI*2);
             ctx.fill();
@@ -277,9 +282,8 @@
             // 3. Waves
             ctx.lineWidth = 2;
             state.waves.forEach(w => {
-                // Fade out
                 const alpha = Math.max(0, 1 - w.r / 600);
-                ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`; // Sky blue
+                ctx.strokeStyle = `rgba(56, 189, 248, ${alpha})`; 
                 ctx.beginPath();
                 ctx.arc(w.x, w.y, w.r, 0, Math.PI * 2);
                 ctx.stroke();
@@ -294,17 +298,16 @@
             ctx.font = '12px sans-serif';
             ctx.fillText('S', state.sourceX, CENTER_Y);
 
-            // 5. Mach Cone (If super sonic)
+            // 5. Mach Cone
+            const { sourceSpeed } = paramsRef.current; // Use ref for draw too
             if (sourceSpeed > 1.0) {
                 const angle = Math.asin(1 / sourceSpeed);
                 const coneLen = 600;
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
                 ctx.setLineDash([5, 5]);
                 ctx.beginPath();
-                // Top line
                 ctx.moveTo(state.sourceX, CENTER_Y);
                 ctx.lineTo(state.sourceX - coneLen * Math.cos(angle), CENTER_Y - coneLen * Math.sin(angle));
-                // Bottom line
                 ctx.moveTo(state.sourceX, CENTER_Y);
                 ctx.lineTo(state.sourceX - coneLen * Math.cos(angle), CENTER_Y + coneLen * Math.sin(angle));
                 ctx.stroke();
@@ -324,7 +327,6 @@
             if (window.lucide) window.lucide.createIcons();
         });
 
-        // Update sound if enabled changes
         useEffect(() => {
             if (!soundEnabled) stopSound();
             else if (isPlaying) startSound();
