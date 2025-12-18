@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resistivity Explorer | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-emerald::-webkit-slider-thumb { background: #10b981; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 400;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    // Material Data (Resistivity in Ohm-meters)
+    // Scaled for visualization purposes if needed, but these are real values
+    const MATERIALS = [
+        { name: "Silver", rho: 1.59e-8, color: "#e5e7eb", desc: "Best Conductor" },
+        { name: "Copper", rho: 1.68e-8, color: "#f59e0b", desc: "Standard Wire" },
+        { name: "Gold", rho: 2.44e-8, color: "#fcd34d", desc: "Corrosion Resistant" },
+        { name: "Aluminum", rho: 2.65e-8, color: "#9ca3af", desc: "Lightweight" },
+        { name: "Iron", rho: 9.71e-8, color: "#4b5563", desc: "Cheap but Resistive" },
+        { name: "Nichrome", rho: 1.10e-6, color: "#ef4444", desc: "Heating Element (High R)" }
+    ];
+
+    const App = () => {
+        // --- State ---
+        const [length, setLength] = useState(0.5); // meters (0.1 - 2.0)
+        const [area, setArea] = useState(1.0); // mm^2 (0.1 - 10.0)
+        const [materialIdx, setMaterialIdx] = useState(1); // Default Copper
+
+        // Physics Result
+        const [resistance, setResistance] = useState(0);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const electronOffsetRef = useRef(0);
+
+        // --- Physics Logic ---
+        useEffect(() => {
+            const mat = MATERIALS[materialIdx];
+            // R = rho * L / A
+            // Area in mm^2 needs to be converted to m^2 (x 1e-6)
+            const R = (mat.rho * length) / (area * 1e-6);
+            setResistance(R);
+        }, [length, area, materialIdx]);
+
+        // --- Animation Loop ---
+        const loop = () => {
+            // Speed inversely proportional to Resistance
+            // Lower R = Faster flow
+            // Scaling factor for visual
+            // Nichrome (High R ~ 1-10 Ohm) -> Slow
+            // Copper (Low R ~ 0.01 Ohm) -> Fast
+            
+            // To make Copper not infinitely fast and Nichrome not stopped:
+            // Use log scale or clamped mapping
+            
+            // Base speed factor. R ranges from 0.001 to 20.0
+            // Let speed = k / (R^0.5) to dampen extreme range
+            const speed = 2 / Math.max(0.1, Math.sqrt(resistance * 10));
+            
+            electronOffsetRef.current = (electronOffsetRef.current + speed) % 40;
+            
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }); // Re-bind on state change? No, loop uses refs/state.
+        // Actually loop needs current state for drawing. 
+        // We put draw logic inside effect or use refs.
+        // Let's use standard pattern: draw inside loop using current state closure? 
+        // No, loop closure is stale.
+        // We need to redraw when state changes OR rely on Ref for animation.
+        // Simple fix: Add state dependencies to useEffect to restart loop with fresh state closure.
+        
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const mat = MATERIALS[materialIdx];
+            const w = CANVAS_WIDTH;
+            const h = CANVAS_HEIGHT;
+            
+            ctx.clearRect(0, 0, w, h);
+
+            // 1. Draw Wire
+            // Visual Length: Map 0.1m-2.0m to 100px-700px
+            const visualLen = (length / 2.0) * 600 + 50;
+            // Visual Thickness: Map 0.1mm-10mm to 10px-100px
+            const visualThick = (Math.sqrt(area) / Math.sqrt(10)) * 80 + 10; // Sqrt scale for area->radius visual
+
+            const startX = (w - visualLen) / 2;
+            const wireY = h / 2 - visualThick / 2;
+
+            // Wire Body
+            const grad = ctx.createLinearGradient(0, wireY, 0, wireY + visualThick);
+            grad.addColorStop(0, adjustColor(mat.color, 40)); // Highlight
+            grad.addColorStop(0.5, mat.color);
+            grad.addColorStop(1, adjustColor(mat.color, -40)); // Shadow
+            
+            ctx.fillStyle = grad;
+            ctx.fillRect(startX, wireY, visualLen, visualThick);
+            
+            // Wire Borders
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(startX, wireY, visualLen, visualThick);
+            
+            // Ends (Cross sections)
+            ctx.fillStyle = '#4b5563'; // Darker inside
+            ctx.beginPath();
+            ctx.ellipse(startX, h/2, 6, visualThick/2, 0, 0, Math.PI*2);
+            ctx.fill();
+            ctx.stroke();
+
+            // 2. Draw Electrons
+            ctx.fillStyle = '#facc15'; // Yellow electrons
+            const spacing = 40;
+            const rows = Math.max(1, Math.floor(visualThick / 20));
+            const offset = electronOffsetRef.current;
+            
+            // Clip to wire
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(startX, wireY, visualLen, visualThick);
+            ctx.clip();
+            
+            for(let r = 0; r < rows; r++) {
+                const y = wireY + (r + 0.5) * (visualThick / rows);
+                // Shift even rows
+                const rowOffset = (r % 2) * (spacing / 2);
+                
+                for(let x = startX - spacing; x < startX + visualLen + spacing; x += spacing) {
+                    const drawX = x + offset + rowOffset;
+                    // Wrap visual X for infinite scroll effect
+                    const modX = startX + ((drawX - startX) % (visualLen + spacing*2)); // Simple wrap logic is tricky with varying length
+                    
+                    // Simpler loop: just iterate across visualLen
+                    // Current offset is 0..40.
+                    // Draw at startX + offset + k*spacing
+                }
+            }
+            
+            // Re-do simple electron loop
+            for(let r = 0; r < rows; r++) {
+                const y = wireY + (r + 0.5) * (visualThick / rows);
+                const rowOffset = (r % 2) * 20;
+                
+                for(let i = -1; i < visualLen/30 + 1; i++) {
+                     const x = startX + (i * 40 + offset + rowOffset) % (visualLen + 40);
+                     if (x >= startX && x <= startX + visualLen) {
+                         ctx.beginPath();
+                         ctx.arc(x, y, 3, 0, Math.PI*2);
+                         ctx.fill();
+                     }
+                }
+            }
+            ctx.restore();
+            
+            // 3. Dimensions Labels
+            // Length
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            // Bracket line
+            const labelY = wireY + visualThick + 20;
+            ctx.beginPath();
+            ctx.moveTo(startX, labelY);
+            ctx.lineTo(startX, labelY + 10);
+            ctx.moveTo(startX, labelY + 5);
+            ctx.lineTo(startX + visualLen, labelY + 5);
+            ctx.moveTo(startX + visualLen, labelY);
+            ctx.lineTo(startX + visualLen, labelY + 10);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '12px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText(`L = ${length.toFixed(2)} m`, w/2, labelY + 20);
+
+            // Area (Side indicator)
+            const areaX = startX - 30;
+            ctx.beginPath();
+            ctx.moveTo(startX, h/2);
+            ctx.lineTo(areaX, h/2);
+            ctx.stroke();
+            ctx.textAlign = 'right';
+            ctx.fillText(`A = ${area.toFixed(2)} mm²`, areaX - 5, h/2 + 4);
+
+        };
+
+        // Helper to darken/lighten hex color
+        const adjustColor = (color, amount) => {
+            return color; // Simplified for now, can implement hex math if needed
+        };
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Reset
+        const reset = () => {
+            setLength(0.5);
+            setArea(1.0);
+            setMaterialIdx(1);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="zap" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Resistivity Explorer</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Electricity
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[400px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            <div className="absolute top-4 left-4 bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs shadow-lg">
+                                <div className="text-slate-400 font-bold uppercase mb-1">Current Material</div>
+                                <div className="text-lg font-bold text-white mb-1">{MATERIALS[materialIdx].name}</div>
+                                <div className="font-mono text-indigo-300">ρ = {MATERIALS[materialIdx].rho.toExponential(2)} Ω·m</div>
+                                <div className="text-[10px] text-slate-500 mt-1">{MATERIALS[materialIdx].desc}</div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="sliders" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Wire Properties
+                            </h2>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                                {/* Length Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs text-blue-300 font-bold mb-2">
+                                        <span>Length (L)</span>
+                                        <span className="text-white">{length.toFixed(2)} m</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.1" max="2.0" step="0.1"
+                                        value={length} onChange={(e) => setLength(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Short</span>
+                                        <span>Long</span>
+                                    </div>
+                                </div>
+
+                                {/* Area Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs text-emerald-300 font-bold mb-2">
+                                        <span>Cross-sectional Area (A)</span>
+                                        <span className="text-white">{area.toFixed(2)} mm²</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.1" max="10.0" step="0.1"
+                                        value={area} onChange={(e) => setArea(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-emerald"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Thin</span>
+                                        <span>Thick</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Material Selector */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 mb-2 block">Material (Resistivity)</label>
+                                <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                                    {MATERIALS.map((mat, idx) => (
+                                        <button
+                                            key={mat.name}
+                                            onClick={() => setMaterialIdx(idx)}
+                                            className={`py-2 px-1 rounded text-[10px] font-bold transition-all border ${materialIdx === idx ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'}`}
+                                        >
+                                            {mat.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Data & Formula */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Calculation
+                            </h2>
+                            
+                            <div className="space-y-4">
+                                <div className="p-4 bg-slate-900 rounded-xl border border-slate-700 text-center">
+                                    <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">Resistance (R)</div>
+                                    <div className="text-4xl font-mono font-bold text-white mb-1">
+                                        {resistance < 1 
+                                            ? (resistance * 1000).toFixed(1) + " mΩ"
+                                            : resistance.toFixed(3) + " Ω"
+                                        }
+                                    </div>
+                                    <div className="text-[10px] text-indigo-400">Ohms</div>
+                                </div>
+                                
+                                <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-700/50 font-mono text-xs text-slate-300 space-y-2">
+                                    <div className="flex justify-between">
+                                        <span>ρ (Resistivity)</span>
+                                        <span className="text-white">{MATERIALS[materialIdx].rho.toExponential(2)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>L (Length)</span>
+                                        <span className="text-blue-300">{length.toFixed(2)} m</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>A (Area)</span>
+                                        <span className="text-emerald-300">{(area * 1e-6).toExponential(2)} m²</span>
+                                    </div>
+                                    <div className="h-px bg-slate-700 my-1"></div>
+                                    <div className="text-center text-[10px] text-slate-500">
+                                        R = (ρ × L) / A
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-center">
+                            <button 
+                                onClick={reset}
+                                className="px-8 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors w-full"
+                            >
+                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                            </button>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
