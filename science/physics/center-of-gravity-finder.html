@@ -23,8 +23,7 @@
 
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .canvas-container { cursor: grab; }
-        .canvas-container:active { cursor: grabbing; }
+        .canvas-container { cursor: pointer; }
     </style>
 </head>
 <body>
@@ -39,7 +38,7 @@
     const PIN_X = CANVAS_WIDTH / 2;
     const PIN_Y = 100;
 
-    // --- Shapes Data (Vertices relative to an arbitrary local origin) ---
+    // --- Shapes Data ---
     const SHAPES = {
         'L-Shape': [
             { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 200 }, 
@@ -55,11 +54,10 @@
     };
 
     const App = () => {
-        // --- State ---
         const [currentShapeKey, setCurrentShapeKey] = useState('L-Shape');
-        const [pivotIdx, setPivotIdx] = useState(0); // Which vertex is pinned
-        const [rotation, setRotation] = useState(0); // Current rotation in radians
-        const [lines, setLines] = useState([]); // Drawn lines on the shape { x1, y1, x2, y2 } in LOCAL space
+        const [pivotIdx, setPivotIdx] = useState(0); 
+        const [rotation, setRotation] = useState(0); 
+        const [lines, setLines] = useState([]); 
         const [showCoG, setShowCoG] = useState(false);
         const [isSwinging, setIsSwinging] = useState(false);
 
@@ -67,7 +65,6 @@
         const requestRef = useRef();
         
         // --- Geometry Helpers ---
-        // Calculate Polygon Centroid (CoG)
         const getCentroid = (vertices) => {
             let signedArea = 0;
             let Cx = 0;
@@ -92,35 +89,25 @@
         const cog = useMemo(() => getCentroid(currentVertices), [currentVertices]);
 
         // --- Physics Logic ---
-        // Calculate the target angle where CoG is directly below Pivot
         const getTargetRotation = () => {
             const pivot = currentVertices[pivotIdx];
-            // Vector from Pivot to CoG
             const dx = cog.x - pivot.x;
             const dy = cog.y - pivot.y;
-            // Angle of this vector in local space
             const localAngle = Math.atan2(dy, dx);
-            // We want this vector to point DOWN (PI/2) in world space
-            // WorldAngle = LocalAngle + Rotation
-            // PI/2 = LocalAngle + TargetRotation
-            // TargetRotation = PI/2 - LocalAngle
             return Math.PI / 2 - localAngle;
         };
 
         const targetRotation = useMemo(() => getTargetRotation(), [pivotIdx, currentVertices, cog]);
 
-        // Animation Loop
         const animate = () => {
             setRotation(prev => {
                 const diff = targetRotation - prev;
-                // Normalize angle diff
                 const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
                 
                 if (Math.abs(normalizedDiff) < 0.001) {
                     setIsSwinging(false);
                     return targetRotation;
                 }
-                // Simple easing
                 return prev + normalizedDiff * 0.1;
             });
             
@@ -133,7 +120,7 @@
             setIsSwinging(true);
             requestRef.current = requestAnimationFrame(animate);
             return () => cancelAnimationFrame(requestRef.current);
-        }, [targetRotation]); // Trigger when target changes (new pivot)
+        }, [targetRotation]);
 
         // --- Actions ---
         const changeShape = (key) => {
@@ -145,41 +132,24 @@
         };
 
         const drawLine = () => {
-            if (isSwinging && Math.abs(rotation - targetRotation) > 0.01) return; // Wait until steady
+            if (isSwinging && Math.abs(rotation - targetRotation) > 0.01) return;
 
-            // Plumb line in World Space is basically x = PIN_X
-            // We need to transform this line into Local Space to store it
-            // World Point 1: (PIN_X, PIN_Y) -> Pivot Vertex in Local
-            // World Point 2: (PIN_X, PIN_Y + 500) -> Calculate Local
-            
             const pivot = currentVertices[pivotIdx];
             
-            // Vector DOWN in World is (0, 1)
-            // In Local, this vector is rotated by -rotation
-            const downX = Math.cos(rotation - Math.PI/2); // actually rotate vector (0,1) by -rot
-            // Inverse rotation matrix:
-            // | cos  sin |
-            // | -sin cos |
-            // Vector (0, 1) -> (sin(rot), cos(rot))?
-            // Actually simpler:
-            // The line passes through Pivot(local) and CoG(local) because it's balanced!
-            // So we just draw a line from Pivot to CoG extended.
-            
-            // Wait, what if it's not perfectly balanced yet?
-            // Let's do the math properly to capture the current state:
-            // A point (PIN_X, PIN_Y + 100) transformed to local.
+            // Calculate a point strictly below the pin in Local Space
+            // We reverse the rotation to map World(DOWN) to Local
             const wx = PIN_X;
             const wy = PIN_Y + 400;
             
-            // Local = Rotate(World - Offset)
-            // But Shape is drawn: Translate(PIN_X, PIN_Y) -> Rotate(rot) -> Translate(-Pivot.x, -Pivot.y)
-            // Reverse: Translate(Pivot.x, Pivot.y) -> Rotate(-rot) -> Translate(-PIN_X, -PIN_Y)
+            // Vector from Pivot(World) to Point(World)
+            const dx = 0; // wx - PIN_X
+            const dy = 400; // wy - PIN_Y
             
-            const dx = wx - PIN_X;
-            const dy = wy - PIN_Y;
+            // Rotate vector by -rotation
             const rx = dx * Math.cos(-rotation) - dy * Math.sin(-rotation);
             const ry = dx * Math.sin(-rotation) + dy * Math.cos(-rotation);
             
+            // Add to Pivot(Local)
             const lx = rx + pivot.x;
             const ly = ry + pivot.y;
 
@@ -188,23 +158,27 @@
 
         const handleCanvasClick = (e) => {
             const rect = canvasRef.current.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const clickY = e.clientY - rect.top;
+            
+            // FIX: Scale mouse coordinates to match Canvas internal resolution
+            const scaleX = CANVAS_WIDTH / rect.width;
+            const scaleY = CANVAS_HEIGHT / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
 
-            // Check if clicked near a vertex
-            // We need to calculate world positions of all vertices
             const pivot = currentVertices[pivotIdx];
             
             currentVertices.forEach((v, i) => {
-                // Transform v to world
+                // Calculate World Position of this vertex
                 const dx = v.x - pivot.x;
                 const dy = v.y - pivot.y;
+                // Rotate forward
                 const rx = dx * Math.cos(rotation) - dy * Math.sin(rotation);
                 const ry = dx * Math.sin(rotation) + dy * Math.cos(rotation);
                 const wx = PIN_X + rx;
                 const wy = PIN_Y + ry;
 
-                if (Math.hypot(clickX - wx, clickY - wy) < 20) {
+                // Check distance with slightly larger radius
+                if (Math.hypot(clickX - wx, clickY - wy) < 30) {
                     setPivotIdx(i);
                 }
             });
@@ -215,27 +189,25 @@
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
 
-            // Clear
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // 1. Draw Stand/Pin (Static)
+            // 1. Draw Stand/Pin
             ctx.fillStyle = '#94a3b8';
-            ctx.fillRect(PIN_X - 2, 0, 4, PIN_Y); // String/Rod holding the pin
+            ctx.fillRect(PIN_X - 2, 0, 4, PIN_Y);
             ctx.beginPath();
             ctx.arc(PIN_X, PIN_Y, 5, 0, Math.PI*2);
             ctx.fillStyle = '#ffffff';
             ctx.fill();
 
-            // 2. Draw Plumb Line (Physical String hanging down)
+            // 2. Draw Ghost Plumb Line
             ctx.beginPath();
             ctx.moveTo(PIN_X, PIN_Y);
             ctx.lineTo(PIN_X, PIN_Y + 300);
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // Red ghost line
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 5]);
             ctx.stroke();
             ctx.setLineDash([]);
-            // Plumb bob weight
             ctx.beginPath();
             ctx.arc(PIN_X, PIN_Y + 300, 8, 0, Math.PI*2);
             ctx.fillStyle = '#ef4444';
@@ -255,7 +227,7 @@
                 if (i > 0) ctx.lineTo(v.x, v.y);
             });
             ctx.closePath();
-            ctx.fillStyle = 'rgba(59, 130, 246, 0.9)'; // Blue
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.9)';
             ctx.fill();
             ctx.lineWidth = 2;
             ctx.strokeStyle = '#60a5fa';
@@ -273,11 +245,11 @@
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // 6. Draw Vertices (Interactive Points)
+            // 6. Draw Vertices
             currentVertices.forEach((v, i) => {
                 ctx.beginPath();
-                ctx.arc(v.x, v.y, 6, 0, Math.PI*2);
-                ctx.fillStyle = i === pivotIdx ? '#fbbf24' : '#1e293b'; // Amber if active
+                ctx.arc(v.x, v.y, 8, 0, Math.PI*2);
+                ctx.fillStyle = i === pivotIdx ? '#fbbf24' : '#1e293b';
                 ctx.fill();
                 ctx.strokeStyle = 'white';
                 ctx.lineWidth = 2;
@@ -288,7 +260,7 @@
             if (showCoG) {
                 ctx.beginPath();
                 ctx.arc(cog.x, cog.y, 6, 0, Math.PI*2);
-                ctx.fillStyle = '#10b981'; // Emerald
+                ctx.fillStyle = '#10b981';
                 ctx.fill();
                 ctx.strokeStyle = 'white';
                 ctx.stroke();
@@ -304,7 +276,6 @@
 
         }, [currentVertices, pivotIdx, rotation, lines, showCoG, cog]);
 
-        // Init icons
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
         });
@@ -325,7 +296,7 @@
 
                 <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
                     
-                    {/* Left: Simulation Canvas */}
+                    {/* Left: Simulation */}
                     <div className="lg:col-span-8 flex flex-col gap-6">
                         <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
                             <canvas 
@@ -336,7 +307,7 @@
                                 className="w-full h-auto bg-slate-950 rounded-xl canvas-container"
                             />
                             
-                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300">
+                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300 pointer-events-none">
                                 Click on any <strong>corner dot</strong> to hang the shape from there.
                             </div>
                         </div>
@@ -372,9 +343,10 @@
                                 </button>
                                 <button 
                                     onClick={() => { setLines([]); setPivotIdx(0); }}
-                                    className="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl transition-colors"
+                                    className="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl transition-colors flex items-center gap-2"
                                 >
                                     <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                                    <span>Reset</span>
                                 </button>
                             </div>
 
