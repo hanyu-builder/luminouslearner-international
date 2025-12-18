@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stationary Waves Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-purple::-webkit-slider-thumb { background: #a855f7; }
+        .thumb-pink::-webkit-slider-thumb { background: #ec4899; }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 400;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+    const STRING_LENGTH = 700; // pixels
+    const STRING_START_X = 50;
+
+    const App = () => {
+        // --- State ---
+        const [frequency, setFrequency] = useState(10); // Hz
+        const [tension, setTension] = useState(50); // Newtons
+        const [density, setDensity] = useState(0.01); // kg/m
+        
+        // Calculated
+        const [waveSpeed, setWaveSpeed] = useState(0);
+        const [wavelength, setWavelength] = useState(0);
+        const [harmonicN, setHarmonicN] = useState(0);
+        const [amplitudeDisplay, setAmplitudeDisplay] = useState(0);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const timeRef = useRef(0);
+        
+        // Physics Loop State
+        const physicsRef = useRef({
+            currentAmp: 0,
+            targetAmp: 0
+        });
+
+        // --- Physics Logic ---
+        useEffect(() => {
+            // v = sqrt(T / mu)
+            // Scale T and mu to give reasonable visual speeds
+            // Let's say pixels = meters for calculation simplicity in the UI numbers
+            // v (m/s) = sqrt(T / mu)
+            
+            const v = Math.sqrt(tension / density);
+            const lambda = v / frequency;
+
+            setWaveSpeed(v);
+            setWavelength(lambda);
+
+            // Resonance Calculation
+            // String length L = 2m (simulated)
+            const L = 2.0; 
+            
+            // Fundamental Freq f1 = v / 2L
+            const f1 = v / (2 * L);
+            
+            // Check which harmonic we are close to
+            const n_float = frequency / f1;
+            const n_nearest = Math.round(n_float);
+            const deviation = Math.abs(n_float - n_nearest);
+            
+            // Resonance width (how precise you need to be)
+            const width = 0.2; 
+            let resonanceFactor = 0;
+            
+            if (deviation < width) {
+                // Bell curve resonance
+                resonanceFactor = Math.exp(-(deviation * deviation) / (2 * (width/3)**2));
+            }
+
+            physicsRef.current.targetAmp = resonanceFactor * 80; // Max amplitude 80px
+            
+            // Identify Harmonic
+            if (resonanceFactor > 0.8 && n_nearest > 0) {
+                setHarmonicN(n_nearest);
+            } else {
+                setHarmonicN(0); // Not resonant
+            }
+
+        }, [frequency, tension, density]);
+
+        // --- Animation Loop ---
+        const loop = (time) => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            
+            timeRef.current += 0.02; // Time step
+            const t = timeRef.current;
+            
+            // Smooth Amplitude Transition (Simulate energy build-up)
+            const phys = physicsRef.current;
+            phys.currentAmp += (phys.targetAmp - phys.currentAmp) * 0.05;
+            
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Stand / Mounts
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(STRING_START_X - 10, CENTER_Y - 20, 10, 40); // Left Clamp
+            ctx.fillRect(STRING_START_X + STRING_LENGTH, CENTER_Y - 20, 10, 40); // Right Clamp
+            
+            // Pulley (Right side)
+            ctx.beginPath();
+            ctx.arc(STRING_START_X + STRING_LENGTH + 15, CENTER_Y - 15, 15, 0, Math.PI*2);
+            ctx.fillStyle = '#475569';
+            ctx.fill();
+            ctx.strokeStyle = '#94a3b8';
+            ctx.stroke();
+
+            // Hanging Mass (Tension visual)
+            const weightY = CENTER_Y + 50 + (tension / 100) * 50;
+            ctx.beginPath();
+            ctx.moveTo(STRING_START_X + STRING_LENGTH + 30, CENTER_Y - 15);
+            ctx.lineTo(STRING_START_X + STRING_LENGTH + 30, weightY);
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Weight Box
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(STRING_START_X + STRING_LENGTH + 15, weightY, 30, 30);
+            ctx.fillStyle = '#78350f';
+            ctx.font = '10px sans-serif';
+            ctx.fillText(`${tension}N`, STRING_START_X + STRING_LENGTH + 20, weightY + 20);
+
+
+            // 2. Draw String
+            // y(x, t) = 2A sin(kx) cos(wt)
+            // L_sim = 2.0 meters mapped to STRING_LENGTH pixels
+            const L_pixels = STRING_LENGTH;
+            // n_float = frequency / f1 = frequency / (v/2L)
+            // kx = (n * pi * x) / L
+            // We use the exact frequency driven wave shape:
+            // k = 2pi / lambda = 2pi * f / v
+            
+            // We need to map x (0 to L) to pixels (0 to STRING_LENGTH)
+            // Wave Number k (in units of rad/meter)
+            const v = Math.sqrt(tension / density);
+            const k = (2 * Math.PI * frequency) / v;
+            
+            // To visualize the standing wave "attempt", we sum incident and reflected?
+            // Or just plot the standing wave envelope scaled by resonance factor?
+            // Visualizing the "attempt" (traveling waves interfere) is messy.
+            // Let's visualize the "Resulting Vibration".
+            // Shape is determined by frequency. Amplitude is determined by Resonance.
+            
+            const omega = 2 * Math.PI * frequency;
+
+            ctx.beginPath();
+            ctx.lineWidth = 3;
+            // Color based on resonance strength
+            const hue = phys.currentAmp > 20 ? 140 : 200; // Green if resonant, Blue if not
+            ctx.strokeStyle = `hsl(${hue}, 70%, 60%)`;
+            
+            // Shadow / Envelope
+            if (phys.currentAmp > 5) {
+                ctx.fillStyle = `hsla(${hue}, 70%, 60%, 0.1)`;
+                ctx.beginPath();
+                ctx.moveTo(STRING_START_X, CENTER_Y);
+                for (let i = 0; i <= L_pixels; i+=5) {
+                    const x_meter = (i / L_pixels) * 2.0; // Map 0..700px to 0..2m
+                    // Standing wave spatial part: sin(k * x)
+                    // Note: Boundary condition at x=L is fixed.
+                    // This simple formula assumes resonance. 
+                    // For non-resonance, the shape is complex. 
+                    // Simplified Visual: Just show sin(k*x) * currentAmp
+                    
+                    const spatial = Math.sin(k * x_meter);
+                    const y = CENTER_Y + spatial * phys.currentAmp; // Envelope Top
+                    ctx.lineTo(STRING_START_X + i, y);
+                }
+                for (let i = L_pixels; i >= 0; i-=5) {
+                    const x_meter = (i / L_pixels) * 2.0;
+                    const spatial = Math.sin(k * x_meter);
+                    const y = CENTER_Y - spatial * phys.currentAmp; // Envelope Bottom
+                    ctx.lineTo(STRING_START_X + i, y);
+                }
+                ctx.fill();
+            }
+
+            // The String itself
+            ctx.beginPath();
+            for (let i = 0; i <= L_pixels; i+=2) {
+                const x_meter = (i / L_pixels) * 2.0;
+                
+                // Displacement
+                const spatial = Math.sin(k * x_meter);
+                // Oscillation
+                const temporal = Math.cos(omega * (t * 0.05)); // Slow down time for visual
+                
+                // Fix right end? 
+                // In reality, if not resonant, the right end is fixed, so wave reflects.
+                // Our simple sin(kx) does NOT guarantee y=0 at x=L unless resonant.
+                // To force the visual to look like a string tied at both ends:
+                // We multiply by a linear taper if off-resonance? Or just let it look "broken" (vibrating at clamp)?
+                // Let's enforce the node at right end visually for "String" feel, 
+                // by superimposing Left and Right traveling waves.
+                // y = A [ sin(kx - wt) + sin(kx + wt + phi) ]
+                // This is computationally heavier but accurate.
+                
+                // Let's stick to the Standing Wave approximation but dampened by Resonance Factor.
+                // However, to make it look tied, we must ensure y=0 at ends.
+                // The physical string is tied. The driver is at one end? 
+                // Let's assume Melde's experiment: Driver at Left, Pulley at Right.
+                // Left end moves slightly (Driver). Right end fixed.
+                
+                const y = CENTER_Y + spatial * temporal * phys.currentAmp;
+                
+                if (i === 0) ctx.moveTo(STRING_START_X + i, y);
+                else ctx.lineTo(STRING_START_X + i, y);
+            }
+            ctx.stroke();
+
+            // 3. Draw Nodes (Red Dots) if Resonant
+            if (harmonicN > 0 && phys.currentAmp > 30) {
+                ctx.fillStyle = '#ef4444';
+                for (let n = 0; n <= harmonicN; n++) {
+                    const nodeX_m = (n / harmonicN) * 2.0;
+                    const nodeX_px = (nodeX_m / 2.0) * L_pixels;
+                    ctx.beginPath();
+                    ctx.arc(STRING_START_X + nodeX_px, CENTER_Y, 4, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            
+            // Sync UI value (throttled)
+            if (Math.random() < 0.1) setAmplitudeDisplay(phys.currentAmp);
+
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [frequency, tension, density, harmonicN]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        const reset = () => {
+            setFrequency(10);
+            setTension(50);
+            setDensity(0.01);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-purple-500/20 p-2 rounded-lg">
+                            <i data-lucide="activity" className="w-6 h-6 text-purple-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Stationary Waves Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Wave Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Simulation Area */}
+                    <div className="lg:col-span-12">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-auto bg-slate-950 rounded-xl"
+                            />
+                            
+                            {/* Harmonic Badge */}
+                            {harmonicN > 0 && amplitudeDisplay > 30 && (
+                                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600/90 border border-emerald-400 text-white px-6 py-2 rounded-full shadow-[0_0_20px_rgba(16,185,129,0.5)] font-bold animate-pulse flex items-center gap-2">
+                                    <i data-lucide="check-circle" className="w-5 h-5"></i>
+                                    {harmonicN === 1 ? '1st Harmonic (Fundamental)' : `${harmonicN}th Harmonic`}
+                                </div>
+                            )}
+
+                            {/* Amplitude Meter */}
+                            <div className="absolute bottom-4 right-4 w-48 bg-slate-900/80 p-3 rounded-xl border border-slate-700">
+                                <div className="text-[10px] text-slate-400 uppercase mb-1">Resonance Strength</div>
+                                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                    <div 
+                                        className={`h-full transition-all duration-200 ${amplitudeDisplay > 50 ? 'bg-emerald-500' : 'bg-blue-500'}`} 
+                                        style={{width: `${Math.min(100, (amplitudeDisplay/80)*100)}%`}}
+                                    ></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            
+                            {/* Frequency */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold text-purple-300 mb-2">
+                                    <span>Frequency ($f$)</span> <span className="text-white">{frequency} Hz</span>
+                                </label>
+                                <input 
+                                    type="range" min="1" max="100" step="0.5" 
+                                    value={frequency} onChange={(e) => setFrequency(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-purple" 
+                                />
+                            </div>
+
+                            {/* Tension */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold text-pink-300 mb-2">
+                                    <span>Tension ($T$)</span> <span className="text-white">{tension} N</span>
+                                </label>
+                                <input 
+                                    type="range" min="10" max="200" step="5" 
+                                    value={tension} onChange={(e) => setTension(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-pink" 
+                                />
+                            </div>
+
+                            {/* Density */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold text-blue-300 mb-2">
+                                    <span>Linear Density ($\mu$)</span> <span className="text-white">{density} kg/m</span>
+                                </label>
+                                <input 
+                                    type="range" min="0.005" max="0.05" step="0.005" 
+                                    value={density} onChange={(e) => setDensity(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue" 
+                                />
+                            </div>
+
+                            <button onClick={reset} className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors flex items-center justify-center gap-2">
+                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Right: Data */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Wave Properties
+                            </h2>
+                            <div className="space-y-4 font-mono text-sm">
+                                <div className="flex justify-between p-2 rounded bg-slate-900/50 border border-slate-700/50">
+                                    <span className="text-slate-400">Wave Speed ($v$)</span>
+                                    <span className="text-white">{waveSpeed.toFixed(1)} m/s</span>
+                                </div>
+                                <div className="flex justify-between p-2 rounded bg-slate-900/50 border border-slate-700/50">
+                                    <span className="text-slate-400">Wavelength ($\lambda$)</span>
+                                    <span className="text-white">{wavelength.toFixed(2)} m</span>
+                                </div>
+                                <div className="flex justify-between p-2 rounded bg-slate-900/50 border border-slate-700/50">
+                                    <span className="text-slate-400">Loops ($n$)</span>
+                                    <span className={harmonicN > 0 ? "text-emerald-400 font-bold" : "text-slate-600"}>
+                                        {harmonicN > 0 ? harmonicN : "--"}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                            <h3 className="text-indigo-300 font-bold text-sm mb-2 flex items-center">
+                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> How to find Harmonics
+                            </h3>
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                                Slowly slide the <strong>Frequency</strong>. Watch the string.
+                                <br/><br/>
+                                When the string vibrates violently (large amplitude), you have found a <strong>Harmonic</strong>! The number of "loops" you see is the harmonic number ($n$).
+                            </p>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
