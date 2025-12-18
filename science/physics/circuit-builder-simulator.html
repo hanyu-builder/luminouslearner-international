@@ -46,75 +46,85 @@
 
     const App = () => {
         // --- State ---
-        const [mode, setMode] = useState('series'); // 'series' or 'parallel'
-        const [bulbCount, setBulbCount] = useState(2);
+        const [tab, setTab] = useState('series'); // 'series' or 'parallel'
+        
+        // Configuration State
+        // For Series: rows=1, cols=N
+        // For Parallel: rows=N, cols=M
+        const [layout, setLayout] = useState({ rows: 1, cols: 2 }); 
+
         const [voltage, setVoltage] = useState(9.0); // Volts
         const [isSwitchClosed, setIsSwitchClosed] = useState(true);
         
         // Calculated Physics Data
         const [totalCurrent, setTotalCurrent] = useState(0);
         const [totalResistance, setTotalResistance] = useState(0);
-        const [bulbData, setBulbData] = useState([]); // [{v, i, p}]
+        const [bulbStats, setBulbStats] = useState({ v: 0, i: 0, p: 0 }); // Per bulb stats (assuming symmetry)
 
         const canvasRef = useRef(null);
         const requestRef = useRef();
         const electronOffsetRef = useRef(0);
+
+        // --- Logic helpers ---
+        const setSeriesConfig = (n) => {
+            setLayout({ rows: 1, cols: n });
+            setTab('series');
+        };
+
+        const setParallelConfig = (rows, cols) => {
+            setLayout({ rows, cols });
+            setTab('parallel');
+        };
+
+        const reset = () => {
+            setVoltage(9.0);
+            setIsSwitchClosed(true);
+            // Reset to default per tab? Or just voltage/switch.
+            // Let's keep current layout.
+        };
 
         // --- Physics Engine ---
         useEffect(() => {
             if (!isSwitchClosed) {
                 setTotalCurrent(0);
                 setTotalResistance(Infinity);
-                setBulbData(Array(bulbCount).fill({ v: 0, i: 0, p: 0 }));
+                setBulbStats({ v: 0, i: 0, p: 0 });
                 return;
             }
 
-            let R_eq = 0;
-            let I_total = 0;
-            const newBulbData = [];
-
-            if (mode === 'series') {
-                // Series: R_eq = R1 + R2 + ...
-                R_eq = bulbCount * BULB_RESISTANCE;
-                I_total = voltage / R_eq;
-                
-                // In series, Current is same for all, Voltage splits
-                const V_drop = voltage / bulbCount;
-                const Power = I_total * V_drop;
-                
-                for(let i=0; i<bulbCount; i++) {
-                    newBulbData.push({ v: V_drop, i: I_total, p: Power });
-                }
-
-            } else {
-                // Parallel: 1/R_eq = 1/R1 + 1/R2 + ...
-                // Since all R are equal: R_eq = R / N
-                R_eq = BULB_RESISTANCE / bulbCount;
-                I_total = voltage / R_eq;
-                
-                // In parallel, Voltage is same for all, Current splits
-                const I_branch = voltage / BULB_RESISTANCE;
-                const Power = I_branch * voltage;
-                
-                for(let i=0; i<bulbCount; i++) {
-                    newBulbData.push({ v: voltage, i: I_branch, p: Power });
-                }
-            }
+            const { rows, cols } = layout;
+            
+            // Resistance of one branch (bulbs in series within branch)
+            const R_branch = cols * BULB_RESISTANCE;
+            
+            // Total Resistance (branches in parallel)
+            // 1/Req = rows * (1/R_branch) -> Req = R_branch / rows
+            const R_eq = R_branch / rows;
+            
+            // Total Current
+            const I_total = voltage / R_eq;
+            
+            // Current per branch
+            const I_branch = I_total / rows;
+            
+            // Voltage drop per bulb
+            // V = I * R
+            const V_bulb = I_branch * BULB_RESISTANCE;
+            
+            // Power per bulb
+            const P_bulb = V_bulb * I_branch;
 
             setTotalResistance(R_eq);
             setTotalCurrent(I_total);
-            setBulbData(newBulbData);
+            setBulbStats({ v: V_bulb, i: I_branch, p: P_bulb });
 
-        }, [mode, bulbCount, voltage, isSwitchClosed]);
+        }, [layout, voltage, isSwitchClosed]);
 
         // --- Animation Loop ---
         const loop = () => {
             // Electron speed proportional to current
-            // Limit speed visually
             const speed = Math.min(10, totalCurrent * 2); 
-            electronOffsetRef.current = (electronOffsetRef.current - speed) % 20; // Flow negative to positive (electron flow)
-            // Wait, conventional current is + to -. Electron flow is - to +.
-            // Let's animate electron flow: Out of Negative (Black/Short line), Into Positive (Long line).
+            electronOffsetRef.current = (electronOffsetRef.current - speed) % 20; 
             
             draw();
             requestRef.current = requestAnimationFrame(loop);
@@ -137,13 +147,12 @@
             const batteryY = CANVAS_HEIGHT / 2;
             const wireColor = '#fbbf24'; // Amber-400
             const offColor = '#4b5563'; // Gray-600
-            
+            const activeColor = isSwitchClosed ? wireColor : offColor;
+
             const circuitLeft = 100;
             const circuitRight = 700;
             const circuitTop = 50;
             const circuitBottom = 400;
-
-            const activeColor = isSwitchClosed ? wireColor : offColor;
 
             // 1. Draw Battery (Left Side)
             drawBattery(ctx, batteryX, batteryY, voltage);
@@ -173,40 +182,35 @@
             ctx.beginPath();
             ctx.moveTo(circuitLeft + 100, circuitTop);
             
-            if (mode === 'series') {
-                drawSeriesCircuit(ctx, circuitLeft + 100, circuitTop, circuitRight, circuitBottom, batteryX, batteryY);
+            // Draw Circuit Body
+            if (layout.rows === 1) {
+                // Series Style Drawing
+                drawSeriesVisuals(ctx, circuitLeft + 100, circuitTop, circuitRight, circuitBottom, batteryX, batteryY);
             } else {
-                drawParallelCircuit(ctx, circuitLeft + 100, circuitTop, circuitRight, circuitBottom, batteryX, batteryY);
+                // Parallel Style Drawing
+                drawParallelVisuals(ctx, circuitLeft + 100, circuitTop, circuitRight, circuitBottom, batteryX, batteryY);
             }
 
-            // Draw Electrons (Dots)
+            // Draw Electrons on return wire
             if (isSwitchClosed && totalCurrent > 0) {
-                 // We need paths... this is complex for dynamic drawing.
-                 // Let's simplified visual: Just dots moving on the main wires drawn above.
-                 // For this "Lab" view, static lines + glowing bulbs is often clearer than complex electron paths.
-                 // But let's try adding dots on the main return wire.
-                 
-                 drawElectronsOnLine(ctx, batteryX, circuitBottom, batteryX, batteryY + 30, totalCurrent); // Return to battery
+                 drawElectronsOnLine(ctx, batteryX, circuitBottom, batteryX, batteryY + 30, totalCurrent);
             }
         };
 
-        const drawSeriesCircuit = (ctx, startX, startY, endX, endY, batX, batY) => {
-            // Draw a big loop
-            // Wire to Right
+        const drawSeriesVisuals = (ctx, startX, startY, endX, endY, batX, batY) => {
+            const count = layout.cols;
             const width = endX - startX;
-            const step = width / (bulbCount + 1);
+            const step = width / (count + 1);
             
             ctx.beginPath();
             ctx.moveTo(startX, startY);
             
-            // Draw Bulbs on top wire? Or distributed?
-            // Let's distribute horizontally
-            for (let i = 0; i < bulbCount; i++) {
+            for (let i = 0; i < count; i++) {
                 const bx = startX + step * (i + 1);
                 const by = startY;
                 ctx.lineTo(bx - 20, by);
-                ctx.stroke(); // Draw wire to bulb
-                drawBulb(ctx, bx, by, bulbData[i]?.p || 0);
+                ctx.stroke(); 
+                drawBulb(ctx, bx, by, bulbStats.p);
                 ctx.beginPath();
                 ctx.moveTo(bx + 20, by);
             }
@@ -214,21 +218,20 @@
             ctx.lineTo(endX, startY);
             ctx.lineTo(endX, endY);
             ctx.lineTo(batX, endY);
-            ctx.lineTo(batX, batY + 30); // Battery Bottom (-)
+            ctx.lineTo(batX, batY + 30);
             ctx.stroke();
 
-            // Draw Electrons on the path
             if (isSwitchClosed && totalCurrent > 0) {
-                // Top wire
-                drawElectronsOnLine(ctx, startX, startY, endX, startY, totalCurrent);
-                // Right wire
-                drawElectronsOnLine(ctx, endX, startY, endX, endY, totalCurrent);
-                // Bottom wire
-                drawElectronsOnLine(ctx, endX, endY, batX, endY, totalCurrent);
+                drawElectronsOnLine(ctx, startX, startY, endX, startY, totalCurrent); // Top
+                drawElectronsOnLine(ctx, endX, startY, endX, endY, totalCurrent);     // Right
+                drawElectronsOnLine(ctx, endX, endY, batX, endY, totalCurrent);       // Bottom
             }
         };
 
-        const drawParallelCircuit = (ctx, startX, startY, endX, endY, batX, batY) => {
+        const drawParallelVisuals = (ctx, startX, startY, endX, endY, batX, batY) => {
+            const rows = layout.rows;
+            const cols = layout.cols; // Bulbs per branch
+
             // Top Rail
             ctx.beginPath();
             ctx.moveTo(startX, startY);
@@ -241,44 +244,43 @@
             ctx.lineTo(endX, endY);
             ctx.stroke();
             
-            // Rungs (Bulbs)
+            // Branches
             const width = endX - startX;
-            const step = width / (bulbCount); // Distribute across
+            const step = width / (rows); 
             
-            for(let i=0; i<bulbCount; i++) {
-                const bx = startX + step * i + step/2;
-                // Wire down
-                ctx.beginPath();
-                ctx.moveTo(bx, startY);
-                ctx.lineTo(bx, startY + 50);
-                ctx.stroke();
+            for(let i=0; i<rows; i++) {
+                const branchX = startX + step * i + step/2;
                 
-                // Bulb
-                drawBulb(ctx, bx, (startY + endY)/2, bulbData[i]?.p || 0);
-                
-                // Wire connecting bulb to rails
+                // Draw vertical wire for branch
                 ctx.beginPath();
-                ctx.moveTo(bx, startY + 50 + 40); // Bulb bottom approx
-                // Wait, drawBulb is centered. 
-                ctx.moveTo(bx, (startY + endY)/2 - 30);
-                ctx.lineTo(bx, startY);
-                ctx.stroke();
-                
-                ctx.beginPath();
-                ctx.moveTo(bx, (startY + endY)/2 + 30);
-                ctx.lineTo(bx, endY);
-                ctx.stroke();
+                ctx.moveTo(branchX, startY);
+                ctx.lineTo(branchX, endY);
+                ctx.stroke(); // Base wire
 
-                // Electrons in rungs
-                if (isSwitchClosed && totalCurrent > 0) {
-                    drawElectronsOnLine(ctx, bx, startY, bx, endY, bulbData[i]?.i);
+                // Draw Bulbs on this vertical line
+                // Vertical space available
+                const vHeight = endY - startY;
+                const vStep = vHeight / (cols + 1);
+
+                for (let j=0; j<cols; j++) {
+                    const by = startY + vStep * (j + 1);
+                    // Clear wire behind bulb
+                    ctx.clearRect(branchX - 18, by - 18, 36, 36); 
+                    // Redraw bg color (hacky but works for this simple scene)
+                    ctx.fillStyle = '#0f172a';
+                    ctx.fillRect(branchX - 18, by - 18, 36, 36);
+                    
+                    drawBulb(ctx, branchX, by, bulbStats.p);
+                }
+
+                // Electrons in branch
+                if (isSwitchClosed && bulbStats.i > 0) {
+                    drawElectronsOnLine(ctx, branchX, startY, branchX, endY, bulbStats.i);
                 }
             }
             
             // Electrons on rails
             if (isSwitchClosed && totalCurrent > 0) {
-                // Top rail (current reduces as it goes right)
-                // Simplified: just show main flow
                 drawElectronsOnLine(ctx, startX, startY, endX, startY, totalCurrent);
                 drawElectronsOnLine(ctx, endX, endY, batX, endY, totalCurrent);
             }
@@ -287,17 +289,9 @@
         const drawBattery = (ctx, x, y, volts) => {
             ctx.lineWidth = 4;
             ctx.strokeStyle = '#fff';
-            // Top plate (+) Long
-            ctx.beginPath();
-            ctx.moveTo(x - 20, y - 10);
-            ctx.lineTo(x + 20, y - 10);
-            ctx.stroke();
-            // Bottom plate (-) Short
-            ctx.lineWidth = 6; // Thicker for negative? No standard is thicker usually short.
-            ctx.beginPath();
-            ctx.moveTo(x - 10, y + 10);
-            ctx.lineTo(x + 10, y + 10);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x - 20, y - 10); ctx.lineTo(x + 20, y - 10); ctx.stroke();
+            ctx.lineWidth = 6;
+            ctx.beginPath(); ctx.moveTo(x - 10, y + 10); ctx.lineTo(x + 10, y + 10); ctx.stroke();
             
             ctx.fillStyle = '#facc15';
             ctx.font = 'bold 16px sans-serif';
@@ -306,9 +300,8 @@
         };
 
         const drawBulb = (ctx, x, y, power) => {
-            // Glow
             if (power > 0) {
-                const glowRadius = 20 + Math.min(60, power * 5); // Scale glow
+                const glowRadius = 20 + Math.min(60, power * 5); 
                 const grad = ctx.createRadialGradient(x, y, 10, x, y, glowRadius);
                 grad.addColorStop(0, 'rgba(253, 224, 71, 0.8)');
                 grad.addColorStop(1, 'rgba(253, 224, 71, 0)');
@@ -316,25 +309,15 @@
                 ctx.beginPath(); ctx.arc(x, y, glowRadius, 0, Math.PI*2); ctx.fill();
             }
 
-            // Glass
             ctx.fillStyle = 'rgba(255,255,255,0.2)';
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(x, y, 20, 0, Math.PI*2);
-            ctx.fill();
-            ctx.stroke();
+            ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.fill(); ctx.stroke();
             
-            // Filament
             ctx.beginPath();
-            ctx.moveTo(x - 10, y + 15);
-            ctx.lineTo(x - 5, y - 5);
-            ctx.lineTo(x + 5, y - 5);
-            ctx.lineTo(x + 10, y + 15);
-            ctx.strokeStyle = '#fbbf24';
-            ctx.stroke();
+            ctx.moveTo(x - 10, y + 15); ctx.lineTo(x - 5, y - 5); ctx.lineTo(x + 5, y - 5); ctx.lineTo(x + 10, y + 15);
+            ctx.strokeStyle = '#fbbf24'; ctx.stroke();
             
-            // Info text
             if (power > 0) {
                 ctx.fillStyle = 'white';
                 ctx.font = '10px monospace';
@@ -347,34 +330,36 @@
             if (current < 0.01) return;
             const dist = Math.hypot(x2 - x1, y2 - y1);
             const angle = Math.atan2(y2 - y1, x2 - x1);
-            
             const speed = Math.min(5, current * 2); 
-            // We want electron flow (Negative to Positive).
-            // Current I is Pos to Neg.
-            // So electrons move opposite to drawing direction (if drawn in current direction).
-            // Let's assume input x1->x2 is Conventional Current direction.
-            // Electrons move x2 -> x1.
             
-            ctx.fillStyle = '#fef08a'; // Yellow dots
-            
+            ctx.fillStyle = '#fef08a';
             const spacing = 30;
-            const offset = (electronOffsetRef.current * (speed/2)) % spacing; // Animate
+            const offset = (electronOffsetRef.current * (speed/2)) % spacing;
             
             for (let d = offset; d < dist; d += spacing) {
-                // Move backwards from end
                 const ex = x2 - d * Math.cos(angle);
                 const ey = y2 - d * Math.sin(angle);
-                
-                ctx.beginPath();
-                ctx.arc(ex, ey, 2, 0, Math.PI*2);
-                ctx.fill();
+                ctx.beginPath(); ctx.arc(ex, ey, 2, 0, Math.PI*2); ctx.fill();
             }
         };
 
-        // Init icons
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
         });
+
+        // Config button helper
+        const ConfigBtn = ({ label, active, onClick }) => (
+            <button 
+                onClick={onClick}
+                className={`px-3 py-2 rounded text-xs font-bold transition-all border ${
+                    active 
+                    ? 'bg-blue-600 border-blue-500 text-white shadow' 
+                    : 'bg-slate-800 border-slate-600 text-slate-400 hover:bg-slate-700'
+                }`}
+            >
+                {label}
+            </button>
+        );
 
         return (
             <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
@@ -393,7 +378,7 @@
                 <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
                     
                     {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
+                    <div className="lg:col-span-8 flex flex-col gap-6">
                         <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
                             <canvas 
                                 ref={canvasRef} 
@@ -408,79 +393,88 @@
                                     <span className="text-yellow-400 font-mono font-bold">{totalCurrent.toFixed(2)} A</span>
                                 </div>
                                 <div className="flex justify-between gap-4">
-                                    <span className="text-slate-400">Eq. Resistance (Req)</span>
+                                    <span className="text-slate-400">Eq. Resistance ($R_{`eq`}$)</span>
                                     <span className="text-blue-400 font-mono font-bold">{totalResistance.toFixed(1)} Ω</span>
                                 </div>
                             </div>
                         </div>
 
                         {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center justify-between">
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
                             
-                            {/* Circuit Mode */}
-                            <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700">
-                                <button 
-                                    onClick={() => setMode('series')}
-                                    className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${mode === 'series' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    Series
-                                </button>
-                                <button 
-                                    onClick={() => setMode('parallel')}
-                                    className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${mode === 'parallel' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    Parallel
-                                </button>
-                            </div>
-
-                            {/* Voltage Slider */}
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-xs text-yellow-300 font-bold mb-1">
-                                    Battery Voltage <span>{voltage} V</span>
-                                </label>
-                                <input 
-                                    type="range" min="1" max="24" step="1" 
-                                    value={voltage} onChange={(e) => setVoltage(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-yellow" 
-                                />
-                            </div>
-
-                            {/* Bulb Count */}
-                            <div className="flex items-center gap-3">
-                                <button 
-                                    onClick={() => setBulbCount(Math.max(1, bulbCount - 1))}
-                                    className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition-colors"
-                                    disabled={bulbCount <= 1}
-                                >
-                                    <i data-lucide="minus" className="w-4 h-4"></i>
-                                </button>
-                                <div className="text-center">
-                                    <div className="text-xl font-bold text-white">{bulbCount}</div>
-                                    <div className="text-[10px] text-slate-500 uppercase">Bulbs</div>
+                            {/* Circuit Configuration Section */}
+                            <div>
+                                <div className="flex items-center gap-4 mb-3 border-b border-slate-700 pb-2">
+                                    <button 
+                                        onClick={() => { setSeriesConfig(2); }} 
+                                        className={`text-sm font-bold pb-2 -mb-2.5 transition-colors ${tab === 'series' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-slate-400 hover:text-slate-200'}`}
+                                    >
+                                        Series Mode
+                                    </button>
+                                    <button 
+                                        onClick={() => { setParallelConfig(2, 1); }} 
+                                        className={`text-sm font-bold pb-2 -mb-2.5 transition-colors ${tab === 'parallel' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400 hover:text-slate-200'}`}
+                                    >
+                                        Parallel Mode
+                                    </button>
                                 </div>
-                                <button 
-                                    onClick={() => setBulbCount(Math.min(5, bulbCount + 1))}
-                                    className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition-colors"
-                                    disabled={bulbCount >= 5}
-                                >
-                                    <i data-lucide="plus" className="w-4 h-4"></i>
-                                </button>
+
+                                <div className="flex flex-wrap gap-2">
+                                    {tab === 'series' ? (
+                                        <>
+                                            <ConfigBtn label="1 Bulb" active={layout.cols === 1} onClick={() => setSeriesConfig(1)} />
+                                            <ConfigBtn label="2 Bulbs" active={layout.cols === 2} onClick={() => setSeriesConfig(2)} />
+                                            <ConfigBtn label="3 Bulbs" active={layout.cols === 3} onClick={() => setSeriesConfig(3)} />
+                                            <ConfigBtn label="4 Bulbs" active={layout.cols === 4} onClick={() => setSeriesConfig(4)} />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <ConfigBtn label="2 Branches (Total 2)" active={layout.rows === 2 && layout.cols === 1} onClick={() => setParallelConfig(2, 1)} />
+                                            <ConfigBtn label="3 Branches (Total 3)" active={layout.rows === 3 && layout.cols === 1} onClick={() => setParallelConfig(3, 1)} />
+                                            <ConfigBtn label="4 Branches (Total 4)" active={layout.rows === 4 && layout.cols === 1} onClick={() => setParallelConfig(4, 1)} />
+                                            <ConfigBtn label="2 Branches (2x2 Mix)" active={layout.rows === 2 && layout.cols === 2} onClick={() => setParallelConfig(2, 2)} />
+                                        </>
+                                    )}
+                                </div>
                             </div>
 
-                            {/* Switch */}
-                            <button 
-                                onClick={() => setIsSwitchClosed(!isSwitchClosed)}
-                                className={`px-6 py-3 rounded-xl font-bold text-sm shadow-lg transition-all flex items-center gap-2 ${isSwitchClosed ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-red-600 hover:bg-red-500 text-white'}`}
-                            >
-                                <i data-lucide="power" className="w-4 h-4"></i>
-                                {isSwitchClosed ? "ON" : "OFF"}
-                            </button>
+                            <div className="flex flex-wrap gap-8 items-center justify-between border-t border-slate-700 pt-6">
+                                {/* Voltage Slider */}
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-xs text-yellow-300 font-bold mb-1">
+                                        Battery Voltage <span>{voltage} V</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="1" max="24" step="1" 
+                                        value={voltage} onChange={(e) => setVoltage(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-yellow" 
+                                    />
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
+                                    <button 
+                                        onClick={() => setIsSwitchClosed(!isSwitchClosed)}
+                                        className={`px-8 py-3 rounded-xl font-bold text-sm shadow-lg transition-all flex items-center justify-center gap-2 ${isSwitchClosed ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-red-600 hover:bg-red-500 text-white'}`}
+                                    >
+                                        <i data-lucide="power" className="w-4 h-4"></i>
+                                        {isSwitchClosed ? "ON" : "OFF"}
+                                    </button>
+                                    <button 
+                                        onClick={reset}
+                                        className="px-8 py-3 rounded-xl font-bold text-sm bg-slate-700 hover:bg-slate-600 text-white transition-all flex items-center justify-center gap-2"
+                                    >
+                                        <i data-lucide="rotate-ccw" className="w-4 h-4"></i>
+                                        Reset
+                                    </button>
+                                </div>
+                            </div>
 
                         </div>
                     </div>
 
                     {/* Right: Theory & Data */}
-                    <div className="lg:col-span-3 space-y-6">
+                    <div className="lg:col-span-4 space-y-6">
                         
                         <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
                             <h2 className="text-white font-bold mb-4 flex items-center">
@@ -489,7 +483,7 @@
                             </h2>
                             
                             <div className="space-y-4 text-sm text-slate-300">
-                                {mode === 'series' ? (
+                                {tab === 'series' ? (
                                     <div className="space-y-2">
                                         <div className="bg-blue-900/20 p-3 rounded border border-blue-500/30">
                                             <strong className="text-blue-400 block mb-1">Series Circuit</strong>
@@ -497,11 +491,10 @@
                                                 <li>Current is the <strong>same</strong> everywhere.</li>
                                                 <li>Voltage <strong>splits</strong> across bulbs.</li>
                                                 <li>More bulbs = Dimmer light (Resistance ↑).</li>
-                                                <li>One breaks, they all break.</li>
                                             </ul>
                                         </div>
-                                        <div className="font-mono text-xs bg-slate-900 p-2 rounded">
-                                            Req = R1 + R2 + ...
+                                        <div className="font-mono text-xs bg-slate-900 p-2 rounded text-center">
+                                            $R_{`eq`} = R_1 + R_2 + ...$
                                         </div>
                                     </div>
                                 ) : (
@@ -509,14 +502,13 @@
                                         <div className="bg-indigo-900/20 p-3 rounded border border-indigo-500/30">
                                             <strong className="text-indigo-400 block mb-1">Parallel Circuit</strong>
                                             <ul className="list-disc pl-4 text-xs space-y-1">
-                                                <li>Voltage is the <strong>same</strong> everywhere.</li>
+                                                <li>Voltage is the <strong>same</strong> for each branch.</li>
                                                 <li>Current <strong>splits</strong> into branches.</li>
-                                                <li>More bulbs = Same brightness (Resistance ↓).</li>
-                                                <li>Independent operation.</li>
+                                                <li>More branches = Higher Total Current.</li>
                                             </ul>
                                         </div>
-                                        <div className="font-mono text-xs bg-slate-900 p-2 rounded">
-                                            1/Req = 1/R1 + 1/R2 + ...
+                                        <div className="font-mono text-xs bg-slate-900 p-2 rounded text-center">
+                                            $1/R_{`eq`} = 1/R_1 + 1/R_2 + ...$
                                         </div>
                                     </div>
                                 )}
@@ -525,13 +517,22 @@
 
                         <div className="bg-yellow-900/10 border border-yellow-500/20 p-5 rounded-2xl">
                             <h3 className="text-yellow-400 font-bold text-sm mb-2 flex items-center">
-                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> Observation
+                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> Per Bulb Stats
                             </h3>
-                            <p className="text-xs text-slate-300 leading-relaxed">
-                                {mode === 'series' 
-                                    ? "Add more bulbs. Notice how they get dimmer? The battery has to push through MORE total resistance." 
-                                    : "Add more bulbs. Notice they stay bright? Each bulb gets a direct line to the battery, but the battery drains faster (Higher Total Current)!"}
-                            </p>
+                            <div className="grid grid-cols-2 gap-4 text-xs">
+                                <div className="bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                                    <div className="text-slate-500 mb-1">Voltage</div>
+                                    <div className="text-white font-mono font-bold">{bulbStats.v.toFixed(2)} V</div>
+                                </div>
+                                <div className="bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                                    <div className="text-slate-500 mb-1">Current</div>
+                                    <div className="text-white font-mono font-bold">{bulbStats.i.toFixed(2)} A</div>
+                                </div>
+                                <div className="col-span-2 bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                                    <div className="text-slate-500 mb-1">Power (Brightness)</div>
+                                    <div className="text-yellow-400 font-mono font-bold text-lg">{bulbStats.p.toFixed(1)} W</div>
+                                </div>
+                            </div>
                         </div>
 
                     </div>
