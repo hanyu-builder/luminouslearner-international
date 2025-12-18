@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Current Balance Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Digital-7&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .digital-font { font-family: 'Courier New', monospace; letter-spacing: -1px; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-teal::-webkit-slider-thumb { background: #14b8a6; }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const BASE_Y = 350;
+    const G = 9.81;
+
+    const App = () => {
+        // --- State ---
+        const [current, setCurrent] = useState(0.0); // Amps (-5 to 5)
+        const [length, setLength] = useState(5.0); // cm (Effective length)
+        const [magneticField, setMagneticField] = useState(0.1); // Tesla
+        
+        const [tareOffset, setTareOffset] = useState(0);
+        const [showVectors, setShowVectors] = useState(true);
+
+        // Physics Data
+        const [force, setForce] = useState(0); // Newtons
+        const [massReading, setMassReading] = useState(0); // Grams
+        const [dataPoints, setDataPoints] = useState([]); // For graph {i, f}
+
+        const canvasRef = useRef(null);
+        const graphCanvasRef = useRef(null);
+        
+        // Base mass of the magnet assembly (approx 200g)
+        const BASE_MASS = 200; 
+
+        // --- Physics Engine ---
+        useEffect(() => {
+            // F = BIL
+            // L is in cm, convert to meters
+            const L_m = length / 100;
+            const F = magneticField * current * L_m; // Force on WIRE
+            
+            setForce(F);
+
+            // Newton's 3rd Law: Force on Magnet is Equal and Opposite to Force on Wire
+            // If Wire is pushed UP, Magnet is pushed DOWN (Reading increases)
+            // If Wire is pushed DOWN, Magnet is pushed UP (Reading decreases)
+            
+            // Let's define: 
+            // B points INTO screen (X)
+            // I points RIGHT (+X is right?) No, I is horizontal.
+            // B is horizontal (N->S). I is Into/Out of screen?
+            // Setup: Magnets are U-shaped sitting on scale. B is Horizontal.
+            // Wire runs horizontal, perpendicular to B. 
+            // F = I x B. Vertical force.
+            
+            // Direction Convention for Sim:
+            // Positive Current -> Wire pushed UP -> Magnet pushed DOWN -> Scale reading Increases.
+            // Force on Scale = Base Weight + Magnetic Force on Magnet
+            // F_mag_on_magnet = - F_mag_on_wire
+            // If F_wire is UP (+), F_magnet is DOWN (-). Wait. 
+            // Downward force increases scale reading.
+            // So if F_wire is UP, F_magnet is DOWN (pressing on scale).
+            
+            // Let's assume Positive Current = Force UP on Wire = Force DOWN on Magnet = Increased Mass
+            
+            // F = m * g -> m = F / g
+            // Delta Mass (kg) = F / 9.81
+            // Delta Mass (g) = (F / 9.81) * 1000
+            
+            const deltaMassG = (F / G) * 1000;
+            const rawReading = BASE_MASS + deltaMassG;
+            
+            setMassReading(rawReading - tareOffset);
+
+        }, [current, length, magneticField, tareOffset]);
+
+        // --- Actions ---
+        const handleTare = () => {
+            // Set current reading to 0
+            // Current reading = BASE_MASS + deltaMass - oldTare
+            // New Tare = BASE_MASS + deltaMass
+            const F = magneticField * current * (length/100);
+            const deltaMassG = (F / G) * 1000;
+            setTareOffset(BASE_MASS + deltaMassG);
+        };
+
+        const recordData = () => {
+            // Add point (I, F)
+            // Ideally Force is calculated from mass reading: F = (reading * g) / 1000
+            // But we know the true force, let's plot theoretical for clarity or simulated measured?
+            // Let's plot the "Measured" force
+            const measuredForce = (massReading * G) / 1000;
+            setDataPoints(prev => [...prev, { x: current, y: measuredForce }]);
+        };
+
+        const clearData = () => setDataPoints([]);
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Balance (Scale)
+            const scaleX = 200;
+            const scaleY = BASE_Y;
+            const scaleW = 200;
+            
+            // Base
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(scaleX - scaleW/2, scaleY, scaleW, 40);
+            // Pan
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(scaleX - scaleW/2 + 10, scaleY - 10, scaleW - 20, 10);
+            // Stem
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(scaleX - 10, scaleY, 20, 20);
+
+            // Digital Display
+            ctx.fillStyle = '#000';
+            ctx.fillRect(scaleX - 60, scaleY + 10, 120, 25);
+            ctx.fillStyle = '#22c55e'; // Green LED
+            ctx.font = 'bold 20px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(massReading.toFixed(2) + " g", scaleX, scaleY + 28);
+
+            // 2. Draw Magnet Assembly (On the pan)
+            const magY = scaleY - 60;
+            const magW = 140;
+            const magH = 50;
+            
+            // U-Shape Magnet (Side view looks like a C or block)
+            // Let's draw two poles with a gap
+            // North Pole (Left)
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(scaleX - magW/2, magY, magW/2 - 10, magH);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillText("N", scaleX - magW/4, magY + 30);
+            
+            // South Pole (Right)
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(scaleX + 10, magY, magW/2 - 10, magH);
+            ctx.fillStyle = 'white';
+            ctx.fillText("S", scaleX + magW/4, magY + 30);
+            
+            // Base connecting them
+            ctx.fillStyle = '#64748b';
+            ctx.fillRect(scaleX - magW/2, magY + magH, magW, 10);
+
+            // 3. Draw Wire Loop (Suspended)
+            // Wire runs between poles (perpendicular to screen? or Left-Right?)
+            // If B is Left->Right (N->S), and F is Up/Down, I must be Into/Out of screen.
+            // Let's draw Wire cross-section circle
+            const wireY = magY + magH/2;
+            const wireX = scaleX;
+            
+            ctx.fillStyle = '#facc15'; // Copper
+            ctx.beginPath();
+            ctx.arc(wireX, wireY, 8, 0, Math.PI*2);
+            ctx.fill();
+            ctx.strokeStyle = '#a16207';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Current Direction Symbol
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textBaseline = 'middle';
+            if (Math.abs(current) > 0.1) {
+                // Dot (Out) or Cross (In)
+                // If Current > 0, Force UP.
+                // F(Up), B(Right). I x B = F.
+                // I(In) x B(Right) = F(Down)? No.
+                // i(In) = -Z. B(Right) = +X. (-k) x i = -j (Down).
+                // So I(Out) x B(Right) = (+k) x i = +j (Up).
+                // Positive Current = Out (Dot).
+                if (current > 0) {
+                    ctx.beginPath(); ctx.arc(wireX, wireY, 2, 0, Math.PI*2); ctx.fill(); // Dot
+                } else {
+                    ctx.beginPath(); // Cross
+                    ctx.moveTo(wireX-3, wireY-3); ctx.lineTo(wireX+3, wireY+3);
+                    ctx.moveTo(wireX+3, wireY-3); ctx.lineTo(wireX-3, wireY+3);
+                    ctx.stroke();
+                }
+            }
+
+            // Wire supports (going up)
+            ctx.beginPath();
+            ctx.moveTo(wireX, wireY - 8);
+            ctx.lineTo(wireX, wireY - 100);
+            ctx.strokeStyle = '#facc15';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            
+            // Support Stand
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(wireX - 60, wireY - 110, 120, 10); // Horizontal bar
+            ctx.fillRect(wireX + 50, wireY - 110, 10, 200); // Vertical stand
+
+            // 4. Vectors
+            if (showVectors) {
+                // B Field (Blue)
+                drawArrow(ctx, scaleX - 30, wireY, 60, 0, '#3b82f6', 'B');
+                
+                // Force on Wire (Green)
+                if (Math.abs(force) > 0.0001) {
+                    // Visual scale for force
+                    const fLen = force * 2000; 
+                    // Direction: Positive I -> Up force on wire
+                    const fDir = current > 0 ? -1 : 1; // Canvas Y: Up is negative
+                    drawArrow(ctx, wireX, wireY, 0, fLen * fDir, '#10b981', 'F_wire');
+                    
+                    // Reaction Force on Magnet (Red)
+                    // Opposite direction
+                    drawArrow(ctx, wireX + 40, magY + magH, 0, -fLen * fDir, '#ef4444', 'F_mag');
+                }
+            }
+        };
+
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            const len = Math.sqrt(dx*dx + dy*dy);
+            if (len < 5) return;
+            const angle = Math.atan2(dy, dx);
+            
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.stroke();
+            
+            // Head
+            ctx.beginPath();
+            ctx.fillStyle = color;
+            ctx.moveTo(x + dx, y + dy);
+            ctx.lineTo(x + dx - 8 * Math.cos(angle - Math.PI/6), y + dy - 8 * Math.sin(angle - Math.PI/6));
+            ctx.lineTo(x + dx - 8 * Math.cos(angle + Math.PI/6), y + dy - 8 * Math.sin(angle + Math.PI/6));
+            ctx.fill();
+            
+            ctx.fillStyle = color;
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(label, x + dx + 5, y + dy);
+        };
+
+        // Graph Drawing
+        useEffect(() => {
+            const ctx = graphCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            
+            const w = 300;
+            const h = 200;
+            const pad = 30;
+            
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, w, h);
+            
+            // Axes
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 1;
+            // X Axis (Current) -5 to 5
+            ctx.beginPath(); ctx.moveTo(pad, h/2); ctx.lineTo(w-pad, h/2); ctx.stroke();
+            // Y Axis (Force)
+            ctx.beginPath(); ctx.moveTo(w/2, pad); ctx.lineTo(w/2, h-pad); ctx.stroke();
+            
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter';
+            ctx.fillText("Current (A)", w - 40, h/2 - 5);
+            ctx.fillText("Force (mN)", w/2 + 5, 20);
+            
+            // Plot Points
+            // Scale: X: +/- 5A, Y: +/- Max Force (approx 0.05N = 50mN)
+            const maxI = 5;
+            const maxF = 0.05; // 50 mN
+            
+            const mapX = (i) => w/2 + (i / maxI) * (w/2 - pad);
+            const mapY = (f) => h/2 - (f / maxF) * (h/2 - pad);
+            
+            dataPoints.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(mapX(p.x), mapY(p.y), 3, 0, Math.PI*2);
+                ctx.fillStyle = '#facc15';
+                ctx.fill();
+            });
+            
+            // Current Live Point
+            ctx.beginPath();
+            ctx.arc(mapX(current), mapY(force), 5, 0, Math.PI*2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.stroke();
+
+        }, [dataPoints, current, force]);
+
+        useEffect(() => {
+            draw();
+        }, [current, length, magneticField, massReading, showVectors]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-teal-500/20 p-2 rounded-lg">
+                            <i data-lucide="scale" className="w-6 h-6 text-teal-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Current Balance Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Electromagnetism
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute top-4 left-4 flex gap-2">
+                                <button 
+                                    onClick={handleTare}
+                                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-xs font-bold text-yellow-400 transition-colors shadow-lg"
+                                >
+                                    TARE (Zero Scale)
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            
+                            <div className="flex flex-wrap gap-8 items-center">
+                                {/* Current */}
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-xs text-yellow-300 font-bold mb-1">
+                                        Current ($I$) <span className="text-white">{current.toFixed(1)} A</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="-5" max="5" step="0.1" 
+                                        value={current} onChange={(e) => setCurrent(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-yellow" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Reverse (-5A)</span>
+                                        <span>0</span>
+                                        <span>Forward (+5A)</span>
+                                    </div>
+                                </div>
+
+                                {/* Length */}
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-xs text-cyan-300 font-bold mb-1">
+                                        Wire Length ($L$) <span className="text-white">{length} cm</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="1" max="10" step="0.5" 
+                                        value={length} onChange={(e) => setLength(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-cyan" 
+                                    />
+                                </div>
+
+                                {/* B Field */}
+                                <div className="flex-1 min-w-[200px]">
+                                    <label className="flex justify-between text-xs text-indigo-300 font-bold mb-1">
+                                        Magnetic Field ($B$) <span className="text-white">{magneticField.toFixed(2)} T</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.01" max="0.2" step="0.01" 
+                                        value={magneticField} onChange={(e) => setMagneticField(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-indigo" 
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center justify-between border-t border-slate-700 pt-4">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={showVectors} onChange={() => setShowVectors(!showVectors)} className="rounded text-teal-500 focus:ring-0 bg-slate-700 border-slate-600" />
+                                    <span className="text-sm font-bold text-slate-300">Show Forces</span>
+                                </label>
+
+                                <div className="flex gap-2">
+                                    <button onClick={recordData} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm transition-colors shadow">Record Point</button>
+                                    <button onClick={clearData} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold text-sm transition-colors">Clear Graph</button>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Data Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        {/* Graph */}
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                            <h3 className="text-white font-bold mb-4 text-sm flex items-center">
+                                <i data-lucide="line-chart" className="w-4 h-4 mr-2 text-indigo-400"></i>
+                                Force vs Current
+                            </h3>
+                            <canvas 
+                                ref={graphCanvasRef} 
+                                width={300} 
+                                height={200} 
+                                className="w-full h-auto bg-slate-900 rounded-lg border border-slate-700"
+                            />
+                        </div>
+
+                        {/* Calculation Breakdown */}
+                        <div className="bg-teal-900/10 border border-teal-500/20 p-5 rounded-2xl">
+                            <h3 className="text-teal-300 font-bold text-sm mb-3 flex items-center">
+                                <i data-lucide="calculator" className="w-4 h-4 mr-2"></i>
+                                Force Calculation
+                            </h3>
+                            
+                            <div className="space-y-3 font-mono text-xs">
+                                <div className="flex justify-between border-b border-teal-500/10 pb-1">
+                                    <span className="text-slate-400">F = B × I × L</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">B</span>
+                                    <span className="text-indigo-300">{magneticField} T</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">I</span>
+                                    <span className="text-yellow-300">{current} A</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">L</span>
+                                    <span className="text-cyan-300">{(length/100).toFixed(2)} m</span>
+                                </div>
+                                <div className="flex justify-between pt-2 border-t border-teal-500/30 font-bold text-sm">
+                                    <span className="text-white">Force (F)</span>
+                                    <span className="text-emerald-400">{(force * 1000).toFixed(1)} mN</span>
+                                </div>
+                                <div className="flex justify-between font-bold text-sm">
+                                    <span className="text-white">Δ Mass</span>
+                                    <span className="text-emerald-400">{(massReading - (BASE_MASS - tareOffset)).toFixed(2)} g</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="p-4 rounded-xl bg-slate-800 border border-slate-700 text-xs text-slate-400 leading-relaxed">
+                            <i data-lucide="info" className="w-3 h-3 inline mr-1 text-blue-400"></i>
+                            <strong>Physics Note:</strong> The scale measures the <em>reaction force</em> on the magnet. According to Newton's 3rd Law, this is equal and opposite to the magnetic force on the wire.
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
