@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound Wave Visualizer | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-purple::-webkit-slider-thumb { background: #a855f7; }
+        .thumb-pink::-webkit-slider-thumb { background: #ec4899; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 300;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    const App = () => {
+        // --- State ---
+        const [frequency, setFrequency] = useState(440); // Hz (A4)
+        const [volume, setVolume] = useState(0.5); // 0 to 1 (Amplitude)
+        const [isPlaying, setIsPlaying] = useState(false);
+        const [waveform, setWaveform] = useState('sine'); // sine, square, sawtooth, triangle
+
+        const canvasRef = useRef(null);
+        const particlesCanvasRef = useRef(null);
+        const requestRef = useRef();
+        const timeRef = useRef(0);
+        
+        // Audio Context Refs
+        const audioCtxRef = useRef(null);
+        const oscillatorRef = useRef(null);
+        const gainNodeRef = useRef(null);
+
+        // --- Audio Logic ---
+        const initAudio = () => {
+            if (!audioCtxRef.current) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtxRef.current = new AudioContext();
+                
+                gainNodeRef.current = audioCtxRef.current.createGain();
+                gainNodeRef.current.connect(audioCtxRef.current.destination);
+            }
+        };
+
+        const togglePlay = () => {
+            initAudio();
+
+            if (isPlaying) {
+                // Stop
+                if (oscillatorRef.current) {
+                    oscillatorRef.current.stop();
+                    oscillatorRef.current.disconnect();
+                    oscillatorRef.current = null;
+                }
+                setIsPlaying(false);
+            } else {
+                // Start
+                if (audioCtxRef.current.state === 'suspended') {
+                    audioCtxRef.current.resume();
+                }
+
+                const osc = audioCtxRef.current.createOscillator();
+                osc.type = waveform;
+                osc.frequency.setValueAtTime(frequency, audioCtxRef.current.currentTime);
+                
+                // Connect
+                osc.connect(gainNodeRef.current);
+                osc.start();
+                
+                oscillatorRef.current = osc;
+                setIsPlaying(true);
+            }
+        };
+
+        // Update Frequency Live
+        useEffect(() => {
+            if (oscillatorRef.current && isPlaying) {
+                oscillatorRef.current.frequency.setValueAtTime(frequency, audioCtxRef.current.currentTime);
+            }
+        }, [frequency]);
+
+        // Update Volume Live
+        useEffect(() => {
+            if (gainNodeRef.current) {
+                // Smooth transition to avoid clicking noise
+                gainNodeRef.current.gain.setTargetAtTime(volume, audioCtxRef.current.currentTime, 0.05);
+            }
+        }, [volume]);
+
+        // Update Waveform Type
+        useEffect(() => {
+            if (oscillatorRef.current && isPlaying) {
+                oscillatorRef.current.type = waveform;
+            }
+        }, [waveform]);
+
+        // --- Rendering Loop ---
+        const draw = () => {
+            const t = timeRef.current;
+            timeRef.current += 0.05; // Animation speed (independent of audio freq visual)
+            
+            // 1. Draw Oscilloscope (Transverse Representation)
+            const ctx = canvasRef.current?.getContext('2d');
+            if (ctx) {
+                ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                // Grid
+                ctx.strokeStyle = '#1e293b';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, CENTER_Y); ctx.lineTo(CANVAS_WIDTH, CENTER_Y);
+                ctx.stroke();
+
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = '#a855f7'; // Purple
+                ctx.beginPath();
+
+                // Visual Wavelength scaling:
+                // Higher freq = shorter wavelength on screen
+                // Map 100Hz -> Long, 1000Hz -> Short
+                const visualFreq = frequency * 0.05; 
+                
+                for (let x = 0; x < CANVAS_WIDTH; x++) {
+                    // y = A * sin(kx - wt)
+                    // k relates to freq. A relates to volume.
+                    const ampPx = volume * 100; // Max height 100px
+                    
+                    let y = 0;
+                    const phase = x * (frequency / 2000) - t * (frequency / 100); 
+                    
+                    // Simple visualizations for different waveforms
+                    if (waveform === 'sine') {
+                        y = Math.sin(phase * Math.PI * 2);
+                    } else if (waveform === 'square') {
+                        y = Math.sign(Math.sin(phase * Math.PI * 2));
+                    } else if (waveform === 'sawtooth') {
+                        y = -1 + 2 * ((phase) % 1);
+                    } else if (waveform === 'triangle') {
+                        y = Math.abs((phase % 1) * 4 - 2) - 1;
+                    }
+
+                    const plotY = CENTER_Y - y * ampPx;
+                    
+                    if (x === 0) ctx.moveTo(x, plotY);
+                    else ctx.lineTo(x, plotY);
+                }
+                ctx.stroke();
+            }
+
+            // 2. Draw Particles (Longitudinal Representation)
+            const pCtx = particlesCanvasRef.current?.getContext('2d');
+            if (pCtx) {
+                pCtx.clearRect(0, 0, CANVAS_WIDTH, 60);
+                pCtx.fillStyle = '#1e293b';
+                pCtx.fillRect(0, 0, CANVAS_WIDTH, 60);
+
+                const numParticles = 100;
+                const spacing = CANVAS_WIDTH / numParticles;
+                const k = (2 * Math.PI * frequency) / 20000; // Visual k
+                
+                for (let i = 0; i < numParticles; i++) {
+                    const x0 = i * spacing;
+                    // Displacement for longitudinal wave
+                    // dx = A * sin(kx - wt)
+                    // The particle oscillates around x0
+                    
+                    const phase = x0 * (frequency / 2000) - t * (frequency / 100); 
+                    let displacement = 0;
+                    
+                    if (waveform === 'sine') displacement = Math.sin(phase * Math.PI * 2);
+                    else displacement = Math.sin(phase * Math.PI * 2); // Keep sine for particle movement approx
+                    
+                    const ampPx = volume * 20; // Max displacement
+                    const x = x0 + displacement * ampPx;
+                    
+                    pCtx.beginPath();
+                    pCtx.arc(x, 30, 2, 0, Math.PI * 2);
+                    pCtx.fillStyle = i % 10 === 0 ? '#ef4444' : '#94a3b8'; // Highlight every 10th
+                    pCtx.fill();
+                }
+            }
+
+            requestRef.current = requestAnimationFrame(draw);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(draw);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [frequency, volume, waveform]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Safe Reset
+        const reset = () => {
+            if (isPlaying) togglePlay(); // Stop sound
+            setFrequency(440);
+            setVolume(0.5);
+            setWaveform('sine');
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-purple-500/20 p-2 rounded-lg">
+                            <i data-lucide="waves" className="w-6 h-6 text-purple-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Sound Wave Visualizer</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Sound Waves
+                    </div>
+                </nav>
+
+                <main className="max-w-5xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Visualization */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        
+                        {/* Oscilloscope */}
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
+                            <div className="absolute top-2 left-2 bg-slate-900/80 px-2 py-1 rounded text-[10px] text-slate-400 font-bold border border-slate-700">OSCILLOSCOPE (Displacement-Time)</div>
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT} 
+                                className="w-full h-auto bg-slate-950 rounded-xl"
+                            />
+                        </div>
+
+                        {/* Particle View */}
+                        <div className="bg-slate-900 rounded-2xl border border-slate-700 p-4 shadow-lg">
+                            <div className="text-[10px] text-slate-400 font-bold uppercase mb-2">Air Molecules (Longitudinal)</div>
+                            <canvas 
+                                ref={particlesCanvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={60} 
+                                className="w-full h-[60px] bg-slate-950 rounded border border-slate-800"
+                            />
+                            <div className="text-[10px] text-slate-500 mt-1 italic">
+                                Note: Sound travels as compressions (bunched up) and rarefactions (spread out).
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* Right: Controls */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-8">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="sliders" className="w-5 h-5 mr-2 text-purple-400"></i>
+                                Controls
+                            </h2>
+
+                            {/* Main Button */}
+                            <button 
+                                onClick={togglePlay}
+                                className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                            >
+                                <i data-lucide={isPlaying ? "square" : "play"} className="w-5 h-5"></i>
+                                {isPlaying ? "Stop Sound" : "Play Sound"}
+                            </button>
+
+                            {/* Pitch / Frequency */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold text-purple-300 mb-2">
+                                    <span>Pitch (Frequency)</span>
+                                    <span className="text-white font-mono">{frequency} Hz</span>
+                                </label>
+                                <input 
+                                    type="range" min="100" max="1000" step="10" 
+                                    value={frequency} onChange={(e) => setFrequency(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-purple" 
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                    <span>Low (Bass)</span>
+                                    <span>High (Treble)</span>
+                                </div>
+                            </div>
+
+                            {/* Loudness / Amplitude */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold text-pink-300 mb-2">
+                                    <span>Loudness (Amplitude)</span>
+                                    <span className="text-white font-mono">{Math.round(volume * 100)}%</span>
+                                </label>
+                                <input 
+                                    type="range" min="0" max="1" step="0.05" 
+                                    value={volume} onChange={(e) => setVolume(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-pink" 
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                    <span>Quiet</span>
+                                    <span>Loud</span>
+                                </div>
+                            </div>
+
+                            {/* Waveform Selector */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 mb-2 block">Timbre (Wave Shape)</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {['sine', 'square', 'sawtooth', 'triangle'].map(type => (
+                                        <button
+                                            key={type}
+                                            onClick={() => setWaveform(type)}
+                                            className={`py-2 rounded-lg text-[10px] font-bold capitalize transition-colors ${waveform === type ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-slate-200'}`}
+                                        >
+                                            {type}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <button onClick={reset} className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors flex items-center justify-center gap-2">
+                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                            </button>
+
+                        </div>
+
+                        {/* Info Box */}
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                            <h3 className="text-indigo-300 font-bold text-sm mb-3 flex items-center">
+                                <i data-lucide="ear" className="w-4 h-4 mr-2"></i> Hearing Physics
+                            </h3>
+                            <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+                                <div className="flex justify-between border-b border-indigo-500/20 pb-1">
+                                    <span>High Frequency</span>
+                                    <span className="text-white">High Pitch</span>
+                                </div>
+                                <div className="flex justify-between border-b border-indigo-500/20 pb-1">
+                                    <span>High Amplitude</span>
+                                    <span className="text-white">Loud Sound</span>
+                                </div>
+                                <p className="pt-1">
+                                    Humans can typically hear from <strong>20 Hz</strong> to <strong>20,000 Hz</strong>. Can you hear the difference between 100 Hz and 1000 Hz?
+                                </p>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
