@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banking on a Curve Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-orange::-webkit-slider-thumb { background: #f97316; }
+        .thumb-emerald::-webkit-slider-thumb { background: #10b981; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 500;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT * 0.7;
+    const G = 9.81;
+
+    const App = () => {
+        // --- State ---
+        const [angle, setAngle] = useState(15); // Degrees
+        const [velocity, setVelocity] = useState(20); // m/s
+        const [radius, setRadius] = useState(50); // meters
+        const [mu, setMu] = useState(0.5); // Friction coefficient
+        const [showVectors, setShowVectors] = useState(true);
+        const [showComponents, setShowComponents] = useState(false);
+
+        // Physics Results
+        const [idealSpeed, setIdealSpeed] = useState(0);
+        const [maxSpeed, setMaxSpeed] = useState(0);
+        const [minSpeed, setMinSpeed] = useState(0);
+        const [status, setStatus] = useState('safe'); // safe, skid-out, slide-in
+
+        const canvasRef = useRef(null);
+
+        // --- Physics Engine ---
+        useEffect(() => {
+            const rad = angle * (Math.PI / 180);
+            
+            // 1. Ideal Speed (No Friction needed)
+            // v = sqrt(rg tan(theta))
+            const v_ideal = Math.sqrt(radius * G * Math.tan(rad));
+            setIdealSpeed(v_ideal);
+
+            // 2. Max Speed (Skid Out - Friction acts DOWN slope)
+            // v_max = sqrt(rg * (sin + mu*cos) / (cos - mu*sin))
+            const numMax = Math.sin(rad) + mu * Math.cos(rad);
+            const denMax = Math.cos(rad) - mu * Math.sin(rad);
+            let v_max = Infinity;
+            if (denMax > 0) {
+                v_max = Math.sqrt(radius * G * (numMax / denMax));
+            }
+            setMaxSpeed(v_max);
+
+            // 3. Min Speed (Slide In - Friction acts UP slope)
+            // v_min = sqrt(rg * (sin - mu*cos) / (cos + mu*sin))
+            const numMin = Math.sin(rad) - mu * Math.cos(rad);
+            const denMin = Math.cos(rad) + mu * Math.sin(rad);
+            let v_min = 0;
+            if (numMin > 0) {
+                v_min = Math.sqrt(radius * G * (numMin / denMin));
+            }
+            setMinSpeed(v_min);
+
+            // 4. Determine Status
+            if (velocity > v_max) setStatus('skid-out');
+            else if (velocity < v_min) setStatus('slide-in');
+            else setStatus('safe');
+
+        }, [angle, velocity, radius, mu]);
+
+        // --- Rendering ---
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            const rad = angle * (Math.PI / 180);
+
+            // 1. Background
+            const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+            grad.addColorStop(0, '#0f172a');
+            grad.addColorStop(1, '#1e293b');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 2. Draw Banked Road
+            const roadWidth = 600;
+            ctx.save();
+            ctx.translate(CENTER_X, CENTER_Y);
+            
+            // Draw Ground Base (Flat)
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(-400, 0, 800, 200);
+
+            // Draw Slope Wedge
+            ctx.beginPath();
+            ctx.moveTo(-roadWidth/2, 0);
+            ctx.lineTo(roadWidth/2, 0);
+            // Calculate height of wedge right side based on angle
+            // Actually let's just rotate the road surface
+            ctx.restore();
+
+            // Better approach: Draw wedge shape
+            ctx.save();
+            ctx.translate(CENTER_X, CENTER_Y);
+            
+            // Road Surface Line
+            const yRise = Math.tan(rad) * (roadWidth/2);
+            // Pivot at center? Or inside edge?
+            // Let's pivot at center for visual stability
+            
+            ctx.rotate(-rad);
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(-roadWidth/2, 0, roadWidth, 20); // Road thickness
+            
+            // Road Markings
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            for(let i=-roadWidth/2; i<roadWidth/2; i+=40) {
+                ctx.fillRect(i, 2, 20, 4);
+            }
+            ctx.fill();
+
+            // 3. Draw Car (Rear View)
+            const carW = 60;
+            const carH = 40;
+            // Car position Logic based on status
+            // If skid-out, shift car UP/RIGHT relative to road
+            // If slide-in, shift car DOWN/LEFT
+            
+            // Visual offset for effect
+            let xOffset = 0;
+            if (status === 'skid-out') xOffset = 100; // Visual only
+            if (status === 'slide-in') xOffset = -100;
+
+            // Animate xOffset? For now static indicator
+            
+            // Car Body
+            ctx.fillStyle = status === 'safe' ? '#3b82f6' : '#ef4444';
+            // Translate up by car height (note we are in rotated context)
+            ctx.translate(0, -carH - 10); // -10 for wheels
+            
+            // Ghost car if sliding (Optional)
+
+            // Actual Car
+            ctx.fillRect(-carW/2, 0, carW, carH);
+            // Roof
+            ctx.fillStyle = '#60a5fa'; // Light blue / Red
+            if (status !== 'safe') ctx.fillStyle = '#f87171';
+            ctx.beginPath();
+            ctx.moveTo(-carW/2 + 5, 0);
+            ctx.lineTo(carW/2 - 5, 0);
+            ctx.lineTo(carW/2 - 10, -20);
+            ctx.lineTo(-carW/2 + 10, -20);
+            ctx.fill();
+
+            // Wheels
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(-carW/2 + 5, carH, 15, 10);
+            ctx.fillRect(carW/2 - 20, carH, 15, 10);
+            
+            // Tail lights
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(-carW/2 + 5, 10, 10, 5);
+            ctx.fillRect(carW/2 - 15, 10, 10, 5);
+
+            // 4. Vectors
+            if (showVectors) {
+                // Determine Friction Direction
+                // If v > v_ideal, Friction is DOWN slope (Helping gravity)
+                // If v < v_ideal, Friction is UP slope (Fighting gravity)
+                // If v = v_ideal, Friction is 0
+                
+                const carCenterX = 0;
+                const carCenterY = carH / 2;
+                
+                const vecScale = 2; // Scale factor
+
+                // Normal Force (Perpendicular to surface - UP in this rotated frame)
+                // N needs to balance gravity component + contribute to centripetal
+                // N = mg / cos(theta) ... rough visual scaling
+                drawArrow(ctx, 0, carH/2, 0, -80, '#10b981', 'N');
+
+                // Gravity (Straight Down in World)
+                // In rotated frame, Gravity is rotated by +rad
+                // mg points down-right (if slope is up-right)
+                // Wait, we rotated context by -rad (CCW).
+                // So "Down" (World) is rotated by +rad in local
+                const gLen = 60;
+                const gx = gLen * Math.sin(rad);
+                const gy = gLen * Math.cos(rad);
+                drawArrow(ctx, 0, carH/2, gx, gy, '#94a3b8', 'mg');
+
+                // Friction
+                const fLen = Math.min(60, Math.abs(velocity - idealSpeed) * 3);
+                if (velocity > idealSpeed) {
+                    // Friction points DOWN slope (Left in our drawing if car turns right... wait)
+                    // Centripetal force is towards center of turn.
+                    // Let's assume turn center is to the LEFT of the screen.
+                    // Gravity pulls down. Normal pushes Up-Right.
+                    // Horizontal component of Normal points LEFT (Center).
+                    
+                    // If going too fast, need MORE inward force. Friction points LEFT (Down slope).
+                    drawArrow(ctx, 0, carH + 10, -fLen, 0, '#f59e0b', 'f');
+                } else if (velocity < idealSpeed) {
+                    // Friction points UP slope (Right)
+                    drawArrow(ctx, 0, carH + 10, fLen, 0, '#f59e0b', 'f');
+                }
+
+                // Centripetal Force (Net Force) - Horizontal Left in World
+                // In local: Rotate Horizontal Left by +rad
+                if (showComponents) {
+                    const fcLen = (velocity * velocity / radius) * 2; // mv^2/r
+                    // Horizontal Left in world is (-1, 0)
+                    // Rotated by rad: (-cos, sin)
+                    const fcx = -fcLen * Math.cos(rad);
+                    const fcy = fcLen * Math.sin(rad); // Points slightly into slope
+                    
+                    drawArrow(ctx, 0, carH/2, fcx, fcy, '#ef4444', 'F_net');
+                }
+            }
+
+            ctx.restore();
+
+        }, [angle, velocity, radius, mu, idealSpeed, status, showVectors, showComponents]);
+
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+            const toX = x + dx;
+            const toY = y + dy;
+            const angle = Math.atan2(dy, dx);
+            const headLen = 8;
+
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.moveTo(x, y);
+            ctx.lineTo(toX, toY);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.fillStyle = color;
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI/6), toY - headLen * Math.sin(angle - Math.PI/6));
+            ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI/6), toY - headLen * Math.sin(angle + Math.PI/6));
+            ctx.fill();
+            
+            ctx.fillStyle = color;
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(label, toX + 5, toY - 5);
+        };
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Helper for status Badge
+        const StatusBadge = () => {
+            let color = 'bg-emerald-500';
+            let text = 'SAFE';
+            let icon = 'check-circle';
+            
+            if (status === 'skid-out') {
+                color = 'bg-red-500';
+                text = 'SKIDDING OUT (Too Fast)';
+                icon = 'alert-triangle';
+            } else if (status === 'slide-in') {
+                color = 'bg-orange-500';
+                text = 'SLIDING DOWN (Too Slow)';
+                icon = 'arrow-down-right';
+            }
+
+            return (
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-white font-bold shadow-lg ${color}`}>
+                    <i data-lucide={icon} className="w-5 h-5"></i>
+                    {text}
+                </div>
+            );
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-2 rounded-lg">
+                            <i data-lucide="car" className="w-6 h-6 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Banking on a Curve</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Circular Motion
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-auto bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute top-4 left-4">
+                                <StatusBadge />
+                            </div>
+
+                            <div className="absolute top-4 right-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-right">
+                                <div className="text-[10px] text-slate-400 uppercase">Ideal Speed (No Friction)</div>
+                                <div className="text-2xl font-mono text-emerald-400 font-bold">{idealSpeed.toFixed(1)} m/s</div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-col gap-6">
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {/* Speed & Radius */}
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                            Car Speed (v) <span className="text-blue-400">{velocity} m/s</span>
+                                        </label>
+                                        <input type="range" min="0" max="50" step="1" value={velocity} onChange={(e) => setVelocity(Number(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-blue" />
+                                    </div>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                            Curve Radius (r) <span className="text-blue-400">{radius} m</span>
+                                        </label>
+                                        <input type="range" min="20" max="100" step="5" value={radius} onChange={(e) => setRadius(Number(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-blue" />
+                                    </div>
+                                </div>
+
+                                {/* Angle & Friction */}
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                            Banking Angle (θ) <span className="text-orange-400">{angle}°</span>
+                                        </label>
+                                        <input type="range" min="0" max="45" step="1" value={angle} onChange={(e) => setAngle(Number(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-orange" />
+                                    </div>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                            Friction Coeff (μ) <span className="text-emerald-400">{mu.toFixed(2)}</span>
+                                        </label>
+                                        <input type="range" min="0" max="1.0" step="0.05" value={mu} onChange={(e) => setMu(Number(e.target.value))} className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-emerald" />
+                                        <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                            <span>Ice (0.0)</span>
+                                            <span>Wet (0.4)</span>
+                                            <span>Dry (0.8)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4 border-t border-slate-700 pt-4">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={showVectors} onChange={() => setShowVectors(!showVectors)} className="rounded bg-slate-700 border-slate-600 text-indigo-600 focus:ring-0" />
+                                    <span className="text-sm font-bold text-slate-300">Show Vectors</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={showComponents} onChange={() => setShowComponents(!showComponents)} className="rounded bg-slate-700 border-slate-600 text-indigo-600 focus:ring-0" />
+                                    <span className="text-sm font-bold text-slate-300">Show Net Force</span>
+                                </label>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Data Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="shield-check" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Safety Analysis
+                            </h2>
+                            
+                            <div className="space-y-6">
+                                {/* Safe Range Bar */}
+                                <div>
+                                    <div className="flex justify-between text-xs text-slate-400 mb-2">
+                                        <span>Min Safe Speed</span>
+                                        <span>Max Safe Speed</span>
+                                    </div>
+                                    <div className="relative h-6 bg-slate-900 rounded-full border border-slate-700 overflow-hidden">
+                                        {/* Danger Zones */}
+                                        <div className="absolute inset-0 bg-red-900/30"></div>
+                                        
+                                        {/* Safe Zone (Green) */}
+                                        {/* Map 0-50m/s to 0-100% */}
+                                        <div 
+                                            className="absolute top-0 bottom-0 bg-emerald-600/50 border-x border-emerald-500/50"
+                                            style={{
+                                                left: `${(minSpeed / 60) * 100}%`,
+                                                right: `${100 - (maxSpeed / 60) * 100}%`
+                                            }}
+                                        ></div>
+
+                                        {/* Current Speed Marker */}
+                                        <div 
+                                            className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_white] transition-all duration-300"
+                                            style={{ left: `${(velocity / 60) * 100}%` }}
+                                        ></div>
+                                    </div>
+                                    <div className="flex justify-between text-xs font-mono text-slate-300 mt-1">
+                                        <span>{minSpeed.toFixed(1)} m/s</span>
+                                        <span>{maxSpeed === Infinity ? '∞' : maxSpeed.toFixed(1)} m/s</span>
+                                    </div>
+                                </div>
+
+                                {/* Physics Breakdown */}
+                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50 text-sm space-y-2">
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-400">Centripetal Required</span>
+                                        <span className="font-mono text-white">{((1000 * velocity*velocity)/radius).toFixed(0)} N</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 italic text-right">For a 1000kg car</div>
+                                    <div className="h-px bg-slate-700 my-2"></div>
+                                    <div className="text-xs text-slate-300">
+                                        <span className="text-emerald-400 font-bold">Friction Role:</span><br/>
+                                        {velocity > idealSpeed 
+                                            ? "Friction points DOWN the slope to prevent skidding out." 
+                                            : velocity < idealSpeed 
+                                                ? "Friction points UP the slope to prevent sliding down."
+                                                : "Friction is Zero. Pure banking turns the car."}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
