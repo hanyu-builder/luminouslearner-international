@@ -37,42 +37,36 @@
     const CANVAS_WIDTH = 800;
     const CANVAS_HEIGHT = 450;
     const GROUND_Y = 400;
-    const TRACK_COLOR = '#94a3b8';
     const G = 9.8;
     const SCALE = 20; // Pixels per meter
 
     // Generate Track Points
-    // A simple track with a big drop, a loop, and a hill
+    // Fix: Ensure track starts HIGH (Small Y) and drops down
     const generateTrack = () => {
         const points = [];
         for (let x = 0; x <= CANVAS_WIDTH; x+=2) {
             let y = GROUND_Y;
-            // First Drop (0 to 200)
-            if (x < 200) {
-                // Cosine curve from high to low
-                // x=0 -> y=50, x=200 -> y=350
-                const progress = x / 200;
-                y = 350 - 300 * Math.cos(progress * Math.PI / 2); // Start high (50), end low (350)
-                // Actually we want start high.
-                // Let's use cosine interpolation:
-                y = 200 + 150 * Math.cos(progress * Math.PI); // x=0->y=50, x=200->y=350
+            
+            // First Drop (0 to 300) - Big Drop
+            if (x < 300) {
+                const progress = x / 300;
+                // Cosine from 0 to PI: 1 to -1.
+                // We want y to go from 50 (High) to 350 (Low)
+                // y = center - amp * cos(...)
+                // x=0 -> cos=1 -> 200 - 150 = 50.
+                // x=300 -> cos=-1 -> 200 + 150 = 350.
+                y = 200 - 150 * Math.cos(progress * Math.PI); 
+                // However, derivative at start is 0 (flat), good for start.
+                // But we need it to drop faster? No, flat start is realistic for loading platform.
             } 
-            // Loop (200 to 400)
-            else if (x >= 200 && x < 400) {
-                // Circle centered at (300, 250) radius 100
-                const loopX = x - 200; // 0 to 200
-                // We just flat line for simplicity or parametric?
-                // Let's do a simple hill for stability first, loops are tricky with simple height-map logic (x needs to double back)
-                // We will simulate a "hill" that represents a loop's height
-                const progress = (x - 200) / 200;
-                y = 350 - 200 * Math.sin(progress * Math.PI); // Up to 150 and back to 350
+            // Second Hill / Loop (300 to 600)
+            else if (x >= 300 && x < 600) {
+                const progress = (x - 300) / 300;
+                // Go up then down
+                // Base is 350. Go up to 150 (Height 200).
+                y = 350 - 200 * Math.sin(progress * Math.PI);
             }
-            // Second Hill (400 to 600)
-            else if (x >= 400 && x < 600) {
-                const progress = (x - 400) / 200;
-                y = 350 - 100 * Math.sin(progress * Math.PI); // Smaller hill
-            }
-            // Flat finish
+            // Final flat (600+)
             else {
                 y = 350;
             }
@@ -99,13 +93,20 @@
         
         // Mutable Physics State
         const physRef = useRef({
-            xIdx: 0, // Current index in TRACK_POINTS
+            xIdx: 0, 
             totalEnergy: 0,
             heatLost: 0
         });
+        
+        // Ref for friction to avoid stale closure in loop
+        const frictionRef = useRef(false);
+
+        useEffect(() => {
+            frictionRef.current = friction;
+        }, [friction]);
 
         // --- Logic ---
-        const getTrackY = (idx) => TRACK_POINTS[Math.min(idx, TRACK_POINTS.length-1)].y;
+        const getTrackY = (idx) => TRACK_POINTS[Math.min(Math.floor(idx), TRACK_POINTS.length-1)].y;
         
         const resetSim = () => {
             setSimState('idle');
@@ -113,20 +114,25 @@
             
             // Initial State (Top of first hill)
             const startY = getTrackY(0);
-            const startH = (GROUND_Y - startY) / SCALE; // Height in meters
+            const startH = (GROUND_Y - startY) / SCALE; 
             const pe = mass * G * startH;
             
+            // Add a tiny initial KE (Push) to prevent deadlock at v=0
+            const initialPushV = 1.0; // m/s
+            const initialKE = 0.5 * mass * initialPushV * initialPushV;
+
             physRef.current = {
                 xIdx: 0,
-                totalEnergy: pe,
+                totalEnergy: pe + initialKE, // Total includes the push
                 heatLost: 0
             };
             
-            setEnergies({ pe, ke: 0, heat: 0, total: pe });
+            setEnergies({ pe, ke: initialKE, heat: 0, total: pe + initialKE });
             setHeight(startH);
-            setVelocity(0);
+            setVelocity(initialPushV);
             
-            draw();
+            // Force one draw
+            setTimeout(() => draw(), 50);
         };
 
         const startSim = () => {
@@ -139,52 +145,57 @@
             const state = physRef.current;
             
             // 1. Get Current Position Info
-            const currentY = getTrackY(Math.floor(state.xIdx));
+            const currentY = getTrackY(state.xIdx);
             const currentH = (GROUND_Y - currentY) / SCALE;
             
-            // 2. Calculate Energies
+            // 2. Calculate PE
             const pe = mass * G * currentH;
             
-            // Apply Friction (Loss of Total Energy)
-            if (friction) {
-                // Loss proportional to speed? Or distance?
-                // Simple model: Loss per frame if moving
-                if (state.totalEnergy > pe) {
-                    const loss = 200; // Joules per frame
-                    state.heatLost += loss;
-                    // Cap heat loss so we don't go negative KE
-                    if (state.totalEnergy - state.heatLost < pe) {
-                        state.heatLost = state.totalEnergy - pe;
-                    }
+            // 3. Friction Logic
+            if (frictionRef.current) {
+                // Simple friction model: lose energy per distance/frame
+                // Only lose heat if we are moving
+                if (state.totalEnergy - state.heatLost > pe) {
+                    const lossPerFrame = 500; // Joules
+                    state.heatLost += lossPerFrame;
                 }
             }
             
-            // KE = Total_Initial - PE - Heat
+            // 4. Calculate KE
+            // ME = PE + KE + Heat
+            // KE = ME - PE - Heat
             let ke = state.totalEnergy - pe - state.heatLost;
             
-            // 3. Movement Logic
-            if (ke < 0.1) {
-                ke = 0;
-                // Stuck or Finished?
-                // If stuck on a hill, slide back? (Complexity omit: just stop)
-                if (state.xIdx > 10 && state.xIdx < TRACK_POINTS.length - 10) {
-                    // Stuck valley logic could go here
-                }
-            }
+            if (ke < 0) ke = 0; // Can't have negative kinetic energy
 
+            // 5. Calculate Velocity & Move
             const v = Math.sqrt((2 * ke) / mass); // v = sqrt(2KE/m)
             
-            // Move along track (xIdx)
-            // Speed v is in m/s. We need pixels/frame.
-            // approx scale factor for simulation speed
-            const speedPx = v * 0.5; 
-            
-            state.xIdx += speedPx; // Move forward
+            // Deadlock check: If v is too small on a flat/uphill, stop
+            if (v < 0.1) {
+                // If we are at the end, finish
+                if (state.xIdx >= TRACK_POINTS.length - 10) {
+                    setSimState('finished');
+                    return;
+                }
+                // Otherwise, we might be stuck in a valley or friction stopped us
+                // For this simple sim, we just stop animation if stuck
+                // But let's allow it to crawl if v > 0.01 to prevent premature stop
+            }
 
-            // End of track
+            // Move along track (xIdx)
+            // Speed v is in m/s (1m = 20px). 
+            // Frame time ~ 0.016s
+            // dx = v * dt * scale
+            const speedPx = v * 0.016 * SCALE; 
+            
+            state.xIdx += speedPx;
+
+            // End of track check
             if (state.xIdx >= TRACK_POINTS.length - 1) {
                 state.xIdx = TRACK_POINTS.length - 1;
                 setSimState('finished');
+                // Don't return, allow final draw
             } else {
                 requestRef.current = requestAnimationFrame(loop);
             }
@@ -216,7 +227,7 @@
             ctx.fillStyle = grad;
             ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // 2. Draw Track Support (Pillars)
+            // 2. Draw Track Support
             ctx.strokeStyle = '#334155';
             ctx.lineWidth = 2;
             for(let i=0; i<TRACK_POINTS.length; i+=40) {
@@ -238,15 +249,25 @@
             ctx.stroke();
 
             // 4. Draw Cart
-            const idx = Math.min(Math.floor(physRef.current.xIdx), TRACK_POINTS.length-1);
-            const pos = TRACK_POINTS[idx];
+            // Get interpolated position for smoothness
+            const idxFloor = Math.floor(physRef.current.xIdx);
+            const idxCeil = Math.min(idxFloor + 1, TRACK_POINTS.length - 1);
+            const ratio = physRef.current.xIdx - idxFloor;
             
-            // Calculate tangent angle for rotation
-            const nextP = TRACK_POINTS[Math.min(idx+5, TRACK_POINTS.length-1)];
-            const angle = Math.atan2(nextP.y - pos.y, nextP.x - pos.x);
+            const p1 = TRACK_POINTS[idxFloor];
+            const p2 = TRACK_POINTS[idxCeil];
+            
+            const cartX = p1.x + (p2.x - p1.x) * ratio;
+            const cartY = p1.y + (p2.y - p1.y) * ratio;
+
+            // Calculate Angle
+            // Look ahead a bit for stability
+            const lookAheadIdx = Math.min(idxFloor + 5, TRACK_POINTS.length - 1);
+            const pNext = TRACK_POINTS[lookAheadIdx];
+            const angle = Math.atan2(pNext.y - cartY, pNext.x - cartX);
 
             ctx.save();
-            ctx.translate(pos.x, pos.y);
+            ctx.translate(cartX, cartY);
             ctx.rotate(angle);
             
             // Cart Body
@@ -256,31 +277,29 @@
             ctx.fillStyle = '#94a3b8';
             ctx.beginPath(); ctx.arc(-10, -2, 4, 0, Math.PI*2); ctx.fill();
             ctx.beginPath(); ctx.arc(10, -2, 4, 0, Math.PI*2); ctx.fill();
-            
             // Passenger
             ctx.beginPath(); ctx.arc(0, -25, 6, 0, Math.PI*2); ctx.fillStyle='#fcd34d'; ctx.fill();
 
-            // Energy Bar (Above Cart)
-            // Simplified: Green = KE, Blue = PE
-            if (simState !== 'idle') {
-                ctx.rotate(-angle); // Keep bar level
-                const barH = 40;
-                const barW = 10;
-                const totalH = 40;
-                const peH = (energies.pe / energies.total) * totalH;
-                const keH = (energies.ke / energies.total) * totalH;
-                
-                ctx.fillStyle = 'rgba(0,0,0,0.5)';
-                ctx.fillRect(-25, -70, barW, totalH); // Background
-                
-                // PE (Blue - Bottom)
-                ctx.fillStyle = '#3b82f6';
-                ctx.fillRect(-25, -70 + (totalH - peH), barW, peH);
-                
-                // KE (Green - Top)
-                ctx.fillStyle = '#10b981';
-                ctx.fillRect(-25, -70, barW, keH);
-            }
+            // Dynamic Energy Bar on Cart
+            const totalH = 40;
+            const barW = 8;
+            const peRatio = energies.pe / energies.total;
+            const keRatio = energies.ke / energies.total;
+            
+            ctx.rotate(-angle); // Un-rotate for bar
+            ctx.translate(0, -35); // Move up
+
+            // Background
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(-15, -totalH, barW*2+4, totalH+4);
+            
+            // PE Bar (Blue)
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(-13, -2 - (peRatio * totalH), barW, peRatio * totalH);
+            
+            // KE Bar (Green)
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(-1, -2 - (keRatio * totalH), barW, keRatio * totalH);
 
             ctx.restore();
         };
@@ -288,7 +307,7 @@
         useEffect(() => {
             resetSim();
             return () => cancelAnimationFrame(requestRef.current);
-        }, [mass, friction]);
+        }, [mass]); // Restart when mass changes
 
         // Init icons
         useEffect(() => {
@@ -300,11 +319,11 @@
             <div className="flex flex-col gap-1 flex-1">
                 <div className="flex justify-between text-xs text-slate-300">
                     <span>{label}</span>
-                    <span className="font-mono">{(value/1000).toFixed(1)} kJ</span>
+                    <span className="font-mono">{(value/1000).toFixed(1)}k</span>
                 </div>
                 <div className="w-full bg-slate-700 h-32 relative rounded-lg overflow-hidden border border-slate-600 flex flex-col-reverse">
                     <div 
-                        className={`w-full transition-all duration-100 ${color}`} 
+                        className={`w-full transition-all duration-75 ${color}`} 
                         style={{ height: `${Math.min(100, (value/max)*100)}%` }}
                     ></div>
                 </div>
@@ -339,12 +358,12 @@
                             
                             {/* Stats Overlay */}
                             <div className="absolute top-4 left-4 flex gap-4">
-                                <div className="bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs">
-                                    <div className="text-slate-400">Height</div>
+                                <div className="bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs shadow-lg">
+                                    <div className="text-slate-400">Height (h)</div>
                                     <div className="text-xl font-mono text-white">{height.toFixed(1)}m</div>
                                 </div>
-                                <div className="bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs">
-                                    <div className="text-slate-400">Velocity</div>
+                                <div className="bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs shadow-lg">
+                                    <div className="text-slate-400">Velocity (v)</div>
                                     <div className="text-xl font-mono text-white">{velocity.toFixed(1)}m/s</div>
                                 </div>
                             </div>
@@ -381,9 +400,9 @@
                                 <button 
                                     onClick={startSim}
                                     disabled={simState === 'running'}
-                                    className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className={`px-8 py-3 rounded-xl font-bold transition-all shadow-lg flex items-center gap-2 ${simState === 'running' ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
                                 >
-                                    <i data-lucide="play" className="w-5 h-5 inline mr-2"></i> Start
+                                    <i data-lucide="play" className="w-5 h-5"></i> Start
                                 </button>
                                 <button 
                                     onClick={resetSim}
@@ -406,10 +425,10 @@
                             </h2>
                             
                             <div className="flex gap-3 h-64 mb-6">
-                                <Bar label="Total (ME)" value={energies.total} max={energies.total || 1} color="bg-indigo-500" />
-                                <Bar label="Potential (PE)" value={energies.pe} max={energies.total || 1} color="bg-blue-500" />
-                                <Bar label="Kinetic (KE)" value={energies.ke} max={energies.total || 1} color="bg-emerald-500" />
-                                {friction && <Bar label="Heat (Q)" value={energies.heat} max={energies.total || 1} color="bg-orange-500" />}
+                                <Bar label="Total" value={energies.total} max={energies.total || 1} color="bg-indigo-500" />
+                                <Bar label="PE" value={energies.pe} max={energies.total || 1} color="bg-blue-500" />
+                                <Bar label="KE" value={energies.ke} max={energies.total || 1} color="bg-emerald-500" />
+                                {friction && <Bar label="Heat" value={energies.heat} max={energies.total || 1} color="bg-orange-500" />}
                             </div>
 
                             <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50 text-xs space-y-2 font-mono">
@@ -428,7 +447,7 @@
                                     </div>
                                 )}
                                 <div className="border-t border-slate-700 pt-2 flex justify-between text-white font-bold">
-                                    <span>Total</span>
+                                    <span>Total (J)</span>
                                     <span>{(energies.total/1000).toFixed(1)} kJ</span>
                                 </div>
                             </div>
