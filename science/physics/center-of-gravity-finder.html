@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Center of Gravity Finder | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .canvas-container { cursor: grab; }
+        .canvas-container:active { cursor: grabbing; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 600;
+    const CANVAS_HEIGHT = 500;
+    const PIN_X = CANVAS_WIDTH / 2;
+    const PIN_Y = 100;
+
+    // --- Shapes Data (Vertices relative to an arbitrary local origin) ---
+    const SHAPES = {
+        'L-Shape': [
+            { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 200 }, 
+            { x: 200, y: 200 }, { x: 200, y: 300 }, { x: 0, y: 300 }
+        ],
+        'Triangle': [
+            { x: 0, y: 0 }, { x: 250, y: 50 }, { x: 50, y: 250 }
+        ],
+        'Irregular': [
+            { x: 50, y: 0 }, { x: 200, y: 50 }, { x: 250, y: 200 }, 
+            { x: 150, y: 300 }, { x: 0, y: 250 }, { x: 20, y: 100 }
+        ]
+    };
+
+    const App = () => {
+        // --- State ---
+        const [currentShapeKey, setCurrentShapeKey] = useState('L-Shape');
+        const [pivotIdx, setPivotIdx] = useState(0); // Which vertex is pinned
+        const [rotation, setRotation] = useState(0); // Current rotation in radians
+        const [lines, setLines] = useState([]); // Drawn lines on the shape { x1, y1, x2, y2 } in LOCAL space
+        const [showCoG, setShowCoG] = useState(false);
+        const [isSwinging, setIsSwinging] = useState(false);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        
+        // --- Geometry Helpers ---
+        // Calculate Polygon Centroid (CoG)
+        const getCentroid = (vertices) => {
+            let signedArea = 0;
+            let Cx = 0;
+            let Cy = 0;
+            for (let i = 0; i < vertices.length; i++) {
+                const x0 = vertices[i].x;
+                const y0 = vertices[i].y;
+                const x1 = vertices[(i + 1) % vertices.length].x;
+                const y1 = vertices[(i + 1) % vertices.length].y;
+                const a = x0 * y1 - x1 * y0;
+                signedArea += a;
+                Cx += (x0 + x1) * a;
+                Cy += (y0 + y1) * a;
+            }
+            signedArea *= 0.5;
+            Cx /= (6 * signedArea);
+            Cy /= (6 * signedArea);
+            return { x: Cx, y: Cy };
+        };
+
+        const currentVertices = useMemo(() => SHAPES[currentShapeKey], [currentShapeKey]);
+        const cog = useMemo(() => getCentroid(currentVertices), [currentVertices]);
+
+        // --- Physics Logic ---
+        // Calculate the target angle where CoG is directly below Pivot
+        const getTargetRotation = () => {
+            const pivot = currentVertices[pivotIdx];
+            // Vector from Pivot to CoG
+            const dx = cog.x - pivot.x;
+            const dy = cog.y - pivot.y;
+            // Angle of this vector in local space
+            const localAngle = Math.atan2(dy, dx);
+            // We want this vector to point DOWN (PI/2) in world space
+            // WorldAngle = LocalAngle + Rotation
+            // PI/2 = LocalAngle + TargetRotation
+            // TargetRotation = PI/2 - LocalAngle
+            return Math.PI / 2 - localAngle;
+        };
+
+        const targetRotation = useMemo(() => getTargetRotation(), [pivotIdx, currentVertices, cog]);
+
+        // Animation Loop
+        const animate = () => {
+            setRotation(prev => {
+                const diff = targetRotation - prev;
+                // Normalize angle diff
+                const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                
+                if (Math.abs(normalizedDiff) < 0.001) {
+                    setIsSwinging(false);
+                    return targetRotation;
+                }
+                // Simple easing
+                return prev + normalizedDiff * 0.1;
+            });
+            
+            if (isSwinging) {
+                requestRef.current = requestAnimationFrame(animate);
+            }
+        };
+
+        useEffect(() => {
+            setIsSwinging(true);
+            requestRef.current = requestAnimationFrame(animate);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [targetRotation]); // Trigger when target changes (new pivot)
+
+        // --- Actions ---
+        const changeShape = (key) => {
+            setCurrentShapeKey(key);
+            setPivotIdx(0);
+            setLines([]);
+            setRotation(0);
+            setShowCoG(false);
+        };
+
+        const drawLine = () => {
+            if (isSwinging && Math.abs(rotation - targetRotation) > 0.01) return; // Wait until steady
+
+            // Plumb line in World Space is basically x = PIN_X
+            // We need to transform this line into Local Space to store it
+            // World Point 1: (PIN_X, PIN_Y) -> Pivot Vertex in Local
+            // World Point 2: (PIN_X, PIN_Y + 500) -> Calculate Local
+            
+            const pivot = currentVertices[pivotIdx];
+            
+            // Vector DOWN in World is (0, 1)
+            // In Local, this vector is rotated by -rotation
+            const downX = Math.cos(rotation - Math.PI/2); // actually rotate vector (0,1) by -rot
+            // Inverse rotation matrix:
+            // | cos  sin |
+            // | -sin cos |
+            // Vector (0, 1) -> (sin(rot), cos(rot))?
+            // Actually simpler:
+            // The line passes through Pivot(local) and CoG(local) because it's balanced!
+            // So we just draw a line from Pivot to CoG extended.
+            
+            // Wait, what if it's not perfectly balanced yet?
+            // Let's do the math properly to capture the current state:
+            // A point (PIN_X, PIN_Y + 100) transformed to local.
+            const wx = PIN_X;
+            const wy = PIN_Y + 400;
+            
+            // Local = Rotate(World - Offset)
+            // But Shape is drawn: Translate(PIN_X, PIN_Y) -> Rotate(rot) -> Translate(-Pivot.x, -Pivot.y)
+            // Reverse: Translate(Pivot.x, Pivot.y) -> Rotate(-rot) -> Translate(-PIN_X, -PIN_Y)
+            
+            const dx = wx - PIN_X;
+            const dy = wy - PIN_Y;
+            const rx = dx * Math.cos(-rotation) - dy * Math.sin(-rotation);
+            const ry = dx * Math.sin(-rotation) + dy * Math.cos(-rotation);
+            
+            const lx = rx + pivot.x;
+            const ly = ry + pivot.y;
+
+            setLines(prev => [...prev, { x1: pivot.x, y1: pivot.y, x2: lx, y2: ly }]);
+        };
+
+        const handleCanvasClick = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // Check if clicked near a vertex
+            // We need to calculate world positions of all vertices
+            const pivot = currentVertices[pivotIdx];
+            
+            currentVertices.forEach((v, i) => {
+                // Transform v to world
+                const dx = v.x - pivot.x;
+                const dy = v.y - pivot.y;
+                const rx = dx * Math.cos(rotation) - dy * Math.sin(rotation);
+                const ry = dx * Math.sin(rotation) + dy * Math.cos(rotation);
+                const wx = PIN_X + rx;
+                const wy = PIN_Y + ry;
+
+                if (Math.hypot(clickX - wx, clickY - wy) < 20) {
+                    setPivotIdx(i);
+                }
+            });
+        };
+
+        // --- Rendering ---
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Stand/Pin (Static)
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(PIN_X - 2, 0, 4, PIN_Y); // String/Rod holding the pin
+            ctx.beginPath();
+            ctx.arc(PIN_X, PIN_Y, 5, 0, Math.PI*2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            // 2. Draw Plumb Line (Physical String hanging down)
+            ctx.beginPath();
+            ctx.moveTo(PIN_X, PIN_Y);
+            ctx.lineTo(PIN_X, PIN_Y + 300);
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // Red ghost line
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Plumb bob weight
+            ctx.beginPath();
+            ctx.arc(PIN_X, PIN_Y + 300, 8, 0, Math.PI*2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+
+            // 3. Transform Space for Shape
+            const pivot = currentVertices[pivotIdx];
+            ctx.save();
+            ctx.translate(PIN_X, PIN_Y);
+            ctx.rotate(rotation);
+            ctx.translate(-pivot.x, -pivot.y);
+
+            // 4. Draw Shape
+            ctx.beginPath();
+            ctx.moveTo(currentVertices[0].x, currentVertices[0].y);
+            currentVertices.forEach((v, i) => {
+                if (i > 0) ctx.lineTo(v.x, v.y);
+            });
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.9)'; // Blue
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#60a5fa';
+            ctx.stroke();
+
+            // 5. Draw Drawn Lines (Saved Plumb Lines)
+            ctx.beginPath();
+            lines.forEach(l => {
+                ctx.moveTo(l.x1, l.y1);
+                ctx.lineTo(l.x2, l.y2);
+            });
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 6. Draw Vertices (Interactive Points)
+            currentVertices.forEach((v, i) => {
+                ctx.beginPath();
+                ctx.arc(v.x, v.y, 6, 0, Math.PI*2);
+                ctx.fillStyle = i === pivotIdx ? '#fbbf24' : '#1e293b'; // Amber if active
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+
+            // 7. Draw True CoG
+            if (showCoG) {
+                ctx.beginPath();
+                ctx.arc(cog.x, cog.y, 6, 0, Math.PI*2);
+                ctx.fillStyle = '#10b981'; // Emerald
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.stroke();
+                // Crosshair
+                ctx.beginPath();
+                ctx.moveTo(cog.x - 10, cog.y); ctx.lineTo(cog.x + 10, cog.y);
+                ctx.moveTo(cog.x, cog.y - 10); ctx.lineTo(cog.x, cog.y + 10);
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+        }, [currentVertices, pivotIdx, rotation, lines, showCoG, cog]);
+
+        // Init icons
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-2 rounded-lg">
+                            <i data-lucide="crosshair" className="w-6 h-6 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Center of Gravity Finder</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Statics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                onClick={handleCanvasClick}
+                                className="w-full h-auto bg-slate-950 rounded-xl canvas-container"
+                            />
+                            
+                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300">
+                                Click on any <strong>corner dot</strong> to hang the shape from there.
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-4 items-center justify-between">
+                            
+                            <div className="flex gap-2">
+                                {Object.keys(SHAPES).map(key => (
+                                    <button 
+                                        key={key}
+                                        onClick={() => changeShape(key)}
+                                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-colors ${currentShapeKey === key ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+                                    >
+                                        {key}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={drawLine}
+                                    disabled={isSwinging}
+                                    className="px-6 py-3 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/50 rounded-xl font-bold transition-colors flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    <i data-lucide="pencil" className="w-4 h-4"></i> Draw Plumb Line
+                                </button>
+                                <button 
+                                    onClick={() => setShowCoG(!showCoG)}
+                                    className={`px-4 py-3 rounded-xl font-bold transition-colors border ${showCoG ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-slate-700 text-slate-300 border-slate-600'}`}
+                                >
+                                    {showCoG ? 'Hide Answer' : 'Show True CoG'}
+                                </button>
+                                <button 
+                                    onClick={() => { setLines([]); setPivotIdx(0); }}
+                                    className="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl transition-colors"
+                                >
+                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Guide */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="book-open" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                The Method
+                            </h2>
+                            <ol className="space-y-4 text-sm text-slate-400 list-decimal pl-4">
+                                <li className="pl-2">
+                                    <span className="text-white font-bold block mb-1">Hang the Object</span>
+                                    Pick any corner (vertex). Gravity will pull the center of mass to the lowest possible point, directly below the pin.
+                                </li>
+                                <li className="pl-2">
+                                    <span className="text-white font-bold block mb-1">Draw the Vertical</span>
+                                    Use a plumb line (string with weight) to mark the vertical line passing through the pin. The CoG <em>must</em> be somewhere on this line.
+                                </li>
+                                <li className="pl-2">
+                                    <span className="text-white font-bold block mb-1">Repeat</span>
+                                    Hang the object from a <em>different</em> corner and draw another line.
+                                </li>
+                                <li className="pl-2">
+                                    <span className="text-emerald-400 font-bold block mb-1">Find the Intersection</span>
+                                    The point where your lines cross is the Center of Gravity!
+                                </li>
+                            </ol>
+                        </div>
+
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl text-center">
+                            <div className="text-xs text-indigo-300 uppercase tracking-widest mb-2">Current Status</div>
+                            <div className="text-2xl font-bold text-white mb-1">
+                                {lines.length} Line{lines.length !== 1 ? 's' : ''} Drawn
+                            </div>
+                            <div className="text-xs text-slate-400">
+                                {lines.length < 2 ? "Draw at least 2 lines to find the center." : "Great! Do they intersect at one point?"}
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
