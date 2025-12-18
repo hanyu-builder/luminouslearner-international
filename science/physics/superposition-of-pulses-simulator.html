@@ -42,15 +42,12 @@
     const CANVAS_WIDTH = 800;
     const CANVAS_HEIGHT = 400;
     const CENTER_Y = 200;
-    const PIXELS_PER_METER = 100; // Scale
 
     const App = () => {
         // --- State ---
-        // Pulse A (Left moving Right)
         const [ampA, setAmpA] = useState(1.0); // -1.5 to 1.5
         const [widthA, setWidthA] = useState(1.0); // 0.5 to 2.0
         
-        // Pulse B (Right moving Left)
         const [ampB, setAmpB] = useState(1.0); // -1.5 to 1.5
         const [widthB, setWidthB] = useState(1.0); // 0.5 to 2.0
 
@@ -63,11 +60,22 @@
         const timeRef = useRef(0);
         const lastTimeRef = useRef(0);
 
+        // --- Refs for Animation Loop (Fixes Stale Closures) ---
+        // These refs ensure the loop always sees the latest values
+        const simStateRef = useRef('idle');
+        const paramsRef = useRef({ ampA, widthA, ampB, widthB, showGhost, simSpeed });
+
+        // Update refs when state changes
+        useEffect(() => {
+            simStateRef.current = simState;
+            paramsRef.current = { ampA, widthA, ampB, widthB, showGhost, simSpeed };
+            // Force redraw when params change even if paused
+            if (simState !== 'running') {
+                draw(timeRef.current);
+            }
+        }, [ampA, widthA, ampB, widthB, showGhost, simSpeed, simState]);
+
         // --- Physics Logic ---
-        // Gaussian Pulse Function: y = A * exp( - (x - (x0 + vt))^2 / (2 * sigma^2) )
-        // width parameter controls sigma. width = 4*sigma approx visual width?
-        // Let's say sigma = width * 0.2
-        
         const getPulseY = (x, amp, width, centerPos) => {
             const sigma = width * 50; // Scale width to pixels sigma
             const dx = x - centerPos;
@@ -76,15 +84,17 @@
 
         const resetSim = () => {
             setSimState('idle');
+            // Ref update handled by effect, but for immediate logic safety:
+            simStateRef.current = 'idle';
+            
             cancelAnimationFrame(requestRef.current);
             timeRef.current = 0;
             draw(0);
         };
 
-        const startSim = () => {
+        const toggleSim = () => {
             if (simState === 'running') {
                 setSimState('paused');
-                cancelAnimationFrame(requestRef.current);
             } else {
                 setSimState('running');
                 lastTimeRef.current = performance.now();
@@ -93,18 +103,21 @@
         };
 
         const loop = (timestamp) => {
-            if (simState !== 'running') {
-                lastTimeRef.current = timestamp; // Reset delta base if paused
-                // But we are not in loop if paused.
+            // Check Ref instead of State
+            if (simStateRef.current !== 'running') {
+                return;
             }
             
             const dt = (timestamp - lastTimeRef.current) / 1000;
             lastTimeRef.current = timestamp;
 
-            const safeDt = Math.min(dt, 0.1) * simSpeed;
+            // Use Ref for params
+            const speedFactor = paramsRef.current.simSpeed;
+            const safeDt = Math.min(dt, 0.1) * speedFactor;
+            
             timeRef.current += safeDt;
 
-            // Check if pulses passed each other completely (approx 6s)
+            // Check if pulses passed each other (approx 6s)
             if (timeRef.current > 6.0) {
                 setSimState('finished');
                 draw(timeRef.current);
@@ -119,6 +132,9 @@
         const draw = (t) => {
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
+
+            // Get latest params from Ref
+            const { ampA, widthA, ampB, widthB, showGhost } = paramsRef.current;
 
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
@@ -175,7 +191,6 @@
                 const yA = getPulseY(x, ampA, widthA, posA);
                 const yB = getPulseY(x, ampB, widthB, posB);
                 
-                // Superposition Principle: y = y1 + y2
                 const yTotal = CENTER_Y + yA + yB;
                 
                 if (x===0) ctx.moveTo(x, yTotal); else ctx.lineTo(x, yTotal);
@@ -184,8 +199,6 @@
             ctx.shadowBlur = 0;
 
             // 4. Markers
-            // Draw a dot at the peak of resultant? Or center?
-            // Let's just draw labels
             ctx.fillStyle = '#94a3b8';
             ctx.font = '12px monospace';
             ctx.fillText(`t = ${t.toFixed(2)}s`, 10, 20);
@@ -195,7 +208,7 @@
         useEffect(() => {
             draw(0);
             return () => cancelAnimationFrame(requestRef.current);
-        }, [ampA, widthA, ampB, widthB, showGhost]);
+        }, []);
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
@@ -262,8 +275,8 @@
                                     </label>
                                     <input 
                                         type="range" min="-1.5" max="1.5" step="0.5" 
-                                        value={ampA} onChange={(e) => {setAmpA(Number(e.target.value)); resetSim();}} 
-                                        disabled={simState !== 'idle'}
+                                        value={ampA} onChange={(e) => setAmpA(Number(e.target.value))} 
+                                        disabled={simState !== 'idle' && simState !== 'paused'}
                                         className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-blue" 
                                     />
                                 </div>
@@ -273,8 +286,8 @@
                                     </label>
                                     <input 
                                         type="range" min="0.5" max="2.0" step="0.1" 
-                                        value={widthA} onChange={(e) => {setWidthA(Number(e.target.value)); resetSim();}} 
-                                        disabled={simState !== 'idle'}
+                                        value={widthA} onChange={(e) => setWidthA(Number(e.target.value))} 
+                                        disabled={simState !== 'idle' && simState !== 'paused'}
                                         className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-blue" 
                                     />
                                 </div>
@@ -291,8 +304,8 @@
                                     </label>
                                     <input 
                                         type="range" min="-1.5" max="1.5" step="0.5" 
-                                        value={ampB} onChange={(e) => {setAmpB(Number(e.target.value)); resetSim();}} 
-                                        disabled={simState !== 'idle'}
+                                        value={ampB} onChange={(e) => setAmpB(Number(e.target.value))} 
+                                        disabled={simState !== 'idle' && simState !== 'paused'}
                                         className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-red" 
                                     />
                                 </div>
@@ -302,8 +315,8 @@
                                     </label>
                                     <input 
                                         type="range" min="0.5" max="2.0" step="0.1" 
-                                        value={widthB} onChange={(e) => {setWidthB(Number(e.target.value)); resetSim();}} 
-                                        disabled={simState !== 'idle'}
+                                        value={widthB} onChange={(e) => setWidthB(Number(e.target.value))} 
+                                        disabled={simState !== 'idle' && simState !== 'paused'}
                                         className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb thumb-red" 
                                     />
                                 </div>
@@ -317,7 +330,7 @@
                         
                         <div className="grid grid-cols-2 gap-3 h-full">
                             <button 
-                                onClick={startSim}
+                                onClick={toggleSim}
                                 disabled={simState === 'finished'}
                                 className={`${btnClass} ${simState === 'running' ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'} ${simState === 'finished' ? 'opacity-50 cursor-not-allowed' : ''}`}
                             >
