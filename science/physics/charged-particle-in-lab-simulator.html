@@ -45,9 +45,11 @@
     const CENTER_Y = CANVAS_HEIGHT / 2;
     const PIXELS_PER_METER = 50; // Scale
 
-    // Physics Constants (Scaled for visual)
-    const Q_SCALE = 1; 
-    const M_SCALE = 1;
+    // Gun Geometry
+    const GUN_W = 60;
+    const GUN_H = 30;
+    const GUN_X = 0;
+    const GUN_Y = CENTER_Y - GUN_H / 2;
 
     const App = () => {
         // --- State ---
@@ -76,7 +78,7 @@
             if (particleType === 'proton') {
                 setMass(1.0); setCharge(1.0);
             } else if (particleType === 'electron') {
-                setMass(0.1); setCharge(-1.0); // Electron mass scaled up for visibility
+                setMass(0.1); setCharge(-1.0); 
             } else if (particleType === 'alpha') {
                 setMass(4.0); setCharge(2.0);
             }
@@ -84,9 +86,6 @@
 
         // --- Physics Logic ---
         useEffect(() => {
-            // r = mv / qB
-            // T = 2 * pi * m / qB
-            
             if (Math.abs(magneticField) < 0.01 || Math.abs(charge) < 0.01) {
                 setRadius(Infinity);
                 setPeriod(Infinity);
@@ -101,15 +100,16 @@
         // --- Actions ---
         const fireParticle = () => {
             setParticles(prev => [...prev, {
-                x: 50, // Start from left edge
+                x: 50, // Start from nozzle
                 y: CENTER_Y,
-                vx: velocity * PIXELS_PER_METER, // Scale to pixels/s
+                vx: velocity * PIXELS_PER_METER, 
                 vy: 0,
                 m: mass,
                 q: charge,
                 trail: [],
                 color: charge > 0 ? '#ef4444' : '#3b82f6',
-                active: true
+                active: true,
+                hit: false
             }]);
         };
 
@@ -120,35 +120,53 @@
             const dt = (timestamp - prevTimeRef.current) / 1000;
             prevTimeRef.current = timestamp;
             
-            // Limit dt for stability
             const safeDt = Math.min(dt, 0.05);
 
             setParticles(prev => prev.map(p => {
-                if (!p.active) return p;
+                if (!p.active || p.hit) return p;
 
-                // Lorentz Force: F = q(v x B)
-                // In 2D: Fx = q * vy * B, Fy = -q * vx * B
-                // a = F/m
-                
-                // B is perpendicular to screen (Z axis)
-                // If B > 0 (Out), v = (vx, vy, 0), B = (0, 0, B)
-                // v x B = (vy*B - 0, 0 - vx*B, 0) = (vy*B, -vx*B, 0)
-                // F = q * (vy*B, -vx*B)
-                
-                // Let's use B value directly (positive or negative)
-                // Force in pixels/s^2. B is in Tesla. q in C. m in kg.
-                // We need to be careful with units scaling.
-                // Physics: a = (q/m) * (v x B)
-                
-                // In simulation units:
-                // v is in pixels/s.
-                // We want r (pixels) = (m * v_px) / (q * B_sim)
-                // So a_px = (q * B_sim / m) * v_perp
-                // Let B_sim = magneticField.
-                
                 const B = magneticField;
-                const ax = (p.q * B / p.m) * p.vy;
-                const ay = -(p.q * B / p.m) * p.vx;
+                
+                // Physics Correction:
+                // Coordinate system: X Right, Y Down (Canvas).
+                // B > 0 (Out). v (Right).
+                // Physics Force: v x B = Right x Out = Down.
+                // Down in Physics is +Y in Canvas.
+                // So for Proton (+q), ay should be Positive.
+                
+                // ax = (qB/m) * vy
+                // ay = -(qB/m) * vx  <-- This formula rotates vector CW if coeff is positive?
+                // Let's test: vx=1, vy=0. ay = -1 (Up). This is Wrong for B_out.
+                // We want ay = +1 (Down).
+                // So ay should be + (qB/m) * vx ? No.
+                // Cross product z-component determines rotation direction.
+                
+                // Let's force correct direction:
+                // B(Out), v(Right) -> F(Down/Canvas+Y) for Proton.
+                // q(+), B(+), vx(+) -> Need ay(+).
+                // So formula: ay = (q * B / m) * vx ? 
+                // If we integrate this, velocity rotates.
+                
+                // Standard 2D rotation 90 deg: (x, y) -> (-y, x) [CCW] or (y, -x) [CW].
+                // Proton in B_out circles Clockwise (Right -> Down -> Left -> Up).
+                // So we need (vy, -vx).
+                // ax = factor * vy
+                // ay = factor * (-vx)
+                // factor = qB/m.
+                // If q=1, B=1, m=1. ax = vy, ay = -vx.
+                // If vx=1, ay=-1 (Up). Still Up!
+                
+                // To circle CW (Down first), we need ay = +1.
+                // So ay = (qB/m) * vx? No that's not perpendicular.
+                // Perpendicular is (vy, -vx) or (-vy, vx).
+                // We want initial accel (0, 1). Initial v (1, 0).
+                // So we need (-vy, vx) * k ? 
+                // Let's try: ax = -k * vy, ay = k * vx.
+                // Check: vx=1, vy=0 -> ax=0, ay=k (Down). Correct.
+                
+                const k = (p.q * B / p.m);
+                const ax = -k * p.vy;
+                const ay = k * p.vx;
                 
                 const newVx = p.vx + ax * safeDt;
                 const newVy = p.vy + ay * safeDt;
@@ -162,10 +180,25 @@
                 }
                 if (newTrail.length > 200) newTrail.shift();
 
-                // Boundary check (Despawn if far out)
-                const isActive = newX > -100 && newX < CANVAS_WIDTH + 100 && newY > -100 && newY < CANVAS_HEIGHT + 100;
+                // Boundary check
+                const isOutOfBounds = newX > -100 && newX < CANVAS_WIDTH + 100 && newY > -100 && newY < CANVAS_HEIGHT + 100;
+                
+                // Collision with Gun
+                // Gun rect: x[0, 60], y[CENTER_Y - 15, CENTER_Y + 15]
+                let isHit = false;
+                if (newX < 60 && newY > CENTER_Y - 20 && newY < CENTER_Y + 20) {
+                    isHit = true;
+                }
 
-                return { ...p, x: newX, y: newY, vx: newVx, vy: newVy, trail: newTrail, active: isActive };
+                return { 
+                    ...p, 
+                    x: newX, y: newY, 
+                    vx: isHit ? 0 : newVx, 
+                    vy: isHit ? 0 : newVy, 
+                    trail: newTrail, 
+                    active: isOutOfBounds,
+                    hit: isHit 
+                };
             }).filter(p => p.active));
 
             draw();
@@ -182,7 +215,6 @@
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
             // 1. Draw Magnetic Field
-            // Cross (x) for Into (Negative B), Dot (.) for Out (Positive B)
             ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.lineWidth = 2;
@@ -194,13 +226,11 @@
                 for (let x = 20; x < CANVAS_WIDTH; x += spacing) {
                     for (let y = 20; y < CANVAS_HEIGHT; y += spacing) {
                         if (magneticField < 0) {
-                            // Into Page (X)
                             ctx.beginPath();
                             ctx.moveTo(x - size, y - size); ctx.lineTo(x + size, y + size);
                             ctx.moveTo(x + size, y - size); ctx.lineTo(x - size, y + size);
                             ctx.stroke();
                         } else {
-                            // Out of Page (Dot)
                             ctx.beginPath();
                             ctx.arc(x, y, 2, 0, Math.PI*2);
                             ctx.fill();
@@ -210,7 +240,6 @@
                         }
                     }
                 }
-                // Label
                 ctx.fillStyle = '#94a3b8';
                 ctx.font = 'bold 16px sans-serif';
                 ctx.textAlign = 'right';
@@ -232,14 +261,20 @@
 
                 // Particle Body
                 ctx.beginPath();
-                ctx.arc(p.x, p.y, 6 + p.m, 0, Math.PI*2); // Size by mass
+                ctx.arc(p.x, p.y, 6 + p.m, 0, Math.PI*2); 
                 ctx.fillStyle = p.color;
                 ctx.fill();
-                ctx.strokeStyle = 'white';
+                ctx.strokeStyle = '#fff';
                 ctx.lineWidth = 1;
                 ctx.stroke();
                 
-                // Charge sign
+                // Hit marker
+                if (p.hit) {
+                    ctx.strokeStyle = '#facc15';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, Math.PI*2); ctx.stroke();
+                }
+                
                 ctx.fillStyle = 'white';
                 ctx.font = '10px sans-serif';
                 ctx.textAlign = 'center';
@@ -249,9 +284,9 @@
             
             // 3. Draw Gun
             ctx.fillStyle = '#334155';
-            ctx.fillRect(0, CENTER_Y - 15, 60, 30);
+            ctx.fillRect(GUN_X, GUN_Y, GUN_W, GUN_H);
             ctx.fillStyle = '#475569';
-            ctx.fillRect(50, CENTER_Y - 10, 10, 20); // Nozzle
+            ctx.fillRect(GUN_X + GUN_W - 10, GUN_Y + 5, 10, 20); // Nozzle
         };
 
         useEffect(() => {
@@ -261,69 +296,11 @@
                 cancelAnimationFrame(requestRef.current);
             }
             return () => cancelAnimationFrame(requestRef.current);
-        }, [isRunning, magneticField, particles]); // Re-bind on state change? No, use refs in loop. 
-        // But particles state is updated via setParticles functional update, so it's safe.
-        // Magnetic field is used in loop from state closure?
-        // Yes, `loop` captures `magneticField`. This is a stale closure bug risk.
-        // FIX: Use Ref for Magnetic Field
-        
-        // --- Ref Syncing ---
-        const paramsRef = useRef({ B: 1.0 });
-        useEffect(() => {
-            paramsRef.current = { B: magneticField };
-        }, [magneticField]);
-        
-        // Override Loop to use Ref
-        const safeLoop = (timestamp) => {
-            const dt = (timestamp - prevTimeRef.current) / 1000;
-            prevTimeRef.current = timestamp;
-            const safeDt = Math.min(dt, 0.05);
-
-            setParticles(prev => prev.map(p => {
-                if (!p.active) return p;
-
-                const B = paramsRef.current.B;
-                const ax = (p.q * B / p.m) * p.vy;
-                const ay = -(p.q * B / p.m) * p.vx;
-                
-                const newVx = p.vx + ax * safeDt;
-                const newVy = p.vy + ay * safeDt;
-                const newX = p.x + newVx * safeDt;
-                const newY = p.y + newVy * safeDt;
-
-                const newTrail = [...p.trail];
-                if (newTrail.length === 0 || Math.hypot(newX - newTrail[newTrail.length-1].x, newY - newTrail[newTrail.length-1].y) > 5) {
-                    newTrail.push({x: newX, y: newY});
-                }
-                if (newTrail.length > 200) newTrail.shift();
-
-                const isActive = newX > -100 && newX < CANVAS_WIDTH + 100 && newY > -100 && newY < CANVAS_HEIGHT + 100;
-
-                return { ...p, x: newX, y: newY, vx: newVx, vy: newVy, trail: newTrail, active: isActive };
-            }).filter(p => p.active));
-
-            draw();
-            if (isRunning) {
-                requestRef.current = requestAnimationFrame(safeLoop);
-            }
-        };
-        
-        // Initial start
-        useEffect(() => {
-            if (isRunning) {
-                prevTimeRef.current = performance.now();
-                requestRef.current = requestAnimationFrame(safeLoop);
-            }
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [isRunning]); // Only restart loop if pause/play toggled
+        }, [isRunning, magneticField, particles]);
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
         });
-        
-        useEffect(() => {
-             draw(); // Draw initial state
-        }, [magneticField, particles]);
 
         return (
             <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
@@ -356,7 +333,7 @@
                                     onClick={fireParticle}
                                     className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg transition-all flex items-center gap-2"
                                 >
-                                    <i data-lucide="crosshair" className="w-4 h-4"></i> Fire
+                                    Fire
                                 </button>
                                 <button 
                                     onClick={clear}
@@ -371,9 +348,9 @@
                         <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
                             
                             <div className="flex gap-4 mb-4 border-b border-slate-700 pb-4">
-                                <button onClick={() => setParticleType('proton')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'proton' ? 'bg-red-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Proton (+)</button>
-                                <button onClick={() => setParticleType('electron')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'electron' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Electron (-)</button>
-                                <button onClick={() => setParticleType('alpha')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'alpha' ? 'bg-purple-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Alpha (++)</button>
+                                <button onClick={() => setParticleType('proton')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'proton' ? 'bg-slate-700 text-white border border-slate-500' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>Proton (+)</button>
+                                <button onClick={() => setParticleType('electron')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'electron' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>Electron (-)</button>
+                                <button onClick={() => setParticleType('alpha')} className={`flex-1 py-2 rounded text-sm font-bold transition-colors ${particleType === 'alpha' ? 'bg-slate-700 text-white border border-slate-500' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>Alpha (++)</button>
                             </div>
 
                             <div className="grid grid-cols-2 gap-8">
@@ -419,13 +396,13 @@
                                     <span className="text-white">{charge > 0 ? '+' : ''}{charge} e</span>
                                 </div>
                                 <div className="p-3 bg-slate-900 rounded border border-slate-700 mt-2">
-                                    <div className="text-[10px] text-slate-500 uppercase mb-1">Radius ($r = mv/qB$)</div>
+                                    <div className="text-[10px] text-slate-500 uppercase mb-1">RADIUS ($r = MV/QB$)</div>
                                     <div className="text-xl font-bold text-emerald-400">
                                         {Math.abs(radius) === Infinity ? "∞" : Math.abs(radius).toFixed(2)} <span className="text-xs text-slate-500">m</span>
                                     </div>
                                 </div>
                                 <div className="p-3 bg-slate-900 rounded border border-slate-700">
-                                    <div className="text-[10px] text-slate-500 uppercase mb-1">Period ($T$)</div>
+                                    <div className="text-[10px] text-slate-500 uppercase mb-1">PERIOD ($T$)</div>
                                     <div className="text-lg font-bold text-white">
                                         {Math.abs(period) === Infinity ? "∞" : Math.abs(period).toFixed(2)} <span className="text-xs text-slate-500">s</span>
                                     </div>
