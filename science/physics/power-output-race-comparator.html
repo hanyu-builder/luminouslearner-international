@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Power Output Race | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-orange::-webkit-slider-thumb { background: #f97316; }
+        .thumb-gray::-webkit-slider-thumb { background: #64748b; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const GROUND_Y = 400;
+    const G = 9.8;
+    const PIXELS_PER_METER = 30; // Scale
+
+    const App = () => {
+        // --- State ---
+        const [mass, setMass] = useState(50); // kg
+        const [height, setHeight] = useState(10); // meters
+        
+        const [powerA, setPowerA] = useState(500); // Watts
+        const [powerB, setPowerB] = useState(250); // Watts
+        
+        const [simState, setSimState] = useState('idle'); // idle, running, finished
+        
+        // Realtime Data
+        const [time, setTime] = useState(0);
+        const [posA, setPosA] = useState(0); // Current height A (m)
+        const [posB, setPosB] = useState(0); // Current height B (m)
+        
+        // Refs
+        const requestRef = useRef();
+        const startTimeRef = useRef(0);
+        
+        // Calculations
+        const workRequired = mass * G * height; // Joules (mgh)
+        const timeA = workRequired / powerA; // Theoretical Time A
+        const timeB = workRequired / powerB; // Theoretical Time B
+
+        // --- Logic ---
+        const startRace = () => {
+            if (simState === 'running') return;
+            setSimState('running');
+            setPosA(0);
+            setPosB(0);
+            startTimeRef.current = Date.now();
+            loop();
+        };
+
+        const reset = () => {
+            setSimState('idle');
+            cancelAnimationFrame(requestRef.current);
+            setPosA(0);
+            setPosB(0);
+            setTime(0);
+        };
+
+        const loop = () => {
+            const now = Date.now();
+            const elapsed = (now - startTimeRef.current) / 1000; // Seconds
+            
+            // Physics: Power = Work / Time -> Work = Power * Time
+            // Work done so far = P * t
+            // Height = Work / (mg) = (P * t) / (mg)
+            // But max height is 'height'
+            
+            const currentHA = Math.min(height, (powerA * elapsed) / (mass * G));
+            const currentHB = Math.min(height, (powerB * elapsed) / (mass * G));
+            
+            setPosA(currentHA);
+            setPosB(currentHB);
+            setTime(elapsed);
+
+            // Finish Condition
+            if (currentHA >= height && currentHB >= height) {
+                setSimState('finished');
+            } else {
+                requestRef.current = requestAnimationFrame(loop);
+            }
+        };
+
+        useEffect(() => {
+            return () => cancelAnimationFrame(requestRef.current);
+        }, []);
+
+        // --- Rendering ---
+        const canvasRef = useRef(null);
+        
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Background
+            const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+            grad.addColorStop(0, '#0f172a');
+            grad.addColorStop(1, '#1e293b');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Ground
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+
+            // 2. Goal Line
+            const goalY = GROUND_Y - height * PIXELS_PER_METER;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.beginPath();
+            ctx.moveTo(0, goalY);
+            ctx.lineTo(CANVAS_WIDTH, goalY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.font = '12px Inter';
+            ctx.fillText(`Target Height: ${height}m`, 10, goalY - 5);
+
+            // 3. Draw Cranes/Engines
+            const drawEngine = (x, currentH, color, label, power) => {
+                const boxSize = 40 + (mass / 200) * 10; // Scale box with mass
+                const boxY = GROUND_Y - currentH * PIXELS_PER_METER - boxSize;
+                
+                // Cable
+                ctx.beginPath();
+                ctx.moveTo(x + boxSize/2, 0); // From ceiling/crane top
+                ctx.lineTo(x + boxSize/2, boxY);
+                ctx.strokeStyle = '#64748b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Box
+                ctx.fillStyle = color;
+                ctx.fillRect(x, boxY, boxSize, boxSize);
+                
+                // Label on Box
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillText(`${mass}kg`, x + 5, boxY + boxSize/2 + 4);
+
+                // Engine Label at bottom
+                ctx.fillStyle = color;
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillText(label, x, GROUND_Y + 25);
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '12px monospace';
+                ctx.fillText(`${power}W`, x, GROUND_Y + 40);
+                
+                // Progress Label
+                if (currentH >= height) {
+                    ctx.fillStyle = '#10b981'; // Green check
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.fillText("DONE!", x + boxSize + 10, boxY + 25);
+                }
+            };
+
+            drawEngine(200, posA, '#3b82f6', 'Engine A', powerA);
+            drawEngine(500, posB, '#f97316', 'Engine B', powerB);
+
+        }, [mass, height, powerA, powerB, posA, posB]);
+
+        // Init icons
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Helper Bar
+        const StatCard = ({ label, value, unit, color }) => (
+            <div className={`p-4 rounded-xl border bg-slate-800 border-slate-700`}>
+                <div className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">{label}</div>
+                <div className={`text-xl font-mono font-bold ${color}`}>
+                    {value} <span className="text-sm text-slate-500">{unit}</span>
+                </div>
+            </div>
+        );
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-emerald-500/20 p-2 rounded-lg">
+                            <i data-lucide="timer" className="w-6 h-6 text-emerald-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Power Output Race</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Work & Power
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-auto bg-slate-950 rounded-xl"
+                            />
+                            
+                            {/* Live Timer */}
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/90 px-6 py-2 rounded-full border border-slate-700 font-mono text-xl text-white shadow-lg">
+                                {time.toFixed(2)}s
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            <div className="flex flex-wrap gap-8">
+                                {/* Common Settings */}
+                                <div className="flex-1 min-w-[200px] space-y-4 border-r border-slate-700 pr-6">
+                                    <h3 className="text-white font-bold text-sm flex items-center">
+                                        <i data-lucide="package" className="w-4 h-4 mr-2 text-slate-400"></i> Load Settings
+                                    </h3>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-400 mb-1">
+                                            <span>Mass ($m$)</span> <span className="text-white">{mass} kg</span>
+                                        </label>
+                                        <input type="range" min="10" max="200" step="10" value={mass} onChange={(e) => { setMass(Number(e.target.value)); reset(); }} disabled={simState === 'running'} className="w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer slider-thumb thumb-gray" />
+                                    </div>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-slate-400 mb-1">
+                                            <span>Height ($h$)</span> <span className="text-white">{height} m</span>
+                                        </label>
+                                        <input type="range" min="5" max="12" step="1" value={height} onChange={(e) => { setHeight(Number(e.target.value)); reset(); }} disabled={simState === 'running'} className="w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer slider-thumb thumb-gray" />
+                                    </div>
+                                    <div className="bg-slate-700/50 p-3 rounded-lg text-xs font-mono text-slate-300">
+                                        <div>Work Required (mgh):</div>
+                                        <div className="text-lg text-emerald-400 font-bold">{(workRequired).toFixed(0)} J</div>
+                                    </div>
+                                </div>
+
+                                {/* Engine Settings */}
+                                <div className="flex-1 min-w-[200px] space-y-4">
+                                    <h3 className="text-white font-bold text-sm flex items-center">
+                                        <i data-lucide="zap" className="w-4 h-4 mr-2 text-slate-400"></i> Engine Power
+                                    </h3>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-blue-300 mb-1">
+                                            <span>Engine A (Blue)</span> <span className="text-white">{powerA} W</span>
+                                        </label>
+                                        <input type="range" min="100" max="2000" step="50" value={powerA} onChange={(e) => { setPowerA(Number(e.target.value)); reset(); }} disabled={simState === 'running'} className="w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue" />
+                                        <div className="text-[10px] text-slate-500 mt-1">Est. Time: {timeA.toFixed(2)}s</div>
+                                    </div>
+                                    <div>
+                                        <label className="flex justify-between text-xs text-orange-300 mb-1">
+                                            <span>Engine B (Orange)</span> <span className="text-white">{powerB} W</span>
+                                        </label>
+                                        <input type="range" min="100" max="2000" step="50" value={powerB} onChange={(e) => { setPowerB(Number(e.target.value)); reset(); }} disabled={simState === 'running'} className="w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer slider-thumb thumb-orange" />
+                                        <div className="text-[10px] text-slate-500 mt-1">Est. Time: {timeB.toFixed(2)}s</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <button 
+                                    onClick={startRace}
+                                    disabled={simState === 'running'}
+                                    className={`rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 py-3 transition-all ${simState === 'running' ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                >
+                                    <i data-lucide="play" className="w-5 h-5"></i> START RACE
+                                </button>
+                                <button 
+                                    onClick={reset}
+                                    className="bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold text-lg py-3 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i> RESET
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Results Board
+                            </h2>
+                            
+                            <div className="space-y-4">
+                                <div className="p-4 rounded-xl bg-blue-900/10 border border-blue-500/20">
+                                    <div className="text-blue-400 font-bold mb-2 text-sm">Engine A Stats</div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 uppercase">Power</div>
+                                            <div className="font-mono text-white">{powerA} W</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 uppercase">Time Taken</div>
+                                            <div className={`font-mono text-xl font-bold ${posA >= height ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                                {posA >= height ? timeA.toFixed(2) : '--'}s
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 rounded-xl bg-orange-900/10 border border-orange-500/20">
+                                    <div className="text-orange-400 font-bold mb-2 text-sm">Engine B Stats</div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 uppercase">Power</div>
+                                            <div className="font-mono text-white">{powerB} W</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 uppercase">Time Taken</div>
+                                            <div className={`font-mono text-xl font-bold ${posB >= height ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                                {posB >= height ? timeB.toFixed(2) : '--'}s
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Winner Banner */}
+                        {simState === 'finished' && (
+                            <div className="p-6 rounded-2xl bg-gradient-to-br from-indigo-600 to-purple-700 shadow-xl text-center animate-in zoom-in duration-300">
+                                <div className="text-indigo-200 text-xs uppercase tracking-widest mb-1">WINNER</div>
+                                <div className="text-3xl font-bold text-white mb-2">
+                                    {timeA < timeB ? "Engine A 🏆" : timeA > timeB ? "Engine B 🏆" : "It's a Tie! 🤝"}
+                                </div>
+                                <div className="text-xs text-white/80">
+                                    {timeA < timeB 
+                                        ? `A was ${(timeB - timeA).toFixed(2)}s faster!` 
+                                        : timeA > timeB 
+                                            ? `B was ${(timeA - timeB).toFixed(2)}s faster!` 
+                                            : "Same Power = Same Time"}
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
