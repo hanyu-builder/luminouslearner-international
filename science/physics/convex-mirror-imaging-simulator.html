@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Convex Mirror Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-orange::-webkit-slider-thumb { background: #f97316; }
+        .canvas-container { cursor: ew-resize; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 500;
+    const MIRROR_X = 400; // Middle of screen
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    const App = () => {
+        // --- State ---
+        // Focal Length is negative for Convex mirrors
+        const [focalLength, setFocalLength] = useState(150); // Magnitude in pixels
+        const [objDist, setObjDist] = useState(200); // pixels from mirror (left side)
+        const [objHeight, setObjHeight] = useState(80); // pixels
+        
+        const [showRays, setShowRays] = useState(true);
+        const [isDragging, setIsDragging] = useState(false);
+
+        // Calculated Physics
+        // Mirror Eq: 1/f = 1/do + 1/di
+        // f is negative for convex mirror. do is positive.
+        // 1/di = 1/(-f) - 1/do = -(1/f + 1/do)
+        // di = - (f*do) / (f + do)
+        
+        const f = -focalLength;
+        const do_val = objDist;
+        
+        const di_val = (f * do_val) / (do_val - f);
+        const magnification = -di_val / do_val;
+        const imgHeight = objHeight * magnification;
+        
+        // di_val will be negative (virtual image behind mirror)
+        // magnification will be positive (upright) and < 1 (diminished)
+
+        const canvasRef = useRef(null);
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const objX = MIRROR_X - objDist;
+            
+            // Check if clicking near object
+            if (Math.abs(x - objX) < 40) {
+                setIsDragging(true);
+            }
+        };
+
+        const handleMouseMove = (e) => {
+            if (!isDragging) return;
+            const rect = canvasRef.current.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            
+            // Constrain (Left side only)
+            if (x > MIRROR_X - 20) x = MIRROR_X - 20;
+            if (x < 20) x = 20;
+            
+            setObjDist(MIRROR_X - x);
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+        };
+
+        // --- Rendering ---
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Backgrounds
+            // Real World (Left)
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, MIRROR_X, CANVAS_HEIGHT);
+            // Virtual World (Right)
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(MIRROR_X, 0, CANVAS_WIDTH - MIRROR_X, CANVAS_HEIGHT);
+
+            // 2. Principal Axis
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(0, CENTER_Y);
+            ctx.lineTo(CANVAS_WIDTH, CENTER_Y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 3. Draw Convex Mirror
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            // Curves outwards towards left. Center C is on Right.
+            // Arc centered at (MIRROR_X + R, CENTER_Y)
+            const R = 2 * focalLength;
+            // Draw arc from top to bottom
+            // Need correct angle
+            ctx.moveTo(MIRROR_X, CENTER_Y - 150);
+            ctx.quadraticCurveTo(MIRROR_X - 40, CENTER_Y, MIRROR_X, CENTER_Y + 150); // Control point moves Left to bulge Left
+            ctx.stroke();
+            
+            // Hatching on Right side (Virtual side is coated)
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            for(let y = -140; y <= 140; y+=10) {
+                const cy = CENTER_Y + y;
+                const t = y / 150;
+                const cx = MIRROR_X - 20 * (1 - t*t); // Curve approx
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 10, cy + 5); ctx.stroke();
+            }
+
+            // 4. Mark F and C (Behind mirror -> Right)
+            const fX = MIRROR_X + focalLength;
+            const cX = MIRROR_X + 2 * focalLength;
+            
+            drawPoint(ctx, fX, CENTER_Y, '#ef4444', 'F');
+            drawPoint(ctx, cX, CENTER_Y, '#3b82f6', 'C');
+            drawPoint(ctx, MIRROR_X, CENTER_Y, '#94a3b8', 'V');
+
+            // 5. Draw Object
+            const objX = MIRROR_X - objDist;
+            drawCandle(ctx, objX, CENTER_Y, objHeight, 1.0, "Object");
+
+            // 6. Draw Image
+            // di_val is negative (distance to left of mirror?), NO.
+            // Mirror Eq sign convention:
+            // di < 0 means virtual image (behind mirror).
+            // Distance from mirror is abs(di_val).
+            // Position: MIRROR_X + abs(di)  (Since it's on the right)
+            const imgX = MIRROR_X + Math.abs(di_val);
+            drawCandle(ctx, imgX, CENTER_Y, imgHeight, 0.6, "Image");
+
+            // 7. Ray Tracing
+            if (showRays) {
+                const objTopY = CENTER_Y - objHeight;
+                const imgTopY = CENTER_Y - imgHeight;
+
+                // Ray 1: Parallel -> Reflects as if from F
+                ctx.strokeStyle = '#facc15'; // Yellow
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(objX, objTopY);
+                ctx.lineTo(MIRROR_X, objTopY); // Hit mirror
+                ctx.stroke();
+                
+                // Reflection Line: Diverges away from F
+                // Line from F(fX, CENTER_Y) through (MIRROR_X, objTopY) extending Left
+                // Slope m = (objTopY - CENTER_Y) / (MIRROR_X - fX)
+                // Draw solid ray to Left
+                const slope1 = (objTopY - CENTER_Y) / (MIRROR_X - fX);
+                const destX1 = 0;
+                const destY1 = objTopY - slope1 * (MIRROR_X - 0); // Extrapolate
+                
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, objTopY);
+                ctx.lineTo(destX1, destY1);
+                ctx.stroke();
+
+                // Virtual Extension to F
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, objTopY);
+                ctx.lineTo(fX, CENTER_Y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+
+                // Ray 2: Aimed at F -> Reflects Parallel
+                // Ray from ObjTop aimed at F(fX, CENTER_Y)
+                // Hit point on mirror.
+                // Simple approx: Hit mirror vertical line at y calculated by slope
+                // Slope m = (CENTER_Y - objTopY) / (fX - objX)
+                // y at Mirror = objTopY + m * (MIRROR_X - objX)
+                
+                const slope2 = (CENTER_Y - objTopY) / (fX - objX);
+                const hitY2 = objTopY + slope2 * (MIRROR_X - objX);
+                
+                ctx.strokeStyle = '#38bdf8'; // Cyan
+                ctx.beginPath();
+                ctx.moveTo(objX, objTopY);
+                ctx.lineTo(MIRROR_X, hitY2);
+                ctx.stroke();
+                
+                // Reflect Parallel (Horizontal Left)
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, hitY2);
+                ctx.lineTo(0, hitY2);
+                ctx.stroke();
+                
+                // Virtual Extension (Horizontal Right)
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, hitY2);
+                ctx.lineTo(imgX, hitY2); // Should match imgTopY
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+
+                // Ray 3: Aimed at C -> Reflects back
+                // Ray from ObjTop to C(cX, CENTER_Y)
+                const slope3 = (CENTER_Y - objTopY) / (cX - objX);
+                const hitY3 = objTopY + slope3 * (MIRROR_X - objX);
+                
+                ctx.strokeStyle = '#a855f7'; // Purple
+                ctx.beginPath();
+                ctx.moveTo(objX, objTopY);
+                ctx.lineTo(MIRROR_X, hitY3);
+                ctx.stroke();
+                
+                // Reflect back (Left)
+                // Just redraw over line roughly
+                
+                // Virtual Extension to C
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, hitY3);
+                ctx.lineTo(cX, CENTER_Y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+        }, [focalLength, objDist, objHeight, showRays]);
+
+        // Helpers
+        const drawPoint = (ctx, x, y, color, label) => {
+            ctx.fillStyle = color;
+            ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(label, x - 5, y + 20);
+        };
+
+        const drawCandle = (ctx, x, baseY, height, alpha, label) => {
+            ctx.save();
+            ctx.translate(x, baseY);
+            ctx.globalAlpha = alpha;
+            
+            // Body
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(-10, -height, 20, height);
+            
+            // Wick
+            ctx.fillStyle = '#1f2937';
+            ctx.fillRect(-1, -height-5, 2, 5);
+            
+            // Flame
+            ctx.beginPath();
+            ctx.arc(0, -height-10, 8, 0, Math.PI*2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, -height-10, 4, 0, Math.PI*2);
+            ctx.fillStyle = '#facc15';
+            ctx.fill();
+
+            // Label
+            ctx.fillStyle = alpha === 1 ? 'white' : '#ef4444';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(label, 0, 20);
+
+            ctx.restore();
+        };
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Reset
+        const reset = () => {
+            setObjDist(200);
+            setFocalLength(150);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-orange-500/20 p-2 rounded-lg">
+                            <i data-lucide="eye" className="w-6 h-6 text-orange-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Convex Mirror Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Geometric Optics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Canvas */}
+                    <div className="lg:col-span-9 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[500px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl canvas-container"
+                            />
+                            
+                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300">
+                                Drag the <strong>Candle</strong> to see how the image changes.
+                            </div>
+                            
+                            <div className="absolute top-4 left-4 px-3 py-1 rounded bg-purple-900/50 border border-purple-500 text-purple-300 text-xs font-bold">
+                                Image is Always Virtual, Upright, Smaller
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
+                            
+                            <div className="flex-1 min-w-[200px]">
+                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                    Object Distance ($d_o$) <span className="text-blue-400">{objDist} px</span>
+                                </label>
+                                <input 
+                                    type="range" min="50" max="350" step="10" 
+                                    value={objDist} onChange={(e) => setObjDist(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue"
+                                />
+                            </div>
+
+                            <div className="flex-1 min-w-[200px]">
+                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                    Focal Length ($f$) <span className="text-orange-400">{-focalLength} px</span>
+                                </label>
+                                <input 
+                                    type="range" min="50" max="250" step="10" 
+                                    value={focalLength} onChange={(e) => setFocalLength(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-orange"
+                                />
+                            </div>
+                            
+                            <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition-colors">
+                                <input type="checkbox" checked={showRays} onChange={() => setShowRays(!showRays)} className="rounded text-cyan-500 focus:ring-0" />
+                                <span className="text-sm font-bold text-slate-300">Show Rays</span>
+                            </label>
+
+                            <button onClick={reset} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors flex items-center justify-center gap-2">
+                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                            </button>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Data Analysis */}
+                    <div className="lg:col-span-3 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Properties
+                            </h2>
+                            
+                            <div className="space-y-4 font-mono text-sm">
+                                <div className="flex justify-between p-2 rounded bg-slate-900/50 border border-slate-700/50">
+                                    <span className="text-slate-400">Mag ($M$)</span>
+                                    <span className="text-emerald-400">
+                                        {magnification.toFixed(2)}x
+                                    </span>
+                                </div>
+                                <div className="flex justify-between p-2 rounded bg-slate-900/50 border border-slate-700/50">
+                                    <span className="text-slate-400">Img Dist ($d_i$)</span>
+                                    <span className="text-red-300">{di_val.toFixed(0)} px</span>
+                                </div>
+                                
+                                <div className="h-px bg-slate-700 my-2"></div>
+                                
+                                <div className="text-xs text-slate-300 leading-relaxed">
+                                    <strong>Observation:</strong><br/>
+                                    The image is always trapped between the mirror ($V$) and the focal point ($F$).
+                                    <br/><br/>
+                                    As the object moves further away, the image gets smaller and moves closer to $F$.
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                            <h3 className="text-indigo-300 font-bold text-sm mb-2 flex items-center">
+                                <i data-lucide="car" className="w-4 h-4 mr-2"></i> Application
+                            </h3>
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                                <strong>"Objects in mirror are closer than they appear."</strong>
+                                <br/><br/>
+                                Because the image is smaller (Diminished), our brain thinks the car behind us is farther away. This wide field of view helps eliminate blind spots!
+                            </p>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
