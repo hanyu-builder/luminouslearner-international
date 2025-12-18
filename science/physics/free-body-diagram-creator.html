@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free Body Diagram Creator | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .canvas-container { cursor: crosshair; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 600;
+    const CANVAS_HEIGHT = 400;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    // --- Scenario Data ---
+    const SCENARIOS = [
+        {
+            id: 1,
+            title: "Box on Flat Surface",
+            description: "A box resting on a table.",
+            drawBg: (ctx) => {
+                // Table
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(100, CENTER_Y + 40, 400, 10);
+                // Box
+                ctx.fillStyle = '#3b82f6';
+                ctx.fillRect(CENTER_X - 40, CENTER_Y - 40, 80, 80);
+            },
+            solution: [
+                { type: 'mg', angle: 90 }, // Gravity down
+                { type: 'N', angle: -90 }  // Normal up
+            ]
+        },
+        {
+            id: 2,
+            title: "Box Being Pushed (Friction)",
+            description: "A box being pushed right on a rough floor.",
+            drawBg: (ctx) => {
+                // Floor
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(100, CENTER_Y + 40, 400, 10);
+                // Box
+                ctx.fillStyle = '#3b82f6';
+                ctx.fillRect(CENTER_X - 40, CENTER_Y - 40, 80, 80);
+                // Hand pushing
+                ctx.fillStyle = '#fbbf24';
+                ctx.beginPath(); ctx.moveTo(CENTER_X - 40, CENTER_Y); ctx.lineTo(CENTER_X - 60, CENTER_Y); ctx.lineWidth=5; ctx.stroke();
+            },
+            solution: [
+                { type: 'mg', angle: 90 },
+                { type: 'N', angle: -90 },
+                { type: 'F_app', angle: 0 }, // Right
+                { type: 'f', angle: 180 }    // Left
+            ]
+        },
+        {
+            id: 3,
+            title: "Box on Ramp",
+            description: "A box sliding down a rough incline (30°).",
+            drawBg: (ctx) => {
+                const rad = 30 * Math.PI / 180;
+                ctx.save();
+                ctx.translate(CENTER_X, CENTER_Y);
+                // Ramp line
+                ctx.rotate(rad);
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(-200, 40, 400, 10);
+                // Box
+                ctx.fillStyle = '#3b82f6';
+                ctx.fillRect(-40, -40, 80, 80);
+                ctx.restore();
+            },
+            solution: [
+                { type: 'mg', angle: 90 }, // Always down
+                { type: 'N', angle: -60 }, // Perpendicular to ramp (30 deg tilt means N tilts -90 + 30 = -60)
+                { type: 'f', angle: 210 }  // Up the ramp (180 + 30 = 210)
+            ]
+        },
+        {
+            id: 4,
+            title: "Pendulum",
+            description: "A ball swinging to the right.",
+            drawBg: (ctx) => {
+                // Ceiling
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(CENTER_X - 50, 50, 100, 10);
+                // String
+                ctx.beginPath();
+                ctx.moveTo(CENTER_X, 50);
+                ctx.lineTo(CENTER_X + 60, CENTER_Y);
+                ctx.strokeStyle = '#94a3b8';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Ball
+                ctx.beginPath();
+                ctx.arc(CENTER_X + 60, CENTER_Y, 20, 0, Math.PI*2);
+                ctx.fillStyle = '#ef4444';
+                ctx.fill();
+            },
+            offsetCenter: { x: 60, y: 0 }, // Shift FBD center to ball pos
+            solution: [
+                { type: 'mg', angle: 90 },
+                { type: 'T', angle: -120 } // Roughly up-left
+            ]
+        }
+    ];
+
+    const FORCE_TYPES = [
+        { id: 'mg', label: 'Weight (mg)', color: '#94a3b8' },
+        { id: 'N', label: 'Normal (N)', color: '#10b981' },
+        { id: 'f', label: 'Friction (f)', color: '#ef4444' },
+        { id: 'T', label: 'Tension (T)', color: '#f59e0b' },
+        { id: 'F_app', label: 'Applied (F)', color: '#3b82f6' },
+    ];
+
+    const App = () => {
+        const [currentScenarioIdx, setCurrentScenarioIdx] = useState(0);
+        const [userVectors, setUserVectors] = useState([]);
+        const [feedback, setFeedback] = useState(null);
+        const [draggingId, setDraggingId] = useState(null);
+
+        const canvasRef = useRef(null);
+        const scenario = SCENARIOS[currentScenarioIdx];
+
+        // --- Logic ---
+        const addVector = (type) => {
+            const color = FORCE_TYPES.find(f => f.id === type).color;
+            // Add random offset so they don't stack perfectly
+            const angle = Math.random() * 360; 
+            const length = 80;
+            const dx = length * Math.cos(angle * Math.PI / 180);
+            const dy = length * Math.sin(angle * Math.PI / 180);
+
+            setUserVectors([...userVectors, {
+                id: Date.now(),
+                type,
+                dx,
+                dy,
+                color
+            }]);
+            setFeedback(null);
+        };
+
+        const removeVector = (id) => {
+            setUserVectors(userVectors.filter(v => v.id !== id));
+            setFeedback(null);
+        };
+
+        const checkAnswer = () => {
+            // Logic: Compare userVectors vs scenario.solution
+            // 1. Check count
+            if (userVectors.length !== scenario.solution.length) {
+                setFeedback({ type: 'error', msg: `Incorrect number of forces. Expected ${scenario.solution.length}, you have ${userVectors.length}.` });
+                return;
+            }
+
+            // 2. Check each expected force exists and has roughly correct angle
+            let allCorrect = true;
+            let msg = "Correct!";
+
+            // Clone to track matched ones
+            let remainingUserVectors = [...userVectors];
+
+            for (let sol of scenario.solution) {
+                // Find a matching vector in user list
+                const matchIndex = remainingUserVectors.findIndex(uv => {
+                    if (uv.type !== sol.type) return false;
+                    
+                    // Calculate Angle
+                    let userAngle = Math.atan2(uv.dy, uv.dx) * (180 / Math.PI);
+                    if (userAngle < 0) userAngle += 360; // 0-360 range
+                    
+                    // Normalize solution angle
+                    let solAngle = sol.angle;
+                    if (solAngle < 0) solAngle += 360;
+
+                    // Tolerance +/- 20 degrees
+                    let diff = Math.abs(userAngle - solAngle);
+                    if (diff > 180) diff = 360 - diff; // Handle 359 vs 1 case
+                    
+                    return diff < 20;
+                });
+
+                if (matchIndex === -1) {
+                    allCorrect = false;
+                    msg = `Missing or misaligned force: ${sol.type}`;
+                    break;
+                } else {
+                    // Remove matched to avoid double counting
+                    remainingUserVectors.splice(matchIndex, 1);
+                }
+            }
+
+            if (allCorrect) {
+                setFeedback({ type: 'success', msg: "Perfect! All forces are correctly identified and directed." });
+            } else {
+                setFeedback({ type: 'error', msg: msg });
+            }
+        };
+
+        const reset = () => {
+            setUserVectors([]);
+            setFeedback(null);
+        };
+
+        const nextScenario = () => {
+            setCurrentScenarioIdx((prev) => (prev + 1) % SCENARIOS.length);
+            reset();
+        };
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Adjust for offset center
+            const cx = CENTER_X + (scenario.offsetCenter?.x || 0);
+            const cy = CENTER_Y + (scenario.offsetCenter?.y || 0);
+
+            // Check vector heads
+            for (let i = userVectors.length - 1; i >= 0; i--) {
+                const v = userVectors[i];
+                const headX = cx + v.dx;
+                const headY = cy + v.dy;
+                
+                if (Math.hypot(x - headX, y - headY) < 15) {
+                    setDraggingId(v.id);
+                    return;
+                }
+            }
+        };
+
+        const handleMouseMove = (e) => {
+            if (!draggingId) return;
+            const rect = canvasRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const cx = CENTER_X + (scenario.offsetCenter?.x || 0);
+            const cy = CENTER_Y + (scenario.offsetCenter?.y || 0);
+
+            setUserVectors(prev => prev.map(v => {
+                if (v.id !== draggingId) return v;
+                return { ...v, dx: x - cx, dy: y - cy };
+            }));
+        };
+
+        const handleMouseUp = () => {
+            setDraggingId(null);
+        };
+
+        // --- Drawing ---
+        useEffect(() => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Scenario Background (Faded)
+            ctx.globalAlpha = 0.4;
+            scenario.drawBg(ctx);
+            ctx.globalAlpha = 1.0;
+
+            // 2. Draw FBD Origin Dot
+            const cx = CENTER_X + (scenario.offsetCenter?.x || 0);
+            const cy = CENTER_Y + (scenario.offsetCenter?.y || 0);
+            
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI*2);
+            ctx.fillStyle = 'white';
+            ctx.fill();
+            ctx.strokeStyle = 'black';
+            ctx.stroke();
+
+            // 3. Draw User Vectors
+            userVectors.forEach(v => {
+                drawArrow(ctx, cx, cy, cx + v.dx, cy + v.dy, v.color, v.type);
+            });
+
+        }, [userVectors, scenario]);
+
+        const drawArrow = (ctx, fromX, fromY, toX, toY, color, label) => {
+            const angle = Math.atan2(toY - fromY, toX - fromX);
+            const headLen = 12;
+
+            ctx.beginPath();
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(toX, toY);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Head
+            ctx.beginPath();
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            // Label background
+            const midX = (fromX + toX) / 2;
+            const midY = (fromY + toY) / 2;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(midX - 10, midY - 10, 20, 20);
+            
+            // Label Text
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, midX, midY);
+        };
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="pencil-ruler" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">FBD Creator</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Forces
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-4">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[400px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl cursor-crosshair touch-none"
+                            />
+                            
+                            <div className="absolute top-4 left-4 bg-slate-900/90 px-4 py-2 rounded-lg border border-slate-700 shadow-lg">
+                                <div className="text-xs text-slate-400 font-bold uppercase mb-1">Scenario {scenario.id}</div>
+                                <div className="text-white font-bold">{scenario.title}</div>
+                                <div className="text-xs text-slate-400 mt-1">{scenario.description}</div>
+                            </div>
+
+                            {feedback && (
+                                <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl border font-bold shadow-lg animate-bounce ${feedback.type === 'success' ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white'}`}>
+                                    {feedback.type === 'success' ? <i data-lucide="check-circle" className="w-5 h-5 inline mr-2" /> : <i data-lucide="alert-circle" className="w-5 h-5 inline mr-2" />}
+                                    {feedback.msg}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center">
+                            <div className="flex gap-2">
+                                <button onClick={reset} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold transition-colors">
+                                    <i data-lucide="rotate-ccw" className="w-4 h-4 inline mr-2"></i> Clear
+                                </button>
+                                <button onClick={checkAnswer} className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-bold transition-colors shadow-lg">
+                                    Check Answer
+                                </button>
+                            </div>
+                            <button onClick={nextScenario} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white font-bold transition-colors flex items-center">
+                                Next Scenario <i data-lucide="arrow-right" className="w-4 h-4 ml-2"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Right: Toolbox */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="plus-circle" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Add Forces
+                            </h2>
+                            <p className="text-xs text-slate-400 mb-4">Click to add, then drag the arrow head to rotate.</p>
+                            
+                            <div className="space-y-3">
+                                {FORCE_TYPES.map(f => (
+                                    <button 
+                                        key={f.id}
+                                        onClick={() => addVector(f.id)}
+                                        className="w-full p-3 rounded-xl border border-slate-600 bg-slate-700/50 hover:bg-slate-700 transition-all flex items-center justify-between group"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-4 h-4 rounded-full" style={{background: f.color}}></div>
+                                            <span className="font-mono font-bold text-white">{f.label}</span>
+                                        </div>
+                                        <i data-lucide="plus" className="w-4 h-4 text-slate-400 group-hover:text-white"></i>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Current Vectors List */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 min-h-[200px]">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="list" className="w-5 h-5 mr-2 text-slate-400"></i>
+                                Active Forces
+                            </h2>
+                            {userVectors.length === 0 ? (
+                                <div className="text-center text-slate-500 py-8 text-sm italic">
+                                    No forces added yet.
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {userVectors.map(v => (
+                                        <div key={v.id} className="flex items-center justify-between bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full" style={{background: v.color}}></div>
+                                                <span className="text-sm font-mono text-slate-300">{v.type}</span>
+                                            </div>
+                                            <button onClick={() => removeVector(v.id)} className="text-slate-500 hover:text-red-400">
+                                                <i data-lucide="trash-2" className="w-4 h-4"></i>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
