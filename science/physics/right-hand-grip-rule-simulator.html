@@ -52,8 +52,9 @@
 
         // --- Three.js Setup ---
         useEffect(() => {
-            const width = mountRef.current.clientWidth;
-            const height = mountRef.current.clientHeight;
+            const mount = mountRef.current;
+            let width = mount.clientWidth;
+            let height = mount.clientHeight;
 
             // Scene
             const scene = new THREE.Scene();
@@ -68,9 +69,16 @@
             cameraRef.current = camera;
 
             // Renderer
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(width, height);
-            mountRef.current.appendChild(renderer.domElement);
+            renderer.setPixelRatio(window.devicePixelRatio); // Sharpness on HDPI screens
+            
+            // Force canvas to fill container via CSS
+            renderer.domElement.style.width = '100%';
+            renderer.domElement.style.height = '100%';
+            renderer.domElement.style.display = 'block';
+            
+            mount.appendChild(renderer.domElement);
             rendererRef.current = renderer;
 
             // Lights
@@ -80,7 +88,7 @@
             dirLight.position.set(5, 10, 7);
             scene.add(dirLight);
 
-            // Orbit Controls (Simple implementation)
+            // Orbit Controls Logic (Simple)
             let isDragging = false;
             let previousMousePosition = { x: 0, y: 0 };
             
@@ -93,23 +101,14 @@
                         y: e.offsetY - previousMousePosition.y
                     };
                     
-                    const deltaRotationQuaternion = new THREE.Quaternion()
-                        .setFromEuler(new THREE.Euler(
-                            toRadians(deltaMove.y * 0.5),
-                            toRadians(deltaMove.x * 0.5),
-                            0,
-                            'XYZ'
-                        ));
-                    
-                    // Rotate pivot (Scene root wrapper maybe?)
-                    // For simplicity, rotate camera around 0,0,0
+                    // Rotate camera around origin
                     const radius = camera.position.length();
                     let theta = Math.atan2(camera.position.x, camera.position.z);
                     let phi = Math.acos(camera.position.y / radius);
                     
                     theta -= deltaMove.x * 0.01;
                     phi -= deltaMove.y * 0.01;
-                    phi = Math.max(0.1, Math.min(Math.PI - 0.1, phi)); // Clamp vertical
+                    phi = Math.max(0.1, Math.min(Math.PI - 0.1, phi));
 
                     camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
                     camera.position.y = radius * Math.cos(phi);
@@ -131,40 +130,31 @@
             // Loop
             const animate = () => {
                 animationRef.current = requestAnimationFrame(animate);
-                
-                // Animate electrons/current
-                if (objectsRef.current.electrons) {
-                    objectsRef.current.electrons.forEach(e => {
-                        // Move logic based on mode
-                    });
-                    // For simplicity, texture offset animation is better
-                    if (objectsRef.current.wireMaterial) {
-                        // UV scroll? Or just simple dash line movement?
-                        // Let's rely on arrows for direction
-                    }
-                }
-                
                 renderer.render(scene, camera);
             };
             animate();
 
-            // Resize
-            const handleResize = () => {
-                const w = mountRef.current.clientWidth;
-                const h = mountRef.current.clientHeight;
-                camera.aspect = w / h;
+            // Robust Resize Observer
+            const resizeObserver = new ResizeObserver(() => {
+                if (!mount) return;
+                const newWidth = mount.clientWidth;
+                const newHeight = mount.clientHeight;
+                
+                if (newWidth === 0 || newHeight === 0) return;
+
+                camera.aspect = newWidth / newHeight;
                 camera.updateProjectionMatrix();
-                renderer.setSize(w, h);
-            };
-            window.addEventListener('resize', handleResize);
+                renderer.setSize(newWidth, newHeight);
+            });
+            
+            resizeObserver.observe(mount);
 
             return () => {
-                window.removeEventListener('resize', handleResize);
+                resizeObserver.disconnect();
                 cancelAnimationFrame(animationRef.current);
-                if (mountRef.current && renderer.domElement) {
-                    mountRef.current.removeChild(renderer.domElement);
+                if (mount && renderer.domElement) {
+                    mount.removeChild(renderer.domElement);
                 }
-                // Cleanup listeners
                 canvas.removeEventListener('mousedown', onMouseDown);
                 canvas.removeEventListener('mouseup', onMouseUp);
                 canvas.removeEventListener('mousemove', onMouseMove);
@@ -179,10 +169,10 @@
             const scene = sceneRef.current;
             if (!scene) return;
 
-            // Clear old objects
             while(scene.children.length > 0){ 
                 scene.remove(scene.children[0]); 
             }
+            
             // Re-add lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
             scene.add(ambientLight);
@@ -200,13 +190,13 @@
         };
 
         const createStraightWire = (scene) => {
-            // 1. Wire
+            // Wire
             const geometry = new THREE.CylinderGeometry(0.2, 0.2, 8, 32);
-            const material = new THREE.MeshStandardMaterial({ color: 0xf59e0b }); // Amber
+            const material = new THREE.MeshStandardMaterial({ color: 0xf59e0b });
             const wire = new THREE.Mesh(geometry, material);
             scene.add(wire);
 
-            // 2. Current Arrow (Big)
+            // Current Arrow
             const dir = currentDirection;
             const arrowLen = 2;
             const arrowColor = 0xffffff;
@@ -214,45 +204,29 @@
             const arrowOrigin = new THREE.Vector3(0, -dir * 2, 0);
             const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, arrowColor, 0.5, 0.3);
             scene.add(arrowHelper);
-            
-            // Label 'I'
-            // Text sprites are complex in vanilla three.js without font loader.
-            // We'll trust the arrow visual.
 
-            // 3. Magnetic Field Lines (Concentric Circles)
+            // Field Lines
             if (showField) {
                 const rings = [1.5, 3.0, 4.5];
                 rings.forEach(radius => {
-                    const curve = new THREE.EllipseCurve(
-                        0, 0,            // ax, aY
-                        radius, radius,  // xRadius, yRadius
-                        0, 2 * Math.PI,  // aStartAngle, aEndAngle
-                        false,           // aClockwise
-                        0                // aRotation
-                    );
+                    const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, 2 * Math.PI, false, 0);
                     const points = curve.getPoints(50);
                     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                    const material = new THREE.LineBasicMaterial({ color: 0x3b82f6 }); // Blue
+                    const material = new THREE.LineBasicMaterial({ color: 0x3b82f6 });
                     const ring = new THREE.Line(geometry, material);
-                    ring.rotation.x = Math.PI / 2; // Lay flat on XZ plane
+                    ring.rotation.x = Math.PI / 2;
                     scene.add(ring);
 
-                    // Add Arrows on Ring
-                    // B field direction: Right hand rule.
-                    // If I is UP, B is CCW (looking from top).
-                    // If I is DOWN, B is CW.
+                    // Arrows on Ring
                     const arrowCount = 4;
                     for(let i=0; i<arrowCount; i++) {
                         const angle = (i / arrowCount) * Math.PI * 2;
                         const x = Math.cos(angle) * radius;
                         const z = Math.sin(angle) * radius;
                         
-                        // Tangent direction (-sin, cos) for CCW
                         let dirX = -Math.sin(angle);
                         let dirZ = Math.cos(angle);
-                        
                         if (currentDirection === -1) {
-                            // CW
                             dirX = Math.sin(angle);
                             dirZ = -Math.cos(angle);
                         }
@@ -265,39 +239,28 @@
                 });
             }
 
-            // 4. Hand Model (Simplified Blocky Hand)
+            // Hand
             if (showHand) {
                 const handGroup = new THREE.Group();
-                
-                // Thumb (Along wire)
                 const thumbGeo = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
-                const skinMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5 }); // Pink skin
+                const skinMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5 });
                 const thumb = new THREE.Mesh(thumbGeo, skinMat);
                 thumb.position.y = currentDirection * 1;
                 if (currentDirection === -1) thumb.rotation.x = Math.PI;
                 handGroup.add(thumb);
                 
-                // Palm/Fingers (Curved around wire)
-                // Torus segment?
-                const fingersGeo = new THREE.TorusGeometry(1.2, 0.3, 16, 20, Math.PI); // Half circle
+                const fingersGeo = new THREE.TorusGeometry(1.2, 0.3, 16, 20, Math.PI);
                 const fingers = new THREE.Mesh(fingersGeo, skinMat);
                 fingers.rotation.x = Math.PI / 2;
-                fingers.rotation.y = Math.PI; // Face front
-                if (currentDirection === -1) {
-                    fingers.scale.y = -1; // Flip curl direction?
-                    // Right hand rule: Thumb down, fingers curl CW.
-                    // Torus goes CCW by default geometry?
-                    // Visual check needed. Simple torus is fine for concept.
-                }
+                fingers.rotation.y = Math.PI;
                 handGroup.add(fingers);
 
-                handGroup.position.set(0.5, 0, 0); // Offset slightly
+                handGroup.position.set(0.5, 0, 0);
                 scene.add(handGroup);
             }
         };
 
         const createSolenoid = (scene) => {
-            // 1. Solenoid Coil (Helix)
             const radius = 2;
             const length = 8;
             const turns = 10;
@@ -305,7 +268,6 @@
             
             const path = new THREE.Curve();
             path.getPoint = function (t) {
-                // t from 0 to 1
                 const angle = t * turns * 2 * Math.PI;
                 const x = (t - 0.5) * length;
                 const y = Math.cos(angle) * radius;
@@ -318,31 +280,19 @@
             const coil = new THREE.Mesh(geometry, material);
             scene.add(coil);
 
-            // 2. Current Arrows (On top of coil)
-            // If I is Right (1): Current flows into page at top?
-            // Let's assume winding: Over the top, away from viewer.
-            // Current Dir 1 (Right): Top arrows point Away (-Z). Bottom arrows point Towards (+Z).
-            // Actually let's just put arrows along the wire path? Too messy.
-            // Put big arrow for I_in and I_out.
-            
             const iColor = 0xffffff;
             const inArrow = new THREE.ArrowHelper(new THREE.Vector3(currentDirection, 0, 0), new THREE.Vector3(-length/2 - 1, 0, 0), 1, iColor);
             const outArrow = new THREE.ArrowHelper(new THREE.Vector3(currentDirection, 0, 0), new THREE.Vector3(length/2, 0, 0), 1, iColor);
             scene.add(inArrow);
             scene.add(outArrow);
 
-            // 3. Magnetic Field (Through center)
             if (showField) {
                 const bColor = 0x3b82f6;
-                // Central line
                 const bDir = new THREE.Vector3(currentDirection, 0, 0);
                 const bOrigin = new THREE.Vector3(-length/2 - 2, 0, 0);
                 const bArrow = new THREE.ArrowHelper(bDir, bOrigin, length + 4, bColor, 1, 0.5);
                 scene.add(bArrow);
                 
-                // Outer loops (simplified as large ellipses)
-                // ... complex to draw curved 3d lines easily. 
-                // Let's add parallel lines inside to show uniformity
                 for(let y=-1; y<=1; y+=2) {
                      const paraOrigin = new THREE.Vector3(-length/2, y, 0);
                      const paraArrow = new THREE.ArrowHelper(bDir, paraOrigin, length, bColor, 0.5, 0.3);
@@ -350,30 +300,21 @@
                 }
             }
 
-            // 4. Hand Model
             if (showHand) {
-                // Fingers curl around coil (Direction of I)
-                // Thumb points along axis (Direction of B)
                 const handGroup = new THREE.Group();
-                
-                // Thumb (Along B)
                 const thumbGeo = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
                 const skinMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5 });
                 const thumb = new THREE.Mesh(thumbGeo, skinMat);
-                thumb.rotation.z = -Math.PI / 2 * currentDirection; // Point Left/Right
+                thumb.rotation.z = -Math.PI / 2 * currentDirection;
                 thumb.position.x = currentDirection * 1;
                 handGroup.add(thumb);
                 
-                // Fingers (Wrapping coil)
                 const fingersGeo = new THREE.TorusGeometry(2.2, 0.4, 16, 20, Math.PI * 1.5);
                 const fingers = new THREE.Mesh(fingersGeo, skinMat);
-                fingers.rotation.y = Math.PI / 2; // Align with x-axis
-                // Fingers curl direction... 
-                // Right hand rule for solenoid: Fingers = I, Thumb = B.
-                // Visual representation is static approximation.
+                fingers.rotation.y = Math.PI / 2;
                 handGroup.add(fingers);
                 
-                handGroup.position.y = 2.5; // Sit on top
+                handGroup.position.y = 2.5;
                 scene.add(handGroup);
             }
         };
@@ -386,7 +327,6 @@
             if (window.lucide) window.lucide.createIcons();
         });
 
-        // Toggle Current
         const toggleDirection = () => {
             setCurrentDirection(prev => prev * -1);
         };
