@@ -40,7 +40,7 @@
     const { useState, useEffect, useRef } = React;
 
     const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 500;
+    const CANVAS_HEIGHT = 450;
     const CENTER_X = CANVAS_WIDTH / 2;
     const CENTER_Y = CANVAS_HEIGHT / 2;
 
@@ -52,10 +52,8 @@
         
         const [isRunning, setIsRunning] = useState(false);
         const [slowMo, setSlowMo] = useState(false);
-        const [showForces, setShowForces] = useState(true);
-        const [showCurrent, setShowCurrent] = useState(true);
-        const [showField, setShowField] = useState(true);
-
+        
+        // --- Refs for Animation Loop (Source of Truth) ---
         const canvasRef = useRef(null);
         const requestRef = useRef();
         const lastTimeRef = useRef(0);
@@ -65,6 +63,17 @@
             angle: 0,
             velocity: 0
         });
+        
+        // Parameter Refs (To avoid stale closures in loop)
+        const paramsRef = useRef({
+            voltage: 5.0,
+            slowMo: false
+        });
+
+        // Sync State to Refs
+        useEffect(() => {
+            paramsRef.current = { voltage, slowMo };
+        }, [voltage, slowMo]);
 
         // --- Logic ---
         const startSim = () => {
@@ -74,18 +83,14 @@
             requestRef.current = requestAnimationFrame(loop);
         };
 
-        const pauseSim = () => {
-            setIsRunning(false);
-            cancelAnimationFrame(requestRef.current);
-        };
-
         const resetSim = () => {
             setIsRunning(false);
             cancelAnimationFrame(requestRef.current);
             physicsRef.current = { angle: 0, velocity: 0 };
             setAngle(0);
             setSpeed(0);
-            setTimeout(draw, 50);
+            // Force redraw immediately
+            setTimeout(() => draw(), 10);
         };
 
         const loop = (timestamp) => {
@@ -93,30 +98,23 @@
             lastTimeRef.current = timestamp;
 
             const state = physicsRef.current;
+            const { voltage, slowMo } = paramsRef.current;
             
             // Physics Model
-            // Torque = k * Voltage * sin(theta)? 
-            // Simplified: DC motor reaches terminal speed proportional to Voltage
-            // But we want to show Commutation physics.
-            // Torque direction depends on Angle relative to field.
-            // Commutator flips polarity every 180 degrees (PI radians).
+            // Target speed is proportional to voltage
+            const maxSpeed = voltage * 4; // Scale factor
             
-            // Normalize angle to 0 - 2PI
-            const normAngle = state.angle % (2 * Math.PI);
-            
-            // Commutation Logic:
-            // Torque is always positive in ideal motor because commutator flips current
-            // Let's model simple torque
-            const maxSpeed = voltage * 2; // Arbitrary scale
-            const accel = (maxSpeed - state.velocity) * 2.0; // Simple drag/acceleration model
+            // Acceleration/Drag model to reach max speed smoothly
+            const accel = (maxSpeed - state.velocity) * 2.0; 
             
             state.velocity += accel * dt;
             
+            // Apply speed to angle
             // Slow motion factor
             const timeScale = slowMo ? 0.2 : 1.0;
             state.angle += state.velocity * dt * timeScale;
 
-            // Sync UI
+            // Sync UI state occasionally (every frame is fine for this simple app)
             setAngle(state.angle);
             setSpeed(state.velocity);
 
@@ -126,7 +124,6 @@
 
         // --- 3D Projection Helper ---
         const project = (x, y, z) => {
-            // Simple perspective projection
             const scale = 300 / (300 + z);
             return {
                 x: CENTER_X + x * scale,
@@ -141,121 +138,81 @@
             if (!ctx) return;
 
             const theta = physicsRef.current.angle;
+            const { voltage } = paramsRef.current;
 
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // 1. Draw Magnetic Field (Background)
-            if (showField) {
-                ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)'; // Faint Blue
-                ctx.lineWidth = 1;
-                for (let y = -100; y <= 100; y += 40) {
+            // 1. Draw Magnetic Field (Enhanced)
+            // Field lines from N (Left) to S (Right)
+            ctx.lineWidth = 1;
+            const fieldSpacing = 40;
+            
+            for (let y = -120; y <= 120; y += fieldSpacing) {
+                // Fading lines
+                const grad = ctx.createLinearGradient(150, 0, 650, 0);
+                grad.addColorStop(0, 'rgba(56, 189, 248, 0)');
+                grad.addColorStop(0.2, 'rgba(56, 189, 248, 0.4)');
+                grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.4)');
+                grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+                
+                ctx.strokeStyle = grad;
+                ctx.beginPath();
+                ctx.moveTo(150, CENTER_Y + y);
+                ctx.lineTo(650, CENTER_Y + y);
+                ctx.stroke();
+
+                // Arrows indicating direction N -> S
+                if (y % 80 === 0) {
+                    const arrowX = CENTER_X + (y % 60); 
+                    ctx.fillStyle = 'rgba(56, 189, 248, 0.6)';
                     ctx.beginPath();
-                    ctx.moveTo(100, CENTER_Y + y);
-                    ctx.lineTo(700, CENTER_Y + y);
-                    ctx.stroke();
-                    // Arrow
-                    ctx.beginPath();
-                    ctx.moveTo(400, CENTER_Y + y);
-                    ctx.lineTo(390, CENTER_Y + y - 5);
-                    ctx.lineTo(390, CENTER_Y + y + 5);
-                    ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+                    ctx.moveTo(arrowX, CENTER_Y + y);
+                    ctx.lineTo(arrowX - 8, CENTER_Y + y - 4);
+                    ctx.lineTo(arrowX - 8, CENTER_Y + y + 4);
                     ctx.fill();
                 }
-                ctx.fillStyle = '#38bdf8';
-                ctx.font = 'bold 20px sans-serif';
-                ctx.fillText("B", CENTER_X, 80);
             }
+            
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = 'bold 24px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("B", CENTER_X, CENTER_Y - 140);
 
-            // 2. Draw Stator Magnets
+
+            // 2. Draw Stator Magnets (3D Cubes)
+            const magW = 100, magH = 240;
             // Left (N)
-            const magW = 100, magH = 200;
-            // 3D effect for magnet
-            drawCube(ctx, -250, 0, 0, magW, magH, 100, '#ef4444', '#b91c1c', 'N');
+            drawCube(ctx, -300, 0, 0, magW, magH, 120, '#ef4444', '#b91c1c', 'N');
             // Right (S)
-            drawCube(ctx, 250, 0, 0, magW, magH, 100, '#3b82f6', '#1d4ed8', 'S');
-
+            drawCube(ctx, 300, 0, 0, magW, magH, 120, '#3b82f6', '#1d4ed8', 'S');
 
             // 3. Draw Rotor (Coil)
-            // Coil is a rectangle w x h rotating around Y axis (in 3D terms, here Z is depth)
-            // Let's define coil in 3D coords relative to center (0,0,0)
-            const coilW = 240;
-            const coilH = 140;
-            
-            // Vertices of the loop
-            // We need to split into "Left Arm" and "Right Arm" to color them diff (Orange/Blue)
-            // Local coords, rotated by theta around X axis? No, Z axis is depth.
-            // Rotation is around Y axis in 3D space? No, usually horizontal shaft -> Rotate around X axis.
-            // Let's assume shaft is horizontal (Left-Right). Rotation is around X axis.
-            // Wait, magnets are Left/Right. Field is Horizontal. 
-            // Coil axis must be Perpendicular to Field for max torque? No.
-            // Standard motor: Axle is Z-axis (pointing at viewer)? No.
-            // Let's stick to standard diagram:
-            // Magnets Left/Right. Field Horizontal (X).
-            // Axle is Vertical? Or Axle is Into Page (Z)?
-            // If Axle is Z, we see a cross section rotating.
-            // Let's do a 3D perspective: Axle is Z (Depth). 
-            // Magnets are Left/Right.
-            // Coil rotates in XY plane? No, that's 2D.
-            // Let's rotate around X-axis (Horizontal). Magnets Top/Bottom?
-            
-            // Standard Textbook:
-            // Magnets Left (N) / Right (S). Field X-axis.
-            // Coil rotates around Z-axis (Depth).
-            // This means we are looking at the end of the motor?
-            // To see the "loop", we usually look from an angle.
-            
-            // Let's try: Axle is X-axis (Horizontal). Magnets are Top/Bottom? No.
-            // Let's use: Magnets Left/Right. Field X-axis.
-            // Coil rotates around Y-axis (Vertical)? NO.
-            // Coil axis is Z.
-            
-            // Let's Rotate around X-axis for visualization.
-            // Axle is horizontal.
-            // Magnets are Front/Back? Or Top/Bottom?
-            
-            // VISUALIZATION CHOICE:
-            // Magnets: Left (N) and Right (S). Field -> Right.
-            // Axle: Horizontal (X-axis).
-            // Coil: Rotates around X-axis.
-            // This means the loop goes "into" and "out of" the screen.
-            
-            // Vertices
-            // A ---- B
-            // |      |
-            // D ---- C
-            // A,D connected to commutator. B,C is the far end.
-            
-            const cos = Math.cos(theta);
-            const sin = Math.sin(theta);
-            
-            // Arm 1 (Orange side): From (0,0,0) to radius
-            // Let's say radius is r = coilH / 2.
-            // y = r * sin(theta), z = r * cos(theta).
-            
+            const coilW = 280;
+            const coilH = 160;
             const r = coilH / 2;
             const halfW = coilW / 2;
-            
-            // 4 Points of the loop
-            // Near side (Commutator side) is at x = -halfW? No, let's center it.
-            // Axle runs from -200 to 200.
-            
-            // Arm 1 (Orange): y = r*sin, z = r*cos.
-            // Arm 2 (Blue): y = -r*sin, z = -r*cos.
-            
+
+            // Calculate 3D positions of coil corners
+            // Rotating around X-axis (Horizontal)
             const y1 = r * Math.sin(theta);
-            const z1 = r * Math.cos(theta); // Depth
+            const z1 = r * Math.cos(theta); 
             const y2 = -y1;
             const z2 = -z1;
-            
-            // Calculate z-order for drawing (Painter's algorithm)
-            // Back parts first.
-            // z1 > z2 means Arm 1 is in front.
-            
-            const drawArm = (y, z, color, isSide1) => {
+
+            // Draw Axle (Behind everything)
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 12;
+            ctx.beginPath();
+            ctx.moveTo(CENTER_X - 350, CENTER_Y);
+            ctx.lineTo(CENTER_X + 350, CENTER_Y);
+            ctx.stroke();
+
+            // Helper to draw an arm
+            const drawArm = (y, z, color, label) => {
                 const p1 = project(-halfW, y, z);
                 const p2 = project(halfW, y, z);
                 
-                ctx.lineWidth = 8;
+                ctx.lineWidth = 10;
                 ctx.strokeStyle = color;
                 ctx.lineCap = 'round';
                 ctx.beginPath();
@@ -263,290 +220,195 @@
                 ctx.lineTo(p2.x, p2.y);
                 ctx.stroke();
                 
-                // Draw Side wires connecting to axle?
-                // The loop end
-                // We handle the connecting loop part separately or just simple lines
+                // Label (A/B)
+                ctx.fillStyle = 'white';
+                ctx.font = '12px sans-serif';
+                ctx.fillText(label, (p1.x+p2.x)/2, p1.y - 5);
+            };
+
+            // Current Arrows Helper
+            const drawI = (y, z, dir) => {
+                if (voltage < 0.1) return;
+                const p1 = project(-halfW, y, z);
+                const p2 = project(halfW, y, z);
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
+                
+                ctx.fillStyle = '#facc15';
+                ctx.beginPath();
+                if (dir > 0) { // Left to Right
+                    ctx.moveTo(midX + 10, midY);
+                    ctx.lineTo(midX - 5, midY - 6);
+                    ctx.lineTo(midX - 5, midY + 6);
+                } else { // Right to Left
+                    ctx.moveTo(midX - 10, midY);
+                    ctx.lineTo(midX + 5, midY - 6);
+                    ctx.lineTo(midX + 5, midY + 6);
+                }
+                ctx.fill();
+            };
+
+            // Force Arrows Helper
+            const drawF = (y, z, dir) => {
+                if (voltage < 0.1) return;
+                const p1 = project(0, y, z); // Center of arm
+                
+                // Force is perpendicular to B (X) and I (X). 
+                // Wait, I is X. B is X? No.
+                // Magnets Left/Right. B is X-axis (Horizontal).
+                // Coil Arms are parallel to X-axis. 
+                // PARALLEL WIRES FEEL NO FORCE.
+                // The force acts on the "depth" wires (connecting front/back).
+                
+                // Visualization Hack: We usually show force on the long arms for simplicity in 2D diagrams,
+                // even though physically it's the side arms cutting the field.
+                // Let's draw force arrows on the side arms?
+                // Side arms are at x = +/- halfW. They run along Z/Y.
+                
+                // Let's stick to standard textbook representation where Force pushes the loop UP/DOWN.
+                // F = I x B. 
+                // Top Arm: I goes into page? B goes Right. F = Down.
+                
+                const fLen = 40;
+                const fY = dir > 0 ? -fLen : fLen;
+                
+                ctx.strokeStyle = '#10b981';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p1.x, p1.y + fY);
+                ctx.stroke();
+                
+                // Arrowhead
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y + fY);
+                ctx.lineTo(p1.x - 5, p1.y + fY - 5 * Math.sign(fY));
+                ctx.lineTo(p1.x + 5, p1.y + fY - 5 * Math.sign(fY));
+                ctx.fillStyle = '#10b981';
+                ctx.fill();
+            };
+
+            // Commutator State
+            // sin(theta) > 0 means 0-180 deg (Top half).
+            // Current direction flips when theta crosses 0 or 180.
+            const isOrangeTop = y1 > 0; // Current enters top
+            
+            // Draw Elements Painter's Algorithm (Z-sort)
+            const drawOrange = () => {
+                drawArm(y1, z1, '#f97316', 'A');
+                // Current: If Top, L->R. If Bot, R->L.
+                // Force: If Top, Up/Down?
+                // Right Hand Rule: I (Right), B (Right). Parallel?
+                // Real motor: B is N->S. I is Into/Out of page.
+                // Our diagram: B is Left->Right.
+                // So Active Wires are the ones going Into/Out.
+                // But we drew wires Left->Right.
+                
+                // Let's accept the visual abstraction:
+                // Yellow Arrows show Current flow.
+                // Green Arrows show Lorentz Force.
+                
+                // Let's assume Orange arm current is always +1 relative to loop.
+                const curDir = isOrangeTop ? 1 : -1;
+                const forceDir = isOrangeTop ? 1 : -1; // Top pushed up? Or down.
+                // Let's make it rotate clockwise. Top arm pushed Down (-1), Bot arm Up (+1).
+                
+                drawI(y1, z1, curDir);
+                drawF(y1, z1, -curDir); 
             };
             
-            // Draw Axle (Static visual, behind coil)
-            ctx.strokeStyle = '#64748b';
-            ctx.lineWidth = 10;
-            ctx.beginPath();
-            ctx.moveTo(CENTER_X - 250, CENTER_Y);
-            ctx.lineTo(CENTER_X + 250, CENTER_Y);
-            ctx.stroke();
+            const drawBlue = () => {
+                drawArm(y2, z2, '#3b82f6', 'B');
+                const curDir = isOrangeTop ? -1 : 1;
+                drawI(y2, z2, curDir);
+                drawF(y2, z2, -curDir);
+            };
 
-            // Draw Back Connection (Far end)
-            // Connects (halfW, y1, z1) to (halfW, y2, z2)
-            const p1_far = project(halfW, y1, z1);
-            const p2_far = project(halfW, y2, z2);
-            ctx.strokeStyle = '#475569'; // Dark wire
-            ctx.lineWidth = 6;
-            ctx.beginPath(); ctx.moveTo(p1_far.x, p1_far.y); ctx.lineTo(p2_far.x, p2_far.y); ctx.stroke();
-            
-            // Draw Arms (Sorted by Z)
-            const orangeColor = '#f97316';
-            const blueColor = '#3b82f6';
-            
-            // Commutator Points (Near end)
-            const p1_near = project(-halfW, y1, z1);
-            const p2_near = project(-halfW, y2, z2);
-
-            // Determine Current Direction in Arms
-            // Commutation: Brush contacts flip at vertical?
-            // Usually Brushes are Top/Bottom.
-            // Split ring gap is horizontal when coil is vertical.
-            // So when y > 0 (Top), current flows one way. When y < 0 (Bottom), flows other way.
-            
-            // Let's assume Brush Top is (+) and Brush Bottom is (-).
-            // Current enters top brush, goes into the arm currently at top.
-            // Returns via bottom arm to bottom brush.
-            
-            // If y1 > 0 (Orange Arm is Top): Current enters Orange (Left to Right).
-            // If y1 < 0 (Orange Arm is Bottom): Current exits Orange (Right to Left).
-            
-            const isOrangeTop = y1 > 0; //Actually sin(theta) > 0 means 0-180 deg
-            
-            // Draw Order
             if (z1 < z2) {
-                // Orange is back
-                drawArm(y1, z1, orangeColor, true);
-                if (showCurrent) drawCurrentArrow(ctx, -halfW, y1, z1, halfW, y1, z1, isOrangeTop ? 1 : -1);
-                if (showForces) drawForceArrow(ctx, 0, y1, z1, isOrangeTop);
-
-                drawArm(y2, z2, blueColor, false);
-                if (showCurrent) drawCurrentArrow(ctx, -halfW, y2, z2, halfW, y2, z2, isOrangeTop ? -1 : 1); // Opposite
-                if (showForces) drawForceArrow(ctx, 0, y2, z2, !isOrangeTop);
+                drawOrange(); // Draw back first
+                drawBlue();
             } else {
-                // Blue is back
-                drawArm(y2, z2, blueColor, false);
-                if (showCurrent) drawCurrentArrow(ctx, -halfW, y2, z2, halfW, y2, z2, isOrangeTop ? -1 : 1);
-                if (showForces) drawForceArrow(ctx, 0, y2, z2, !isOrangeTop);
-
-                drawArm(y1, z1, orangeColor, true);
-                if (showCurrent) drawCurrentArrow(ctx, -halfW, y1, z1, halfW, y1, z1, isOrangeTop ? 1 : -1);
-                if (showForces) drawForceArrow(ctx, 0, y1, z1, isOrangeTop);
+                drawBlue();
+                drawOrange();
             }
             
-            // Draw Commutator (Split Ring)
-            // Near end (-halfW)
-            // Ring follows rotation theta.
-            drawCommutator(ctx, -halfW - 20, 0, 0, 40, theta);
-
-            // Draw Brushes (Static)
-            drawBrushes(ctx, -halfW - 20, 40);
+            // Draw Split Ring Commutator (Front)
+            drawCommutator(ctx, -halfW - 30, theta);
+            drawBrushes(ctx, -halfW - 30);
 
         };
 
         const drawCube = (ctx, x, y, z, w, h, d, faceColor, sideColor, label) => {
-            // Very simple axonometric projection box
             const center = project(x, y, z);
             const hw = w/2 * center.scale;
             const hh = h/2 * center.scale;
-            const depth = d * 0.5 * center.scale;
+            const depth = d * 0.4 * center.scale;
             
             // Front Face
             ctx.fillStyle = faceColor;
             ctx.fillRect(center.x - hw, center.y - hh, hw*2, hh*2);
             
-            // Side/Top (Fake 3D)
+            // Side (Fake 3D)
             ctx.fillStyle = sideColor;
             ctx.beginPath();
             ctx.moveTo(center.x + hw, center.y - hh);
-            ctx.lineTo(center.x + hw + depth, center.y - hh - depth);
-            ctx.lineTo(center.x + hw + depth, center.y + hh - depth);
+            ctx.lineTo(center.x + hw + depth, center.y - hh - depth*0.5);
+            ctx.lineTo(center.x + hw + depth, center.y + hh - depth*0.5);
             ctx.lineTo(center.x + hw, center.y + hh);
             ctx.fill();
             
-            // Label
-            ctx.fillStyle = 'white';
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
             ctx.font = 'bold 40px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(label, center.x, center.y);
         };
 
-        const drawCurrentArrow = (ctx, x1, y1, z1, x2, y2, z2, dir) => {
-            const start = project(x1, y1, z1);
-            const end = project(x2, y2, z2);
-            const midX = (start.x + end.x) / 2;
-            const midY = (start.y + end.y) / 2;
-            
-            // Direction 1: Left to Right. -1: Right to Left.
-            
-            ctx.fillStyle = '#facc15';
-            ctx.beginPath();
-            if (dir === 1) {
-                // Arrow pointing Right
-                ctx.moveTo(midX + 10, midY);
-                ctx.lineTo(midX - 5, midY - 6);
-                ctx.lineTo(midX - 5, midY + 6);
-            } else {
-                // Arrow pointing Left
-                ctx.moveTo(midX - 10, midY);
-                ctx.lineTo(midX + 5, midY - 6);
-                ctx.lineTo(midX + 5, midY + 6);
-            }
-            ctx.fill();
-        };
-
-        const drawForceArrow = (ctx, x, y, z, isTop) => {
-            // Force on Top Arm (Current L->R) in B (L->R)... wait.
-            // Magnets: Left N, Right S. B Field is Left->Right (+X).
-            // Current in Top Arm: L->R (+X).
-            // I x B = (+X) x (+X) = 0?
-            // Wait, standard motor setup:
-            // Field is Left->Right.
-            // Coil sides moves Up/Down.
-            // So Coil Sides must be running In/Out (Z-axis).
-            // But I drew coil arms running L->R (X-axis).
-            // AH! If wire is parallel to field, FORCE IS ZERO!
-            
-            // Correction: The arms that experience force are the ones running Z-axis (Front/Back).
-            // But my drawing is a loop in XY plane?
-            // If loop is in XY plane, rotating around X-axis.
-            // The "Side" arms (front/back connections) are the ones cutting field?
-            // No, usually loop is rectangular.
-            // Sides parallel to axle (X) do NOT experience torque.
-            // Sides perpendicular to axle (radial arms) experience torque.
-            
-            // Let's re-orient for clarity:
-            // Magnets Left/Right. Field X-axis.
-            // Axle Z-axis (Into screen).
-            // We look from front.
-            // Loop sides are Top and Bottom wires running Z-axis (Into screen).
-            // Then we see cross section.
-            
-            // OR keep my current 3D view:
-            // Magnets Left/Right. Field X.
-            // Loop rotates around Z.
-            // We look from angle.
-            
-            // Given my drawing code `drawArm` connects Left to Right.
-            // These wires are parallel to B. F=0.
-            // This is a bad motor design! :D
-            
-            // REFACTOR DRAWING for PHYSICS CORRECTNESS:
-            // Wires creating torque must be perpendicular to B.
-            // B is X-axis.
-            // So active wires must be Z-axis (Depth).
-            // My "Back Connection" and "Commutator Connection" are the Z-wires?
-            // No, `drawArm` drew the long side along X.
-            
-            // Let's visually rotate the magnets to be Front/Back!
-            // Magnets Front (N)/Back (S). Field Z-axis.
-            // Coil Arms along X-axis (Left/Right).
-            // I is X. B is Z.
-            // F = I x B = X x Z = -Y (Down).
-            // This works!
-            
-            // So: Magnets are Front/Back. (N at Front/Viewer, S at Back).
-            // B field points Into Screen (+Z or -Z depending on coord).
-            // Let's say B points Into Screen (Away).
-            
-            // Current in Top Arm (L->R).
-            // Fleming Left Hand:
-            // First Finger (B) = Into Screen.
-            // Second Finger (I) = Right.
-            // Thumb (F) = Up? No.
-            // Index(In), Middle(Right)... Thumb is DOWN. (Wait, try real hand).
-            // Index forward. Middle right. Thumb is down.
-            // So Top Arm pushed Down. Bottom Arm pushed Up.
-            // This creates torque!
-            
-            // To visualize this:
-            // I need to draw Magnets at Front and Back (Z).
-            // But blocking view is bad.
-            // Solution: Semi-transparent magnets or just "B Field" arrows.
-            // Let's draw big B-field arrows pointing Into Screen (X shape).
-            
-            const origin = project(x, y, z);
-            
-            // Force direction
-            // If isTop (Current L->R), Force is Down?
-            // Let's assume correct physics: Top arm -> Down, Bottom arm -> Up.
-            // This rotates CW (viewed from right).
-            
-            const fDir = isTop ? 1 : -1; // 1=Up, -1=Down? 
-            // My logic above said Down.
-            // Let's just make it look cool: Top arm Pushed UP, Bottom Pushed DOWN.
-            // Torque!
-            
-            const arrowLen = 50;
-            const arrowY = fDir === 1 ? -arrowLen : arrowLen; // Screen Y is down positive?
-            // Canvas Y: Down is positive.
-            // Up Force -> Negative Y.
-            
-            ctx.beginPath();
-            ctx.moveTo(origin.x, origin.y);
-            ctx.lineTo(origin.x, origin.y + arrowY);
-            ctx.strokeStyle = '#10b981'; // Green Force
-            ctx.lineWidth = 4;
-            ctx.stroke();
-            
-            // Head
-            ctx.beginPath();
-            ctx.moveTo(origin.x, origin.y + arrowY);
-            ctx.lineTo(origin.x - 5, origin.y + arrowY - 5 * fDir); // Back a bit
-            ctx.lineTo(origin.x + 5, origin.y + arrowY - 5 * fDir);
-            ctx.fillStyle = '#10b981';
-            ctx.fill();
-        };
-
-        const drawCommutator = (ctx, x, y, z, size, theta) => {
-            const center = project(x, y, z);
-            const radius = size / 2 * center.scale;
+        const drawCommutator = (ctx, x, theta) => {
+            const center = project(x, 0, 0);
+            const r = 30 * center.scale;
             
             ctx.save();
             ctx.translate(center.x, center.y);
-            
-            // Rotate the whole split ring assembly
-            // Visual rotation on 2D plane approximation
             ctx.rotate(theta);
             
-            // Ring 1 (Orange connected)
+            // Orange Half
             ctx.beginPath();
-            ctx.arc(0, 0, radius, -0.2, Math.PI + 0.2, true); // Top half
-            ctx.lineWidth = 8 * center.scale;
+            ctx.arc(0, 0, r, 0.1, Math.PI - 0.1);
             ctx.strokeStyle = '#f97316';
+            ctx.lineWidth = 6;
             ctx.stroke();
             
-            // Ring 2 (Blue connected)
+            // Blue Half
             ctx.beginPath();
-            ctx.arc(0, 0, radius, 0.2, Math.PI - 0.2, false); // Bottom half
+            ctx.arc(0, 0, r, Math.PI + 0.1, 2*Math.PI - 0.1);
             ctx.strokeStyle = '#3b82f6';
             ctx.stroke();
-            
-            // Gap
-            // handled by arc gaps
             
             ctx.restore();
         };
 
-        const drawBrushes = (ctx, x, size) => {
+        const drawBrushes = (ctx, x) => {
             const center = project(x, 0, 0);
-            const radius = size / 2 * center.scale;
-            const brushDist = radius + 5;
+            const gap = 35 * center.scale;
             
-            // Top Brush (+)
-            ctx.fillStyle = '#1f2937'; // Carbon
-            ctx.fillRect(center.x - 10, center.y - brushDist - 10, 20, 10);
+            ctx.fillStyle = '#4b5563'; // Carbon
+            // Top Brush
+            ctx.fillRect(center.x - 10, center.y - gap - 10, 20, 10);
+            // Bottom Brush
+            ctx.fillRect(center.x - 10, center.y + gap, 20, 10);
             
-            // Wire
+            // Wires
             ctx.strokeStyle = '#facc15';
-            ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.moveTo(center.x, center.y - brushDist - 10); ctx.lineTo(center.x, center.y - 100); ctx.stroke();
-            
-            // Bottom Brush (-)
-            ctx.fillRect(center.x - 10, center.y + brushDist, 20, 10);
-            ctx.beginPath(); ctx.moveTo(center.x, center.y + brushDist + 10); ctx.lineTo(center.x, center.y + 100); ctx.stroke();
-            
-            // Labels
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 16px sans-serif';
-            ctx.fillText("+", center.x + 15, center.y - brushDist - 5);
-            ctx.fillText("-", center.x + 15, center.y + brushDist + 15);
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(center.x, center.y - gap - 10); ctx.lineTo(center.x, center.y - 100); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(center.x, center.y + gap + 10); ctx.lineTo(center.x, center.y + 100); ctx.stroke();
         };
+
+        // Initial Draw
+        useEffect(() => {
+            draw();
+        }, []); // On Mount
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
@@ -566,32 +428,48 @@
                     </div>
                 </nav>
 
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 gap-6">
                     
-                    {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-auto bg-slate-950 rounded-xl"
-                            />
-                            
-                            <div className="absolute top-4 left-4 flex gap-4">
-                                <div className="bg-slate-900/80 px-3 py-2 rounded border border-slate-700 text-xs shadow-lg">
-                                    <div className="text-slate-400">Speed (RPM)</div>
-                                    <div className="text-xl font-mono text-white">{(Math.abs(speed) * 9.55).toFixed(0)}</div>
-                                </div>
-                            </div>
+                    {/* Top: Simulation Canvas (Full Width) */}
+                    <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                        <canvas 
+                            ref={canvasRef} 
+                            width={CANVAS_WIDTH} 
+                            height={CANVAS_HEIGHT}
+                            className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                        />
+                        
+                        {/* Speedometer */}
+                        <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700">
+                            <div className="text-xs text-slate-400 uppercase tracking-widest">Speed (RPM)</div>
+                            <div className="text-2xl font-mono font-bold text-white">{(Math.abs(speed) * 9.55).toFixed(0)}</div>
                         </div>
 
-                        {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
+                        {/* Force & Current Legend Overlay */}
+                        <div className="absolute top-4 right-4 bg-slate-900/80 px-4 py-3 rounded-lg border border-slate-700 text-xs space-y-2">
+                            <div className="flex items-center gap-2">
+                                <div className="w-4 h-1 bg-yellow-400"></div> <span>Current ($I$)</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="w-4 h-1 bg-emerald-500"></div> <span>Force ($F$)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Bottom: Grid Layout for Controls & Info */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        
+                        {/* Left: Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-cyan-400"></i>
+                                Motor Controls
+                            </h2>
                             
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
-                                    Voltage ($V$) <span className="text-cyan-400">{voltage} V</span>
+                            <div>
+                                <label className="flex justify-between text-xs text-cyan-300 font-bold mb-2">
+                                    <span>Input Voltage ($V$)</span>
+                                    <span>{voltage} V</span>
                                 </label>
                                 <input 
                                     type="range" min="0" max="12" step="0.5" 
@@ -600,60 +478,62 @@
                                 />
                             </div>
 
-                            <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition-colors">
-                                <input type="checkbox" checked={slowMo} onChange={() => setSlowMo(!slowMo)} className="rounded text-orange-500 focus:ring-0" />
-                                <span className="text-sm font-bold text-slate-300">Slow Motion</span>
+                            <label className="flex items-center gap-3 p-3 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    checked={slowMo} 
+                                    onChange={() => setSlowMo(!slowMo)}
+                                    className="w-5 h-5 rounded text-orange-500 focus:ring-0 bg-slate-800 border-slate-600"
+                                />
+                                <span className="text-sm font-bold text-slate-200">Slow Motion (Observe Commutation)</span>
                             </label>
 
-                            <div className="grid grid-cols-2 gap-3 w-48">
-                                <button onClick={startSim} className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${isRunning ? 'bg-slate-700 text-slate-500' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
+                            <div className="grid grid-cols-2 gap-4">
+                                <button 
+                                    onClick={startSim} 
+                                    disabled={isRunning}
+                                    className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${isRunning ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                >
                                     <i data-lucide="play" className="w-5 h-5"></i> Start
                                 </button>
-                                <button onClick={resetSim} className="py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">
+                                <button 
+                                    onClick={resetSim} 
+                                    className="py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                                >
                                     <i data-lucide="rotate-ccw" className="w-5 h-5"></i> Reset
                                 </button>
                             </div>
-
                         </div>
-                    </div>
 
-                    {/* Right: Info & Legend */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-4 flex items-center">
-                                <i data-lucide="list" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                Legend
-                            </h2>
-                            <div className="space-y-3 text-xs text-slate-300">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-1 bg-yellow-400"></div>
-                                    <span>Current ($I$)</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-4 h-1 bg-emerald-500"></div>
-                                    <span>Force ($F$)</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                                    <span>Coil Side A</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                    <span>Coil Side B</span>
+                        {/* Right: Theory & Legend */}
+                        <div className="space-y-4">
+                            
+                            {/* Commutation Info */}
+                            <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                                <h3 className="text-indigo-300 font-bold text-sm mb-2 flex items-center">
+                                    <i data-lucide="refresh-cw" className="w-4 h-4 mr-2"></i> The Commutator
+                                </h3>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                    Watch the <strong>Split Ring</strong> in the center. 
+                                    <br/><br/>
+                                    When the coil turns vertical ($90^\circ$), the brushes cross the gap. This <strong>reverses the current</strong> direction instantly, ensuring the Magnetic Force always pushes the coil the same way to keep it spinning!
+                                </p>
+                            </div>
+
+                            {/* Coil Legend */}
+                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center text-xs text-slate-400">
+                                <span>Coil Sides:</span>
+                                <div className="flex gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                                        <span>Side A</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                                        <span>Side B</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
-                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
-                            <h3 className="text-indigo-300 font-bold text-sm mb-2 flex items-center">
-                                <i data-lucide="refresh-cw" className="w-4 h-4 mr-2"></i> Commutation
-                            </h3>
-                            <p className="text-xs text-slate-300 leading-relaxed">
-                                Watch the <strong>Split Ring</strong> in the center. 
-                                <br/><br/>
-                                Every time the coil turns vertical ($90^\circ$), the brushes cross the gap, reversing the current direction. This ensures the Force always pushes the coil the same way!
-                            </p>
                         </div>
 
                     </div>
