@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plane Mirror Ray Tracing | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .canvas-container { cursor: default; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 500;
+    const MIRROR_X = CANVAS_WIDTH / 2;
+    const SCALE = 50; // Pixels per unit distance
+
+    const App = () => {
+        // --- State ---
+        // Object Position (Left side)
+        const [objPos, setObjPos] = useState({ x: 200, y: 250 });
+        // Eye Position (Right side?? No, reflection is seen from same side usually? 
+        // Wait, Plane Mirror: Object is in front. Eye is in front. Image is behind.
+        // Let's put Mirror in Middle. Left is "Real World", Right is "Virtual World".
+        // Object is at x < MIRROR_X. Eye is at x < MIRROR_X.
+        // Image will be at x > MIRROR_X.
+        
+        const [eyePos, setEyePos] = useState({ x: 100, y: 100 }); 
+        
+        const [showVirtualRays, setShowVirtualRays] = useState(true);
+        const [showNormal, setShowNormal] = useState(true);
+        const [showImage, setShowImage] = useState(true);
+
+        const [dragging, setDragging] = useState(null); // 'obj' or 'eye'
+
+        const canvasRef = useRef(null);
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Check distance to Object
+            if (Math.hypot(x - objPos.x, y - objPos.y) < 30) {
+                setDragging('obj');
+                return;
+            }
+            // Check distance to Eye
+            if (Math.hypot(x - eyePos.x, y - eyePos.y) < 30) {
+                setDragging('eye');
+                return;
+            }
+        };
+
+        const handleMouseMove = (e) => {
+            if (!dragging) return;
+            const rect = canvasRef.current.getBoundingClientRect();
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+
+            // Constrain to Left Side (Real World)
+            if (x > MIRROR_X - 20) x = MIRROR_X - 20;
+            if (x < 20) x = 20;
+            if (y < 20) y = 20;
+            if (y > CANVAS_HEIGHT - 20) y = CANVAS_HEIGHT - 20;
+
+            if (dragging === 'obj') setObjPos({ x, y });
+            if (dragging === 'eye') setEyePos({ x, y });
+        };
+
+        const handleMouseUp = () => {
+            setDragging(null);
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Backgrounds
+            // Real World (Left)
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, MIRROR_X, CANVAS_HEIGHT);
+            // Virtual World (Right) - Slightly lighter/different tint
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(MIRROR_X, 0, CANVAS_WIDTH - MIRROR_X, CANVAS_HEIGHT);
+            
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.font = 'bold 40px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("REAL", MIRROR_X / 2, CANVAS_HEIGHT / 2);
+            ctx.fillText("VIRTUAL", MIRROR_X + (CANVAS_WIDTH - MIRROR_X) / 2, CANVAS_HEIGHT / 2);
+
+            // 2. Draw Mirror
+            ctx.strokeStyle = '#94a3b8'; // Silver
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(MIRROR_X, 0);
+            ctx.lineTo(MIRROR_X, CANVAS_HEIGHT);
+            ctx.stroke();
+            
+            // Mirror hatch marks on virtual side
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1;
+            for (let y = 0; y < CANVAS_HEIGHT; y += 20) {
+                ctx.beginPath();
+                ctx.moveTo(MIRROR_X, y);
+                ctx.lineTo(MIRROR_X + 10, y + 10);
+                ctx.stroke();
+            }
+
+            // 3. Calculate Image Position
+            // Plane mirror: Image dist = Object dist
+            const dist = MIRROR_X - objPos.x;
+            const imgX = MIRROR_X + dist;
+            const imgY = objPos.y;
+
+            // 4. Ray Tracing Logic
+            // We need to draw rays from Object to Eye, bouncing off Mirror.
+            // The trick: The ray appears to come from the Image!
+            // So we draw a line from Image to Eye. The intersection with Mirror is the reflection point.
+            
+            // Ray 1: Top of eye pupil? Let's just use center of eye for simplicity.
+            // Let's draw 2 rays to simulate "cone" of vision if needed, but 1 is clearer for geometry.
+            // Let's do 2 rays: Top of object to Eye, Bottom of object to Eye? 
+            // Or just Point Object?
+            // Simple Point Object (Candle Flame) is best.
+            
+            // Intersection Point on Mirror
+            // Line from (imgX, imgY) to (eyePos.x, eyePos.y)
+            // Slope m = (eyeY - imgY) / (eyeX - imgX)
+            // x = MIRROR_X
+            // y - imgY = m * (MIRROR_X - imgX)
+            // y = imgY + m * (MIRROR_X - imgX)
+            
+            const m = (eyePos.y - imgY) / (eyePos.x - imgX);
+            const hitY = imgY + m * (MIRROR_X - imgX);
+
+            // Check if hit point is on screen (Mirror is infinite vertically here)
+            // Draw Virtual Ray (Image to Mirror)
+            if (showVirtualRays && showImage) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#ef4444'; // Red for virtual
+                ctx.setLineDash([5, 5]);
+                ctx.lineWidth = 2;
+                ctx.moveTo(imgX, imgY);
+                ctx.lineTo(MIRROR_X, hitY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Draw Reflected Ray (Mirror to Eye)
+            ctx.beginPath();
+            ctx.strokeStyle = '#facc15'; // Yellow beam
+            ctx.lineWidth = 3;
+            ctx.moveTo(MIRROR_X, hitY);
+            ctx.lineTo(eyePos.x, eyePos.y);
+            ctx.stroke();
+            
+            // Draw Incident Ray (Object to Mirror)
+            ctx.beginPath();
+            ctx.moveTo(objPos.x, objPos.y);
+            ctx.lineTo(MIRROR_X, hitY);
+            ctx.stroke();
+            
+            // Draw Normal at hit point
+            if (showNormal) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#cbd5e1';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 2]);
+                ctx.moveTo(MIRROR_X - 50, hitY);
+                ctx.lineTo(MIRROR_X + 50, hitY); // Just horizontal line
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Mark angles? maybe too cluttered.
+            }
+
+            // 5. Draw Objects
+            
+            // Object (Candle)
+            drawCandle(ctx, objPos.x, objPos.y, 1.0);
+            
+            // Image (Ghost Candle)
+            if (showImage) {
+                drawCandle(ctx, imgX, imgY, 0.5); // Semi-transparent
+            }
+
+            // Eye
+            drawEye(ctx, eyePos.x, eyePos.y);
+            
+            // Measurements
+            // Draw distance lines
+            const measureY = Math.max(objPos.y, 450) + 20; // Bottom area
+            
+            // Object Distance
+            drawDimension(ctx, objPos.x, measureY, MIRROR_X, measureY, '#3b82f6', `do = ${dist.toFixed(0)}`);
+            
+            // Image Distance
+            if (showImage) {
+                drawDimension(ctx, MIRROR_X, measureY, imgX, measureY, '#ef4444', `di = ${dist.toFixed(0)}`);
+            }
+
+        };
+
+        const drawCandle = (ctx, x, y, alpha) => {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.globalAlpha = alpha;
+            
+            // Body
+            ctx.fillStyle = '#fde047'; // Wax
+            ctx.fillRect(-10, 0, 20, 40);
+            
+            // Wick
+            ctx.fillStyle = '#1f2937';
+            ctx.fillRect(-1, -5, 2, 5);
+            
+            // Flame (The point source)
+            ctx.beginPath();
+            ctx.arc(0, -10, 8, 0, Math.PI*2);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, -10, 4, 0, Math.PI*2);
+            ctx.fillStyle = '#facc15';
+            ctx.fill();
+            
+            // Label
+            if (alpha === 1) {
+                ctx.fillStyle = 'white';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Object', -15, 55);
+            } else {
+                ctx.fillStyle = '#ef4444';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Image', -15, 55);
+            }
+
+            ctx.restore();
+        };
+
+        const drawEye = (ctx, x, y) => {
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Eye shape
+            ctx.beginPath();
+            ctx.moveTo(-15, 0);
+            ctx.quadraticCurveTo(0, -10, 15, 0);
+            ctx.quadraticCurveTo(0, 10, -15, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#334155';
+            ctx.stroke();
+            
+            // Pupil (looking at mirror)
+            // Simple logic: look right
+            ctx.beginPath();
+            ctx.arc(5, 0, 5, 0, Math.PI*2);
+            ctx.fillStyle = '#3b82f6';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(5, 0, 2, 0, Math.PI*2);
+            ctx.fillStyle = '#000';
+            ctx.fill();
+
+            ctx.fillStyle = 'white';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('Eye', -10, 25);
+
+            ctx.restore();
+        };
+
+        const drawDimension = (ctx, x1, y1, x2, y2, color, label) => {
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            // Line
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            // End caps
+            ctx.moveTo(x1, y1 - 5); ctx.lineTo(x1, y1 + 5);
+            ctx.moveTo(x2, y2 - 5); ctx.lineTo(x2, y2 + 5);
+            ctx.stroke();
+            
+            // Label
+            ctx.fillStyle = color;
+            ctx.font = '12px monospace';
+            const midX = (x1 + x2) / 2;
+            ctx.fillText(label, midX - 25, y1 - 5);
+        };
+
+        useEffect(() => {
+            draw();
+        }, [objPos, eyePos, showVirtualRays, showNormal, showImage]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        const reset = () => {
+            setObjPos({ x: 200, y: 250 });
+            setEyePos({ x: 100, y: 100 });
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="mirror" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Plane Mirror Ray Tracing</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Optics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-9 flex flex-col gap-6">
+                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[500px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl canvas-container"
+                            />
+                            
+                            <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300 pointer-events-none">
+                                Drag the <strong>Candle</strong> or <strong>Eye</strong> to move them.
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Controls & Info */}
+                    <div className="lg:col-span-3 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            <h2 className="text-white font-bold mb-2 flex items-center">
+                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Visibility
+                            </h2>
+                            
+                            <div className="space-y-3">
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <span className="text-sm font-medium text-slate-300">Virtual Rays</span>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showVirtualRays} 
+                                        onChange={() => setShowVirtualRays(!showVirtualRays)}
+                                        className="w-5 h-5 rounded border-slate-500 text-indigo-600 focus:ring-0"
+                                    />
+                                </label>
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <span className="text-sm font-medium text-slate-300">Normal Line</span>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showNormal} 
+                                        onChange={() => setShowNormal(!showNormal)}
+                                        className="w-5 h-5 rounded border-slate-500 text-indigo-600 focus:ring-0"
+                                    />
+                                </label>
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <span className="text-sm font-medium text-slate-300">Show Image</span>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showImage} 
+                                        onChange={() => setShowImage(!showImage)}
+                                        className="w-5 h-5 rounded border-slate-500 text-indigo-600 focus:ring-0"
+                                    />
+                                </label>
+                            </div>
+
+                            <button onClick={reset} className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors flex items-center justify-center gap-2">
+                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                            </button>
+                        </div>
+
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                            <h3 className="text-indigo-300 font-bold text-sm mb-3 flex items-center">
+                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> Key Concept
+                            </h3>
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                                The eye thinks light travels in straight lines. When the reflected ray enters the eye, the brain traces it <strong>backwards</strong> (the dotted red line).
+                                <br/><br/>
+                                The point where these virtual rays converge is where we "see" the image.
+                            </p>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
