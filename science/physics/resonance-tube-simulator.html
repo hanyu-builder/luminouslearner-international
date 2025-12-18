@@ -39,15 +39,21 @@
 <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    const CANVAS_WIDTH = 400;
-    const CANVAS_HEIGHT = 600;
-    const TUBE_X = CANVAS_WIDTH / 2;
-    const TUBE_WIDTH = 100;
+    // Adjusted for Horizontal Layout
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 400;
+    
+    // Tube Geometry
+    const TUBE_START_X = 150; // Space for speaker on left
+    const TUBE_Y = CANVAS_HEIGHT / 2;
+    const TUBE_DIAMETER = 120;
+    const MAX_TUBE_LENGTH_PX = 600; // Max visual length
+    
     const SPEED_OF_SOUND = 343; // m/s
 
     const App = () => {
         // --- State ---
-        const [frequency, setFrequency] = useState(343); // Hz (lambda = 1m for simplicity)
+        const [frequency, setFrequency] = useState(343); // Hz
         const [tubeLength, setTubeLength] = useState(0.5); // meters
         const [isPlaying, setIsPlaying] = useState(false);
         const [soundEnabled, setSoundEnabled] = useState(false);
@@ -70,22 +76,21 @@
         // --- Physics Logic ---
         useEffect(() => {
             // Calculate Resonance
-            // For closed tube: Resonance at L = n * lambda / 4, where n = 1, 3, 5...
+            // Closed tube (one end open, one closed): Resonance at L = n * lambda / 4 (n=odd)
             const lambda = SPEED_OF_SOUND / frequency;
             const quarterLambda = lambda / 4;
             
-            // Check distance to nearest odd integer multiple of quarterLambda
+            // Check harmonic
             const n_float = tubeLength / quarterLambda;
-            // Find nearest odd integer
             let n_odd = Math.round((n_float - 1) / 2) * 2 + 1;
             if (n_odd < 1) n_odd = 1;
 
             const diff = Math.abs(tubeLength - (n_odd * quarterLambda));
             
-            // Gaussian resonance profile
-            const width = 0.05 * lambda; // Tolerance
+            // Resonance profile
+            const width = 0.05 * lambda; 
             let factor = Math.exp(-(diff * diff) / (2 * width * width));
-            if (factor < 0.01) factor = 0.01; // Min volume
+            if (factor < 0.01) factor = 0.01;
             
             setResonanceFactor(factor);
             
@@ -97,7 +102,6 @@
 
             // Audio Update
             if (gainRef.current) {
-                // Base volume 0.1, Max volume 0.5 at resonance
                 const targetVol = 0.05 + 0.3 * factor;
                 gainRef.current.gain.setTargetAtTime(soundEnabled ? targetVol : 0, audioCtxRef.current.currentTime, 0.1);
             }
@@ -147,13 +151,7 @@
 
         // --- Animation Loop ---
         const loop = (timestamp) => {
-            const dt = (timestamp - timeRef.current) / 1000;
-            // timeRef.current = timestamp; // Don't reset time base for wave phase continuity?
-            // Actually wave phase w*t needs continuous t.
-            // Let's just use timestamp as absolute time
-            
             draw(timestamp / 1000);
-            
             if (isPlaying) {
                 requestRef.current = requestAnimationFrame(loop);
             }
@@ -165,132 +163,136 @@
 
             const width = CANVAS_WIDTH;
             const height = CANVAS_HEIGHT;
-            const scaleY = 400; // pixels per meter length
             
-            const tubePixelHeight = tubeLength * scaleY;
-            const tubeTopY = 100;
-            const tubeBottomY = tubeTopY + tubePixelHeight;
+            // Map physical length (m) to pixels
+            // Let's say max length 1.2m fits in MAX_TUBE_LENGTH_PX
+            const scaleX = MAX_TUBE_LENGTH_PX / 1.2; 
+            const tubePixelLen = tubeLength * scaleX;
 
             ctx.clearRect(0, 0, width, height);
 
-            // 1. Draw Speaker
-            const speakerY = tubeTopY - 40;
+            // 1. Draw Speaker (Left)
+            const speakerX = TUBE_START_X - 20;
             ctx.fillStyle = '#475569';
+            // Speaker Box
             ctx.beginPath();
-            ctx.moveTo(TUBE_X - 40, speakerY);
-            ctx.lineTo(TUBE_X + 40, speakerY);
-            ctx.lineTo(TUBE_X + 20, speakerY + 30);
-            ctx.lineTo(TUBE_X - 20, speakerY + 30);
+            ctx.moveTo(speakerX, TUBE_Y - 50);
+            ctx.lineTo(speakerX - 60, TUBE_Y - 50);
+            ctx.lineTo(speakerX - 60, TUBE_Y + 50);
+            ctx.lineTo(speakerX, TUBE_Y + 50);
+            // Cone
+            ctx.lineTo(speakerX + 20, TUBE_Y + 70); // Flare
+            ctx.lineTo(speakerX + 20, TUBE_Y - 70);
+            ctx.closePath();
             ctx.fill();
+            
             // Diaphragm vibration
-            const diaphragmY = speakerY + 30 + Math.sin(t * frequency * 0.1) * 3; // Visual vibration only
+            const diaphragmX = speakerX + 20 + Math.sin(t * frequency * 0.1) * 3;
             ctx.strokeStyle = '#94a3b8';
             ctx.lineWidth = 4;
             ctx.beginPath();
-            ctx.moveTo(TUBE_X - 20, diaphragmY);
-            ctx.lineTo(TUBE_X + 20, diaphragmY);
+            ctx.moveTo(diaphragmX, TUBE_Y - 60);
+            ctx.lineTo(diaphragmX, TUBE_Y + 60);
             ctx.stroke();
 
-            // 2. Draw Tube
+            // 2. Draw Tube (Horizontal)
+            const tubeTop = TUBE_Y - TUBE_DIAMETER / 2;
+            const tubeBottom = TUBE_Y + TUBE_DIAMETER / 2;
+            
             ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeTopY, TUBE_WIDTH, tubePixelHeight);
+            // Draw full length tube container
+            ctx.fillRect(TUBE_START_X, tubeTop, MAX_TUBE_LENGTH_PX + 20, TUBE_DIAMETER);
             
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 4;
             ctx.beginPath();
-            // Left Wall
-            ctx.moveTo(TUBE_X - TUBE_WIDTH/2, tubeTopY);
-            ctx.lineTo(TUBE_X - TUBE_WIDTH/2, tubeBottomY);
-            // Right Wall
-            ctx.moveTo(TUBE_X + TUBE_WIDTH/2, tubeTopY);
-            ctx.lineTo(TUBE_X + TUBE_WIDTH/2, tubeBottomY);
+            // Top Wall
+            ctx.moveTo(TUBE_START_X, tubeTop);
+            ctx.lineTo(TUBE_START_X + MAX_TUBE_LENGTH_PX + 20, tubeTop);
+            // Bottom Wall
+            ctx.moveTo(TUBE_START_X, tubeBottom);
+            ctx.lineTo(TUBE_START_X + MAX_TUBE_LENGTH_PX + 20, tubeBottom);
             ctx.stroke();
 
-            // Piston / Water Level
-            ctx.fillStyle = '#0891b2'; // Cyan water
-            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeBottomY, TUBE_WIDTH, height - tubeBottomY);
-            ctx.fillStyle = '#06b6d4'; // Surface
-            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeBottomY, TUBE_WIDTH, 10);
-
-
-            // 3. Draw Waves
-            // Standing wave: y(x,t) = A sin(kx) cos(wt)
-            // Here x is vertical distance from closed end (Node)
-            // But usually we measure x from open end.
-            // Closed end (Bottom) is always a Displacement NODE (Amp=0).
-            // Open end (Top) is an ANTINODE (Amp=Max) ONLY at resonance.
-            // General case: Bottom is Node. Source is forcing at top.
+            // 3. Draw Piston (Plunger)
+            const pistonX = TUBE_START_X + tubePixelLen;
             
-            // Simplified visual: 
-            // Wave envelope shape: sin(k * dist_from_bottom)
-            // k = 2PI / lambda
+            // Rod
+            ctx.fillStyle = '#64748b';
+            ctx.fillRect(pistonX, TUBE_Y - 5, MAX_TUBE_LENGTH_PX - tubePixelLen + 50, 10); // Rod extending right
+            
+            // Head
+            ctx.fillStyle = '#0891b2'; // Cyan Piston
+            ctx.fillRect(pistonX, tubeTop + 2, 20, TUBE_DIAMETER - 4);
+            ctx.fillStyle = '#06b6d4';
+            ctx.fillRect(pistonX, tubeTop + 2, 5, TUBE_DIAMETER - 4); // Surface detail
+
+            // Handle at far right
+            ctx.fillStyle = '#334155';
+            ctx.beginPath();
+            ctx.arc(TUBE_START_X + MAX_TUBE_LENGTH_PX + 40, TUBE_Y, 15, 0, Math.PI*2);
+            ctx.fill();
+
+            // 4. Draw Waves
             const lambda = SPEED_OF_SOUND / frequency;
             const k = (2 * Math.PI) / lambda;
             
-            // The amplitude at any point y (measured from top)
-            // Distance from bottom d = tubeLength - (y_sim)
-            // Envelope = sin(k * d)
-            // But this assumes perfect resonance boundary condition at bottom.
-            // Yes, bottom is always a node (hard boundary).
+            // Piston (Right) is always a DISPLACEMENT NODE (Zero movement)
+            // Speaker (Left) is source.
+            // Measure x from Piston (Right) to Left for standing wave shape sin(kx)
+            // pistonX is x=0 for the wave equation frame
             
-            // Draw Wave Envelope
             if (showWave) {
                 ctx.beginPath();
                 ctx.strokeStyle = `rgba(244, 63, 94, ${0.3 + resonanceFactor * 0.7})`; // Red
                 ctx.lineWidth = 2;
                 
-                // Max visual amplitude
-                const maxAmp = TUBE_WIDTH / 2 - 5;
+                const maxAmp = TUBE_DIAMETER / 2 - 10;
                 
-                // Draw left and right envelopes
-                for (let i = 0; i <= tubePixelHeight; i+=2) {
-                    const y = tubeTopY + i;
-                    const distFromBottomM = (tubePixelHeight - i) / scaleY;
+                // Top Envelope
+                for (let x = 0; x <= tubePixelLen; x+=2) {
+                    const screenX = pistonX - x; // Drawing from piston leftwards
+                    const distFromNodeM = x / scaleX; // Distance from closed end in meters
                     
-                    // Standing wave shape relative to bottom node
-                    // Amp scaled by resonance factor to show "loudness"
-                    // Ideally off-resonance amplitude is small
-                    const amp = Math.sin(k * distFromBottomM) * (10 + resonanceFactor * maxAmp);
+                    // Standing wave shape relative to closed end node
+                    const amp = Math.sin(k * distFromNodeM) * (10 + resonanceFactor * maxAmp);
                     
-                    if (i===0) ctx.moveTo(TUBE_X - amp, y);
-                    else ctx.lineTo(TUBE_X - amp, y);
+                    if (x===0) ctx.moveTo(screenX, TUBE_Y - amp);
+                    else ctx.lineTo(screenX, TUBE_Y - amp);
                 }
                 ctx.stroke();
                 
+                // Bottom Envelope
                 ctx.beginPath();
-                for (let i = 0; i <= tubePixelHeight; i+=2) {
-                    const y = tubeTopY + i;
-                    const distFromBottomM = (tubePixelHeight - i) / scaleY;
-                    const amp = Math.sin(k * distFromBottomM) * (10 + resonanceFactor * maxAmp);
+                for (let x = 0; x <= tubePixelLen; x+=2) {
+                    const screenX = pistonX - x;
+                    const distFromNodeM = x / scaleX;
+                    const amp = Math.sin(k * distFromNodeM) * (10 + resonanceFactor * maxAmp);
                     
-                    if (i===0) ctx.moveTo(TUBE_X + amp, y);
-                    else ctx.lineTo(TUBE_X + amp, y);
+                    if (x===0) ctx.moveTo(screenX, TUBE_Y + amp);
+                    else ctx.lineTo(screenX, TUBE_Y + amp);
                 }
                 ctx.stroke();
             }
 
-            // 4. Draw Particles (Air molecules)
+            // 5. Draw Particles (Longitudinal)
             if (showParticles) {
-                const numParticles = 200;
+                const numParticles = 300;
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
                 
-                // Use a seeded random or fixed set to avoid jitter?
-                // Calculate displacement for each particle based on its rest position
-                
                 for (let i = 0; i < numParticles; i++) {
-                    // Rest position (distributed vertically)
-                    const restY_m = (i / numParticles) * tubeLength;
-                    const distFromBottom_m = tubeLength - restY_m;
+                    // Rest position (distributed horizontally)
+                    const restX_m = (i / numParticles) * tubeLength;
+                    // Distance from closed end (Right)
+                    const distFromClosed_m = tubeLength - restX_m;
                     
-                    // Displacement Node at bottom means particles don't move there.
-                    // Displacement Antinode means max movement.
-                    // Disp = A * sin(k * distFromBottom) * cos(wt)
+                    // Standing wave displacement
+                    const standingAmp = Math.sin(k * distFromClosed_m) * (5 + resonanceFactor * 30); 
+                    const instantaneousDisp = standingAmp * Math.cos(2 * Math.PI * frequency * t * 0.05); // Visual speed scale
                     
-                    const standingAmp = Math.sin(k * distFromBottom_m) * (5 + resonanceFactor * 20); // pixels
-                    const instantaneousDisp = standingAmp * Math.cos(2 * Math.PI * frequency * t * 0.05); // Slow down time for visual
-                    
-                    const yPx = tubeTopY + (restY_m * scaleY) + instantaneousDisp;
-                    const xPx = TUBE_X + ((i * 1327) % (TUBE_WIDTH - 10)) - (TUBE_WIDTH/2 - 5); // Pseudo random X
+                    const xPx = TUBE_START_X + (restX_m * scaleX) + instantaneousDisp;
+                    // Randomize Y slightly to fill tube
+                    const yPx = TUBE_Y + ((i * 1327) % (TUBE_DIAMETER - 10)) - (TUBE_DIAMETER/2 - 5);
                     
                     ctx.beginPath();
                     ctx.arc(xPx, yPx, 2, 0, Math.PI*2);
@@ -298,17 +300,23 @@
                 }
             }
             
-            // 5. Ruler
+            // 6. Ruler
             ctx.fillStyle = '#64748b';
             ctx.font = '10px monospace';
-            ctx.textAlign = 'right';
+            ctx.textAlign = 'center';
+            // Draw ticks along the bottom
+            const rulerY = tubeBottom + 10;
+            ctx.beginPath();
+            ctx.moveTo(TUBE_START_X, rulerY);
+            ctx.lineTo(TUBE_START_X + MAX_TUBE_LENGTH_PX, rulerY);
+            ctx.stroke();
+            
             for (let m = 0; m <= 1.2; m += 0.1) {
-                const y = tubeTopY + m * scaleY;
-                if (y > height) break;
-                ctx.fillRect(TUBE_X - TUBE_WIDTH/2 - 10, y, 10, 1);
-                ctx.fillText(m.toFixed(1) + 'm', TUBE_X - TUBE_WIDTH/2 - 15, y + 3);
+                const x = TUBE_START_X + m * scaleX;
+                if (x > TUBE_START_X + MAX_TUBE_LENGTH_PX) break;
+                ctx.fillRect(x, rulerY, 1, 5);
+                ctx.fillText(m.toFixed(1) + 'm', x, rulerY + 15);
             }
-
         };
 
         useEffect(() => {
@@ -319,7 +327,7 @@
                 draw(0); // Static draw
             }
             return () => cancelAnimationFrame(requestRef.current);
-        }, [isPlaying, frequency, tubeLength, showParticles, showWave, resonanceFactor]); // Re-bind loop vars
+        }, [isPlaying, frequency, tubeLength, showParticles, showWave, resonanceFactor]); 
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
@@ -349,7 +357,7 @@
 
                 <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
                     
-                    {/* Left: Controls */}
+                    {/* Left: Controls (Moved to Left for better flow) */}
                     <div className="lg:col-span-4 space-y-6">
                         
                         <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-8">
@@ -454,14 +462,14 @@
 
                     {/* Right: Simulation Canvas */}
                     <div className="lg:col-span-8 flex flex-col gap-6">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[600px] flex justify-center">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[600px] flex flex-col justify-center">
                             <canvas 
                                 ref={canvasRef} 
                                 width={CANVAS_WIDTH} 
                                 height={CANVAS_HEIGHT}
-                                className="h-full w-auto object-contain rounded-xl"
+                                className="h-auto w-full object-contain rounded-xl"
                             />
-                            <div className="absolute top-4 right-4 text-xs text-slate-500 font-mono pointer-events-none">
+                            <div className="absolute top-4 right-4 text-xs text-slate-500 font-mono pointer-events-none bg-slate-900/80 px-2 py-1 rounded">
                                 v = {SPEED_OF_SOUND} m/s
                             </div>
                         </div>
