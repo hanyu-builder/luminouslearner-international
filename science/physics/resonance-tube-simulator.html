@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resonance Tube Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-cyan::-webkit-slider-thumb { background: #06b6d4; }
+        .thumb-rose::-webkit-slider-thumb { background: #f43f5e; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 400;
+    const CANVAS_HEIGHT = 600;
+    const TUBE_X = CANVAS_WIDTH / 2;
+    const TUBE_WIDTH = 100;
+    const SPEED_OF_SOUND = 343; // m/s
+
+    const App = () => {
+        // --- State ---
+        const [frequency, setFrequency] = useState(343); // Hz (lambda = 1m for simplicity)
+        const [tubeLength, setTubeLength] = useState(0.5); // meters
+        const [isPlaying, setIsPlaying] = useState(false);
+        const [soundEnabled, setSoundEnabled] = useState(false);
+        const [showParticles, setShowParticles] = useState(true);
+        const [showWave, setShowWave] = useState(true);
+
+        // Computed
+        const [resonanceFactor, setResonanceFactor] = useState(0);
+        const [harmonic, setHarmonic] = useState(null);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const timeRef = useRef(0);
+        
+        // Audio
+        const audioCtxRef = useRef(null);
+        const oscRef = useRef(null);
+        const gainRef = useRef(null);
+
+        // --- Physics Logic ---
+        useEffect(() => {
+            // Calculate Resonance
+            // For closed tube: Resonance at L = n * lambda / 4, where n = 1, 3, 5...
+            const lambda = SPEED_OF_SOUND / frequency;
+            const quarterLambda = lambda / 4;
+            
+            // Check distance to nearest odd integer multiple of quarterLambda
+            const n_float = tubeLength / quarterLambda;
+            // Find nearest odd integer
+            let n_odd = Math.round((n_float - 1) / 2) * 2 + 1;
+            if (n_odd < 1) n_odd = 1;
+
+            const diff = Math.abs(tubeLength - (n_odd * quarterLambda));
+            
+            // Gaussian resonance profile
+            const width = 0.05 * lambda; // Tolerance
+            let factor = Math.exp(-(diff * diff) / (2 * width * width));
+            if (factor < 0.01) factor = 0.01; // Min volume
+            
+            setResonanceFactor(factor);
+            
+            if (factor > 0.8) {
+                setHarmonic(n_odd);
+            } else {
+                setHarmonic(null);
+            }
+
+            // Audio Update
+            if (gainRef.current) {
+                // Base volume 0.1, Max volume 0.5 at resonance
+                const targetVol = 0.05 + 0.3 * factor;
+                gainRef.current.gain.setTargetAtTime(soundEnabled ? targetVol : 0, audioCtxRef.current.currentTime, 0.1);
+            }
+            if (oscRef.current) {
+                oscRef.current.frequency.setTargetAtTime(frequency, audioCtxRef.current.currentTime, 0.1);
+            }
+
+        }, [frequency, tubeLength, soundEnabled]);
+
+        // --- Audio System ---
+        const toggleAudio = () => {
+            if (!audioCtxRef.current) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtxRef.current = new AudioContext();
+                
+                const osc = audioCtxRef.current.createOscillator();
+                const gain = audioCtxRef.current.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.value = frequency;
+                gain.gain.value = 0;
+                
+                osc.connect(gain);
+                gain.connect(audioCtxRef.current.destination);
+                osc.start();
+                
+                oscRef.current = osc;
+                gainRef.current = gain;
+            }
+            
+            if (audioCtxRef.current.state === 'suspended') {
+                audioCtxRef.current.resume();
+            }
+            
+            setSoundEnabled(!soundEnabled);
+        };
+
+        const toggleSim = () => {
+            setIsPlaying(!isPlaying);
+            if (!isPlaying) {
+                timeRef.current = performance.now();
+                requestRef.current = requestAnimationFrame(loop);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+            }
+        };
+
+        // --- Animation Loop ---
+        const loop = (timestamp) => {
+            const dt = (timestamp - timeRef.current) / 1000;
+            // timeRef.current = timestamp; // Don't reset time base for wave phase continuity?
+            // Actually wave phase w*t needs continuous t.
+            // Let's just use timestamp as absolute time
+            
+            draw(timestamp / 1000);
+            
+            if (isPlaying) {
+                requestRef.current = requestAnimationFrame(loop);
+            }
+        };
+
+        const draw = (t) => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const width = CANVAS_WIDTH;
+            const height = CANVAS_HEIGHT;
+            const scaleY = 400; // pixels per meter length
+            
+            const tubePixelHeight = tubeLength * scaleY;
+            const tubeTopY = 100;
+            const tubeBottomY = tubeTopY + tubePixelHeight;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. Draw Speaker
+            const speakerY = tubeTopY - 40;
+            ctx.fillStyle = '#475569';
+            ctx.beginPath();
+            ctx.moveTo(TUBE_X - 40, speakerY);
+            ctx.lineTo(TUBE_X + 40, speakerY);
+            ctx.lineTo(TUBE_X + 20, speakerY + 30);
+            ctx.lineTo(TUBE_X - 20, speakerY + 30);
+            ctx.fill();
+            // Diaphragm vibration
+            const diaphragmY = speakerY + 30 + Math.sin(t * frequency * 0.1) * 3; // Visual vibration only
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(TUBE_X - 20, diaphragmY);
+            ctx.lineTo(TUBE_X + 20, diaphragmY);
+            ctx.stroke();
+
+            // 2. Draw Tube
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeTopY, TUBE_WIDTH, tubePixelHeight);
+            
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            // Left Wall
+            ctx.moveTo(TUBE_X - TUBE_WIDTH/2, tubeTopY);
+            ctx.lineTo(TUBE_X - TUBE_WIDTH/2, tubeBottomY);
+            // Right Wall
+            ctx.moveTo(TUBE_X + TUBE_WIDTH/2, tubeTopY);
+            ctx.lineTo(TUBE_X + TUBE_WIDTH/2, tubeBottomY);
+            ctx.stroke();
+
+            // Piston / Water Level
+            ctx.fillStyle = '#0891b2'; // Cyan water
+            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeBottomY, TUBE_WIDTH, height - tubeBottomY);
+            ctx.fillStyle = '#06b6d4'; // Surface
+            ctx.fillRect(TUBE_X - TUBE_WIDTH/2, tubeBottomY, TUBE_WIDTH, 10);
+
+
+            // 3. Draw Waves
+            // Standing wave: y(x,t) = A sin(kx) cos(wt)
+            // Here x is vertical distance from closed end (Node)
+            // But usually we measure x from open end.
+            // Closed end (Bottom) is always a Displacement NODE (Amp=0).
+            // Open end (Top) is an ANTINODE (Amp=Max) ONLY at resonance.
+            // General case: Bottom is Node. Source is forcing at top.
+            
+            // Simplified visual: 
+            // Wave envelope shape: sin(k * dist_from_bottom)
+            // k = 2PI / lambda
+            const lambda = SPEED_OF_SOUND / frequency;
+            const k = (2 * Math.PI) / lambda;
+            
+            // The amplitude at any point y (measured from top)
+            // Distance from bottom d = tubeLength - (y_sim)
+            // Envelope = sin(k * d)
+            // But this assumes perfect resonance boundary condition at bottom.
+            // Yes, bottom is always a node (hard boundary).
+            
+            // Draw Wave Envelope
+            if (showWave) {
+                ctx.beginPath();
+                ctx.strokeStyle = `rgba(244, 63, 94, ${0.3 + resonanceFactor * 0.7})`; // Red
+                ctx.lineWidth = 2;
+                
+                // Max visual amplitude
+                const maxAmp = TUBE_WIDTH / 2 - 5;
+                
+                // Draw left and right envelopes
+                for (let i = 0; i <= tubePixelHeight; i+=2) {
+                    const y = tubeTopY + i;
+                    const distFromBottomM = (tubePixelHeight - i) / scaleY;
+                    
+                    // Standing wave shape relative to bottom node
+                    // Amp scaled by resonance factor to show "loudness"
+                    // Ideally off-resonance amplitude is small
+                    const amp = Math.sin(k * distFromBottomM) * (10 + resonanceFactor * maxAmp);
+                    
+                    if (i===0) ctx.moveTo(TUBE_X - amp, y);
+                    else ctx.lineTo(TUBE_X - amp, y);
+                }
+                ctx.stroke();
+                
+                ctx.beginPath();
+                for (let i = 0; i <= tubePixelHeight; i+=2) {
+                    const y = tubeTopY + i;
+                    const distFromBottomM = (tubePixelHeight - i) / scaleY;
+                    const amp = Math.sin(k * distFromBottomM) * (10 + resonanceFactor * maxAmp);
+                    
+                    if (i===0) ctx.moveTo(TUBE_X + amp, y);
+                    else ctx.lineTo(TUBE_X + amp, y);
+                }
+                ctx.stroke();
+            }
+
+            // 4. Draw Particles (Air molecules)
+            if (showParticles) {
+                const numParticles = 200;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                
+                // Use a seeded random or fixed set to avoid jitter?
+                // Calculate displacement for each particle based on its rest position
+                
+                for (let i = 0; i < numParticles; i++) {
+                    // Rest position (distributed vertically)
+                    const restY_m = (i / numParticles) * tubeLength;
+                    const distFromBottom_m = tubeLength - restY_m;
+                    
+                    // Displacement Node at bottom means particles don't move there.
+                    // Displacement Antinode means max movement.
+                    // Disp = A * sin(k * distFromBottom) * cos(wt)
+                    
+                    const standingAmp = Math.sin(k * distFromBottom_m) * (5 + resonanceFactor * 20); // pixels
+                    const instantaneousDisp = standingAmp * Math.cos(2 * Math.PI * frequency * t * 0.05); // Slow down time for visual
+                    
+                    const yPx = tubeTopY + (restY_m * scaleY) + instantaneousDisp;
+                    const xPx = TUBE_X + ((i * 1327) % (TUBE_WIDTH - 10)) - (TUBE_WIDTH/2 - 5); // Pseudo random X
+                    
+                    ctx.beginPath();
+                    ctx.arc(xPx, yPx, 2, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            
+            // 5. Ruler
+            ctx.fillStyle = '#64748b';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'right';
+            for (let m = 0; m <= 1.2; m += 0.1) {
+                const y = tubeTopY + m * scaleY;
+                if (y > height) break;
+                ctx.fillRect(TUBE_X - TUBE_WIDTH/2 - 10, y, 10, 1);
+                ctx.fillText(m.toFixed(1) + 'm', TUBE_X - TUBE_WIDTH/2 - 15, y + 3);
+            }
+
+        };
+
+        useEffect(() => {
+            if (isPlaying) {
+                requestRef.current = requestAnimationFrame(loop);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+                draw(0); // Static draw
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [isPlaying, frequency, tubeLength, showParticles, showWave, resonanceFactor]); // Re-bind loop vars
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Reset
+        const reset = () => {
+            setFrequency(343);
+            setTubeLength(0.5);
+            setSoundEnabled(false);
+            if (gainRef.current) gainRef.current.gain.value = 0;
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-cyan-500/20 p-2 rounded-lg">
+                            <i data-lucide="mic-2" className="w-6 h-6 text-cyan-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Resonance Tube Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Sound Waves
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Controls */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-8">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-cyan-400"></i>
+                                Controls
+                            </h2>
+
+                            {/* Frequency Slider */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold mb-2 text-cyan-300">
+                                    <span>Source Frequency ($f$)</span>
+                                    <span>{frequency} Hz</span>
+                                </label>
+                                <input 
+                                    type="range" min="200" max="1000" step="1" 
+                                    value={frequency} onChange={(e) => setFrequency(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-cyan" 
+                                />
+                                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                    <span>200Hz</span>
+                                    <span>$\lambda = {(SPEED_OF_SOUND/frequency).toFixed(2)}m$</span>
+                                    <span>1000Hz</span>
+                                </div>
+                            </div>
+
+                            {/* Length Slider */}
+                            <div>
+                                <label className="flex justify-between text-xs font-bold mb-2 text-rose-300">
+                                    <span>Tube Length ($L$)</span>
+                                    <span>{tubeLength.toFixed(3)} m</span>
+                                </label>
+                                <input 
+                                    type="range" min="0.1" max="1.2" step="0.001" 
+                                    value={tubeLength} onChange={(e) => setTubeLength(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-rose" 
+                                />
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <span className="text-sm font-bold text-slate-300">Show Particles</span>
+                                    <input type="checkbox" checked={showParticles} onChange={() => setShowParticles(!showParticles)} className="w-5 h-5 rounded text-cyan-500 focus:ring-0" />
+                                </label>
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <span className="text-sm font-bold text-slate-300">Show Wave Envelope</span>
+                                    <input type="checkbox" checked={showWave} onChange={() => setShowWave(!showWave)} className="w-5 h-5 rounded text-rose-500 focus:ring-0" />
+                                </label>
+                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
+                                    <div className="flex items-center gap-2">
+                                        <i data-lucide={soundEnabled ? "volume-2" : "volume-x"} className="w-4 h-4 text-slate-400"></i>
+                                        <span className="text-sm font-bold text-slate-300">Audio Feedback</span>
+                                    </div>
+                                    <input type="checkbox" checked={soundEnabled} onChange={toggleAudio} className="w-5 h-5 rounded text-emerald-500 focus:ring-0" />
+                                </label>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={toggleSim} className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${isPlaying ? 'bg-slate-700 text-slate-300' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
+                                    <i data-lucide={isPlaying ? "pause" : "play"} className="w-4 h-4"></i>
+                                    {isPlaying ? "Pause" : "Start"}
+                                </button>
+                                <button onClick={reset} className="py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">
+                                    <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                                </button>
+                            </div>
+
+                        </div>
+
+                        {/* Analysis Card */}
+                        <div className={`p-5 rounded-2xl border transition-colors duration-500 ${harmonic ? 'bg-emerald-900/20 border-emerald-500/50' : 'bg-slate-800 border-slate-700'}`}>
+                            <h3 className={`font-bold text-sm mb-3 flex items-center ${harmonic ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                <i data-lucide="activity" className="w-4 h-4 mr-2"></i> 
+                                Resonance Status
+                            </h3>
+                            
+                            <div className="flex justify-between items-end mb-2">
+                                <div className="text-xs text-slate-500 uppercase tracking-widest">Loudness</div>
+                                <div className="font-mono font-bold text-xl text-white">{(resonanceFactor * 100).toFixed(0)}%</div>
+                            </div>
+                            
+                            <div className="w-full h-3 bg-slate-700 rounded-full overflow-hidden mb-4">
+                                <div 
+                                    className={`h-full transition-all duration-100 ${harmonic ? 'bg-emerald-500' : 'bg-slate-500'}`} 
+                                    style={{width: `${resonanceFactor * 100}%`}}
+                                ></div>
+                            </div>
+
+                            {harmonic ? (
+                                <div className="text-center animate-bounce">
+                                    <span className="text-2xl font-bold text-white block">n = {harmonic}</span>
+                                    <span className="text-xs text-emerald-300 uppercase font-bold">{harmonic === 1 ? 'Fundamental' : `${harmonic}rd Harmonic`}</span>
+                                </div>
+                            ) : (
+                                <div className="text-center text-xs text-slate-500 py-2">
+                                    Adjust length to find resonance points...
+                                </div>
+                            )}
+                        </div>
+
+                    </div>
+
+                    {/* Right: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[600px] flex justify-center">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="h-full w-auto object-contain rounded-xl"
+                            />
+                            <div className="absolute top-4 right-4 text-xs text-slate-500 font-mono pointer-events-none">
+                                v = {SPEED_OF_SOUND} m/s
+                            </div>
+                        </div>
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
