@@ -71,10 +71,6 @@
         // --- Physics Logic ---
         useEffect(() => {
             // v = sqrt(T / mu)
-            // Scale T and mu to give reasonable visual speeds
-            // Let's say pixels = meters for calculation simplicity in the UI numbers
-            // v (m/s) = sqrt(T / mu)
-            
             const v = Math.sqrt(tension / density);
             const lambda = v / frequency;
 
@@ -94,18 +90,22 @@
             const deviation = Math.abs(n_float - n_nearest);
             
             // Resonance width (how precise you need to be)
-            const width = 0.2; 
+            const width = 0.25; // Slightly wider resonance window
             let resonanceFactor = 0;
             
+            // Base vibration (forced oscillation) - ensuring string always moves a little
+            const baseAmp = 5; 
+
             if (deviation < width) {
                 // Bell curve resonance
                 resonanceFactor = Math.exp(-(deviation * deviation) / (2 * (width/3)**2));
             }
 
-            physicsRef.current.targetAmp = resonanceFactor * 80; // Max amplitude 80px
+            // Target amplitude combines resonance (huge) and base forced motion (small)
+            physicsRef.current.targetAmp = (resonanceFactor * 80) + baseAmp; 
             
             // Identify Harmonic
-            if (resonanceFactor > 0.8 && n_nearest > 0) {
+            if (resonanceFactor > 0.6 && n_nearest > 0) {
                 setHarmonicN(n_nearest);
             } else {
                 setHarmonicN(0); // Not resonant
@@ -118,22 +118,27 @@
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
             
-            timeRef.current += 0.02; // Time step
+            // Adjust time step based on frequency to avoid strobing effect at high freq
+            // But we want visual oscillation to be perceivable. 
+            // If freq is 100Hz, real-time animation would just be a blur.
+            // We slow down visual time for high frequencies so the eye can see the wave shape.
+            const visualFreqScale = Math.max(1, frequency / 10); 
+            timeRef.current += 0.05 * visualFreqScale; 
             const t = timeRef.current;
             
-            // Smooth Amplitude Transition (Simulate energy build-up)
+            // Smooth Amplitude Transition
             const phys = physicsRef.current;
-            phys.currentAmp += (phys.targetAmp - phys.currentAmp) * 0.05;
+            phys.currentAmp += (phys.targetAmp - phys.currentAmp) * 0.1;
             
             // Clear
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
             // 1. Draw Stand / Mounts
             ctx.fillStyle = '#334155';
-            ctx.fillRect(STRING_START_X - 10, CENTER_Y - 20, 10, 40); // Left Clamp
-            ctx.fillRect(STRING_START_X + STRING_LENGTH, CENTER_Y - 20, 10, 40); // Right Clamp
+            ctx.fillRect(STRING_START_X - 10, CENTER_Y - 20, 10, 40); 
+            ctx.fillRect(STRING_START_X + STRING_LENGTH, CENTER_Y - 20, 10, 40); 
             
-            // Pulley (Right side)
+            // Pulley
             ctx.beginPath();
             ctx.arc(STRING_START_X + STRING_LENGTH + 15, CENTER_Y - 15, 15, 0, Math.PI*2);
             ctx.fillStyle = '#475569';
@@ -141,7 +146,7 @@
             ctx.strokeStyle = '#94a3b8';
             ctx.stroke();
 
-            // Hanging Mass (Tension visual)
+            // Hanging Mass
             const weightY = CENTER_Y + 50 + (tension / 100) * 50;
             ctx.beginPath();
             ctx.moveTo(STRING_START_X + STRING_LENGTH + 30, CENTER_Y - 15);
@@ -150,93 +155,55 @@
             ctx.lineWidth = 2;
             ctx.stroke();
             
-            // Weight Box
             ctx.fillStyle = '#f59e0b';
             ctx.fillRect(STRING_START_X + STRING_LENGTH + 15, weightY, 30, 30);
             ctx.fillStyle = '#78350f';
             ctx.font = '10px sans-serif';
             ctx.fillText(`${tension}N`, STRING_START_X + STRING_LENGTH + 20, weightY + 20);
 
-
             // 2. Draw String
-            // y(x, t) = 2A sin(kx) cos(wt)
-            // L_sim = 2.0 meters mapped to STRING_LENGTH pixels
             const L_pixels = STRING_LENGTH;
-            // n_float = frequency / f1 = frequency / (v/2L)
-            // kx = (n * pi * x) / L
-            // We use the exact frequency driven wave shape:
-            // k = 2pi / lambda = 2pi * f / v
-            
-            // We need to map x (0 to L) to pixels (0 to STRING_LENGTH)
-            // Wave Number k (in units of rad/meter)
             const v = Math.sqrt(tension / density);
             const k = (2 * Math.PI * frequency) / v;
             
-            // To visualize the standing wave "attempt", we sum incident and reflected?
-            // Or just plot the standing wave envelope scaled by resonance factor?
-            // Visualizing the "attempt" (traveling waves interfere) is messy.
-            // Let's visualize the "Resulting Vibration".
-            // Shape is determined by frequency. Amplitude is determined by Resonance.
+            // Visual oscillation speed
+            // We decouple visual speed from physics frequency slightly to keep it viewable
+            // But phase relationship must maintain spatial shape k*x
             
-            const omega = 2 * Math.PI * frequency;
-
             ctx.beginPath();
             ctx.lineWidth = 3;
-            // Color based on resonance strength
-            const hue = phys.currentAmp > 20 ? 140 : 200; // Green if resonant, Blue if not
+            const hue = phys.currentAmp > 20 ? 140 : 200; 
             ctx.strokeStyle = `hsl(${hue}, 70%, 60%)`;
             
-            // Shadow / Envelope
-            if (phys.currentAmp > 5) {
+            // Draw Envelope (Ghost of max displacement)
+            if (phys.currentAmp > 10) {
                 ctx.fillStyle = `hsla(${hue}, 70%, 60%, 0.1)`;
                 ctx.beginPath();
                 ctx.moveTo(STRING_START_X, CENTER_Y);
-                for (let i = 0; i <= L_pixels; i+=5) {
-                    const x_meter = (i / L_pixels) * 2.0; // Map 0..700px to 0..2m
-                    // Standing wave spatial part: sin(k * x)
-                    // Note: Boundary condition at x=L is fixed.
-                    // This simple formula assumes resonance. 
-                    // For non-resonance, the shape is complex. 
-                    // Simplified Visual: Just show sin(k*x) * currentAmp
-                    
+                // Higher resolution for envelope (step=2)
+                for (let i = 0; i <= L_pixels; i+=2) {
+                    const x_meter = (i / L_pixels) * 2.0; 
                     const spatial = Math.sin(k * x_meter);
-                    const y = CENTER_Y + spatial * phys.currentAmp; // Envelope Top
+                    const y = CENTER_Y + Math.abs(spatial) * phys.currentAmp; 
                     ctx.lineTo(STRING_START_X + i, y);
                 }
-                for (let i = L_pixels; i >= 0; i-=5) {
-                    const x_meter = (i / L_pixels) * 2.0;
+                 for (let i = L_pixels; i >= 0; i-=2) {
+                    const x_meter = (i / L_pixels) * 2.0; 
                     const spatial = Math.sin(k * x_meter);
-                    const y = CENTER_Y - spatial * phys.currentAmp; // Envelope Bottom
+                    const y = CENTER_Y - Math.abs(spatial) * phys.currentAmp; 
                     ctx.lineTo(STRING_START_X + i, y);
                 }
                 ctx.fill();
             }
 
-            // The String itself
+            // Draw Vibrating String
             ctx.beginPath();
-            for (let i = 0; i <= L_pixels; i+=2) {
+            // IMPROVED: High resolution drawing step (1 pixel) to prevent aliasing at high freq
+            for (let i = 0; i <= L_pixels; i+=1) {
                 const x_meter = (i / L_pixels) * 2.0;
                 
-                // Displacement
                 const spatial = Math.sin(k * x_meter);
-                // Oscillation
-                const temporal = Math.cos(omega * (t * 0.05)); // Slow down time for visual
-                
-                // Fix right end? 
-                // In reality, if not resonant, the right end is fixed, so wave reflects.
-                // Our simple sin(kx) does NOT guarantee y=0 at x=L unless resonant.
-                // To force the visual to look like a string tied at both ends:
-                // We multiply by a linear taper if off-resonance? Or just let it look "broken" (vibrating at clamp)?
-                // Let's enforce the node at right end visually for "String" feel, 
-                // by superimposing Left and Right traveling waves.
-                // y = A [ sin(kx - wt) + sin(kx + wt + phi) ]
-                // This is computationally heavier but accurate.
-                
-                // Let's stick to the Standing Wave approximation but dampened by Resonance Factor.
-                // However, to make it look tied, we must ensure y=0 at ends.
-                // The physical string is tied. The driver is at one end? 
-                // Let's assume Melde's experiment: Driver at Left, Pulley at Right.
-                // Left end moves slightly (Driver). Right end fixed.
+                const temporal = Math.cos(t); // Unified time base
                 
                 const y = CENTER_Y + spatial * temporal * phys.currentAmp;
                 
@@ -245,7 +212,7 @@
             }
             ctx.stroke();
 
-            // 3. Draw Nodes (Red Dots) if Resonant
+            // 3. Draw Nodes
             if (harmonicN > 0 && phys.currentAmp > 30) {
                 ctx.fillStyle = '#ef4444';
                 for (let n = 0; n <= harmonicN; n++) {
@@ -257,7 +224,6 @@
                 }
             }
             
-            // Sync UI value (throttled)
             if (Math.random() < 0.1) setAmplitudeDisplay(phys.currentAmp);
 
             requestRef.current = requestAnimationFrame(loop);
