@@ -59,9 +59,11 @@
         const [time, setTime] = useState(0);
 
         const canvasRef = useRef(null);
-        const graphCanvasRef = useRef(null);
         const requestRef = useRef();
         const prevTimeRef = useRef(0);
+        
+        // Ref to track running state in loop
+        const isRunningRef = useRef(false);
 
         // Calculated Physics
         const velocityMag = radius * omega; // v = r * w
@@ -70,41 +72,50 @@
         // --- Logic ---
         const resetSim = () => {
             setIsRunning(false);
+            isRunningRef.current = false;
             cancelAnimationFrame(requestRef.current);
             setAngle(0);
             setTime(0);
-            draw(0);
+            // Force a draw at angle 0
+            setTimeout(() => draw(0), 0);
         };
 
         const toggleSim = () => {
             if (isRunning) {
                 setIsRunning(false);
+                isRunningRef.current = false;
                 cancelAnimationFrame(requestRef.current);
             } else {
                 setIsRunning(true);
+                isRunningRef.current = true;
                 prevTimeRef.current = performance.now();
                 requestRef.current = requestAnimationFrame(loop);
             }
         };
 
         const loop = (timestamp) => {
+            if (!isRunningRef.current) return;
+
             const dt = (timestamp - prevTimeRef.current) / 1000;
+            // Prevent huge jumps if tab was inactive
+            const safeDt = Math.min(dt, 0.1); 
+            
             prevTimeRef.current = timestamp;
 
-            // Update Angle
-            // New Angle = Old Angle + Omega * dt
-            // Note: Standard canvas Y is down, so CCW rotation means angle decreases? 
-            // Let's use standard math coords: X right, Y up.
-            // Canvas: X right, Y down.
-            // To simulate CCW (standard math), we need to decrease angle in canvas coords? 
-            // Or just use Math.cos(angle) and Math.sin(angle) and invert Y visually.
+            setAngle(prev => {
+                const newAngle = (prev + omega * safeDt) % (2 * Math.PI);
+                // Call draw directly from loop with new angle for smoothness
+                // But we need radius/omega/flags which are state...
+                // React state inside requestAnimationFrame closure might be stale if not careful.
+                // However, draw() uses state variables.
+                // Best practice: Use refs for animation variables or pass them.
+                // For this simple app, we trigger state update which triggers useEffect draw.
+                return newAngle;
+            });
             
-            setAngle(prev => (prev + omega * dt) % (2 * Math.PI));
-            setTime(t => t + dt);
+            setTime(t => t + safeDt);
 
-            if (isRunning) {
-                requestRef.current = requestAnimationFrame(loop);
-            }
+            requestRef.current = requestAnimationFrame(loop);
         };
 
         // --- Rendering ---
@@ -132,8 +143,10 @@
 
             // 2. Object Position
             // Canvas Y is inverted relative to standard cartesian Y for math
-            const px = CENTER_X + radius * SCALE * Math.cos(-currentAngle);
-            const py = CENTER_Y + radius * SCALE * Math.sin(-currentAngle);
+            // Standard math: x = r cos(theta), y = r sin(theta) (y up)
+            // Canvas: x = r cos(theta), y = -r sin(theta) (y down) to match CCW visual
+            const px = CENTER_X + radius * SCALE * Math.cos(currentAngle);
+            const py = CENTER_Y - radius * SCALE * Math.sin(currentAngle);
 
             // Radius Line
             ctx.beginPath();
@@ -154,18 +167,36 @@
 
             // 3. Vectors
             // Velocity (Tangent) - Perpendicular to Radius
-            // Direction: Angle + 90 deg (PI/2) for CCW
+            // Tangent direction is angle + 90 deg (PI/2)
             if (showVelocity) {
                 const vScale = 15; // Visual scaling
-                const vAngle = -currentAngle - Math.PI / 2; // Tangent direction
-                drawArrow(ctx, px, py, velocityMag * vScale, vAngle, '#10b981', 'v');
+                // Direction: In canvas coords (y flipped), tangent is angle + PI/2?
+                // Let's verify: at angle 0 (Right), V is Up (neg Y). 
+                // x=r, y=0. V should be (0, -1). 
+                // angle=0. cos(0)=1, sin(0)=0.
+                // Tangent angle = PI/2? cos(PI/2)=0, -sin(PI/2)=-1. Yes.
+                const vAngle = currentAngle + Math.PI / 2; 
+                
+                // Note: drawArrow takes angle where +Y is DOWN. 
+                // Math.sin(PI/2) is 1 (Down). We want Up (-1).
+                // So we need to negate the sin component for drawing?
+                // Actually, drawArrow uses standard canvas logic (y down).
+                // If we want UP, we need negative Y component.
+                // Angle PI/2 in canvas is DOWN. -PI/2 is UP.
+                // So visual angle should be -(currentAngle + PI/2)?
+                
+                // Let's stick to standard math angle for calc, then flip Y for draw
+                const mathVAngle = currentAngle + Math.PI / 2;
+                const vx = velocityMag * Math.cos(mathVAngle);
+                const vy = velocityMag * Math.sin(mathVAngle); // Math Y (Up is positive)
+                
+                // Canvas dy needs to be inverted (-vy)
+                drawArrow(ctx, px, py, vx * vScale, -vy * vScale, '#10b981', 'v');
                 
                 // Components
                 if (showComponents) {
-                    const vx = velocityMag * Math.cos(vAngle);
-                    const vy = velocityMag * Math.sin(vAngle);
                     drawComponent(ctx, px, py, vx * vScale, 0, '#10b981', 'vx');
-                    drawComponent(ctx, px, py, 0, vy * vScale, '#10b981', 'vy');
+                    drawComponent(ctx, px, py, 0, -vy * vScale, '#10b981', 'vy');
                 }
             }
 
@@ -173,22 +204,25 @@
             // Direction: Angle + 180 deg (PI)
             if (showAcceleration) {
                 const aScale = 15;
-                const aAngle = -currentAngle + Math.PI; // Towards center
-                drawArrow(ctx, px, py, accelMag * aScale, aAngle, '#ef4444', 'a');
+                const mathAAngle = currentAngle + Math.PI; 
+                
+                const ax = accelMag * Math.cos(mathAAngle);
+                const ay = accelMag * Math.sin(mathAAngle);
+
+                drawArrow(ctx, px, py, ax * aScale, -ay * aScale, '#ef4444', 'a');
 
                 // Components
                 if (showComponents) {
-                    const ax = accelMag * Math.cos(aAngle);
-                    const ay = accelMag * Math.sin(aAngle);
                     drawComponent(ctx, px, py, ax * aScale, 0, '#ef4444', 'ax');
-                    drawComponent(ctx, px, py, 0, ay * aScale, '#ef4444', 'ay');
+                    drawComponent(ctx, px, py, 0, -ay * aScale, '#ef4444', 'ay');
                 }
             }
         };
 
-        const drawArrow = (ctx, x, y, len, angle, color, label) => {
-            const toX = x + len * Math.cos(angle);
-            const toY = y + len * Math.sin(angle);
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            const toX = x + dx;
+            const toY = y + dy;
+            const angle = Math.atan2(dy, dx);
             
             ctx.beginPath();
             ctx.strokeStyle = color;
@@ -229,6 +263,8 @@
             ctx.fill();
         };
 
+        // Redraw when angle changes (Animation loop triggers this via setAngle)
+        // Also redraw when params change
         useEffect(() => {
             draw(angle);
         }, [angle, radius, omega, showVelocity, showAcceleration, showComponents]);
@@ -255,7 +291,6 @@
                 
                 // Draw Sin Wave (Velocity Y component ~ Cosine)
                 // Draw Cos Wave (Position X component ~ Cosine)
-                // Let's draw Velocity X (Sin) and Velocity Y (Cos)
                 
                 ctx.lineWidth = 2;
                 
@@ -263,8 +298,6 @@
                 ctx.beginPath();
                 ctx.strokeStyle = '#10b981';
                 for(let i=0; i<w; i++) {
-                    // map i to time history? Or just project current cycle?
-                    // Let's show "Phase"
                     const phase = angle - (w - i) * 0.05; // Trail behind
                     const val = -Math.sin(phase) * 30; // Scale amplitude
                     if (i===0) ctx.moveTo(i, h/2 + val);
