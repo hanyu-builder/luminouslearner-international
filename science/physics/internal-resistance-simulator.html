@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internal Resistance Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-orange::-webkit-slider-thumb { background: #f97316; }
+        .thumb-emerald::-webkit-slider-thumb { background: #10b981; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const GRAPH_WIDTH = 300;
+    const GRAPH_HEIGHT = 200;
+
+    const App = () => {
+        // --- State ---
+        const [emf, setEmf] = useState(12.0); // Volts
+        const [internalR, setInternalR] = useState(2.0); // Ohms (r)
+        const [loadR, setLoadR] = useState(10.0); // Ohms (R)
+        
+        // Calculated
+        const [current, setCurrent] = useState(0); // I
+        const [terminalV, setTerminalV] = useState(0); // V_terminal
+        const [internalDrop, setInternalDrop] = useState(0); // Ir
+        const [powerLoad, setPowerLoad] = useState(0);
+        const [powerLost, setPowerLost] = useState(0);
+
+        const canvasRef = useRef(null);
+        const graphCanvasRef = useRef(null);
+        const requestRef = useRef();
+        const electronOffsetRef = useRef(0);
+
+        // --- Physics Logic ---
+        useEffect(() => {
+            // I = E / (R + r)
+            const totalR = loadR + internalR;
+            // Handle short circuit limit
+            const I = totalR > 0.01 ? emf / totalR : emf / 0.01; 
+            
+            // V_term = E - Ir  OR  V_term = I * R
+            const V_term = I * loadR;
+            const V_drop = I * internalR;
+
+            setCurrent(I);
+            setTerminalV(V_term);
+            setInternalDrop(V_drop);
+            setPowerLoad(I * I * loadR);
+            setPowerLost(I * I * internalR);
+
+        }, [emf, internalR, loadR]);
+
+        // --- Animation Loop ---
+        const loop = () => {
+            // Speed prop to current
+            const speed = Math.min(10, current * 2);
+            electronOffsetRef.current = (electronOffsetRef.current + speed) % 20;
+            
+            drawCircuit();
+            drawGraph();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        });
+
+        // --- Rendering ---
+        const drawCircuit = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            const cx = 250; // Center of circuit diagram
+            const cy = CANVAS_HEIGHT / 2;
+            const w = 300;
+            const h = 200;
+            const left = cx - w/2;
+            const right = cx + w/2;
+            const top = cy - h/2;
+            const bottom = cy + h/2;
+
+            // 1. Draw Wires
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#fbbf24'; // Active Wire
+            ctx.lineJoin = 'round';
+            
+            ctx.beginPath();
+            ctx.moveTo(left, top);
+            ctx.lineTo(right, top); // Top wire
+            ctx.lineTo(right, bottom); // Right wire
+            ctx.lineTo(left, bottom); // Bottom wire
+            ctx.lineTo(left, top); // Left wire
+            ctx.stroke();
+
+            // 2. Draw "Real Battery" Box (Dotted)
+            const batBoxTop = top + 40;
+            const batBoxBottom = bottom - 40;
+            const batBoxLeft = left - 20;
+            const batBoxRight = left + 20;
+            
+            ctx.strokeStyle = '#94a3b8';
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 2;
+            ctx.strokeRect(left - 40, top + 20, 80, h - 40);
+            ctx.setLineDash([]);
+            
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px sans-serif';
+            ctx.fillText("Real Battery", left - 35, top + 15);
+
+            // 3. Draw EMF Source (Ideal Battery)
+            const batY = cy - 40;
+            drawBatterySymbol(ctx, left, batY, emf);
+            
+            // 4. Draw Internal Resistor (r)
+            const rY = cy + 40;
+            drawResistor(ctx, left, rY, internalR, true);
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText(`r`, left + 25, rY + 5);
+
+            // 5. Draw Load Resistor (R) - Right Side
+            drawResistor(ctx, right, cy, loadR, false);
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillText(`Load R`, right + 25, cy + 5);
+
+            // 6. Voltmeter (Across Terminals)
+            // Terminals are where battery box connects to main circuit
+            // Top Terminal
+            drawTerminal(ctx, left, top + 20);
+            drawTerminal(ctx, left, bottom - 20);
+            
+            // Voltmeter graphic
+            drawVoltmeter(ctx, left - 120, cy, terminalV);
+            // Leads
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(left - 120, cy - 30); ctx.lineTo(left - 120, top + 20); ctx.lineTo(left, top + 20); // To top terminal
+            ctx.moveTo(left - 120, cy + 30); ctx.lineTo(left - 120, bottom - 20); ctx.lineTo(left, bottom - 20); // To bot terminal
+            ctx.stroke();
+
+            // 7. Ammeter (Top wire)
+            const amX = (left + right) / 2;
+            drawAmmeter(ctx, amX, top, current);
+
+            // 8. Electrons
+            if (current > 0.01) {
+                // Top wire (Right)
+                drawElectrons(ctx, left, top, right, top, current);
+                // Right wire (Down)
+                drawElectrons(ctx, right, top, right, bottom, current);
+                // Bottom wire (Left)
+                drawElectrons(ctx, right, bottom, left, bottom, current);
+                // Inside Battery (Up)
+                drawElectrons(ctx, left, bottom, left, top, current);
+            }
+        };
+
+        const drawGraph = () => {
+            const ctx = graphCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const w = GRAPH_WIDTH;
+            const h = GRAPH_HEIGHT;
+            const pad = 30;
+
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, w, h);
+
+            // Axes
+            // X: Current (0 to Max I_short)
+            // Y: Voltage (0 to EMF)
+            
+            const maxV = 15; // Fixed range for stability
+            const maxI = 15;
+            
+            const mapX = (i) => pad + (i / maxI) * (w - 2*pad);
+            const mapY = (v) => h - pad - (v / maxV) * (h - 2*pad);
+
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 1;
+            // X Axis
+            ctx.beginPath(); ctx.moveTo(pad, h-pad); ctx.lineTo(w-pad, h-pad); ctx.stroke();
+            // Y Axis
+            ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.stroke();
+            
+            // Labels
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText("Current (A)", w/2, h - 5);
+            ctx.save(); ctx.translate(10, h/2); ctx.rotate(-Math.PI/2); ctx.fillText("Terminal V (V)", 0, 0); ctx.restore();
+
+            // Plot Line: V = E - Ir
+            // Start point: I=0, V=E
+            // End point: V=0, I=E/r (Short circuit current)
+            
+            const startX = mapX(0);
+            const startY = mapY(emf);
+            const endI = emf / internalR;
+            const endX = mapX(endI);
+            const endY = mapY(0);
+
+            // The Line
+            ctx.strokeStyle = '#4b5563'; // Darker line for potential path
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY); // This might go off graph if r is small, clip needed
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Current Operating Point
+            const cx = mapX(current);
+            const cy = mapY(terminalV);
+
+            // Bounds check drawing
+            if (cx < w && cy > 0) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, 6, 0, Math.PI*2);
+                ctx.fillStyle = '#ef4444';
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Drop lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.setLineDash([2, 2]);
+                ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, h-pad); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(pad, cy); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        };
+
+        // --- Draw Helpers ---
+        const drawBatterySymbol = (ctx, x, y, v) => {
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#fff';
+            // Wire through
+            ctx.beginPath(); ctx.moveTo(x, y - 20); ctx.lineTo(x, y + 20); ctx.stroke();
+            // Gap
+            ctx.clearRect(x - 10, y - 5, 20, 10);
+            // Plates
+            ctx.beginPath(); ctx.moveTo(x - 15, y - 5); ctx.lineTo(x + 15, y - 5); ctx.stroke(); // Top +
+            ctx.lineWidth = 6;
+            ctx.beginPath(); ctx.moveTo(x - 8, y + 5); ctx.lineTo(x + 8, y + 5); ctx.stroke(); // Bot -
+            
+            ctx.fillStyle = '#facc15';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText(`E = ${v}V`, x - 20, y + 4);
+        };
+
+        const drawResistor = (ctx, x, y, r, isVertical) => {
+            ctx.save();
+            ctx.translate(x, y);
+            if (isVertical) ctx.rotate(Math.PI/2);
+            
+            // Zigzag
+            ctx.beginPath();
+            ctx.moveTo(-20, 0);
+            for(let i=0; i<4; i++) {
+                ctx.lineTo(-15 + i*10, (i%2===0 ? -8 : 8));
+            }
+            ctx.lineTo(15, 0);
+            ctx.lineTo(20, 0);
+            
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = isVertical ? '#ef4444' : '#3b82f6';
+            ctx.stroke();
+            ctx.restore();
+        };
+
+        const drawVoltmeter = (ctx, x, y, val) => {
+            ctx.fillStyle = '#1e293b';
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(x, y, 25, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('V', x, y - 5);
+            
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 12px monospace';
+            ctx.fillText(val.toFixed(2), x, y + 10);
+        };
+
+        const drawAmmeter = (ctx, x, y, val) => {
+            ctx.fillStyle = '#1e293b';
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('A', x, y + 5);
+            
+            // Value bubble above
+            ctx.fillStyle = '#facc15';
+            ctx.fillText(`${val.toFixed(2)}A`, x, y - 25);
+        };
+
+        const drawTerminal = (ctx, x, y) => {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+        };
+
+        const drawElectrons = (ctx, x1, y1, x2, y2, current) => {
+            if (current < 0.01) return;
+            const dist = Math.hypot(x2 - x1, y2 - y1);
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            
+            const speed = Math.min(5, current * 1.5); 
+            const spacing = 30;
+            // Electrons move opposite to current. If x1->x2 is current, electrons go x2->x1.
+            // Loop moves offset forward, so subtract from end? Or add to start but rotate 180?
+            // Let's just draw current flow (conventional) for clarity, users confuse electrons often.
+            // "Electron Flow" label?
+            // Let's stick to Conventional Current (Positive Charges) moving x1->x2.
+            // If we want Electrons, they go x2 -> x1.
+            // Let's draw Conventional Current (Yellow Arrows/Dots moving with flow)
+            
+            const offset = (electronOffsetRef.current * speed) % spacing;
+            
+            ctx.fillStyle = '#fef08a';
+            for (let d = offset; d < dist; d += spacing) {
+                const ex = x1 + d * Math.cos(angle);
+                const ey = y1 + d * Math.sin(angle);
+                ctx.beginPath(); ctx.arc(ex, ey, 2, 0, Math.PI*2); ctx.fill();
+            }
+        };
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Reset
+        const reset = () => {
+            setEmf(12.0);
+            setInternalR(2.0);
+            setLoadR(10.0);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-orange-500/20 p-2 rounded-lg">
+                            <i data-lucide="battery" className="w-6 h-6 text-orange-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Internal Resistance Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: DC Circuits
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-xs text-slate-300">
+                                <strong>Tip:</strong> Decrease <strong>Load R</strong> to increase current and see voltage drop.
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
+                            
+                            <div className="flex-1 min-w-[150px]">
+                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                    EMF ($\mathcal{E}$) <span className="text-yellow-400">{emf} V</span>
+                                </label>
+                                <input 
+                                    type="range" min="1" max="24" step="1" 
+                                    value={emf} onChange={(e) => setEmf(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-orange"
+                                />
+                            </div>
+
+                            <div className="flex-1 min-w-[150px]">
+                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                    Internal R ($r$) <span className="text-red-400">{internalR} Ω</span>
+                                </label>
+                                <input 
+                                    type="range" min="0.1" max="5.0" step="0.1" 
+                                    value={internalR} onChange={(e) => setInternalR(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-orange"
+                                />
+                            </div>
+
+                            <div className="flex-1 min-w-[150px]">
+                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-1">
+                                    Load R ($R$) <span className="text-blue-400">{loadR} Ω</span>
+                                </label>
+                                <input 
+                                    type="range" min="0" max="20" step="0.5" 
+                                    value={loadR} onChange={(e) => setLoadR(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue"
+                                />
+                            </div>
+
+                            <button onClick={reset} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors">
+                                <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                            </button>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        {/* Graph */}
+                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                            <h3 className="text-white font-bold mb-4 text-sm flex items-center">
+                                <i data-lucide="line-chart" className="w-4 h-4 mr-2 text-indigo-400"></i>
+                                V-I Characteristic
+                            </h3>
+                            <canvas 
+                                ref={graphCanvasRef} 
+                                width={GRAPH_WIDTH} 
+                                height={GRAPH_HEIGHT} 
+                                className="w-full h-auto bg-slate-900 rounded-lg border border-slate-700"
+                            />
+                            <div className="text-center text-[10px] text-slate-500 mt-2">
+                                Equation of line: V = {emf} - {internalR}I
+                            </div>
+                        </div>
+
+                        {/* Power Distribution */}
+                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
+                            <h3 className="text-indigo-300 font-bold text-sm mb-3 flex items-center">
+                                <i data-lucide="pie-chart" className="w-4 h-4 mr-2"></i> Power Efficiency
+                            </h3>
+                            
+                            <div className="space-y-3">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-blue-400">Useful Power ($I^2R$)</span>
+                                        <span className="text-white">{powerLoad.toFixed(1)} W</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div className="h-full bg-blue-500" style={{width: `${(powerLoad/(powerLoad+powerLost))*100}%`}}></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-red-400">Wasted Heat ($I^2r$)</span>
+                                        <span className="text-white">{powerLost.toFixed(1)} W</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div className="h-full bg-red-500" style={{width: `${(powerLost/(powerLoad+powerLost))*100}%`}}></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="mt-3 text-right text-xs text-slate-500">
+                                Efficiency: {((powerLoad/(powerLoad+powerLost))*100).toFixed(1)}%
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
