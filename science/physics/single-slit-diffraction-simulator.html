@@ -43,14 +43,10 @@
     const SCREEN_HEIGHT = 100;
     const GRAPH_HEIGHT = 150;
     
-    // Physics scale
-    const DISTANCE_TO_SCREEN = 1.0; // meters (L)
-
     const App = () => {
         // --- State ---
         const [wavelength, setWavelength] = useState(532); // nm (Green)
         const [slitWidth, setSlitWidth] = useState(2000); // nm (2 microns)
-        const [intensityScale, setIntensityScale] = useState(1.0); 
 
         const waveCanvasRef = useRef(null);
         const screenCanvasRef = useRef(null);
@@ -76,7 +72,8 @@
             } else {
                 r = 0; g = 0; b = 0;
             }
-            // Intensity drop off at edges
+            
+            // Intensity falloff
             let factor;
             if (wavelength >= 380 && wavelength < 420) factor = 0.3 + 0.7 * (wavelength - 380) / (420 - 380);
             else if (wavelength >= 420 && wavelength < 700) factor = 1.0;
@@ -98,16 +95,15 @@
             requestRef.current = requestAnimationFrame(loop);
         };
 
-        // 1. Draw Wave View (Top) - Animated Huygens
+        // 1. Draw Wave View (Top) - Realistic Intensity
         const drawWaveView = () => {
             const ctx = waveCanvasRef.current?.getContext('2d');
             if (!ctx) return;
 
             const w = CANVAS_WIDTH;
             const h = WAVE_HEIGHT;
-            const cx = w / 2;
             const cy = h / 2;
-            const slitX = 100; // Position of barrier
+            const slitX = 100; 
 
             ctx.clearRect(0, 0, w, h);
             
@@ -117,52 +113,70 @@
 
             // Draw Barrier
             ctx.fillStyle = '#334155';
-            const gapPixels = (slitWidth / 5000) * 40; // Scale visual gap (not to scale physically)
+            const gapPixels = (slitWidth / 5000) * 40; 
             ctx.fillRect(slitX, 0, 10, cy - gapPixels/2);
             ctx.fillRect(slitX, cy + gapPixels/2, 10, h - (cy + gapPixels/2));
 
-            // Draw Waves
-            ctx.lineWidth = 2;
-            const waveSpacing = (wavelength / 700) * 20; // Visual wavelength scale
+            // Incoming Plane Waves
+            const waveSpacing = (wavelength / 700) * 20; 
             const t = timeRef.current;
 
-            // Incoming Plane Waves
+            ctx.lineWidth = 2;
             ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.5)`;
             for (let x = 0; x < slitX; x += waveSpacing) {
-                const waveX = (x + t * 5) % slitX; // Move right
+                const waveX = (x + t * 5) % slitX; 
                 ctx.beginPath();
                 ctx.moveTo(waveX, 0);
                 ctx.lineTo(waveX, h);
                 ctx.stroke();
             }
 
-            // Diffracted Waves
-            // Ideally: Intensity varies with angle.
-            // Simplified visual: Arcs coming from slit
+            // Diffracted Waves (Modulated by Intensity)
+            // We draw arcs in segments to vary opacity based on angle
+            const numSegments = 90; // Resolution of arc
+            const angleStep = Math.PI / numSegments;
+
             for (let r = 0; r < w - slitX; r += waveSpacing) {
                 const radius = (r + t * 5) % (w - slitX);
-                
-                // We draw multiple arcs to simulate intensity pattern? 
-                // Or just concentric circles that fade at edges?
-                // Let's draw arcs but change opacity based on angle to mimic diffraction
-                
-                // We need to draw the arc pixel by pixel or segment by segment to vary opacity?
-                // Too heavy. Let's just draw standard arcs for concept.
-                
-                ctx.beginPath();
-                ctx.arc(slitX, cy, radius, -Math.PI/2, Math.PI/2);
-                ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${1 - radius/(w-slitX)})`;
-                ctx.stroke();
+                if (radius < 5) continue;
+
+                for (let i = 0; i < numSegments; i++) {
+                    // Angle from -PI/2 to PI/2
+                    const theta = -Math.PI/2 + i * angleStep;
+                    
+                    // Calculate Intensity at this angle
+                    // beta = (pi * a * sin(theta)) / lambda
+                    const beta = (Math.PI * slitWidth * Math.sin(theta)) / wavelength;
+                    
+                    let intensity = 1.0;
+                    if (Math.abs(beta) > 1e-6) {
+                        const sinc = Math.sin(beta) / beta;
+                        intensity = sinc * sinc;
+                    }
+
+                    // Falloff with distance (1/r) for visual realism
+                    const distanceFalloff = Math.max(0, 1 - radius / (w - slitX));
+                    const alpha = intensity * distanceFalloff;
+
+                    if (alpha < 0.01) continue; // Skip invisible segments
+
+                    const startAngle = theta;
+                    const endAngle = theta + angleStep;
+
+                    ctx.beginPath();
+                    ctx.arc(slitX, cy, radius, startAngle, endAngle);
+                    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
+                    ctx.stroke();
+                }
             }
             
             // Draw Rays to First Minima (Visual Guide)
-            // sin(theta) = lambda / a
             const ratio = wavelength / slitWidth;
             if (ratio <= 1) {
                 const theta = Math.asin(ratio);
                 const len = 600;
                 
-                ctx.strokeStyle = '#ef4444'; // Red guides
+                ctx.strokeStyle = '#ef4444'; 
                 ctx.setLineDash([5, 5]);
                 ctx.lineWidth = 1;
                 
@@ -191,7 +205,6 @@
             const w = CANVAS_WIDTH;
             const sh = SCREEN_HEIGHT;
             const gh = GRAPH_HEIGHT;
-            const cy = sh / 2;
 
             // Clear
             screenCtx.clearRect(0, 0, w, sh);
@@ -208,7 +221,7 @@
             graphCtx.lineWidth = 1;
             graphCtx.beginPath();
             graphCtx.moveTo(0, gh - 20);
-            graphCtx.lineTo(w, gh - 20); // X axis
+            graphCtx.lineTo(w, gh - 20); 
             graphCtx.stroke();
             
             // Center Line
@@ -218,64 +231,46 @@
             graphCtx.stroke();
             graphCtx.setLineDash([]);
 
-            // Physics Calculation Loop
-            // Screen covers range of angles. Let's say screen is at distance L.
-            // y on screen = L * tan(theta).
-            // We map x pixel on canvas to y position on screen.
-            // Let's assume Screen width represents +/- 0.1 meters or so?
-            // Scale factor: how zoomed in are we?
-            
-            // To make it look good, let's say the canvas width covers the central peak and a few orders.
-            // Width of central peak: y = L * lambda / a * 2 approx.
-            // Let's map pixels to angle directly for simplicity.
-            // max theta = 0.05 rad (small angle approx)
-            
-            const maxTheta = 0.05 * (5000 / slitWidth); // Auto-zoom based on slit width to keep pattern visible
+            // Mapping: Map canvas x to angle theta
+            // We want to show a fixed angular range, e.g., -60 to 60 degrees?
+            // Or scale it? Let's use a fixed angular field of view for consistent comparison.
+            // FOV: +/- 0.5 radians (~30 degrees)
+            const fov = 0.5; 
             
             graphCtx.beginPath();
             graphCtx.strokeStyle = color.css;
             graphCtx.lineWidth = 2;
-            // Fill for graph
             graphCtx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.2)`;
 
-            // ImageData for Screen View (Photorealistic)
             const screenImg = screenCtx.createImageData(w, sh);
             const sData = screenImg.data;
 
             for (let x = 0; x < w; x++) {
-                // Map x (0 to width) to theta (-maxTheta to maxTheta)
-                const theta = -maxTheta + (x / w) * (2 * maxTheta);
+                // Map x to theta (-fov to +fov)
+                const theta = -fov + (x / w) * (2 * fov);
                 
-                // Calculate Alpha (Phase difference)
-                // alpha = (pi * a * sin(theta)) / lambda
-                // Units need to match. wavelength in nm, slitWidth in nm.
+                // Calculate Alpha
                 const alpha = (Math.PI * slitWidth * Math.sin(theta)) / wavelength;
                 
-                // Intensity I = I0 * (sin(alpha) / alpha)^2
+                // Intensity
                 let intensity = 1.0;
-                if (Math.abs(alpha) < 1e-6) {
-                    intensity = 1.0; // Limit at 0
-                } else {
+                if (Math.abs(alpha) > 1e-6) {
                     const sinc = Math.sin(alpha) / alpha;
                     intensity = sinc * sinc;
                 }
 
-                // Plot on Graph
+                // Plot Graph
                 const plotY = (gh - 20) - intensity * (gh - 40);
                 if (x === 0) graphCtx.moveTo(x, plotY);
                 else graphCtx.lineTo(x, plotY);
 
-                // Draw on Screen (Vertical bands)
-                // Intensity determines brightness
+                // Draw Screen
                 const brightness = Math.floor(intensity * 255);
-                
                 for (let y = 0; y < sh; y++) {
                     const idx = (y * w + x) * 4;
-                    sData[idx] = color.r;     // R
-                    sData[idx+1] = color.g;   // G
-                    sData[idx+2] = color.b;   // B
-                    // Alpha falloff towards top/bottom to simulate beam height? Or just flat.
-                    // Let's do flat band like a real screen
+                    sData[idx] = color.r;
+                    sData[idx+1] = color.g;
+                    sData[idx+2] = color.b;
                     sData[idx+3] = brightness; 
                 }
             }
@@ -286,34 +281,33 @@
             graphCtx.lineTo(0, gh-20);
             graphCtx.fill();
 
-            // Put Screen Image
             screenCtx.putImageData(screenImg, 0, 0);
 
-            // Draw Labels (First Minima)
-            // lambda / a = sin(theta) approx theta
-            const thetaMin = wavelength / slitWidth;
+            // Draw Labels (Minima)
+            const thetaMin = Math.asin(Math.min(1, wavelength / slitWidth));
             // Map theta back to x pixel
-            // theta = -maxTheta + (x/w)*2maxTheta -> x = ((theta + maxTheta) / 2maxTheta) * w
-            const minX_R = ((thetaMin + maxTheta) / (2 * maxTheta)) * w;
-            const minX_L = ((-thetaMin + maxTheta) / (2 * maxTheta)) * w;
+            // x = ((theta + fov) / (2*fov)) * w
+            if (!isNaN(thetaMin)) {
+                const minX_R = ((thetaMin + fov) / (2 * fov)) * w;
+                const minX_L = ((-thetaMin + fov) / (2 * fov)) * w;
 
-            // Draw markers on Graph
-            if (minX_R < w) {
-                graphCtx.fillStyle = '#ef4444';
-                graphCtx.fillText('Min', minX_R - 10, gh - 5);
-                graphCtx.fillRect(minX_R, gh - 25, 2, 10);
-            }
-            if (minX_L > 0) {
-                graphCtx.fillStyle = '#ef4444';
-                graphCtx.fillText('Min', minX_L - 10, gh - 5);
-                graphCtx.fillRect(minX_L, gh - 25, 2, 10);
+                if (minX_R < w) {
+                    graphCtx.fillStyle = '#ef4444';
+                    graphCtx.fillText('Min', minX_R - 10, gh - 5);
+                    graphCtx.fillRect(minX_R, gh - 25, 2, 10);
+                }
+                if (minX_L > 0) {
+                    graphCtx.fillStyle = '#ef4444';
+                    graphCtx.fillText('Min', minX_L - 10, gh - 5);
+                    graphCtx.fillRect(minX_L, gh - 25, 2, 10);
+                }
             }
         };
 
         useEffect(() => {
             requestRef.current = requestAnimationFrame(loop);
             return () => cancelAnimationFrame(requestRef.current);
-        }, [wavelength, slitWidth]); // Loop needs color update
+        }, [wavelength, slitWidth]); 
 
         useEffect(() => {
             updateCalculations();
@@ -336,7 +330,7 @@
                         <div className="bg-indigo-500/20 p-2 rounded-lg">
                             <i data-lucide="aperture" className="w-6 h-6 text-indigo-400"></i>
                         </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Single Slit Diffraction</h1>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Single Slit Diffraction Lab</h1>
                     </div>
                     <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
                         Topic: Wave Optics
@@ -403,8 +397,8 @@
                                     className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb" 
                                 />
                                 <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                    <span>Narrow (Diffracts More)</span>
-                                    <span>Wide (Diffracts Less)</span>
+                                    <span>Narrow (High Diffraction)</span>
+                                    <span>Wide (Low Diffraction)</span>
                                 </div>
                             </div>
 
@@ -426,9 +420,9 @@
                             <p className="text-xs text-slate-300 leading-relaxed border-t border-indigo-500/30 pt-3">
                                 <strong>Rule of Thumb:</strong>
                                 <br/>
-                                If <strong>λ ≈ a</strong> (Ratio ≈ 1), diffraction is maximum (very wide spread).
+                                As <strong>λ / a</strong> increases (Red light or Narrow slit), the diffraction pattern spreads out WIDER.
                                 <br/>
-                                If <strong>λ &lt;&lt; a</strong> (Ratio small), diffraction is minimal (sharp shadow).
+                                As <strong>λ / a</strong> decreases (Blue light or Wide slit), the pattern becomes NARROWER.
                             </p>
                         </div>
 
