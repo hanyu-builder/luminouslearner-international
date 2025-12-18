@@ -68,24 +68,8 @@
 
         // --- Physics Logic ---
         const calculateInduction = (y, v) => {
-            // Flux Phi ~ 1 / (1 + (dy/R)^2)^(3/2) roughly for loop on axis
-            // EMF = -dPhi/dt = - (dPhi/dy * dy/dt) = - (dPhi/dy * v)
-            
             const dy = y - COIL_Y;
-            // Simplified Flux model derivative (Gaussian-ish peak at 0)
-            // Peak at dy=0. Slope is max at inflection points.
-            
-            // dPhi/dy shape: Positive above (approaching), Negative below (leaving) for N pole down.
-            // If N down: B points down. Flux down increases as y increases (goes down).
-            // Wait, standard coords: y increases downwards.
-            // Magnet moving down (v > 0).
-            // N pole down. B field points DOWN.
-            // Approaching coil (y < COIL_Y): Flux DOWN is INCREASING.
-            // Lenz: Create Flux UP. Current: CCW (from top).
-            // Leaving coil (y > COIL_Y): Flux DOWN is DECREASING.
-            // Lenz: Create Flux DOWN. Current: CW (from top).
-            
-            // Let's model rate of change of flux
+            // Gaussian derivative for flux change rate approximation
             const dist = (dy / 100);
             const rateOfChange = -dist * Math.exp(-(dist * dist)) * 5; 
             
@@ -109,31 +93,18 @@
         const dropMagnet = () => {
             if (isDropping) return;
             setIsDropping(true);
-            physicsRef.current.v = 0; // Start from 0 or current? Start drop.
+            physicsRef.current.v = 0; 
         };
 
         const loop = () => {
             const state = physicsRef.current;
             
             if (isDropping) {
-                // Gravity + Magnetic Braking
                 const G = 0.5; // Gravity
                 
-                // Induction
-                const emf = calculateInduction(state.y, state.v);
-                
-                // Magnetic Force (Braking) F = I * L * B_rad ?
-                // Simply, Energy conservation: Kinetic energy is converted to electrical heat.
-                // Force opposes motion. F_mag is proportional to Current * Velocity (approx eddy current damping)
-                // F_drag = k * emf * something? 
-                // Let's simplified: Drag force is proportional to Induced Current^2 / v ? 
-                // Or F = k * I * v?
-                // Actually F = I * (dPhi/dy). 
-                // Since I ~ dPhi/dy * v, then F ~ (dPhi/dy)^2 * v.
-                // It's a viscous drag proportional to velocity and position sensitivity.
-                
+                // Induction damping
                 const dy = state.y - COIL_Y;
-                const sensitivity = (dy/100) * Math.exp(-(Math.pow(dy/100, 2))); // dPhi/dy shape
+                const sensitivity = (dy/100) * Math.exp(-(dy*dy)/(100*100));
                 const brakingForce = 2.0 * (sensitivity * sensitivity) * state.v;
                 
                 state.v += G - brakingForce; 
@@ -148,11 +119,9 @@
             }
             
             // Update Current Visualization
-            const current = calculateInduction(state.y, state.v); // For visualization, use v even if dragging
-            // If dragging, calculate v from delta pos? 
-            // For now dragging doesn't set v, so current is 0. 
-            // Better: calculate v from mouse drag delta?
+            const current = calculateInduction(state.y, state.v);
             
+            // Sync to React State (Triggers Render)
             setMagnetY(state.y);
             setMagnetVel(state.v);
             setInducedCurrent(current);
@@ -165,11 +134,12 @@
         useEffect(() => {
             if (!isDropping) {
                 const dy = physicsRef.current.y - prevYRef.current;
-                physicsRef.current.v = dy; // Fake velocity for induction calc during drag
+                physicsRef.current.v = dy; 
                 prevYRef.current = physicsRef.current.y;
             }
         });
 
+        // Start/Stop Loop
         useEffect(() => {
             requestRef.current = requestAnimationFrame(loop);
             return () => cancelAnimationFrame(requestRef.current);
@@ -200,7 +170,137 @@
             physicsRef.current.dragging = false;
         };
 
-        // --- Rendering ---
+        // --- Rendering Helpers ---
+        const drawArrowHead = (ctx, px, py, vx, vy) => {
+            ctx.beginPath();
+            ctx.moveTo(px + vx, py + vy); // Tip
+            ctx.lineTo(px - vy*0.5, py + vx*0.5); // Back 1
+            ctx.lineTo(px + vy*0.5, py - vx*0.5); // Back 2
+            ctx.fill();
+        };
+
+        const drawCurrentArrows = (ctx, x, y, rx, ry, dir, color) => {
+            ctx.fillStyle = color;
+            for (let i = 1; i <= 3; i++) {
+                const angle = Math.PI * (i/4); // 45, 90, 135
+                const px = x + rx * Math.cos(angle);
+                const py = y + ry * Math.sin(angle);
+                
+                let tx = -rx * Math.sin(angle);
+                let ty = ry * Math.cos(angle);
+                
+                const len = Math.sqrt(tx*tx + ty*ty);
+                tx = (tx/len) * 15 * dir;
+                ty = (ty/len) * 15 * dir;
+
+                drawArrowHead(ctx, px, py, tx, ty);
+            }
+        };
+
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 3;
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.stroke();
+            
+            const angle = Math.atan2(dy, dx);
+            ctx.beginPath();
+            ctx.moveTo(x + dx, y + dy);
+            ctx.lineTo(x + dx - 10 * Math.cos(angle - Math.PI/6), y + dy - 10 * Math.sin(angle - Math.PI/6));
+            ctx.lineTo(x + dx - 10 * Math.cos(angle + Math.PI/6), y + dy - 10 * Math.sin(angle + Math.PI/6));
+            ctx.fill();
+            
+            if (label) {
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillText(label, x + dx + 10, y + dy);
+            }
+        };
+
+        const drawFieldLines = (ctx, x, y, pol) => {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 2;
+            const numLines = 6;
+            const w = MAGNET_W;
+            const h = MAGNET_H;
+            const isNDown = pol === 'N_DOWN';
+            
+            for(let i=1; i<=numLines/2; i++) {
+                const offset = i * 40;
+                
+                ctx.beginPath();
+                ctx.moveTo(x + w/4, y - h/2 + 5);
+                ctx.bezierCurveTo(x + w + offset, y - h, x + w + offset, y + h, x + w/4, y + h/2 - 5);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(x - w/4, y - h/2 + 5);
+                ctx.bezierCurveTo(x - w - offset, y - h, x - w - offset, y + h, x - w/4, y + h/2 - 5);
+                ctx.stroke();
+                
+                const midY = y;
+                const midX = x + w + offset*0.75;
+                const arrowDir = isNDown ? -1 : 1; 
+                
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                drawArrowHead(ctx, midX, midY, 0, arrowDir * 10);
+                drawArrowHead(ctx, x - (midX-x), midY, 0, arrowDir * 10);
+            }
+        };
+
+        const drawBulb = (ctx, x, y, intensity) => {
+            ctx.strokeStyle = '#b45309';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(x - 40, y); ctx.lineTo(x, y); ctx.stroke();
+            
+            const alpha = Math.min(1, intensity);
+            const r = 20;
+            
+            if (alpha > 0) {
+                const grad = ctx.createRadialGradient(x, y, r*0.5, x, y, r*3);
+                grad.addColorStop(0, `rgba(250, 204, 21, ${alpha})`);
+                grad.addColorStop(1, 'rgba(250, 204, 21, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(x, y, r*3, 0, Math.PI*2); ctx.fill();
+            }
+            
+            ctx.fillStyle = `rgba(255, 255, 255, 0.3)`;
+            ctx.strokeStyle = '#fff';
+            ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            
+            ctx.strokeStyle = alpha > 0.1 ? '#fef08a' : '#57534e';
+            ctx.beginPath(); ctx.moveTo(x-5, y+10); ctx.lineTo(x-5, y-5); ctx.lineTo(x+5, y-5); ctx.lineTo(x+5, y+10); ctx.stroke();
+        };
+
+        const drawMagnet = (ctx, x, y, pol) => {
+            const w = MAGNET_W;
+            const h = MAGNET_H;
+            const topColor = pol === 'N_DOWN' ? '#3b82f6' : '#ef4444';
+            const botColor = pol === 'N_DOWN' ? '#ef4444' : '#3b82f6';
+            const topText = pol === 'N_DOWN' ? 'S' : 'N';
+            const botText = pol === 'N_DOWN' ? 'N' : 'S';
+
+            ctx.fillStyle = topColor;
+            ctx.fillRect(x - w/2, y - h/2, w, h/2);
+            ctx.fillStyle = botColor;
+            ctx.fillRect(x - w/2, y, w, h/2);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(topText, x, y - h/4);
+            ctx.fillText(botText, x, y + h/4);
+            
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - w/2, y - h/2, w, h);
+        };
+
+        // --- Main Draw Function ---
         const draw = () => {
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
@@ -220,21 +320,13 @@
             ctx.beginPath();
             ctx.ellipse(cx, cy, COIL_RADIUS, COIL_RADIUS * 0.4, 0, Math.PI, 2*Math.PI);
             ctx.lineWidth = 12;
-            ctx.strokeStyle = '#334155'; // Dark grey copper
+            ctx.strokeStyle = '#334155';
             ctx.stroke();
-            // Copper color overlay
             ctx.lineWidth = 8;
             ctx.strokeStyle = '#b45309';
             ctx.stroke();
 
             // 3. Draw Magnet
-            // Depending on y, magnet might be inside coil. 
-            // We need proper Z-ordering.
-            // If magnet is above coil, draw magnet then front coil.
-            // If magnet is below coil, draw magnet then front coil?
-            // Actually, if magnet is passing through, part is occluded.
-            // Simple Z-order: Back Coil -> Magnet -> Front Coil. This works for transparency illusion.
-            
             drawMagnet(ctx, cx, my, polarity);
 
             // 4. Draw Coil (Front part)
@@ -247,27 +339,20 @@
             ctx.strokeStyle = '#b45309';
             ctx.stroke();
 
-            // 5. Draw Induced Current (Arrows on Coil)
+            // 5. Draw Induced Current
             if (Math.abs(inducedCurrent) > 0.5) {
                 const intensity = Math.min(1, Math.abs(inducedCurrent) / 10);
-                const color = 'rgba(250, 204, 21, ' + intensity + ')'; // Yellow
-                
-                // Direction: + is CCW (Right to Left on front), - is CW (Left to Right on front)
-                // Wait, CCW from top means Front moves Right->Left.
+                const color = 'rgba(250, 204, 21, ' + intensity + ')'; 
                 const dir = inducedCurrent > 0 ? 1 : -1;
                 
                 drawCurrentArrows(ctx, cx, cy, COIL_RADIUS, COIL_RADIUS*0.4, dir, color);
-                
-                // LED Bulb lighting up?
                 drawBulb(ctx, cx + COIL_RADIUS + 40, cy, intensity);
             } else {
                 drawBulb(ctx, cx + COIL_RADIUS + 40, cy, 0);
             }
             
-            // 6. Draw Induced B-Field Indicator (Lenz's Pole)
+            // 6. Induced B-Field Indicator
             if (Math.abs(inducedCurrent) > 1.0) {
-                // If current > 0 (CCW), Coil Top acts as N pole.
-                // If current < 0 (CW), Coil Top acts as S pole.
                 const label = inducedCurrent > 0 ? "N" : "S";
                 const color = inducedCurrent > 0 ? "#ef4444" : "#3b82f6";
                 
@@ -275,186 +360,21 @@
                 ctx.fillStyle = color;
                 ctx.font = 'bold 40px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(label, cx, cy); // Center of coil
+                ctx.fillText(label, cx, cy); 
                 ctx.globalAlpha = 1.0;
             }
 
             // 7. Force Vector
             if (showForces && Math.abs(inducedCurrent) > 1.0) {
-                // Braking force always opposes motion
                 const fDir = -Math.sign(magnetVel);
-                const fMag = Math.abs(inducedCurrent) * 5; // Scale
-                
-                // Draw arrow on magnet center
+                const fMag = Math.abs(inducedCurrent) * 5; 
                 drawArrow(ctx, cx + MAGNET_W/2 + 20, my, 0, fDir * fMag, '#10b981', 'F_drag');
             }
-
         };
 
-        const drawMagnet = (ctx, x, y, pol) => {
-            const w = MAGNET_W;
-            const h = MAGNET_H;
-            
-            // North is Top if N_DOWN is false?
-            // pol: 'N_DOWN' -> Bottom is N (Red). Top is S (Blue).
-            // pol: 'S_DOWN' -> Bottom is S (Blue). Top is N (Red).
-            
-            const topColor = pol === 'N_DOWN' ? '#3b82f6' : '#ef4444';
-            const botColor = pol === 'N_DOWN' ? '#ef4444' : '#3b82f6';
-            const topText = pol === 'N_DOWN' ? 'S' : 'N';
-            const botText = pol === 'N_DOWN' ? 'N' : 'S';
-
-            // Top Half
-            ctx.fillStyle = topColor;
-            ctx.fillRect(x - w/2, y - h/2, w, h/2);
-            // Bottom Half
-            ctx.fillStyle = botColor;
-            ctx.fillRect(x - w/2, y, w, h/2);
-            
-            // Text
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 20px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(topText, x, y - h/4);
-            ctx.fillText(botText, x, y + h/4);
-            
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x - w/2, y - h/2, w, h);
-        };
-
-        const drawCurrentArrows = (ctx, x, y, rx, ry, dir, color) => {
-            // Front arc arrows
-            ctx.fillStyle = color;
-            
-            // 3 Arrows
-            for (let i = 1; i <= 3; i++) {
-                const angle = Math.PI * (i/4); // 45, 90, 135
-                const px = x + rx * Math.cos(angle);
-                const py = y + ry * Math.sin(angle);
-                
-                // Tangent direction
-                // dx/dt = -rx sin t, dy/dt = ry cos t
-                let tx = -rx * Math.sin(angle);
-                let ty = ry * Math.cos(angle);
-                
-                // Normalize and scale
-                const len = Math.sqrt(tx*tx + ty*ty);
-                tx = (tx/len) * 15 * dir;
-                ty = (ty/len) * 15 * dir;
-
-                drawArrowHead(ctx, px, py, tx, ty);
-            }
-        };
-        
-        const drawArrowHead = (ctx, px, py, vx, vy) => {
-            ctx.beginPath();
-            ctx.moveTo(px + vx, py + vy); // Tip
-            ctx.lineTo(px - vy*0.5, py + vx*0.5); // Back 1
-            ctx.lineTo(px + vy*0.5, py - vx*0.5); // Back 2
-            ctx.fill();
-        };
-
-        const drawFieldLines = (ctx, x, y, pol) => {
-            // Simple static graphic relative to magnet Y
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            ctx.lineWidth = 2;
-            
-            const numLines = 6;
-            const w = MAGNET_W;
-            const h = MAGNET_H;
-            
-            // Lines emanating from poles
-            // If N_DOWN, flux comes out of Bottom, into Top
-            const isNDown = pol === 'N_DOWN';
-            
-            // Draw loops
-            for(let i=1; i<=numLines/2; i++) {
-                const offset = i * 40;
-                
-                ctx.beginPath();
-                // Right Loop
-                ctx.moveTo(x + w/4, y - h/2 + 5);
-                ctx.bezierCurveTo(x + w + offset, y - h, x + w + offset, y + h, x + w/4, y + h/2 - 5);
-                ctx.stroke();
-                
-                // Left Loop
-                ctx.beginPath();
-                ctx.moveTo(x - w/4, y - h/2 + 5);
-                ctx.bezierCurveTo(x - w - offset, y - h, x - w - offset, y + h, x - w/4, y + h/2 - 5);
-                ctx.stroke();
-                
-                // Arrow direction
-                // N -> S.
-                // If N_DOWN: Out Bottom, In Top. (Upwards on outside)
-                // If S_DOWN: In Bottom, Out Top. (Downwards on outside)
-                
-                const midY = y;
-                const midX = x + w + offset*0.75; // Approx bezier mid
-                const arrowDir = isNDown ? -1 : 1; // -1 Up, 1 Down
-                
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-                drawArrowHead(ctx, midX, midY, 0, arrowDir * 10);
-                drawArrowHead(ctx, x - (midX-x), midY, 0, arrowDir * 10);
-            }
-        };
-        
-        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
-            ctx.lineWidth = 3;
-            
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x + dx, y + dy);
-            ctx.stroke();
-            
-            // Head
-            const angle = Math.atan2(dy, dx);
-            ctx.beginPath();
-            ctx.moveTo(x + dx, y + dy);
-            ctx.lineTo(x + dx - 10 * Math.cos(angle - Math.PI/6), y + dy - 10 * Math.sin(angle - Math.PI/6));
-            ctx.lineTo(x + dx - 10 * Math.cos(angle + Math.PI/6), y + dy - 10 * Math.sin(angle + Math.PI/6));
-            ctx.fill();
-            
-            if (label) {
-                ctx.font = 'bold 12px sans-serif';
-                ctx.fillText(label, x + dx + 10, y + dy);
-            }
-        };
-
-        const drawBulb = (ctx, x, y, intensity) => {
-            // Wire connection
-            ctx.strokeStyle = '#b45309';
-            ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(x - 40, y); ctx.lineTo(x, y); ctx.stroke();
-            
-            // Bulb
-            const alpha = Math.min(1, intensity);
-            const r = 20;
-            
-            // Glow
-            if (alpha > 0) {
-                const grad = ctx.createRadialGradient(x, y, r*0.5, x, y, r*3);
-                grad.addColorStop(0, `rgba(250, 204, 21, ${alpha})`);
-                grad.addColorStop(1, 'rgba(250, 204, 21, 0)');
-                ctx.fillStyle = grad;
-                ctx.beginPath(); ctx.arc(x, y, r*3, 0, Math.PI*2); ctx.fill();
-            }
-            
-            ctx.fillStyle = `rgba(255, 255, 255, 0.3)`;
-            ctx.strokeStyle = '#fff';
-            ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-            
-            // Filament
-            ctx.strokeStyle = alpha > 0.1 ? '#fef08a' : '#57534e';
-            ctx.beginPath(); ctx.moveTo(x-5, y+10); ctx.lineTo(x-5, y-5); ctx.lineTo(x+5, y-5); ctx.lineTo(x+5, y+10); ctx.stroke();
-        };
-
+        // KEY FIX: Re-draw whenever state changes!
         useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
+            draw();
         });
 
         useEffect(() => {
