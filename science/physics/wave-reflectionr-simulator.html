@@ -71,18 +71,8 @@
             // Spawn new wavefront every 40 frames
             if (frameCountRef.current % 40 === 0) {
                 // Incoming plane wave from left
-                // Represented by a line segment or points
-                // Let's use points for ray tracing visual style combined with wave lines
-                // Actually, simple geometric approach:
-                // Incoming waves are vertical lines moving right (x increases)
                 wavesRef.current.push({ x: 0, type: 'incident', id: Date.now() });
             }
-
-            // Update waves
-            // For simple reflection simulation without heavy grid physics, 
-            // we can track "wavefront lines" and their reflected counterparts.
-            
-            // This is a geometric simulation (Ray Tracing approach for Wavefronts)
             
             draw();
             requestRef.current = requestAnimationFrame(loop);
@@ -107,115 +97,91 @@
             const barrierColor = '#facc15'; // Yellow
             ctx.strokeStyle = barrierColor;
             ctx.lineWidth = 5;
-            ctx.beginPath();
 
-            // Define Barrier Geometry
-            // Flat: Line at center, rotated by angle
-            // Concave: Arc facing left
-            // Convex: Arc facing right
-            
+            // Define Barrier Geometry & Draw IMMEDIATELY to avoid path clearing issues
             const rad = angle * Math.PI / 180;
             
             if (barrierType === 'flat') {
+                ctx.beginPath();
                 const len = 300;
-                // Center pivot
-                const dx = len/2 * Math.sin(rad); // Perpendicular to normal? No, simple rotation
+                const dx = len/2 * Math.sin(rad);
                 const dy = len/2 * Math.cos(rad);
-                
-                // If angle is 0, barrier is vertical | (reflects straight back)
-                // If angle is 45, barrier is \ (reflects up)
-                // Let's define angle 0 as Vertical barrier.
                 
                 ctx.moveTo(CENTER_X - dx, CENTER_Y - dy);
                 ctx.lineTo(CENTER_X + dx, CENTER_Y + dy);
+                ctx.stroke(); // Draw barrier first
                 
                 // Draw Normal
                 if (showNormal) {
                     ctx.save();
                     ctx.translate(CENTER_X, CENTER_Y);
-                    ctx.rotate(Math.PI/2 - rad); // Normal is perp to barrier
+                    ctx.rotate(Math.PI/2 - rad);
                     ctx.strokeStyle = '#ef4444';
                     ctx.setLineDash([5, 5]);
                     ctx.lineWidth = 2;
                     ctx.beginPath();
                     ctx.moveTo(0, 0);
-                    ctx.lineTo(-100, 0); // Pointing left (towards incoming)
+                    ctx.lineTo(-100, 0);
                     ctx.stroke();
                     ctx.restore();
                 }
 
             } else if (barrierType === 'concave') {
+                ctx.beginPath();
                 // C shape
                 ctx.arc(CENTER_X + 50, CENTER_Y, 150, Math.PI - 0.7, Math.PI + 0.7);
-                // Focal point approx at R/2 = 75 from center+50 = center-25
+                ctx.stroke(); // Draw barrier first
+
+                // Focal point
                 if (showNormal) {
                      ctx.fillStyle = '#ef4444';
                      ctx.beginPath(); ctx.arc(CENTER_X + 50 - 75, CENTER_Y, 4, 0, Math.PI*2); ctx.fill();
+                     
+                     ctx.fillStyle = '#ef4444';
+                     ctx.font = '12px Inter';
                      ctx.fillText('F', CENTER_X + 50 - 75, CENTER_Y - 10);
                 }
+
             } else if (barrierType === 'convex') {
+                ctx.beginPath();
                 // ) shape
                 ctx.arc(CENTER_X - 50, CENTER_Y, 150, -0.7, 0.7);
+                ctx.stroke(); // Draw barrier first
             }
-            ctx.stroke();
 
             // 3. Draw Waves (Ray Tracing Logic)
-            // We simulate "rays" and draw lines connecting them to form wavefronts
-            
             const numRays = 20;
             const raySpacing = 15;
             const waveSpeed = 2;
-            const t = frameCountRef.current * waveSpeed; // Total distance traveled
+            const t = frameCountRef.current * waveSpeed;
 
             ctx.lineWidth = 2;
-
-            // Loop through "virtual" wave pulses launched at specific times
-            // t_launch = 0, 40*speed, 80*speed...
-            // current_dist = t - t_launch
             
-            const launchInterval = 60; // pixel distance between waves
+            const launchInterval = 60;
             const maxDist = CANVAS_WIDTH + CANVAS_HEIGHT;
 
             for (let dist = t % launchInterval; dist < maxDist; dist += launchInterval) {
-                // Draw a wavefront at 'dist'
-                
                 ctx.beginPath();
-                // We construct the wavefront by tracing rays
-                let firstPoint = true;
                 
                 for (let i = -numRays/2; i <= numRays/2; i++) {
                     const rayY = CENTER_Y + i * raySpacing;
-                    const rayStart = 0;
-                    
-                    // Check intersection with barrier
-                    // Simplified Ray-Plane Intersection logic for visual
                     
                     let hitDist = 9999;
                     let hitX = 0;
                     let hitY = 0;
                     let reflected = false;
                     
-                    // --- Intersection Math ---
+                    // Intersection Math
                     if (barrierType === 'flat') {
-                        // Line: P = Center + t*Dir
-                        // Ray: y = rayY, x increases
-                        // Barrier: (x - CX)*Nx + (y - CY)*Ny = 0 ? No, parametric line segment
-                        // x = CX + s*sin(rad), y = CY + s*cos(rad) for s in [-L/2, L/2]
-                        
-                        // Intersection: rayY = CY + s*cos(rad) -> s = (rayY - CY)/cos(rad)
-                        // hitX = CX + s*sin(rad)
-                        
-                        // Check bounds of s
                         if (Math.abs(Math.cos(rad)) > 0.01) {
                             const s = (rayY - CENTER_Y) / Math.cos(rad);
-                            if (Math.abs(s) < 150) { // Half length
+                            if (Math.abs(s) < 150) {
                                 hitX = CENTER_X + s * Math.sin(rad);
                                 hitY = rayY;
                                 hitDist = hitX;
                                 reflected = true;
                             }
                         } else {
-                            // Vertical barrier (rad=90)
                             if (Math.abs(rayY - CENTER_Y) < 150) {
                                 hitX = CENTER_X;
                                 hitY = rayY;
@@ -224,12 +190,8 @@
                             }
                         }
                     } else if (barrierType === 'concave') {
-                        // Circle: (x - (CX+50))^2 + (y - CY)^2 = 150^2
-                        // Ray: y = rayY. x < CX+50
-                        // (x - h)^2 = R^2 - (y - k)^2
-                        // x = h - sqrt(...) (Left side of circle)
                         const dy = rayY - CENTER_Y;
-                        if (Math.abs(dy) < 140) { // Limit arc
+                        if (Math.abs(dy) < 140) {
                             const dx = Math.sqrt(150*150 - dy*dy);
                             hitX = (CENTER_X + 50) - dx;
                             hitY = rayY;
@@ -237,98 +199,64 @@
                             reflected = true;
                         }
                     } else if (barrierType === 'convex') {
-                         // Circle center (CX-50, CY)
                          const dy = rayY - CENTER_Y;
                          if (Math.abs(dy) < 140) {
                              const dx = Math.sqrt(150*150 - dy*dy);
-                             hitX = (CENTER_X - 50) + dx; // Right side
+                             hitX = (CENTER_X - 50) + dx;
                              hitY = rayY;
                              hitDist = hitX;
                              reflected = true;
                          }
                     }
 
-                    // --- Draw Wave Point ---
+                    // Calculate Point
                     let waveX, waveY;
                     
                     if (dist < hitDist) {
-                        // Incident Wave
                         waveX = dist;
                         waveY = rayY;
-                        
-                        // Draw Incident Ray (Ghost)
-                        if (showRays && dist % (launchInterval*2) < 5) { // Only draw ray lines occasionally
+                        if (showRays && dist % (launchInterval*2) < 5) {
                             ctx.fillStyle = 'rgba(6, 182, 212, 0.1)';
                             ctx.fillRect(0, rayY, hitDist, 1);
                         }
                     } else {
-                        // Reflected Wave
                         if (!reflected) {
-                            // Missed barrier, continue straight
                             waveX = dist;
                             waveY = rayY;
                         } else {
-                            // Reflect!
                             const remainDist = dist - hitDist;
-                            
-                            // Normal Vector at Hit Point
                             let nx, ny;
                             if (barrierType === 'flat') {
-                                nx = -Math.cos(rad); // Points left-ish
-                                ny = Math.sin(rad); // Points up/down depending on side? 
-                                // Actually Normal direction is Angle - 90
-                                // rad=0 (Vertical) -> Normal (-1, 0)
+                                nx = -Math.cos(rad); 
+                                ny = Math.sin(rad); 
                             } else if (barrierType === 'concave') {
-                                // Normal points to center (CX+50, CY)
                                 const angle = Math.atan2(hitY - CENTER_Y, hitX - (CENTER_X+50));
                                 nx = -Math.cos(angle); 
                                 ny = -Math.sin(angle);
-                            } else { // convex
-                                // Normal points away from center (CX-50, CY)
+                            } else { 
                                 const angle = Math.atan2(hitY - CENTER_Y, hitX - (CENTER_X-50));
                                 nx = Math.cos(angle); 
                                 ny = Math.sin(angle);
                             }
                             
-                            // Incident Vector (1, 0)
-                            // Reflected Vector R = I - 2(I.N)N
-                            // I = (1, 0)
-                            const dot = 1 * nx + 0 * ny; // just nx
+                            const dot = 1 * nx + 0 * ny;
                             const rx = 1 - 2 * dot * nx;
                             const ry = 0 - 2 * dot * ny;
                             
                             waveX = hitX + rx * remainDist;
                             waveY = hitY + ry * remainDist;
-                            
-                            // Draw Reflected Ray
-                             if (showRays && dist % (launchInterval*2) < 5) {
-                                ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
-                                // Simple line trace is hard here without stroke, just visualize wavefronts
-                             }
                         }
                     }
                     
-                    // Don't connect if huge jump (e.g. missed barrier vs hit barrier edge)
-                    // If i > -numRays/2 and distance to prev point is huge, start new path
-                    
-                    // Simple Drawing: Dots or Lines? Lines form the wavefront.
-                    // If reflected state changes, break line
-                    
-                    // We need to store points to draw line strip
                     if (i === -numRays/2) {
                         ctx.moveTo(waveX, waveY);
                     } else {
-                        // Threshold check
-                        //ctx.lineTo(waveX, waveY); 
-                        // Actually just draw dots for "Huygens" feel or small lines
                          const size = 2;
-                         ctx.fillStyle = dist < hitDist ? '#06b6d4' : '#ef4444'; // Cyan vs Red
+                         ctx.fillStyle = dist < hitDist ? '#06b6d4' : '#ef4444';
                          ctx.fillRect(waveX, waveY, 2, 2);
                     }
                 }
-                // ctx.stroke(); // Connecting lines is tricky with discontinuity
             }
-
         };
 
         useEffect(() => {
