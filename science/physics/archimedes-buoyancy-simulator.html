@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Archimedes' Buoyancy Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-cyan::-webkit-slider-thumb { background: #06b6d4; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    const WATER_LEVEL = 350; // Y coordinate of water surface
+    const GRAVITY = 9.8;
+
+    const MATERIALS = [
+        { name: "Wood", density: 600, color: "#a87748" }, // kg/m^3
+        { name: "Ice", density: 917, color: "#bae6fd" },
+        { name: "Water (Neutral)", density: 1000, color: "#3b82f6" },
+        { name: "Aluminum", density: 2700, color: "#94a3b8" },
+        { name: "Iron", density: 7874, color: "#64748b" },
+        { name: "Gold", density: 19320, color: "#facc15" }
+    ];
+
+    const FLUID_DENSITY = 1000; // Water
+
+    const App = () => {
+        // --- State ---
+        const [material, setMaterial] = useState("Wood");
+        const [volume, setVolume] = useState(0.005); // m^3 (5 Liters)
+        const [showForces, setShowForces] = useState(true);
+        const [isDragging, setIsDragging] = useState(false);
+        
+        // Physics State
+        const physicsRef = useRef({
+            y: 100, // Object Y position (center)
+            vy: 0,
+            submergedVol: 0,
+            displacedMass: 0
+        });
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // Derived values
+        const currentMat = MATERIALS.find(m => m.name === material);
+        const mass = currentMat.density * volume; // kg
+        const weight = mass * GRAVITY; // N
+        // Block size visual scaling: Cube root of volume
+        const blockSize = Math.pow(volume, 1/3) * 200; // pixels approx
+
+        // --- Physics Engine ---
+        const updatePhysics = () => {
+            if (isDragging) return; // Physics paused while dragging
+
+            const state = physicsRef.current;
+            const bottomY = state.y + blockSize/2;
+            
+            // 1. Calculate Buoyancy
+            // How much of the object is below water level?
+            let submergedH = 0;
+            if (bottomY > WATER_LEVEL) {
+                submergedH = Math.min(blockSize, bottomY - WATER_LEVEL);
+            }
+            
+            // Ratio submerged
+            const ratio = Math.max(0, submergedH / blockSize);
+            state.submergedVol = volume * ratio;
+            
+            // Archimedes Principle: Fb = rho * V_sub * g
+            const buoyantForce = FLUID_DENSITY * state.submergedVol * GRAVITY;
+            state.displacedMass = FLUID_DENSITY * state.submergedVol;
+
+            // 2. Net Force
+            // F_net = Fb - W - Drag
+            // Drag force to dampen oscillation
+            const drag = state.vy * 5.0; // simple damping
+            const netForce = buoyantForce - weight - drag;
+            
+            // 3. Acceleration (F=ma)
+            const acc = netForce / mass;
+            
+            // 4. Update Position
+            state.vy += acc * 0.016; // dt approx
+            state.y -= state.vy * 0.5; // Canvas Y is inverted (Up is negative), but F is up (+). 
+            // Wait, standard physics: Up is +Y. Gravity is -g.
+            // Let's stick to canvas coords: Y increases downwards.
+            // Gravity Force: +mg (Down). Buoyant Force: -Fb (Up).
+            // Net Force (Canvas Y) = mg - Fb - Drag
+            
+            const netForceCanvas = weight - buoyantForce - (state.vy * 10); // increased damping
+            const accCanvas = netForceCanvas / mass;
+            
+            state.vy += accCanvas * 0.016;
+            state.y += state.vy * 0.1; // Scale movement
+
+            // Floor collision
+            if (state.y + blockSize/2 > CANVAS_HEIGHT - 20) {
+                state.y = CANVAS_HEIGHT - 20 - blockSize/2;
+                state.vy *= -0.5; // Bounce
+                if (Math.abs(state.vy) < 0.1) state.vy = 0;
+            }
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            const state = physicsRef.current;
+
+            // 1. Draw Water Tank
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.2)'; // Light blue
+            ctx.fillRect(100, WATER_LEVEL, 400, CANVAS_HEIGHT - WATER_LEVEL);
+            // Water Surface Line
+            ctx.beginPath();
+            ctx.moveTo(100, WATER_LEVEL);
+            ctx.lineTo(500, WATER_LEVEL);
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            // Tank Walls
+            ctx.strokeStyle = '#94a3b8';
+            ctx.strokeRect(100, WATER_LEVEL - 50, 400, CANVAS_HEIGHT - WATER_LEVEL + 50);
+
+            // 2. Draw Object
+            const x = 300; // Center of tank
+            const y = state.y;
+            
+            ctx.fillStyle = currentMat.color;
+            ctx.fillRect(x - blockSize/2, y - blockSize/2, blockSize, blockSize);
+            ctx.strokeStyle = '#fff';
+            ctx.strokeRect(x - blockSize/2, y - blockSize/2, blockSize, blockSize);
+            
+            // Label
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(currentMat.name, x, y);
+            ctx.fillText(`${mass.toFixed(1)} kg`, x, y + 15);
+
+            // 3. Draw Displaced Water (The Eureka Can)
+            // Draw a side beaker showing displaced volume
+            const beakerX = 600;
+            const beakerY = 400;
+            const beakerW = 100;
+            const beakerH = 120;
+            
+            // Beaker Body
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(beakerX, beakerY - beakerH, beakerW, beakerH);
+            
+            // Water inside beaker
+            // Height proportional to displaced mass/volume
+            const maxVol = 0.01; // 10L capacity visual
+            const waterH = (state.displacedMass / FLUID_DENSITY / maxVol) * beakerH;
+            
+            if (waterH > 0) {
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
+                ctx.fillRect(beakerX, beakerY - waterH, beakerW, waterH);
+            }
+            
+            // Connecting Pipe (Visual only)
+            ctx.beginPath();
+            ctx.moveTo(500, WATER_LEVEL);
+            ctx.lineTo(beakerX + beakerW/2, WATER_LEVEL);
+            ctx.lineTo(beakerX + beakerW/2, beakerY - beakerH - 10);
+            ctx.strokeStyle = '#475569';
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'center';
+            ctx.fillText("Displaced Water", beakerX + beakerW/2, beakerY + 20);
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = 'bold 16px monospace';
+            ctx.fillText(`${state.displacedMass.toFixed(2)} kg`, beakerX + beakerW/2, beakerY - beakerH/2);
+
+            // 4. Force Vectors
+            if (showForces) {
+                const fb = state.displacedMass * GRAVITY;
+                
+                // Gravity (Down)
+                drawArrow(ctx, x, y, 0, weight * 0.5, '#ef4444', `W = ${weight.toFixed(0)}N`);
+                
+                // Buoyancy (Up)
+                if (fb > 1) {
+                    drawArrow(ctx, x, y, 0, -fb * 0.5, '#22c55e', `Fb = ${fb.toFixed(0)}N`);
+                }
+            }
+        };
+
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            const len = Math.sqrt(dx*dx + dy*dy);
+            if (len < 5) return; // Too small
+
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            // Head
+            const angle = Math.atan2(dy, dx);
+            const headLen = 10;
+            ctx.beginPath();
+            ctx.moveTo(x + dx, y + dy);
+            ctx.lineTo(x + dx - headLen * Math.cos(angle - Math.PI / 6), y + dy - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(x + dx - headLen * Math.cos(angle + Math.PI / 6), y + dy - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.fillStyle = color;
+            ctx.fill();
+
+            // Label
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(label, x + dx + 10, y + dy);
+        };
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            const objX = 300;
+            const objY = physicsRef.current.y;
+            
+            // Check collision
+            if (Math.abs(mouseX - objX) < blockSize/2 + 20 && Math.abs(mouseY - objY) < blockSize/2 + 20) {
+                setIsDragging(true);
+            }
+        };
+
+        const handleMouseMove = (e) => {
+            if (isDragging) {
+                const rect = canvasRef.current.getBoundingClientRect();
+                physicsRef.current.y = e.clientY - rect.top;
+                physicsRef.current.vy = 0;
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsDragging(false);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [material, volume, showForces, isDragging]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-cyan-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="anchor" className="w-5 h-5 text-cyan-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Archimedes' Buoyancy Lab</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Mechanics
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain cursor-grab active:cursor-grabbing"
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                            />
+                            {/* Instruction */}
+                            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/80 px-4 py-2 rounded-full text-xs text-slate-400 pointer-events-none backdrop-blur animate-pulse">
+                                Drag the block to push it underwater!
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Results */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur sticky top-0 z-10">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Measurements</h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-700">
+                                        <div className="text-xs text-slate-400">Block Mass</div>
+                                        <div className="font-mono font-bold text-white">{mass.toFixed(2)} kg</div>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-slate-900 p-2 rounded border border-slate-700">
+                                        <div className="text-xs text-slate-400">Block Density</div>
+                                        <div className="font-mono font-bold text-white">{currentMat.density} kg/m³</div>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-cyan-900/30 p-2 rounded border border-cyan-800/50">
+                                        <div className="text-xs text-cyan-300">Fluid Density</div>
+                                        <div className="font-mono font-bold text-cyan-300">1000 kg/m³</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Controls */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Material Selection */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-300 mb-2 block">Material</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {MATERIALS.map(m => (
+                                            <button
+                                                key={m.name}
+                                                onClick={() => setMaterial(m.name)}
+                                                className={`py-2 px-1 text-xs rounded border transition-all
+                                                    ${material === m.name 
+                                                        ? 'bg-cyan-600 border-cyan-500 text-white shadow-lg' 
+                                                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
+                                                `}
+                                            >
+                                                {m.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Volume Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-slate-300 mb-1">
+                                        Block Volume
+                                        <span>{(volume * 1000).toFixed(1)} L</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.001" max="0.01" step="0.001" 
+                                        value={volume} onChange={(e) => setVolume(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-cyan" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                        <span>Small</span>
+                                        <span>Large</span>
+                                    </div>
+                                </div>
+
+                                <div className="h-px bg-slate-800"></div>
+
+                                {/* Toggles */}
+                                <label className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-750 transition">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showForces} 
+                                        onChange={() => setShowForces(!showForces)}
+                                        className="w-4 h-4 rounded text-cyan-500 bg-slate-900 border-slate-600 focus:ring-0"
+                                    />
+                                    <span className="text-xs font-bold text-slate-300">Show Force Vectors</span>
+                                </label>
+
+                                <div className="mt-auto p-3 bg-amber-900/20 border border-amber-500/20 rounded-lg">
+                                    <h4 className="text-amber-400 font-bold text-xs mb-1 flex items-center">
+                                        <i data-lucide="info" className="w-3 h-3 mr-1"></i> Float or Sink?
+                                    </h4>
+                                    <p className="text-[10px] text-slate-400 leading-tight">
+                                        If Density &lt; 1000 kg/m³, it floats. <br/>
+                                        If Density &gt; 1000 kg/m³, it sinks (unless you shape it like a boat!).
+                                    </p>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
