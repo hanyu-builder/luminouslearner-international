@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Convex Lens Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-teal::-webkit-slider-thumb { background: #14b8a6; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+    
+    // Scale: 1 unit in formula = X pixels
+    const SCALE = 2.5; 
+
+    const App = () => {
+        // --- State ---
+        // Distances in "cm" (arbitrary units for formula)
+        const [u, setU] = useState(100); // Object Distance (Left of lens)
+        const [f, setF] = useState(60);  // Focal Length
+        const [h, setH] = useState(40);  // Object Height
+        const [showRays, setShowRays] = useState(true);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // --- Physics Calculation ---
+        const physics = useMemo(() => {
+            // Lens Formula: 1/v - 1/u = 1/f (Cartesian Sign Convention)
+            // Or 1/u + 1/v = 1/f (Real-is-Positive Convention)
+            // Let's use Real-is-Positive for simplicity in high school physics usually:
+            // 1/u + 1/v = 1/f => 1/v = 1/f - 1/u
+            
+            // However, for rendering coordinate system:
+            // Lens at 0. Object at -u.
+            // 1/v = 1/f + 1/do (if do is negative coordinate) -> standard: 1/di + 1/do = 1/f
+            
+            // Let's calculate v:
+            // 1/v = 1/f - 1/u
+            // v = (u * f) / (u - f)
+            
+            let v = 0;
+            let m = 0;
+            let type = "Real";
+            
+            if (u === f) {
+                v = Infinity;
+                m = Infinity;
+                type = "Undefined (Parallel)";
+            } else {
+                v = (u * f) / (u - f);
+                m = -v / u; // Magnification
+                
+                if (v > 0) type = "Real";
+                else type = "Virtual";
+            }
+
+            return { v, m, type };
+        }, [u, f]);
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // --- 1. Optical Bench Setup ---
+            
+            // Principal Axis
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, CENTER_Y);
+            ctx.lineTo(CANVAS_WIDTH, CENTER_Y);
+            ctx.stroke();
+
+            // Lens (Vertical Line + Symbol)
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(CENTER_X, 50); ctx.lineTo(CENTER_X, CANVAS_HEIGHT-50); ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Lens Shape (Convex)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(CENTER_X, CENTER_Y, 15, 200, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Focal Points
+            const fPx = f * SCALE;
+            drawPoint(ctx, CENTER_X - fPx, CENTER_Y, "F"); // F'
+            drawPoint(ctx, CENTER_X + fPx, CENTER_Y, "F"); // F
+            drawPoint(ctx, CENTER_X - fPx * 2, CENTER_Y, "2F"); // 2F'
+            drawPoint(ctx, CENTER_X + fPx * 2, CENTER_Y, "2F"); // 2F
+
+            // --- 2. Object (Candle/Arrow) ---
+            const objX = CENTER_X - u * SCALE;
+            const objY = CENTER_Y - h; // Up is negative Y
+            
+            // Draw Arrow Object
+            ctx.strokeStyle = '#f59e0b'; // Amber
+            ctx.lineWidth = 4;
+            drawArrow(ctx, objX, CENTER_Y, objX, objY);
+            ctx.fillStyle = '#f59e0b';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText("Object", objX - 15, objY - 10);
+
+            // --- 3. Image ---
+            const { v, m, type } = physics;
+            
+            if (v !== Infinity && Math.abs(v) < 10000) { // Limit huge values
+                const imgX = CENTER_X + v * SCALE;
+                const imgH = h * m; // m is negative for real image (inverted) -> imgH negative (Up in math, but inverted visually?)
+                // Actually canvas Y: CenterY.
+                // Object top is CenterY - h.
+                // Image top is CenterY - (h * m). 
+                // If m is -1, Image top is CenterY + h (Below axis). Correct.
+                
+                const imgY = CENTER_Y - (h * m); // Top tip of image
+
+                // Draw Image Arrow
+                ctx.strokeStyle = v > 0 ? '#10b981' : '#f43f5e'; // Green for Real, Red for Virtual
+                ctx.lineWidth = 4;
+                ctx.setLineDash(v > 0 ? [] : [5, 5]); // Dashed for virtual
+                drawArrow(ctx, imgX, CENTER_Y, imgX, imgY);
+                ctx.setLineDash([]);
+                
+                ctx.fillStyle = v > 0 ? '#10b981' : '#f43f5e';
+                ctx.fillText("Image", imgX - 15, v > 0 ? imgY + 20 : imgY - 10);
+            }
+
+            // --- 4. Ray Tracing ---
+            if (showRays && v !== Infinity) {
+                ctx.lineWidth = 2;
+                const imgX = CENTER_X + v * SCALE;
+                const imgY = CENTER_Y - (h * m);
+
+                // Ray 1: Parallel to Principal Axis -> Refracts through Focus (Right F)
+                ctx.strokeStyle = '#38bdf8'; // Blue Ray
+                ctx.beginPath();
+                ctx.moveTo(objX, objY);
+                ctx.lineTo(CENTER_X, objY); // Hit lens
+                // If Virtual (v < 0), ray still goes through real F, but we trace back
+                // The actual light goes to the right side always.
+                // From Lens(0, objY) -> Through F(f, 0)
+                // Extrapolate to edge
+                const slope1 = (0 - objY) / (fPx - 0);
+                const endX1 = CANVAS_WIDTH;
+                const endY1 = objY + slope1 * (endX1 - CENTER_X);
+                ctx.lineTo(endX1, endY1);
+                ctx.stroke();
+
+                // Virtual Traceback for Ray 1
+                if (v < 0) {
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+                    ctx.beginPath();
+                    ctx.moveTo(CENTER_X, objY);
+                    ctx.lineTo(imgX, imgY); // Trace back to image tip
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // Ray 2: Through Optical Center (Undeviated)
+                ctx.strokeStyle = '#a855f7'; // Purple Ray
+                ctx.beginPath();
+                ctx.moveTo(objX, objY);
+                // Slope = (0 - objY) / (0 - (-u*Scale))
+                // Extrapolate
+                const slope2 = (CENTER_Y - objY) / (CENTER_X - objX);
+                const endX2 = CANVAS_WIDTH;
+                const endY2 = objY + slope2 * (endX2 - objX);
+                ctx.lineTo(endX2, endY2);
+                ctx.stroke();
+
+                // Virtual Traceback for Ray 2 (is just the line itself backwards)
+                if (v < 0) {
+                    ctx.setLineDash([4, 4]);
+                    ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
+                    ctx.beginPath();
+                    ctx.moveTo(objX, objY);
+                    ctx.lineTo(imgX, imgY);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // Ray 3: Through Near Focus (Left F) -> Refracts Parallel
+                // Only if object is outside focus? Or always valid construction.
+                // From Tip through F(Left) to Lens.
+                // Left F is at CENTER_X - fPx.
+                // Line from obj(objX, objY) to lens via F'
+                // Slope
+                // Does it hit the lens?
+                // This ray is tricky if u < f (Virtual).
+                // If Virtual: Ray behaves AS IF coming from F'.
+                // Easier logic: From obj tip towards lens.
+                // Hit height at lens?
+                // Image Y is same height as Parallel Ray hit.
+                // Ray 3 emerges parallel. So y = imgY.
+                
+                // Let's stick to standard construction:
+                // If real object (u > f): Ray passes through F', hits lens, goes parallel.
+                // If virtual (u < f): Ray aims away from F'? No.
+                // Ray passing through F' (or appearing to come from F'?)
+                // Construction: Line connecting obj tip and F'. Extend to lens.
+                
+                // Hit Y on lens
+                // y - y1 = m(x - x1)
+                // Lens is at x = CENTER_X
+                const slope3 = (CENTER_Y - objY) / ((CENTER_X - fPx) - objX);
+                const hitY = objY + slope3 * (CENTER_X - objX);
+                
+                // Only draw if it hits reasonable bounds of lens
+                if (Math.abs(hitY - CENTER_Y) < 300) {
+                    ctx.strokeStyle = '#14b8a6'; // Teal
+                    ctx.beginPath();
+                    ctx.moveTo(objX, objY);
+                    ctx.lineTo(CENTER_X, hitY); // Hit lens
+                    ctx.lineTo(CANVAS_WIDTH, hitY); // Go parallel
+                    ctx.stroke();
+
+                    // Traceback for Ray 3
+                    if (v < 0) {
+                        ctx.setLineDash([4, 4]);
+                        ctx.strokeStyle = 'rgba(20, 184, 166, 0.5)';
+                        ctx.beginPath();
+                        ctx.moveTo(CENTER_X, hitY); // From lens point
+                        ctx.lineTo(imgX, hitY); // Backwards horizontally
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        
+                        // Also trace the "through F" part backwards? Not needed usually.
+                    }
+                }
+            }
+        };
+
+        const drawArrow = (ctx, x1, y1, x2, y2) => {
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+            
+            // Arrow Head
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const headLen = 10;
+            ctx.beginPath();
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+            ctx.fill();
+        };
+
+        const drawPoint = (ctx, x, y, label) => {
+            ctx.fillStyle = '#94a3b8';
+            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
+            ctx.font = '10px sans-serif';
+            ctx.fillText(label, x - 5, y + 15);
+        };
+
+        useEffect(() => {
+            draw();
+        }, [u, f, h, physics, showRays]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="glasses" className="w-5 h-5 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Convex Lens Lab</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Geometric Optics
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                            {/* Legend */}
+                            <div className="absolute top-4 left-4 flex gap-4 pointer-events-none">
+                                <div className="flex items-center gap-1">
+                                    <div className="w-4 h-0.5 bg-sky-400"></div><span className="text-[10px] text-slate-400">Parallel</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <div className="w-4 h-0.5 bg-purple-400"></div><span className="text-[10px] text-slate-400">Center</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <div className="w-4 h-0.5 bg-teal-400"></div><span className="text-[10px] text-slate-400">Focal</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Analysis Panel */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur sticky top-0 z-10">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Image Properties</h3>
+                                <div className="grid grid-cols-2 gap-2 mb-3">
+                                    <div className={`p-2 rounded border border-slate-700 text-center ${physics.type === 'Real' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-rose-900/30 text-rose-400'}`}>
+                                        <div className="text-[10px] uppercase font-bold">{physics.type}</div>
+                                        <div className="text-[9px] opacity-70">{physics.type === 'Real' ? 'Can project on screen' : 'Seen through lens'}</div>
+                                    </div>
+                                    <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
+                                        <div className="text-[10px] text-slate-500">Magnification (m)</div>
+                                        <div className="font-mono font-bold text-white">{Math.abs(physics.m).toFixed(2)}x</div>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between text-xs text-slate-400 bg-slate-900 p-2 rounded border border-slate-700">
+                                    <span>Orientation:</span>
+                                    <span className="text-white font-bold">{physics.m < 0 ? 'Inverted' : 'Upright'}</span>
+                                </div>
+                            </div>
+
+                            {/* 2. Controls */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Object Distance */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-amber-400 mb-2">
+                                        Object Distance (u)
+                                        <span>{u} cm</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="30" max="150" step="1" 
+                                        value={u} onChange={(e) => setU(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-amber mb-1" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500">
+                                        <span>Close</span>
+                                        <span>Far</span>
+                                    </div>
+                                </div>
+
+                                {/* Focal Length */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-blue-400 mb-2">
+                                        Focal Length (f)
+                                        <span>{f} cm</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="30" max="100" step="1" 
+                                        value={f} onChange={(e) => setF(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-blue mb-1" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500">
+                                        <span>Thick Lens</span>
+                                        <span>Thin Lens</span>
+                                    </div>
+                                </div>
+
+                                <div className="h-px bg-slate-800"></div>
+
+                                {/* Calculations Display */}
+                                <div className="space-y-2">
+                                    <h4 className="text-[10px] font-bold text-slate-500 uppercase">Calculations</h4>
+                                    
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-300">1 / u</span>
+                                        <span className="font-mono text-slate-500">{(1/u).toFixed(3)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-300">1 / v</span>
+                                        <span className="font-mono text-slate-500">
+                                            {physics.v !== Infinity ? (1/physics.v).toFixed(3) : '---'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs border-t border-slate-800 pt-2">
+                                        <span className="text-blue-400 font-bold">1 / f</span>
+                                        <span className="font-mono text-blue-400 font-bold">{(1/f).toFixed(3)}</span>
+                                    </div>
+                                    
+                                    <div className="mt-4 p-2 bg-slate-800 rounded text-center">
+                                        <span className="text-xs text-slate-400">Image Distance (v) = </span>
+                                        <span className={`text-lg font-mono font-bold ${physics.v > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                            {physics.v === Infinity ? '∞' : physics.v.toFixed(1) + ' cm'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Toggles */}
+                                <label className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-750 transition mt-4">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showRays} 
+                                        onChange={() => setShowRays(!showRays)}
+                                        className="w-4 h-4 rounded text-blue-500 bg-slate-900 border-slate-600 focus:ring-0"
+                                    />
+                                    <span className="text-xs font-bold text-slate-300">Show Ray Tracing</span>
+                                </label>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
