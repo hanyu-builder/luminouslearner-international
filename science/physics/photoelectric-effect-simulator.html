@@ -8,14 +8,14 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM (Load these first) -->
+    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Prop Types (Required for Recharts UMD) -->
+    <!-- Prop Types (Required for Recharts) -->
     <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
     
-    <!-- Recharts (Updated Version) -->
+    <!-- Recharts (Stable Version) -->
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
     
     <!-- Babel -->
@@ -46,7 +46,7 @@
 
 <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
-    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } = Recharts;
+    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceDot } = Recharts;
 
     const CANVAS_WIDTH = 800;
     const CANVAS_HEIGHT = 550;
@@ -99,15 +99,15 @@
             
             // 1. Spawn Photons
             // Rate depends on intensity
-            const spawnRate = 200 - (intensity * 1.5); // lower is faster
+            const spawnRate = 200 - (intensity * 1.8); // lower is faster
             if (now - state.lastSpawn > spawnRate) {
                 state.photons.push({
-                    x: 150, // Light source X
-                    y: 50,  // Light source Y
-                    vx: 2,  // Moving towards plate
-                    vy: 3,
-                    targetX: 250 + Math.random() * 20, // Plate surface
-                    targetY: 300 + Math.random() * 100
+                    x: 120, // Light source X
+                    y: 40,  // Light source Y
+                    vx: 2.5,  // Moving towards plate
+                    vy: 3.5,
+                    targetX: 240 + Math.random() * 20, // Plate surface
+                    targetY: 280 + Math.random() * 100
                 });
                 state.lastSpawn = now;
             }
@@ -122,7 +122,7 @@
                     p.dead = true;
                     // Spawn Electron?
                     if (K_max > 0) {
-                        // Quantum Efficiency simulation (not every photon ejects an electron)
+                        // Quantum Efficiency simulation
                         if (Math.random() > 0.3) {
                             spawnElectron(p.x, p.y, K_max);
                         }
@@ -135,53 +135,51 @@
             let flowCount = 0;
             state.electrons.forEach(e => {
                 // Electric Field Force
-                // Voltage > 0: Accelerates towards Anode (Right)
-                // Voltage < 0: Retards (Push back to Left)
-                // F = qE. We simulate velocity change directly.
-                // Simple kinematic: v^2 = u^2 + 2as
-                // Work done by field = V * e.
-                // If moving from Plate (Left) to Anode (Right)
-                
-                // Simulation: Apply force to vx
-                const force = (voltage * 0.05); // Scale factor
+                // Voltage > 0: Accelerates towards Anode (Right) -> Force +
+                // Voltage < 0: Retards (Push back to Left) -> Force -
+                // Force scale factor tuned for visuals
+                const force = (voltage * 0.08); 
                 e.vx += force * dt;
                 
                 e.x += e.vx;
                 e.y += e.vy;
 
-                // Hit Anode (Right side ~ 600px)
+                // Hit Anode (Right side ~ 550px)
                 if (e.x > 550) {
                     e.dead = true;
                     flowCount++;
                 }
                 // Hit Cathode again (Turned back)
-                if (e.x < 250) {
+                if (e.x < 240) {
                     e.dead = true;
                 }
+                // Off screen Y
+                if (e.y < 0 || e.y > CANVAS_HEIGHT) e.dead = true;
             });
             state.electrons = state.electrons.filter(e => !e.dead);
 
             // Smooth Current Reading
-            state.detectedCurrent = state.detectedCurrent * 0.9 + flowCount * 0.1;
+            // Real current is 0 if V < -StoppingPotential
+            // But we simulate by counting particles reaching anode
+            state.detectedCurrent = state.detectedCurrent * 0.95 + flowCount * 0.05;
 
-            // Sync React State (Throttled slightly usually, but ok here)
+            // Sync React State
             setPhotonEnergy(E_ph);
             setMaxKE(K_max);
-            // Current is proportional to electrons reaching anode * intensity factor scaling
+            // Visual current scaling
             setCurrent(state.detectedCurrent * (intensity/10)); 
         };
 
         const spawnElectron = (x, y, kMax) => {
             // Initial velocity based on KE
-            // KE = 1/2 m v^2 -> v = sqrt(2*KE/m)
-            // Use scale factor for visual speed
-            const speed = Math.sqrt(kMax) * 3; 
+            // v ~ sqrt(KE). 
+            const speed = Math.sqrt(kMax) * 2.5; 
             
             objectsRef.current.electrons.push({
                 x: x,
-                y: y - 5, // Just above plate
-                vx: speed * (0.8 + Math.random()*0.4), // Mostly horizontal towards anode
-                vy: (Math.random() - 0.5) * speed, // Slight vertical spread
+                y: y - 5,
+                vx: speed * (0.8 + Math.random()*0.2), // Initial X velocity
+                vy: (Math.random() - 0.5) * speed * 0.5, // Slight Y spread
                 dead: false
             });
         };
@@ -201,11 +199,11 @@
             ctx.fillStyle = '#0f172a';
             ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // 1. Draw Vacuum Chamber (Glass Tube)
+            // 1. Draw Vacuum Chamber
             ctx.strokeStyle = '#334155';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.ellipse(400, 300, 200, 120, 0, 0, Math.PI * 2);
+            ctx.ellipse(400, 300, 220, 140, 0, 0, Math.PI * 2);
             ctx.stroke();
             ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
             ctx.fill();
@@ -213,22 +211,23 @@
             // 2. Draw Plates
             // Cathode (Emitter - Left)
             ctx.fillStyle = MATERIALS[material].color;
-            ctx.fillRect(240, 250, 10, 100);
+            ctx.fillRect(230, 240, 15, 120);
+            ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.fillText(material, 230, 230);
             
             // Anode (Collector - Right)
             ctx.fillStyle = '#94a3b8';
-            ctx.fillRect(550, 250, 5, 100); // Thin wire mesh
+            ctx.fillRect(550, 240, 5, 120);
 
             // 3. Draw Circuit
             ctx.strokeStyle = '#475569';
             ctx.lineWidth = 2;
             ctx.beginPath();
             // From Cathode down
-            ctx.moveTo(245, 350); ctx.lineTo(245, 500); 
+            ctx.moveTo(237, 360); ctx.lineTo(237, 500); 
             // To Power Supply
             ctx.lineTo(350, 500);
             // From Anode down
-            ctx.moveTo(552, 350); ctx.lineTo(552, 500);
+            ctx.moveTo(552, 360); ctx.lineTo(552, 500);
             // To Ammeter
             ctx.lineTo(450, 500);
             ctx.stroke();
@@ -246,14 +245,13 @@
             ctx.fillStyle = '#0f172a'; ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#38bdf8'; ctx.fillText("A", 500, 505);
 
-            // 4. Draw Photons (Wavy lines?)
-            // Simple dots/lines for now
+            // 4. Draw Photons
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
             objectsRef.current.photons.forEach(p => {
                 ctx.beginPath();
                 ctx.moveTo(p.x, p.y);
-                ctx.lineTo(p.x - p.vx*2, p.y - p.vy*2); // Trail
+                ctx.lineTo(p.x - p.vx*3, p.y - p.vy*3); // Trail
                 ctx.stroke();
                 
                 // Head
@@ -265,25 +263,26 @@
             ctx.fillStyle = '#38bdf8'; // Cyan
             objectsRef.current.electrons.forEach(e => {
                 ctx.beginPath(); ctx.arc(e.x, e.y, 3, 0, Math.PI*2); ctx.fill();
-                // Speed aura
-                ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
-                ctx.beginPath(); ctx.arc(e.x, e.y, 5, 0, Math.PI*2); ctx.stroke();
+                // Glow
+                ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 5;
+                ctx.stroke(); ctx.shadowBlur = 0;
             });
 
             // 6. Light Source
-            ctx.fillStyle = '#1e293b';
-            ctx.fillRect(120, 20, 60, 40); // Lamp body
-            // Bulb
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(90, 10, 60, 40);
+            // Cone
             ctx.beginPath();
-            ctx.moveTo(150, 60); ctx.lineTo(200, 120); ctx.lineTo(100, 120); 
-            ctx.fillStyle = `rgba(${hexToRgb(color)}, ${intensity/100})`;
+            ctx.moveTo(120, 50); ctx.lineTo(240, 280); ctx.lineTo(100, 280);
+            const rgb = hexToRgb(color);
+            ctx.fillStyle = `rgba(${rgb}, ${intensity/400})`; // Light beam
             ctx.fill();
         };
 
         useEffect(() => {
             requestRef.current = requestAnimationFrame(loop);
             return () => cancelAnimationFrame(requestRef.current);
-        }, [wavelength, intensity, voltage, material]); // Re-bind simulation params
+        }, [wavelength, intensity, voltage, material]);
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
@@ -291,41 +290,35 @@
 
         // Helper: Wavelength to Color
         function getWavelengthColor(nm) {
-            if (nm < 400) return "#a855f7"; // UV (Purple)
-            if (nm < 450) return "#6366f1"; // Violet/Indigo
-            if (nm < 490) return "#3b82f6"; // Blue
-            if (nm < 560) return "#22c55e"; // Green
-            if (nm < 590) return "#eab308"; // Yellow
-            if (nm < 635) return "#f97316"; // Orange
-            return "#ef4444"; // Red
+            if (nm < 400) return "#a855f7"; // UV
+            if (nm < 450) return "#6366f1"; 
+            if (nm < 490) return "#3b82f6"; 
+            if (nm < 560) return "#22c55e"; 
+            if (nm < 590) return "#eab308"; 
+            if (nm < 635) return "#f97316"; 
+            return "#ef4444"; 
         }
 
         function hexToRgb(hex) {
-            // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
             var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-            hex = hex.replace(shorthandRegex, function(m, r, g, b) {
-                return r + r + g + g + b + b;
-            });
+            hex = hex.replace(shorthandRegex, function(m, r, g, b) { return r + r + g + g + b + b; });
             var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
             return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : "255,255,255";
         }
 
-        // I-V Data Generator for Chart
+        // Generate I-V Curve Data
         const graphData = useMemo(() => {
             const data = [];
-            // Simulate typical Photoelectric Curve
-            // I = 0 if V < -StoppingPotential
-            // I saturates as V increases
-            const Vs = K_max_calc(wavelength, wf); // Stopping Potential magnitude
+            const Vs = (HC / wavelength) - wf; // Stopping Potential magnitude
             const saturation = intensity * 0.1;
 
-            for (let v = -5; v <= 5; v += 1) {
+            for (let v = -3; v <= 3; v += 0.2) {
                 let i_val = 0;
-                if (Vs > 0) { // If emission is possible
+                if (Vs > 0) { 
                     if (v < -Vs) i_val = 0;
-                    else if (v > 0) i_val = saturation; // Saturation region
+                    else if (v > 0) i_val = saturation; 
                     else {
-                        // Rising region (simplified linear/curve)
+                        // Rising region
                         i_val = saturation * (1 - Math.abs(v)/Vs); 
                         if (i_val < 0) i_val = 0;
                     }
@@ -335,10 +328,6 @@
             return data;
         }, [wavelength, intensity, wf]);
 
-        function K_max_calc(lam, workFunc) {
-            return (HC / lam) - workFunc;
-        }
-
         return (
             <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
                 <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
@@ -346,10 +335,10 @@
                         <div className="bg-blue-500/20 p-1.5 rounded-lg">
                             <i data-lucide="zap" className="w-5 h-5 text-blue-400"></i>
                         </div>
-                        <h1 className="text-lg font-bold text-white tracking-wide">Photoelectric Effect Lab</h1>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Photoelectric Effect</h1>
                     </div>
                     <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
-                        Topic: Quantum Mechanics
+                        Topic: Quantum Physics
                     </div>
                 </nav>
 
@@ -376,19 +365,19 @@
                                     <div className="text-emerald-400 font-mono font-bold">{current.toFixed(2)} mA</div>
                                 </div>
                                 <div className="bg-slate-900 p-2 rounded border border-slate-700">
-                                    <div className="text-[10px] text-slate-500">Max KE ($K_{max}$)</div>
+                                    <div className="text-[10px] text-slate-500">Max KE (K<sub>max</sub>)</div>
                                     <div className={`font-mono font-bold ${maxKE > 0 ? 'text-blue-400' : 'text-slate-500'}`}>
                                         {maxKE > 0 ? maxKE.toFixed(2) : "0.00"} eV
                                     </div>
                                 </div>
                                 <div className="col-span-2 bg-slate-900 p-2 rounded border border-slate-700 flex justify-between">
-                                    <div className="text-[10px] text-slate-500">Photon Energy ($hf$)</div>
+                                    <div className="text-[10px] text-slate-500">Photon Energy (hf)</div>
                                     <div className="text-white font-mono font-bold">{photonEnergy.toFixed(2)} eV</div>
                                 </div>
                             </div>
 
                             {/* Controls */}
-                            <div className="p-5 space-y-5">
+                            <div className="p-5 space-y-5 flex-1">
                                 
                                 {/* Wavelength */}
                                 <div>
@@ -420,27 +409,27 @@
                                 {/* Voltage */}
                                 <div>
                                     <label className="flex justify-between text-xs font-bold text-slate-300 mb-1">
-                                        Battery Voltage
+                                        Voltage (V)
                                         <span className={voltage < 0 ? 'text-red-400' : 'text-emerald-400'}>{voltage.toFixed(1)} V</span>
                                     </label>
                                     <input 
-                                        type="range" min="-5" max="5" step="0.1" 
+                                        type="range" min="-3" max="3" step="0.1" 
                                         value={voltage} onChange={(e) => setVoltage(Number(e.target.value))}
                                         className="w-full h-2 bg-slate-700 rounded-lg slider-thumb" 
                                     />
                                     <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                        <span>Reverse (Retarding)</span>
+                                        <span>Retarding</span>
                                         <span>Forward</span>
                                     </div>
                                 </div>
 
                                 {/* Material */}
                                 <div>
-                                    <label className="text-xs font-bold text-slate-300 mb-1 block">Target Material</label>
+                                    <label className="text-xs font-bold text-slate-300 mb-1 block">Metal Plate</label>
                                     <select 
                                         value={material} 
                                         onChange={(e) => setMaterial(e.target.value)}
-                                        className="w-full bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded p-2 focus:ring-1 focus:ring-blue-500 outline-none"
+                                        className="w-full bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded p-2 outline-none"
                                     >
                                         {Object.keys(MATERIALS).map(m => (
                                             <option key={m} value={m}>{MATERIALS[m].label}</option>
@@ -448,21 +437,15 @@
                                     </select>
                                 </div>
 
-                                {/* Mini I-V Graph */}
-                                <div className="h-32 w-full bg-slate-900 border border-slate-700 rounded-lg p-2 relative">
-                                    <div className="text-[9px] text-slate-500 absolute top-1 left-2">Expected I-V Curve</div>
+                                {/* I-V Graph */}
+                                <div className="h-32 w-full bg-slate-950 border border-slate-700 rounded-lg p-2 relative">
+                                    <div className="text-[9px] text-slate-500 absolute top-1 left-2">I-V Curve</div>
                                     <ResponsiveContainer width="100%" height="100%">
                                         <LineChart data={graphData}>
-                                            <XAxis dataKey="v" hide type="number" domain={[-5, 5]} />
+                                            <XAxis dataKey="v" hide type="number" domain={[-3, 3]} />
                                             <YAxis hide type="number" domain={[0, 'auto']} />
-                                            <Tooltip 
-                                                contentStyle={{backgroundColor: '#1e293b', border: '1px solid #475569', fontSize: '10px'}}
-                                                labelFormatter={(v) => `V: ${v}V`}
-                                                itemStyle={{color: '#38bdf8'}}
-                                            />
-                                            <Line type="monotone" dataKey="i" stroke="#38bdf8" strokeWidth={2} dot={false} />
-                                            {/* Current operating point */}
-                                            {/* We can't easily draw a dot at current V without complex composition, but the curve shows the theory */}
+                                            <Line type="monotone" dataKey="i" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                            <ReferenceDot x={voltage} y={current} r={3} fill={voltage < 0 ? "#ef4444" : "#10b981"} stroke="white" />
                                         </LineChart>
                                     </ResponsiveContainer>
                                 </div>
