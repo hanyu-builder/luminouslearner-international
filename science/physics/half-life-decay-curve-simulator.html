@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Half-Life Decay Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+        canvas { image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const GRID_SIZE = 40; // 40x25 grid = 1000 atoms
+    const TOTAL_ATOMS = 1000;
+    
+    // Graph Config
+    const GRAPH_HEIGHT = 150;
+    const GRAPH_WIDTH = 250;
+
+    const App = () => {
+        // --- State ---
+        const [halfLife, setHalfLife] = useState(5.0); // Seconds (Simulated)
+        const [simState, setSimState] = useState('idle'); // idle, running, finished
+        const [time, setTime] = useState(0);
+        const [remaining, setRemaining] = useState(TOTAL_ATOMS);
+        
+        // Isotope Preset
+        const [isotope, setIsotope] = useState('Custom');
+
+        const canvasRef = useRef(null);
+        const graphCanvasRef = useRef(null);
+        const requestRef = useRef();
+        const lastTimeRef = useRef(0);
+        
+        // Physics Data (Mutable for performance)
+        const atomsRef = useRef(new Uint8Array(TOTAL_ATOMS).fill(1)); // 1 = Parent, 0 = Daughter
+        const historyRef = useRef([]); // {t, N}
+
+        // --- Logic ---
+        const resetSim = () => {
+            setSimState('idle');
+            cancelAnimationFrame(requestRef.current);
+            setTime(0);
+            setRemaining(TOTAL_ATOMS);
+            atomsRef.current.fill(1); // Reset all to Parent
+            historyRef.current = [{t: 0, N: TOTAL_ATOMS}];
+            drawAtoms();
+            drawGraph();
+        };
+
+        const startSim = () => {
+            if (simState === 'running') return;
+            setSimState('running');
+            lastTimeRef.current = performance.now();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+        
+        const pauseSim = () => {
+             setSimState('paused');
+             cancelAnimationFrame(requestRef.current);
+        };
+
+        const loop = (timestamp) => {
+            const dt = (timestamp - lastTimeRef.current) / 1000;
+            lastTimeRef.current = timestamp;
+            
+            // Limit dt to avoid huge jumps
+            const safeDt = Math.min(dt, 0.1);
+            
+            // Decay Probability per atom per second: lambda = ln(2) / T_half
+            // Prob of decay in dt: P = 1 - exp(-lambda * dt)
+            const lambda = Math.log(2) / halfLife;
+            const probDecay = 1 - Math.exp(-lambda * safeDt);
+            
+            let currentCount = 0;
+            const atoms = atomsRef.current;
+            let changed = false;
+
+            for (let i = 0; i < TOTAL_ATOMS; i++) {
+                if (atoms[i] === 1) {
+                    if (Math.random() < probDecay) {
+                        atoms[i] = 0; // Decay!
+                        changed = true;
+                    } else {
+                        currentCount++;
+                    }
+                }
+            }
+            
+            // Update State
+            setTime(t => {
+                const newTime = t + safeDt;
+                // Record history less frequently (every 0.1s sim time)
+                const lastRec = historyRef.current[historyRef.current.length-1];
+                if (newTime - lastRec.t > 0.1) {
+                    historyRef.current.push({ t: newTime, N: currentCount });
+                }
+                return newTime;
+            });
+            
+            setRemaining(currentCount);
+
+            if (changed) drawAtoms();
+            drawGraph(); // Always update graph line
+            
+            if (currentCount === 0 || time > halfLife * 5) {
+                setSimState('finished');
+            } else {
+                requestRef.current = requestAnimationFrame(loop);
+            }
+        };
+
+        // --- Rendering Atoms ---
+        const drawAtoms = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Only clear if we redraw all? 
+            // We can optimize by only drawing changed, but 1000 is small.
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw grid of atoms
+            const atoms = atomsRef.current;
+            const cols = 40;
+            const rows = 25;
+            const size = 12;
+            const gap = 4;
+            const startX = (CANVAS_WIDTH - (cols * (size+gap))) / 2;
+            const startY = (CANVAS_HEIGHT - (rows * (size+gap))) / 2;
+
+            for (let i = 0; i < TOTAL_ATOMS; i++) {
+                const c = i % cols;
+                const r = Math.floor(i / cols);
+                const x = startX + c * (size + gap);
+                const y = startY + r * (size + gap);
+
+                ctx.beginPath();
+                // Randomize slightly for "gas" look? Or nice grid?
+                // Let's do grid for clarity of counting
+                
+                if (atoms[i] === 1) {
+                    ctx.fillStyle = '#6366f1'; // Indigo (Parent)
+                    ctx.shadowColor = '#6366f1';
+                    ctx.shadowBlur = 5;
+                } else {
+                    ctx.fillStyle = '#475569'; // Slate (Daughter)
+                    ctx.shadowBlur = 0;
+                }
+                
+                ctx.arc(x + size/2, y + size/2, size/2, 0, Math.PI*2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0; // Reset
+        };
+        
+        // --- Rendering Graph ---
+        const drawGraph = () => {
+            const ctx = graphCanvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            
+            const w = GRAPH_WIDTH;
+            const h = GRAPH_HEIGHT;
+            const pad = 20;
+
+            ctx.clearRect(0, 0, w, h);
+            
+            // Background
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.8)'; // Dark slate semi-transparent
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, 0, w, h);
+
+            // Axes
+            // X: Time (0 to 5*HalfLife)
+            // Y: N (0 to 1000)
+            const maxT = halfLife * 5;
+            const maxN = TOTAL_ATOMS;
+            
+            const mapX = (t) => pad + (t / maxT) * (w - 2*pad);
+            const mapY = (n) => h - pad - (n / maxN) * (h - 2*pad);
+
+            // Theoretical Curve (Smooth Line)
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 2;
+            for (let x = 0; x <= w - 2*pad; x+=2) {
+                const t = (x / (w - 2*pad)) * maxT;
+                const N_theory = TOTAL_ATOMS * Math.pow(0.5, t / halfLife);
+                const y = mapY(N_theory);
+                if (x===0) ctx.moveTo(pad, y);
+                else ctx.lineTo(pad + x, y);
+            }
+            ctx.stroke();
+
+            // Actual Data (Step Line)
+            ctx.beginPath();
+            ctx.strokeStyle = '#facc15'; // Yellow
+            ctx.lineWidth = 2;
+            const history = historyRef.current;
+            
+            if (history.length > 0) {
+                ctx.moveTo(mapX(history[0].t), mapY(history[0].N));
+                for (let i=1; i<history.length; i++) {
+                    const pt = history[i];
+                    ctx.lineTo(mapX(pt.t), mapY(pt.N));
+                }
+                // Draw current live point
+                ctx.lineTo(mapX(time), mapY(remaining));
+            }
+            ctx.stroke();
+            
+            // Draw Half-Life Markers
+            ctx.font = '10px monospace';
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'center';
+            
+            for(let i=1; i<=4; i++) {
+                const t = i * halfLife;
+                const x = mapX(t);
+                if (x > w - pad) break;
+                
+                // Vertical Line
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath(); ctx.moveTo(x, pad); ctx.lineTo(x, h - pad); ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Label
+                ctx.fillText(`${i}T`, x, h - 5);
+            }
+            
+            // Y Axis Label
+            ctx.save();
+            ctx.translate(10, h/2);
+            ctx.rotate(-Math.PI/2);
+            ctx.fillText("Nuclei (N)", 0, 0);
+            ctx.restore();
+        };
+
+        useEffect(() => {
+            initIcons();
+            resetSim();
+        }, []); // Mount only
+        
+        // Re-draw when half-life changes (to update graph theoretical line)
+        useEffect(() => {
+             drawGraph();
+        }, [halfLife]);
+
+        const initIcons = () => {
+            if (window.lucide) window.lucide.createIcons();
+        };
+        
+        const setPreset = (name, hl) => {
+            setIsotope(name);
+            setHalfLife(hl);
+            resetSim();
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="atom" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Half-Life Decay Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Nuclear Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            {/* Live Graph Overlay */}
+                            <div className="absolute bottom-4 right-4 border border-slate-700 rounded-xl overflow-hidden shadow-lg">
+                                <canvas 
+                                    ref={graphCanvasRef} 
+                                    width={GRAPH_WIDTH} 
+                                    height={GRAPH_HEIGHT}
+                                    className="block bg-slate-900/90"
+                                />
+                            </div>
+                            
+                            {/* Legend */}
+                            <div className="absolute top-4 left-4 bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs shadow-lg space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-indigo-500 shadow shadow-indigo-500/50"></span>
+                                    <span className="text-indigo-200">Parent (Unstable)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-slate-600"></span>
+                                    <span className="text-slate-400">Daughter (Stable)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Controls & Data */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Decay Settings
+                            </h2>
+
+                            {/* Isotope Presets */}
+                            <div className="mb-6">
+                                <label className="text-xs font-bold text-slate-400 mb-2 block">Isotope Preset</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <button onClick={() => setPreset('Iodine-131', 2.0)} className={`py-2 rounded text-xs font-bold border transition ${isotope==='Iodine-131' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>I-131 (Fast)</button>
+                                    <button onClick={() => setPreset('Carbon-14', 5.0)} className={`py-2 rounded text-xs font-bold border transition ${isotope==='Carbon-14' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>C-14 (Med)</button>
+                                    <button onClick={() => setPreset('Uranium-238', 10.0)} className={`py-2 rounded text-xs font-bold border transition ${isotope==='Uranium-238' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-700 text-slate-400 border-slate-600'}`}>U-238 (Slow)</button>
+                                </div>
+                            </div>
+
+                            {/* Half Life Slider */}
+                            <div className="mb-8">
+                                <label className="flex justify-between text-xs font-bold text-indigo-300 mb-2">
+                                    <span>Half-Life ($T_{`1/2`}$)</span>
+                                    <span className="text-white bg-slate-700 px-2 py-1 rounded">{halfLife.toFixed(1)} s</span>
+                                </label>
+                                <input 
+                                    type="range" min="1.0" max="20.0" step="0.5" 
+                                    value={halfLife} onChange={(e) => { setHalfLife(Number(e.target.value)); setIsotope('Custom'); }}
+                                    disabled={simState === 'running'}
+                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-indigo" 
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <button 
+                                    onClick={simState === 'running' ? pauseSim : startSim}
+                                    disabled={simState === 'finished'}
+                                    className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${simState === 'running' ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'} ${simState === 'finished' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    <i data-lucide={simState === 'running' ? "pause" : "play"} className="w-5 h-5"></i>
+                                    {simState === 'running' ? "Pause" : "Start"}
+                                </button>
+                                <button onClick={resetSim} className="py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors">
+                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Analysis Board */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Live Data
+                            </h2>
+                            
+                            <div className="space-y-4 font-mono text-sm">
+                                <div className="flex justify-between items-center p-3 rounded bg-slate-900 border border-slate-700">
+                                    <span className="text-slate-400 text-xs uppercase">Time Elapsed</span>
+                                    <span className="text-white text-xl">{time.toFixed(2)} <span className="text-sm text-slate-500">s</span></span>
+                                </div>
+
+                                <div className="flex justify-between items-center p-3 rounded bg-indigo-900/10 border border-indigo-500/20">
+                                    <div>
+                                        <div className="text-[10px] text-indigo-400 uppercase">Remaining (N)</div>
+                                        <div className="text-2xl font-bold text-white">{remaining}</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-[10px] text-slate-500 uppercase">% Left</div>
+                                        <div className="text-xl font-bold text-indigo-300">{((remaining/TOTAL_ATOMS)*100).toFixed(1)}%</div>
+                                    </div>
+                                </div>
+                                
+                                <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                                    <div className="h-full bg-indigo-500 transition-all duration-300" style={{width: `${(remaining/TOTAL_ATOMS)*100}%`}}></div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
