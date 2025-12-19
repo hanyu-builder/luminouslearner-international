@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bohr Model Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .spectrum-bg {
+            background: linear-gradient(to right, 
+                #4b0082 0%,   /* 400nm */
+                #0000ff 20%,  /* 450nm */
+                #00ff00 50%,  /* 550nm */
+                #ffff00 70%,  /* 600nm */
+                #ff0000 100%  /* 700nm */
+            );
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 550;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+    const BASE_RADIUS = 40; // n=1 radius
+
+    // Physics Constants (Simplified for visualization)
+    const RH = 13.6; // Rydberg Constant in eV
+    
+    // Electron Orbits (n=1 to 6)
+    // Scale radii not linearly but visibly distinct
+    const ORBITS = [
+        { n: 1, r: 40, label: "Ground State" },
+        { n: 2, r: 80, label: "n=2" },
+        { n: 3, r: 120, label: "n=3" },
+        { n: 4, r: 160, label: "n=4" },
+        { n: 5, r: 200, label: "n=5" },
+        { n: 6, r: 240, label: "n=6" },
+    ];
+
+    const App = () => {
+        // --- State ---
+        const [currentN, setCurrentN] = useState(1);
+        const [targetN, setTargetN] = useState(null);
+        const [lastEmission, setLastEmission] = useState(null); // { wl, color, dE, series }
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        
+        // Animation State
+        const animRef = useRef({
+            angle: 0,
+            radius: ORBITS[0].r,
+            photon: null, // { x, y, angle, type: 'emit'|'absorb', color, active }
+            transitionProgress: 0, // 0 to 1
+            isTransitioning: false
+        });
+
+        // --- Physics Logic ---
+        const calculateTransition = (nHigh, nLow) => {
+            const E_low = -RH / (nLow * nLow);
+            const E_high = -RH / (nHigh * nHigh);
+            const dE = E_high - E_low; // eV
+            
+            // wavelength (nm) = 1240 / dE
+            const wl = 1240 / dE;
+            
+            let series = "Unknown";
+            if (nLow === 1) series = "Lyman (UV)";
+            else if (nLow === 2) series = "Balmer (Visible)";
+            else if (nLow === 3) series = "Paschen (IR)";
+            else series = "Other (IR)";
+
+            return { dE, wl, series, color: getWavelengthColor(wl) };
+        };
+
+        const jumpTo = (n) => {
+            if (n === currentN || animRef.current.isTransitioning) return;
+            
+            setTargetN(n);
+            animRef.current.isTransitioning = true;
+            animRef.current.transitionProgress = 0;
+
+            // Emission or Absorption?
+            if (n < currentN) {
+                // Emission (Going Down)
+                const data = calculateTransition(currentN, n);
+                setLastEmission(data);
+                
+                // Spawn photon animation starting from electron position
+                animRef.current.photon = {
+                    dist: 0,
+                    angle: Math.random() * Math.PI * 2,
+                    color: data.color,
+                    type: 'emit',
+                    active: true,
+                    wl: data.wl // used for wave density visually
+                };
+            } else {
+                // Absorption (Going Up)
+                // In this simplified sim, we just animate the jump up without "incoming" photon logic for clarity
+                // Or we could reset the spectrum display
+                setLastEmission(null);
+            }
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        const updatePhysics = () => {
+            const state = animRef.current;
+            
+            // 1. Electron Revolution
+            // Speed roughly 1/n to visualize slower outer orbits
+            const speed = 0.05 / Math.sqrt(targetN || currentN); 
+            state.angle += speed;
+
+            // 2. Transition (Radius Change)
+            if (state.isTransitioning && targetN) {
+                state.transitionProgress += 0.05;
+                const rStart = ORBITS[currentN - 1].r;
+                const rEnd = ORBITS[targetN - 1].r;
+                
+                if (state.transitionProgress >= 1) {
+                    state.radius = rEnd;
+                    state.isTransitioning = false;
+                    setCurrentN(targetN);
+                    setTargetN(null);
+                } else {
+                    // Smooth easing
+                    const t = state.transitionProgress;
+                    const smoothT = t * t * (3 - 2 * t);
+                    state.radius = rStart + (rEnd - rStart) * smoothT;
+                }
+            } else {
+                state.radius = ORBITS[currentN - 1].r;
+            }
+
+            // 3. Photon Animation
+            if (state.photon && state.photon.active) {
+                state.photon.dist += 4; // speed of light
+                if (state.photon.dist > 600) {
+                    state.photon.active = false;
+                }
+            }
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            const state = animRef.current;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Orbits
+            ORBITS.forEach(orbit => {
+                ctx.beginPath();
+                ctx.arc(CENTER_X, CENTER_Y, orbit.r, 0, Math.PI * 2);
+                ctx.lineWidth = 1;
+                if (orbit.n === currentN || orbit.n === targetN) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                } else {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                }
+                ctx.stroke();
+                
+                // Labels
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.font = '10px sans-serif';
+                ctx.fillText(`n=${orbit.n}`, CENTER_X + 5, CENTER_Y - orbit.r - 2);
+            });
+
+            // 2. Nucleus
+            const grad = ctx.createRadialGradient(CENTER_X, CENTER_Y, 2, CENTER_X, CENTER_Y, 15);
+            grad.addColorStop(0, '#ef4444');
+            grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(CENTER_X, CENTER_Y, 15, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText("p+", CENTER_X, CENTER_Y + 3);
+
+            // 3. Electron
+            const ex = CENTER_X + Math.cos(state.angle) * state.radius;
+            const ey = CENTER_Y + Math.sin(state.angle) * state.radius;
+            
+            ctx.fillStyle = '#38bdf8'; // Cyan
+            ctx.shadowColor = '#38bdf8'; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(ex, ey, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // 4. Photon (Wave Packet)
+            if (state.photon && state.photon.active) {
+                const p = state.photon;
+                // Calculate position based on electron position at launch time? 
+                // Simplification: Emit from center outwards for clarity, or from current electron angle.
+                // Let's emit from the Nucleus outwards for schematic clarity
+                const startX = CENTER_X;
+                const startY = CENTER_Y;
+                
+                ctx.save();
+                ctx.translate(startX, startY);
+                ctx.rotate(p.angle);
+                
+                ctx.beginPath();
+                ctx.strokeStyle = p.color;
+                ctx.lineWidth = 3;
+                
+                // Draw sine wave
+                const waveLen = 20; // visual wave length
+                const amplitude = 5;
+                for (let x = p.dist - 50; x < p.dist; x+=2) {
+                    if (x < 0) continue;
+                    const y = Math.sin(x / waveLen * Math.PI * 2) * amplitude;
+                    if (x === p.dist - 50) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.restore();
+            }
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [currentN, targetN]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Helpers
+        function getWavelengthColor(wl) {
+            if (wl < 380) return "#a855f7"; // UV (Purple)
+            if (wl >= 380 && wl < 450) return "#6366f1"; // Violet
+            if (wl >= 450 && wl < 495) return "#3b82f6"; // Blue
+            if (wl >= 495 && wl < 570) return "#22c55e"; // Green
+            if (wl >= 570 && wl < 590) return "#eab308"; // Yellow
+            if (wl >= 590 && wl < 620) return "#f97316"; // Orange
+            if (wl >= 620 && wl < 750) return "#ef4444"; // Red
+            return "#94a3b8"; // IR (Grey)
+        }
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                {/* Navbar */}
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-purple-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="orbit" className="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Bohr Model & Spectra</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Atomic Physics
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas (Atom View) */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                            <div className="absolute top-4 left-4 text-xs text-slate-500">
+                                Hydrogen Atom (Z=1)
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Controls & Spectra */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Energy Levels Controls */}
+                            <div className="p-4 border-b border-slate-700">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Electron Transitions</h3>
+                                
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[1, 2, 3, 4, 5, 6].map(n => (
+                                        <button
+                                            key={n}
+                                            onClick={() => jumpTo(n)}
+                                            disabled={currentN === n || targetN !== null}
+                                            className={`py-2 rounded border text-xs font-bold transition-all
+                                                ${currentN === n 
+                                                    ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_10px_rgba(147,51,234,0.5)]' 
+                                                    : 'bg-slate-800 border-slate-600 hover:bg-slate-700 text-slate-300'}
+                                                ${(currentN === n || targetN !== null) ? 'opacity-50 cursor-not-allowed' : ''}
+                                            `}
+                                        >
+                                            n = {n}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-slate-500 mt-2 text-center">
+                                    Click a level to jump. Down = Emission, Up = Absorption.
+                                </p>
+                            </div>
+
+                            {/* 2. Spectrometer Output */}
+                            <div className="p-4 border-b border-slate-700 flex-1">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center">
+                                    <i data-lucide="scan-line" className="w-3 h-3 mr-2"></i> Detected Photon
+                                </h3>
+
+                                {lastEmission ? (
+                                    <div className="bg-slate-800 rounded-xl p-4 border border-slate-700 animate-in fade-in slide-in-from-bottom-2">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <div className="w-10 h-10 rounded-full shadow-lg" style={{backgroundColor: lastEmission.color, boxShadow: `0 0 15px ${lastEmission.color}`}}></div>
+                                            <div className="text-right">
+                                                <div className="text-2xl font-mono font-bold text-white">{lastEmission.wl.toFixed(1)} <span className="text-sm text-slate-500">nm</span></div>
+                                                <div className="text-xs text-slate-400">{lastEmission.series}</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between text-xs border-b border-slate-700 pb-1">
+                                                <span className="text-slate-400">Energy Diff ($\Delta E$)</span>
+                                                <span className="text-emerald-400 font-mono">{lastEmission.dE.toFixed(2)} eV</span>
+                                            </div>
+                                            <div className="flex justify-between text-xs pb-1">
+                                                <span className="text-slate-400">Frequency ($f$)</span>
+                                                <span className="text-blue-400 font-mono">{(300000/lastEmission.wl).toFixed(1)} THz</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50 text-center text-xs text-slate-500 italic">
+                                        No emission detected.<br/>Jump to a lower level to emit a photon.
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 3. Visible Spectrum Bar */}
+                            <div className="p-4 bg-slate-950 mt-auto">
+                                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Visible Spectrum (Balmer)</h3>
+                                <div className="h-8 w-full rounded bg-black relative border border-slate-700 overflow-hidden">
+                                    {/* Ruler */}
+                                    <div className="absolute top-0 bottom-0 left-[10%] w-px bg-slate-800"></div> {/* 400 */}
+                                    <div className="absolute top-0 bottom-0 left-[35%] w-px bg-slate-800"></div> {/* 500 */}
+                                    <div className="absolute top-0 bottom-0 left-[60%] w-px bg-slate-800"></div> {/* 600 */}
+                                    <div className="absolute top-0 bottom-0 left-[85%] w-px bg-slate-800"></div> {/* 700 */}
+                                    
+                                    {/* The Line */}
+                                    {lastEmission && lastEmission.wl >= 380 && lastEmission.wl <= 750 && (
+                                        <div 
+                                            className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_white] transition-all duration-500"
+                                            style={{
+                                                left: `${((lastEmission.wl - 380) / (750 - 380)) * 100}%`,
+                                                backgroundColor: lastEmission.color,
+                                                boxShadow: `0 0 8px ${lastEmission.color}`
+                                            }}
+                                        ></div>
+                                    )}
+                                </div>
+                                <div className="flex justify-between text-[9px] text-slate-500 mt-1 font-mono">
+                                    <span>380nm</span>
+                                    <span>750nm</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
