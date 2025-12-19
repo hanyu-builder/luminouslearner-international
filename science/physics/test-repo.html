@@ -1,0 +1,540 @@
+import React, { useState, useRef, useMemo } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls, Html } from '@react-three/drei';
+import * as THREE from 'three';
+import { X, Activity, RefreshCw, Rotate3d, Menu, Box, Info } from 'lucide-react';
+
+/**
+ * 數據庫：解剖學資訊
+ */
+const ANATOMY_DATA = {
+  male: {
+    testes: {
+      title: "睪丸 (Testes)",
+      description: "位於陰囊內，左右各一，呈卵圓形。是男性主要的生殖腺體。",
+      function: "負責產生精子 (Spermatogenesis) 以及分泌雄性激素（主要是睪固酮）。需要低於體溫的環境以維持功能。",
+      color: "#4ade80"
+    },
+    penis: {
+      title: "陰莖 (Penis)",
+      description: "男性的外部生殖器官，主要由海綿體組織構成，前端為龜頭。",
+      function: "負責將尿液排出體外，以及在性交過程中充血勃起，輸送精液進入女性生殖道。",
+      color: "#60a5fa"
+    },
+    prostate: {
+      title: "攝護腺 (Prostate)",
+      description: "位於膀胱頸下方，包圍著尿道起始部，形狀如栗子。",
+      function: "分泌乳白色的鹼性液體（攝護腺液），構成精液的主要成分，有助於液化精液並保護精子。",
+      color: "#f472b6"
+    },
+    vas_deferens: {
+      title: "輸精管 (Vas Deferens)",
+      description: "連接附睪與射精管的細長肌肉管道，路徑彎曲。",
+      function: "負責在射精時透過蠕動將成熟的精子從附睪運送到尿道。",
+      color: "#fbbf24"
+    }
+  },
+  female: {
+    uterus: {
+      title: "子宮 (Uterus)",
+      description: "位於骨盆腔中央，呈倒置的梨形。由平滑肌構成。",
+      function: "孕育胎兒的場所。子宮內膜隨激素週期性變化，增厚準備著床或剝落形成月經。",
+      color: "#fb7185"
+    },
+    ovaries: {
+      title: "卵巢 (Ovaries)",
+      description: "位於子宮兩側，呈扁橢圓形（杏仁狀）。",
+      function: "產生卵子 (Oocytes) 並分泌雌激素與黃體素，是女性生殖與內分泌中心。",
+      color: "#c084fc"
+    },
+    fallopian_tubes: {
+      title: "輸卵管 (Fallopian Tubes)",
+      description: "連接卵巢周邊與子宮角的彎曲管道，末端有傘部。",
+      function: "捕獲排出的卵子並運送至子宮，通常是精子與卵子結合（受精）的發生地。",
+      color: "#f472b6"
+    },
+    cervix: {
+      title: "子宮頸 (Cervix)",
+      description: "子宮下部圓柱狀的開口，突入陰道頂端。",
+      function: "分泌黏液栓阻擋細菌，排卵期黏液變稀薄利於精子通過；生產時會顯著擴張。",
+      color: "#e879f9"
+    },
+    vagina: {
+      title: "陰道 (Vagina)",
+      description: "連接外陰與子宮頸的肌肉彈性管道，內壁有皺褶。",
+      function: "月經排出通道、性交器官以及自然生產的產道。",
+      color: "#fbcfe8"
+    }
+  }
+};
+
+/**
+ * 通用組件：有機形狀的管狀結構 (用於輸卵管、輸精管)
+ */
+const TubeMesh = ({ pathPoints, radius, color, label, id, onClick, isSelected }) => {
+  const meshRef = useRef();
+  const [hovered, setHover] = useState(false);
+
+  // 建立平滑曲線
+  const path = useMemo(() => {
+    const vectors = pathPoints.map(p => new THREE.Vector3(...p));
+    return new THREE.CatmullRomCurve3(vectors);
+  }, [pathPoints]);
+
+  useFrame(() => {
+    if (meshRef.current) {
+      // 選中或懸停時的視覺反饋
+      meshRef.current.material.emissiveIntensity = hovered || isSelected ? 0.5 : 0;
+      const scale = hovered || isSelected ? 1.05 : 1;
+      meshRef.current.scale.setScalar(scale);
+    }
+  });
+
+  return (
+    <group>
+      <mesh
+        ref={meshRef}
+        onClick={(e) => { e.stopPropagation(); onClick(id); }}
+        onPointerOver={() => setHover(true)}
+        onPointerOut={() => setHover(false)}
+      >
+        <tubeGeometry args={[path, 64, radius, 8, false]} />
+        <meshStandardMaterial
+          color={isSelected ? "#ffffff" : color}
+          emissive={color}
+          emissiveIntensity={0}
+          roughness={0.4}
+          metalness={0.1}
+        />
+      </mesh>
+       {/* 標籤顯示在管子的中間點 */}
+       <Html position={path.getPoint(0.5).toArray()} center distanceFactor={10} zIndexRange={[100, 0]}>
+        <div className={`pointer-events-none transition-opacity duration-300 ${hovered || isSelected ? 'opacity-100' : 'opacity-0'}`}>
+           <span className="text-xs font-bold bg-black/70 text-white px-2 py-1 rounded border border-white/20 whitespace-nowrap">
+             {label}
+           </span>
+        </div>
+      </Html>
+    </group>
+  );
+};
+
+/**
+ * 通用組件：複合幾何體器官
+ */
+const OrganMesh = ({ position, rotation, children, color, label, id, onClick, isSelected }) => {
+  const groupRef = useRef();
+  const [hovered, setHover] = useState(false);
+
+  useFrame((state) => {
+    const t = state.clock.getElapsedTime();
+    if (groupRef.current) {
+      // 呼吸般的微動
+      groupRef.current.position.y = position[1] + Math.sin(t * 1.5) * 0.02;
+      
+      const targetScale = hovered || isSelected ? 1.1 : 1;
+      groupRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.1);
+    }
+  });
+
+  return (
+    <group 
+      ref={groupRef} 
+      position={position} 
+      rotation={rotation}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(id);
+      }}
+      onPointerOver={() => setHover(true)}
+      onPointerOut={() => setHover(false)}
+    >
+      {/* 渲染子幾何體，並統一材質 */}
+      <group>
+        {React.Children.map(children, (child) => 
+          React.cloneElement(child, {
+            material: new THREE.MeshStandardMaterial({
+              color: isSelected ? "#ffffff" : color,
+              emissive: isSelected ? color : "#000000",
+              emissiveIntensity: isSelected ? 0.4 : 0,
+              roughness: 0.3,
+              metalness: 0.1,
+            })
+          })
+        )}
+      </group>
+
+      <Html position={[0, 0, 0]} center distanceFactor={12} zIndexRange={[100, 0]} style={{ pointerEvents: 'none' }}>
+        <div 
+          className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border backdrop-blur-sm transition-all duration-300 transform
+            ${hovered || isSelected 
+              ? 'bg-white/90 text-black border-white scale-110 shadow-[0_0_15px_rgba(255,255,255,0.5)] translate-y-[-20px]' 
+              : 'bg-black/40 text-white/70 border-white/10'
+            }`}
+        >
+          {label}
+        </div>
+      </Html>
+    </group>
+  );
+};
+
+/**
+ * 3D 系統：男性 (幾何升級版)
+ */
+const MaleReproductiveSystem = ({ onSelect, selectedId }) => {
+  // 輸精管路徑點 (左右對稱)
+  const leftVasPoints = [[-0.6, -1.2, 0], [-0.8, -0.5, 0.2], [-0.4, 0.2, 0.1], [0, 0.4, 0]];
+  const rightVasPoints = [[0.6, -1.2, 0], [0.8, -0.5, 0.2], [0.4, 0.2, 0.1], [0, 0.4, 0]];
+
+  return (
+    <group position={[0, 0.5, 0]}>
+      {/* 睪丸 (卵圓形) */}
+      <OrganMesh
+        id="testes"
+        label="睪丸"
+        position={[-0.6, -1.5, 0]}
+        color={ANATOMY_DATA.male.testes.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'testes'}
+      >
+        <mesh>
+          <sphereGeometry args={[0.4, 32, 32]} />
+          {/* 透過 scaling 把球體變成卵形 */}
+          <meshStandardMaterial />
+        </mesh>
+      </OrganMesh>
+       <OrganMesh
+        id="testes"
+        label="" // 右側不顯示標籤避免重疊
+        position={[0.6, -1.5, 0]}
+        color={ANATOMY_DATA.male.testes.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'testes'}
+      >
+        <mesh>
+          <sphereGeometry args={[0.4, 32, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 陰莖 (柱狀 + 龜頭) */}
+      <OrganMesh
+        id="penis"
+        label="陰莖"
+        position={[0, -0.8, 1.2]}
+        rotation={[Math.PI / 3.5, 0, 0]}
+        color={ANATOMY_DATA.male.penis.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'penis'}
+      >
+        {/* 莖部 */}
+        <mesh position={[0, -0.5, 0]}>
+          <cylinderGeometry args={[0.3, 0.35, 1.8, 32]} />
+        </mesh>
+        {/* 龜頭 (半球) */}
+        <mesh position={[0, 0.4, 0]}>
+          <sphereGeometry args={[0.36, 32, 16, 0, Math.PI * 2, 0, Math.PI/1.5]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 攝護腺 (栗子形) */}
+      <OrganMesh
+        id="prostate"
+        label="攝護腺"
+        position={[0, 0.3, 0]}
+        color={ANATOMY_DATA.male.prostate.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'prostate'}
+      >
+        <mesh>
+          {/* 稍微壓扁的球體 */}
+          <sphereGeometry args={[0.5, 32, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 輸精管 (曲線) */}
+      <TubeMesh 
+        id="vas_deferens"
+        label="輸精管"
+        pathPoints={leftVasPoints}
+        radius={0.08}
+        color={ANATOMY_DATA.male.vas_deferens.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'vas_deferens'}
+      />
+      <TubeMesh 
+        id="vas_deferens"
+        label=""
+        pathPoints={rightVasPoints}
+        radius={0.08}
+        color={ANATOMY_DATA.male.vas_deferens.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'vas_deferens'}
+      />
+    </group>
+  );
+};
+
+/**
+ * 3D 系統：女性 (幾何升級版)
+ */
+const FemaleReproductiveSystem = ({ onSelect, selectedId }) => {
+  // 輸卵管路徑：從子宮角延伸到卵巢
+  const leftTubePoints = [[-0.6, 1.4, 0], [-1.2, 1.6, 0], [-1.8, 1.2, 0]];
+  const rightTubePoints = [[0.6, 1.4, 0], [1.2, 1.6, 0], [1.8, 1.2, 0]];
+
+  return (
+    <group position={[0, -0.5, 0]}>
+      {/* 子宮 (複合形態) */}
+      <OrganMesh
+        id="uterus"
+        label="子宮"
+        position={[0, 0.8, 0]}
+        color={ANATOMY_DATA.female.uterus.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'uterus'}
+      >
+        {/* 宮底 (圓頂) */}
+        <mesh position={[0, 0.6, 0]}>
+          <sphereGeometry args={[0.8, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        </mesh>
+        {/* 宮體 (倒圓台) */}
+        <mesh position={[0, 0, 0]}>
+          <cylinderGeometry args={[0.8, 0.4, 1.2, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 子宮頸 */}
+      <OrganMesh
+        id="cervix"
+        label="子宮頸"
+        position={[0, -0.8, 0]}
+        color={ANATOMY_DATA.female.cervix.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'cervix'}
+      >
+        <mesh>
+          <cylinderGeometry args={[0.35, 0.35, 0.6, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 陰道 */}
+      <OrganMesh
+        id="vagina"
+        label="陰道"
+        position={[0, -2, 0]}
+        color={ANATOMY_DATA.female.vagina.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'vagina'}
+      >
+        <mesh>
+          <cylinderGeometry args={[0.4, 0.3, 1.8, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 卵巢 (扁橢圓) */}
+      <OrganMesh
+        id="ovaries"
+        label="卵巢"
+        position={[-1.8, 0.8, 0]}
+        rotation={[0, 0, Math.PI / 4]}
+        color={ANATOMY_DATA.female.ovaries.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'ovaries'}
+      >
+        <mesh scale={[1, 0.6, 0.6]}>
+          <sphereGeometry args={[0.45, 32, 32]} />
+        </mesh>
+      </OrganMesh>
+      <OrganMesh
+        id="ovaries"
+        label=""
+        position={[1.8, 0.8, 0]}
+        rotation={[0, 0, -Math.PI / 4]}
+        color={ANATOMY_DATA.female.ovaries.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'ovaries'}
+      >
+        <mesh scale={[1, 0.6, 0.6]}>
+          <sphereGeometry args={[0.45, 32, 32]} />
+        </mesh>
+      </OrganMesh>
+
+      {/* 輸卵管 (曲線) */}
+      <TubeMesh 
+        id="fallopian_tubes"
+        label="輸卵管"
+        pathPoints={leftTubePoints}
+        radius={0.12}
+        color={ANATOMY_DATA.female.fallopian_tubes.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'fallopian_tubes'}
+      />
+      <TubeMesh 
+        id="fallopian_tubes"
+        label=""
+        pathPoints={rightTubePoints}
+        radius={0.12}
+        color={ANATOMY_DATA.female.fallopian_tubes.color}
+        onClick={onSelect}
+        isSelected={selectedId === 'fallopian_tubes'}
+      />
+    </group>
+  );
+};
+
+/**
+ * 主應用程式元件
+ */
+export default function App() {
+  const [gender, setGender] = useState('female');
+  const [selectedPart, setSelectedPart] = useState(null);
+  const [showInfo, setShowInfo] = useState(true);
+
+  const theme = useMemo(() => {
+    return gender === 'male' 
+      ? { bg: 'bg-slate-900', text: 'text-blue-100', accent: 'bg-blue-600', border: 'border-blue-500/30' }
+      : { bg: 'bg-rose-950', text: 'text-pink-100', accent: 'bg-pink-600', border: 'border-pink-500/30' };
+  }, [gender]);
+
+  const currentData = selectedPart && ANATOMY_DATA[gender][selectedPart];
+
+  const handleSelect = (id) => {
+    setSelectedPart(id);
+    setShowInfo(true);
+  };
+
+  const toggleGender = () => {
+    setGender(prev => prev === 'male' ? 'female' : 'male');
+    setSelectedPart(null);
+  };
+
+  return (
+    <div className={`w-full h-screen relative overflow-hidden transition-colors duration-1000 ${theme.bg}`}>
+      
+      {/* Header */}
+      <header className="absolute top-0 left-0 w-full p-4 z-10 flex justify-between items-start pointer-events-none">
+        <div className="pointer-events-auto">
+          <h1 className={`text-3xl font-bold ${theme.text} tracking-wider flex items-center gap-2`}>
+            <Activity className="w-8 h-8" />
+            ReproScope <span className="text-xs opacity-50 font-normal self-end mb-1">3D Viewer</span>
+          </h1>
+        </div>
+
+        <div className="pointer-events-auto flex flex-col gap-2 items-end">
+          <button
+            onClick={toggleGender}
+            className={`flex items-center gap-2 px-6 py-2 rounded-full font-semibold transition-all shadow-lg hover:scale-105 active:scale-95
+              ${gender === 'male' 
+                ? 'bg-blue-500 text-white hover:bg-blue-400' 
+                : 'bg-pink-500 text-white hover:bg-pink-400'
+              }`}
+          >
+            <RefreshCw className="w-4 h-4" />
+            {gender === 'male' ? '女性' : '男性'}視角
+          </button>
+        </div>
+      </header>
+
+      {/* 3D Canvas */}
+      <div className="absolute inset-0 z-0">
+        <Canvas camera={{ position: [0, 2, 8], fov: 45 }} dpr={[1, 2]}>
+          <color attach="background" args={[gender === 'male' ? '#0f172a' : '#4c0519']} />
+          <fog attach="fog" args={[gender === 'male' ? '#0f172a' : '#4c0519', 5, 20]} />
+          
+          <ambientLight intensity={0.6} />
+          <spotLight position={[5, 10, 5]} angle={0.25} penumbra={1} intensity={1.5} castShadow />
+          <pointLight position={[-5, -5, -5]} intensity={0.8} color={gender === 'male' ? "#60a5fa" : "#fb7185"} />
+          
+          <group position={[0, 0, 0]}>
+             {gender === 'male' ? (
+               <MaleReproductiveSystem onSelect={handleSelect} selectedId={selectedPart} />
+             ) : (
+               <FemaleReproductiveSystem onSelect={handleSelect} selectedId={selectedPart} />
+             )}
+          </group>
+
+          <mesh position={[0, -4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[5, 64]} />
+            <meshBasicMaterial color={gender === 'male' ? "#000000" : "#2a0000"} transparent opacity={0.3} />
+          </mesh>
+
+          <OrbitControls 
+            enablePan={false} 
+            minDistance={4} 
+            maxDistance={15}
+            minPolarAngle={Math.PI / 4}
+            maxPolarAngle={Math.PI / 1.5}
+            autoRotate={!selectedPart}
+            autoRotateSpeed={0.8}
+          />
+        </Canvas>
+      </div>
+
+      {/* Info Panel */}
+      {selectedPart && showInfo && (
+        <div className={`absolute top-20 right-4 md:top-1/2 md:-translate-y-1/2 md:right-8 w-80 md:w-96 
+          backdrop-blur-xl bg-black/50 border ${theme.border} rounded-2xl p-6 shadow-2xl z-20
+          animate-in slide-in-from-right fade-in duration-300 pointer-events-auto text-white`}>
+          
+          <button 
+            onClick={() => setShowInfo(false)}
+            className="absolute top-4 right-4 text-white/50 hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`w-12 h-12 rounded-xl ${theme.accent} flex items-center justify-center shadow-lg`}>
+              <Info className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold leading-tight">{currentData.title}</h2>
+              <span className="text-xs text-white/50 uppercase tracking-widest">Selected Organ</span>
+            </div>
+          </div>
+
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+              <h3 className={`text-xs font-bold uppercase tracking-wider mb-2 ${theme.text} opacity-80 flex items-center gap-2`}>
+                <Box className="w-3 h-3" /> 解剖結構
+              </h3>
+              <p className="text-gray-200 leading-relaxed text-sm">
+                {currentData.description}
+              </p>
+            </div>
+            
+            <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+              <h3 className={`text-xs font-bold uppercase tracking-wider mb-2 ${theme.text} opacity-80 flex items-center gap-2`}>
+                <Activity className="w-3 h-3" /> 生理功能
+              </h3>
+              <p className="text-gray-200 leading-relaxed text-sm">
+                {currentData.function}
+              </p>
+            </div>
+          </div>
+          
+          <div className="mt-6 pt-4 border-t border-white/10 flex justify-between items-center">
+            <button 
+              onClick={() => setSelectedPart(null)}
+              className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-sm font-medium"
+            >
+              返回全覽模式
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
+        <div className="bg-black/40 backdrop-blur-md px-6 py-3 rounded-full border border-white/10 text-white/70 flex items-center gap-4 text-sm shadow-xl">
+          <span className="flex items-center gap-1"><Rotate3d className="w-4 h-4"/> 拖曳</span>
+          <span className="w-px h-4 bg-white/20"></span>
+          <span className="flex items-center gap-1"><Menu className="w-4 h-4"/> 縮放</span>
+          <span className="w-px h-4 bg-white/20"></span>
+          <span className="flex items-center gap-1 text-white font-medium">✨ 點擊器官互動</span>
+        </div>
+      </div>
+    </div>
+  );
+}
