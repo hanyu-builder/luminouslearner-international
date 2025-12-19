@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-red::-webkit-slider-thumb { background: #ef4444; }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const CORE_X = 250;
+    const CORE_Y = 225;
+    const CORE_W = 300;
+    const CORE_H = 200;
+    const CORE_THICK = 40;
+
+    const App = () => {
+        // --- State ---
+        const [vp, setVp] = useState(120); // Primary Voltage (AC)
+        const [np, setNp] = useState(10);  // Primary Turns
+        const [ns, setNs] = useState(20);  // Secondary Turns
+        const [isRunning, setIsRunning] = useState(true);
+        const [showFlux, setShowFlux] = useState(true);
+
+        // Calculated
+        const vs = (ns / np) * vp;
+        const ratio = ns / np;
+        let type = "Isolation";
+        if (ratio > 1) type = "Step-Up (Boost)";
+        if (ratio < 1) type = "Step-Down (Buck)";
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const timeRef = useRef(0);
+        
+        // --- Animation Loop ---
+        const loop = (timestamp) => {
+            if (!isRunning) return;
+            timeRef.current += 0.05;
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        useEffect(() => {
+            if (isRunning) {
+                requestRef.current = requestAnimationFrame(loop);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+                draw(); // Static draw
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [isRunning, vp, np, ns, showFlux]);
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const t = timeRef.current;
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Iron Core
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = CORE_THICK;
+            ctx.strokeStyle = '#475569'; // Slate 600
+            ctx.strokeRect(CORE_X - CORE_W/2, CORE_Y - CORE_H/2, CORE_W, CORE_H);
+            
+            // Core Fill (Lighter)
+            ctx.lineWidth = CORE_THICK - 4;
+            ctx.strokeStyle = '#64748b'; // Slate 500
+            ctx.strokeRect(CORE_X - CORE_W/2, CORE_Y - CORE_H/2, CORE_W, CORE_H);
+
+            // 2. Draw Magnetic Flux (Animated Dashed Lines)
+            if (showFlux) {
+                ctx.lineWidth = 2;
+                // Flux intensity proportional to Vp (simplified)
+                const fluxAlpha = Math.min(1, vp / 240 + 0.2); 
+                // Flux direction oscillates with AC
+                const fluxDir = Math.sin(t); 
+                const fluxOffset = (t * 20) % 20;
+
+                ctx.strokeStyle = `rgba(250, 204, 21, ${Math.abs(fluxDir) * fluxAlpha})`; // Yellow pulsating
+                ctx.setLineDash([10, 10]);
+                ctx.lineDashOffset = -fluxOffset * Math.sign(fluxDir); // Move
+                
+                // Inner loop path
+                const inset = 15;
+                ctx.strokeRect(
+                    CORE_X - CORE_W/2 + inset, 
+                    CORE_Y - CORE_H/2 + inset, 
+                    CORE_W - inset*2, 
+                    CORE_H - inset*2
+                );
+                ctx.setLineDash([]);
+            }
+
+            // 3. Draw Primary Coil (Left)
+            const leftX = CORE_X - CORE_W/2;
+            drawCoil(ctx, leftX, CORE_Y, np, '#3b82f6', true); // Blue
+            
+            // 4. Draw Secondary Coil (Right)
+            const rightX = CORE_X + CORE_W/2;
+            drawCoil(ctx, rightX, CORE_Y, ns, '#ef4444', false); // Red
+
+            // 5. Draw Input/Output Terminals & Labels
+            drawTerminals(ctx, leftX, CORE_Y, true, vp);
+            drawTerminals(ctx, rightX, CORE_Y, false, vs);
+            
+            // 6. Draw Oscilloscope (Graphs)
+            drawScope(ctx, 600, 100, 180, 100, vp, '#3b82f6', 'Input Vp');
+            drawScope(ctx, 600, 300, 180, 100, vs, '#ef4444', 'Output Vs');
+        };
+
+        const drawCoil = (ctx, cx, cy, turns, color, isLeft) => {
+            const h = CORE_H - 40; // Height of winding area
+            const w = 40; // Width of coil
+            const step = h / (turns + 1);
+            const startY = cy - h/2;
+            
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = color;
+            ctx.lineCap = 'round';
+
+            // Draw back segments (behind core) - clipped?
+            // Actually core is drawn first. Just draw over core for simple wrap.
+            // To look 3D: Front segments go over core, back segments go "behind" (but we drew core already).
+            // Let's just draw helical loops.
+            
+            for (let i = 0; i < turns; i++) {
+                const y = startY + step * (i + 0.5);
+                
+                // Front part of loop
+                ctx.beginPath();
+                ctx.moveTo(cx - 25, y - 5);
+                ctx.quadraticCurveTo(cx, y + 10, cx + 25, y - 5);
+                ctx.stroke();
+                
+                // Back part (simulated connection to next)
+                if (i < turns - 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(cx + 25, y - 5);
+                    ctx.lineTo(cx + 25, y + step/2); // Vertical connector back
+                    // Simplified: Just draw front loops clearly
+                }
+            }
+            
+            // Leads
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Top lead
+            ctx.moveTo(cx - 25, startY);
+            ctx.lineTo(isLeft ? cx - 80 : cx + 80, startY);
+            // Bottom lead
+            ctx.moveTo(cx - 25, startY + h); // Approx end
+            ctx.lineTo(isLeft ? cx - 80 : cx + 80, startY + h);
+            ctx.stroke();
+        };
+        
+        const drawTerminals = (ctx, x, y, isLeft, voltageVal) => {
+            const h = CORE_H - 40;
+            const termX = isLeft ? x - 80 : x + 80;
+            const topY = y - h/2;
+            const botY = y + h/2; // Actually bottom of coil area
+            // Fix bottom wire pos
+            const coilBottomY = topY + (h / (isLeft ? np : ns) + 1) * (isLeft ? np : ns); // Rough approx
+            // Let's just draw terminals fixed relative to core
+            
+            // Terminals circles
+            ctx.fillStyle = '#1e293b';
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            
+            // Top
+            ctx.beginPath(); ctx.arc(termX, topY, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            // Bot
+            ctx.beginPath(); ctx.arc(termX, topY + 160, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            
+            // Label Voltage
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = isLeft ? 'right' : 'left';
+            ctx.fillText(voltageVal.toFixed(0) + " V", isLeft ? termX - 15 : termX + 15, y);
+            
+            // Label N
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px sans-serif';
+            ctx.fillText((isLeft ? np : ns) + " Turns", isLeft ? termX - 15 : termX + 15, y + 20);
+        };
+
+        const drawScope = (ctx, x, y, w, h, amp, color, label) => {
+            // Background
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, w, h);
+            // Center line
+            ctx.beginPath(); ctx.moveTo(x, y + h/2); ctx.lineTo(x + w, y + h/2); ctx.stroke();
+
+            // Wave
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            // Scale amplitude to fit box. Max V ~ 480 (240 in * 2).
+            // Box half height 50. Scale factor 0.1
+            const scaleY = 0.15;
+            const t = timeRef.current;
+            
+            for (let i = 0; i < w; i++) {
+                const waveX = x + i;
+                // sin wave moving left
+                const phase = (i / 50) - t * 5; 
+                const val = amp * Math.sin(phase);
+                const waveY = y + h/2 - val * scaleY;
+                
+                // Clamp
+                if (waveY < y) continue;
+                if (waveY > y + h) continue;
+
+                if (i === 0) ctx.moveTo(waveX, waveY);
+                else ctx.lineTo(waveX, waveY);
+            }
+            ctx.stroke();
+            
+            // Label
+            ctx.fillStyle = color;
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(label, x + 5, y + 15);
+        };
+
+        useEffect(() => {
+            draw();
+        }, []);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        // Reset
+        const reset = () => {
+            setVp(120);
+            setNp(10);
+            setNs(20);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="zap" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Transformer Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Electromagnetism
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute top-4 left-4 flex gap-2">
+                                <div className={`px-3 py-1 rounded border font-bold text-xs ${ratio > 1 ? 'bg-emerald-900/50 border-emerald-500 text-emerald-300' : ratio < 1 ? 'bg-orange-900/50 border-orange-500 text-orange-300' : 'bg-slate-800 border-slate-600 text-slate-300'}`}>
+                                    {type}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+                            
+                            <div className="grid grid-cols-3 gap-6">
+                                {/* Vp */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-blue-300 mb-2">
+                                        Primary Voltage ($V_p$) <span>{vp} V</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="10" max="240" step="10" 
+                                        value={vp} onChange={(e) => setVp(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-blue" 
+                                    />
+                                </div>
+
+                                {/* Np */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-blue-300 mb-2">
+                                        Primary Turns ($N_p$) <span>{np}</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="5" max="50" step="5" 
+                                        value={np} onChange={(e) => setNp(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-blue" 
+                                    />
+                                </div>
+
+                                {/* Ns */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-red-400 mb-2">
+                                        Secondary Turns ($N_s$) <span>{ns}</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="5" max="50" step="5" 
+                                        value={ns} onChange={(e) => setNs(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-red" 
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-between items-center border-t border-slate-700 pt-4">
+                                <label className="flex items-center gap-2 cursor-pointer bg-slate-700/50 px-3 py-2 rounded-lg border border-slate-600 hover:bg-slate-700 transition">
+                                    <input type="checkbox" checked={showFlux} onChange={() => setShowFlux(!showFlux)} className="rounded text-yellow-500 bg-slate-800 border-slate-500 focus:ring-0" />
+                                    <span className="text-xs font-bold text-slate-300">Show Flux</span>
+                                </label>
+                                
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setIsRunning(!isRunning)}
+                                        className={`px-6 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${isRunning ? 'bg-slate-700 text-slate-300' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                    >
+                                        <i data-lucide={isRunning ? "pause" : "play"} className="w-4 h-4"></i>
+                                        {isRunning ? "Pause" : "Run"}
+                                    </button>
+                                    <button onClick={reset} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-bold text-sm transition-colors flex items-center gap-2">
+                                        <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset
+                                    </button>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Data Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Output Analysis
+                            </h2>
+                            
+                            <div className="space-y-4">
+                                <div className="p-4 rounded-xl bg-slate-900 border border-slate-700 text-center">
+                                    <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">Secondary Voltage ($V_s$)</div>
+                                    <div className="text-4xl font-mono font-bold text-white mb-1">
+                                        {vs.toFixed(0)} <span className="text-lg text-slate-400">V</span>
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                        Based on ratio {ratio.toFixed(2)}:1
+                                    </div>
+                                </div>
+
+                                <div className="p-4 rounded-xl bg-indigo-900/10 border border-indigo-500/20 font-mono text-xs text-slate-300 space-y-2">
+                                    <div className="flex justify-between border-b border-indigo-500/20 pb-1">
+                                        <span>Formula</span>
+                                        <span className="text-white">Vs / Vp = Ns / Np</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Input</span>
+                                        <span className="text-blue-300">{vp} V / {np} T</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span>Output</span>
+                                        <span className="text-red-300">{vs.toFixed(0)} V / {ns} T</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-emerald-900/10 border border-emerald-500/20 p-5 rounded-2xl">
+                            <h3 className="text-emerald-300 font-bold text-sm mb-2 flex items-center">
+                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> How it works
+                            </h3>
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                                Alternating current in the <strong>Primary Coil</strong> creates a changing magnetic flux in the iron core. This changing flux passes through the <strong>Secondary Coil</strong>, inducing a voltage (Faraday's Law).
+                            </p>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
