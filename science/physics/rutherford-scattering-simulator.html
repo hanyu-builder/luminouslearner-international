@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rutherford Scattering Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+        .thumb-rose::-webkit-slider-thumb { background: #f43f5e; }
+        .canvas-container { cursor: crosshair; }
+        
+        /* Custom Scrollbar */
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    const NUCLEUS_X = CANVAS_WIDTH * 0.6;
+    const NUCLEUS_Y = CANVAS_HEIGHT / 2;
+    const k = 50000; // Coulomb constant proxy
+
+    const App = () => {
+        // --- State ---
+        const [energy, setEnergy] = useState(5); // Initial Kinetic Energy (Speed)
+        const [spread, setSpread] = useState(100); // Beam vertical spread
+        const [showTrails, setShowTrails] = useState(true);
+        const [isFiring, setIsFiring] = useState(true);
+        
+        // Stats
+        const [totalCount, setTotalCount] = useState(0);
+        const [deflectedCount, setDeflectedCount] = useState(0); // > 10 degrees
+        const [backscatterCount, setBackscatterCount] = useState(0); // > 90 degrees
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        
+        // Physics Objects (Mutable for performance)
+        const particlesRef = useRef([]); 
+        
+        // --- Physics Logic ---
+        const spawnParticle = () => {
+            // Random Y within spread
+            const yOffset = (Math.random() - 0.5) * spread * 2;
+            
+            particlesRef.current.push({
+                x: 0,
+                y: NUCLEUS_Y + yOffset,
+                vx: energy * 0.8 + 2, // Map energy slider to velocity
+                vy: 0,
+                trail: [],
+                color: Math.random() > 0.9 ? '#fca5a5' : '#a5f3fc', // Occasional different color trace
+                history: 0, // Age
+                counted: false
+            });
+        };
+
+        const updatePhysics = () => {
+            const dt = 0.5; // Time step
+            const nucleusR = 15;
+
+            // Spawn new particles periodically if firing
+            if (isFiring && Math.random() > 0.85) {
+                spawnParticle();
+            }
+
+            particlesRef.current.forEach(p => {
+                // 1. Calculate Distance to Nucleus
+                const dx = p.x - NUCLEUS_X;
+                const dy = p.y - NUCLEUS_Y;
+                const distSq = dx*dx + dy*dy;
+                const dist = Math.sqrt(distSq);
+
+                // 2. Coulomb Force (Repulsion) F = k / r^2
+                // Force direction is along (dx, dy) normalized
+                // Acceleration a = F/m. Let m=1.
+                // Avoid division by zero
+                if (dist > nucleusR) {
+                    const force = k / (distSq); 
+                    const ax = (force * dx / dist);
+                    const ay = (force * dy / dist);
+
+                    p.vx += ax * dt * 0.01; // Scale factor
+                    p.vy += ay * dt * 0.01;
+                }
+
+                // 3. Move
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+
+                // 4. Trail Logic
+                if (showTrails && p.history % 4 === 0) {
+                    p.trail.push({x: p.x, y: p.y});
+                    if (p.trail.length > 20) p.trail.shift();
+                }
+                p.history++;
+
+                // 5. Stats Counting (Only count once when leaving "interaction zone")
+                if (!p.counted && (p.x > CANVAS_WIDTH - 50 || p.x < 0 || p.y < 0 || p.y > CANVAS_HEIGHT)) {
+                    p.counted = true;
+                    // Calculate deflection angle
+                    // Initial vector (1, 0), Final vector (vx, vy)
+                    const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                    // cos(theta) = vx / speed
+                    const angleRad = Math.acos(p.vx / speed);
+                    const angleDeg = angleRad * (180 / Math.PI);
+
+                    setTotalCount(c => c + 1);
+                    if (angleDeg > 10) setDeflectedCount(c => c + 1);
+                    if (angleDeg > 90) setBackscatterCount(c => c + 1);
+                }
+            });
+
+            // Cleanup off-screen particles
+            particlesRef.current = particlesRef.current.filter(p => 
+                p.x > -50 && p.x < CANVAS_WIDTH + 50 && 
+                p.y > -50 && p.y < CANVAS_HEIGHT + 50
+            );
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear Background
+            ctx.fillStyle = '#020617'; 
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Draw Grid (Subtle)
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for(let i=0; i<CANVAS_WIDTH; i+=50) { ctx.moveTo(i, 0); ctx.lineTo(i, CANVAS_HEIGHT); }
+            for(let i=0; i<CANVAS_HEIGHT; i+=50) { ctx.moveTo(0, i); ctx.lineTo(CANVAS_WIDTH, i); }
+            ctx.stroke();
+
+            // Draw Gold Nucleus (Center)
+            // Glow
+            const grad = ctx.createRadialGradient(NUCLEUS_X, NUCLEUS_Y, 5, NUCLEUS_X, NUCLEUS_Y, 40);
+            grad.addColorStop(0, 'rgba(251, 191, 36, 1)');
+            grad.addColorStop(0.5, 'rgba(251, 191, 36, 0.3)');
+            grad.addColorStop(1, 'rgba(251, 191, 36, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(NUCLEUS_X, NUCLEUS_Y, 40, 0, Math.PI*2); ctx.fill();
+            
+            // Solid Core
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath(); ctx.arc(NUCLEUS_X, NUCLEUS_Y, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Au', NUCLEUS_X, NUCLEUS_Y+3);
+
+            // Draw Particles
+            particlesRef.current.forEach(p => {
+                // Trail
+                if (showTrails && p.trail.length > 1) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = p.color;
+                    ctx.lineWidth = 1; // Very thin trails
+                    ctx.globalAlpha = 0.4;
+                    p.trail.forEach((pt, i) => {
+                        if (i === 0) ctx.moveTo(pt.x, pt.y);
+                        else ctx.lineTo(pt.x, pt.y);
+                    });
+                    ctx.stroke();
+                    ctx.globalAlpha = 1.0;
+                }
+
+                // Head
+                ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+            });
+
+            // Draw "Gun" (Source)
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, NUCLEUS_Y - 40, 30, 80);
+            ctx.fillStyle = '#94a3b8';
+            ctx.textAlign = 'left';
+            ctx.fillText("Alpha Source", 5, NUCLEUS_Y - 45);
+        };
+
+        const resetStats = () => {
+            setTotalCount(0);
+            setDeflectedCount(0);
+            setBackscatterCount(0);
+            particlesRef.current = [];
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [energy, spread, isFiring, showTrails]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                {/* Navbar */}
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-amber-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="atom" className="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Rutherford Scattering Lab</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Atomic Physics
+                    </div>
+                </nav>
+
+                {/* Dashboard Main */}
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas (3/4) */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                            {/* Overlay Legend */}
+                            <div className="absolute bottom-4 left-4 pointer-events-none">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                                    <span className="text-[10px] text-slate-400">Gold Nucleus (+)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-cyan-200"></div>
+                                    <span className="text-[10px] text-slate-400">Alpha Particle (+)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Controls (1/4) */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Geiger Counter Stats */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex justify-between items-center">
+                                    Detection Results
+                                    <button onClick={resetStats} className="text-[10px] text-indigo-400 hover:text-indigo-300">Reset</button>
+                                </h3>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-slate-300">Total Fired</span>
+                                        <span className="font-mono text-white">{totalCount}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-yellow-300">Deflected (>10°)</span>
+                                        <span className="font-mono text-white">{deflectedCount}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-rose-400 font-bold">Backscatter (>90°)</span>
+                                        <span className="font-mono text-white">{backscatterCount}</span>
+                                    </div>
+                                    
+                                    {/* Probability Bar */}
+                                    <div className="mt-2">
+                                        <div className="text-[10px] text-slate-500 mb-1">Backscatter Probability (1 in {backscatterCount > 0 ? Math.round(totalCount/backscatterCount) : '...'})</div>
+                                        <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                            <div className="h-full bg-rose-500 transition-all duration-300" style={{width: `${(backscatterCount/totalCount)*100}%`}}></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Controls */}
+                            <div className="p-5 flex-1 flex flex-col gap-6">
+                                
+                                {/* Energy Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-indigo-300 mb-2">
+                                        Alpha Energy (Speed)
+                                    </label>
+                                    <input 
+                                        type="range" min="2" max="15" step="0.5" 
+                                        value={energy} onChange={(e) => setEnergy(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-indigo mb-1" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500">
+                                        <span>Low Energy</span>
+                                        <span>High Energy</span>
+                                    </div>
+                                </div>
+
+                                {/* Spread Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-rose-300 mb-2">
+                                        Beam Width (Spread)
+                                    </label>
+                                    <input 
+                                        type="range" min="10" max="200" step="10" 
+                                        value={spread} onChange={(e) => setSpread(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-rose mb-1" 
+                                    />
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+                                        Wider beam = more particles pass far from nucleus. Narrow beam = more direct hits.
+                                    </p>
+                                </div>
+
+                                {/* Toggles */}
+                                <div className="space-y-3">
+                                    <button 
+                                        onClick={() => setIsFiring(!isFiring)}
+                                        className={`w-full py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all ${!isFiring ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                    >
+                                        <i data-lucide={isFiring ? "pause" : "play"} className="w-4 h-4"></i>
+                                        {isFiring ? "Stop Beam" : "Fire Beam"}
+                                    </button>
+                                    
+                                    <label className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-750 transition">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={showTrails} 
+                                            onChange={() => setShowTrails(!showTrails)}
+                                            className="w-4 h-4 rounded text-indigo-500 bg-slate-900 border-slate-600 focus:ring-0"
+                                        />
+                                        <span className="text-xs font-bold text-slate-300">Show Particle Trails</span>
+                                    </label>
+                                </div>
+                                
+                                <div className="mt-auto bg-amber-900/20 border border-amber-500/20 p-3 rounded-lg">
+                                    <h4 className="text-amber-400 font-bold text-xs mb-1">Observation Tip</h4>
+                                    <p className="text-[11px] text-slate-400">
+                                        Notice how 99% of particles fly straight through! Only those that get very close to the tiny nucleus are pushed away violently.
+                                    </p>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
