@@ -23,14 +23,17 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
         .slider-thumb::-webkit-slider-thumb {
             -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
             border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
         }
-        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
-        .thumb-cyan::-webkit-slider-thumb { background: #06b6d4; }
-        .canvas-container { cursor: pointer; }
+        .thumb-amber::-webkit-slider-thumb { background: #f59e0b; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .circuit-line { stroke: #94a3b8; stroke-width: 2; fill: none; }
+        .resistor-path { stroke: #cbd5e1; stroke-width: 6; stroke-linecap: round; }
     </style>
 </head>
 <body>
@@ -38,470 +41,429 @@
 <div id="root"></div>
 
 <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useMemo } = React;
 
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 450;
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
     
-    // Circuit Layout
-    const POT_X = 200;
-    const POT_Y = 200;
-    const POT_HEIGHT = 200;
-    const POT_WIDTH = 40;
+    // Circuit Layout Constants
+    const SCHEMATIC_X = 200;
+    const REALISTIC_X = 600;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
 
     const App = () => {
         // --- State ---
-        const [vin, setVin] = useState(10); // Volts
-        const [totalR, setTotalR] = useState(1000); // Ohms (Potentiometer total)
-        const [wiperPos, setWiperPos] = useState(0.5); // 0 (Bottom) to 1 (Top)
-        const [loadR, setLoadR] = useState(Infinity); // Load Resistance (Infinity = Open Circuit)
-        const [showElectrons, setShowElectrons] = useState(true);
-        
-        // Calculated
-        const [vout, setVout] = useState(0);
-        const [r1, setR1] = useState(0); // Top part
-        const [r2, setR2] = useState(0); // Bottom part
-        const [iTotal, setITotal] = useState(0);
-        const [iLoad, setILoad] = useState(0);
+        const [vin, setVin] = useState(12); // Input Voltage (V)
+        const [sliderPos, setSliderPos] = useState(50); // 0 (Bottom) to 100 (Top)
+        const [totalR, setTotalR] = useState(10); // Total Resistance kOhm
+        const [loadConnected, setLoadConnected] = useState(false);
+        const [loadR, setLoadR] = useState(10); // Load Resistance kOhm
 
         const canvasRef = useRef(null);
         const requestRef = useRef();
-        const electronOffsetRef = useRef(0);
 
-        // --- Physics Logic ---
-        useEffect(() => {
-            // Potentiometer splits totalR into R1 (Top) and R2 (Bottom)
-            // WiperPos 0 = Bottom (R2=0), 1 = Top (R1=0)
-            // R2 is proportional to wiperPos
+        // --- Calculations ---
+        const physics = useMemo(() => {
+            // R1 is Top part, R2 is Bottom part (where Vout is measured)
+            // sliderPos 100 = Top (R1=0, R2=Total) -> Vout = Vin
+            // sliderPos 0 = Bottom (R1=Total, R2=0) -> Vout = 0
             
-            const R2_pot = totalR * wiperPos;
-            const R1 = totalR * (1 - wiperPos);
-            
-            // If Load is connected, it is in parallel with R2
-            // Req_bottom = (R2_pot * RL) / (R2_pot + RL)
-            
-            let Req_bottom = R2_pot;
-            if (loadR !== Infinity) {
-                if (R2_pot === 0) Req_bottom = 0;
-                else Req_bottom = (R2_pot * loadR) / (R2_pot + loadR);
-            }
-            
-            const R_total_circuit = R1 + Req_bottom;
-            
-            // Avoid division by zero
-            if (R_total_circuit <= 0) {
-                 setVout(0);
-                 setITotal(100); // Max current visual
-                 return;
+            const r2_raw = (sliderPos / 100) * totalR; 
+            const r1_raw = totalR - r2_raw;
+
+            let r2_effective = r2_raw;
+            let parallelR = null;
+
+            // Load Effect
+            if (loadConnected) {
+                // R2 is in parallel with Load
+                // 1/Req = 1/R2 + 1/RL
+                if (r2_raw > 0) {
+                    r2_effective = (r2_raw * loadR) / (r2_raw + loadR);
+                    parallelR = r2_effective;
+                } else {
+                    r2_effective = 0;
+                }
             }
 
-            const I_source = vin / R_total_circuit;
-            const V_out = I_source * Req_bottom;
-            
-            // Current splitting if load exists
-            let I_load = 0;
-            if (loadR !== Infinity && loadR > 0) {
-                I_load = V_out / loadR;
-            }
+            const total_circuit_R = r1_raw + r2_effective;
+            const current = total_circuit_R > 0 ? vin / total_circuit_R : 0; // mA (since R is kOhm)
+            const vout = current * r2_effective;
 
-            setR1(R1);
-            setR2(R2_pot); // The physical R2 of the pot, not equivalent
-            setVout(V_out);
-            setITotal(I_source);
-            setILoad(I_load);
+            return {
+                r1: r1_raw,
+                r2: r2_raw,
+                r2_eff: r2_effective,
+                vout,
+                current
+            };
+        }, [vin, sliderPos, totalR, loadConnected, loadR]);
 
-        }, [vin, totalR, wiperPos, loadR]);
-
-        // --- Animation Loop ---
-        const loop = () => {
-            // Animate electrons
-            // Speed proportional to current
-            const speed = Math.min(10, iTotal * 200); // Scale up small currents
-            electronOffsetRef.current = (electronOffsetRef.current + speed) % 20;
-            
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        });
-
-        // --- Rendering ---
+        // --- Drawing ---
         const draw = () => {
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
 
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // Circuit Geometry
-            const topWireY = 50;
-            const bottomWireY = 400;
-            const batX = 100;
-            const circuitRightX = 600; // Load connects here
-            
-            const potTopY = POT_Y - POT_HEIGHT/2;
-            const potBottomY = POT_Y + POT_HEIGHT/2;
-            
-            // Wiper Y position
-            // Pos 0 (Bottom) -> potBottomY
-            // Pos 1 (Top) -> potTopY
-            const wiperY = potBottomY - wiperPos * POT_HEIGHT;
+            // --- 1. Schematic Diagram (Left) ---
+            const sx = SCHEMATIC_X;
+            const sy = CENTER_Y;
+            const w = 120;
+            const h = 200;
 
-            // 1. Draw Wires (Main Loop)
-            ctx.strokeStyle = '#94a3b8'; // Wire Grey
-            ctx.lineWidth = 4;
-            
-            // Main loop: Bat -> Top -> Pot -> Bottom -> Bat
+            // Main Loop
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(batX, bottomWireY);
-            ctx.lineTo(POT_X, bottomWireY); // To Pot Bottom
-            ctx.lineTo(POT_X, potBottomY);
-            ctx.stroke();
-            
-            ctx.beginPath();
-            ctx.moveTo(batX, topWireY);
-            ctx.lineTo(POT_X, topWireY); // To Pot Top
-            ctx.lineTo(POT_X, potTopY);
+            // Battery (Left side)
+            ctx.moveTo(sx - w, sy - h/2); ctx.lineTo(sx - w, sy + h/2); // Left vertical wire
+            // Top Wire
+            ctx.moveTo(sx - w, sy - h/2); ctx.lineTo(sx, sy - h/2);
+            // Bottom Wire
+            ctx.moveTo(sx - w, sy + h/2); ctx.lineTo(sx, sy + h/2);
             ctx.stroke();
 
-            // 2. Draw Battery
-            const batCenterY = (topWireY + bottomWireY) / 2;
-            drawBattery(ctx, batX, batCenterY, vin);
+            // Battery Symbol
+            drawBattery(ctx, sx - w, sy, vin);
 
-            // 3. Draw Potentiometer Resistor (Zigzag Vertical)
-            ctx.strokeStyle = '#f43f5e'; // Red Resistor
-            ctx.lineWidth = 6;
-            ctx.beginPath();
-            ctx.moveTo(POT_X, potTopY);
-            const zigs = 20;
-            const stepY = POT_HEIGHT / zigs;
-            for(let i=1; i<=zigs; i++) {
-                const x = POT_X + (i%2===0 ? -10 : 10);
-                const y = potTopY + i*stepY;
-                ctx.lineTo(x, y);
-            }
-            ctx.stroke();
+            // Resistor (Vertical Zigzag)
+            drawResistor(ctx, sx, sy - h/2, sx, sy + h/2);
 
-            // 4. Draw Wiper (Output Arm)
-            ctx.strokeStyle = '#facc15'; // Yellow Wiper
-            ctx.lineWidth = 4;
+            // Potentiometer Slider Arrow
+            // Map sliderPos (0-100) to Y position (bottom to top)
+            const sliderY = (sy + h/2) - (sliderPos / 100) * h;
+            
+            ctx.strokeStyle = '#f59e0b'; // Amber
+            ctx.lineWidth = 3;
             ctx.beginPath();
             // Arrow pointing to resistor
-            ctx.moveTo(POT_X + 20, wiperY);
-            ctx.lineTo(POT_X + 50, wiperY); // Short horizontal
-            ctx.lineTo(circuitRightX, wiperY); // To Output Terminal +
+            ctx.moveTo(sx + 30, sliderY); ctx.lineTo(sx, sliderY);
+            // Arrowhead
+            ctx.moveTo(sx + 5, sliderY - 5); ctx.lineTo(sx, sliderY); ctx.lineTo(sx + 5, sliderY + 5);
             ctx.stroke();
+
+            // Output Circuit (Vout)
+            ctx.strokeStyle = '#38bdf8'; // Sky blue
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            // Top Vout wire (from slider)
+            ctx.moveTo(sx + 30, sliderY); ctx.lineTo(sx + 80, sliderY);
+            // Bottom Vout wire (from ground)
+            ctx.moveTo(sx, sy + h/2); ctx.lineTo(sx + 80, sy + h/2);
+            ctx.stroke();
+
+            // Voltmeter
+            drawVoltmeter(ctx, sx + 80, (sliderY + (sy + h/2)) / 2, physics.vout);
             
-            // Wiper Arrowhead
-            ctx.fillStyle = '#facc15';
+            // Connect Voltmeter
             ctx.beginPath();
-            ctx.moveTo(POT_X + 15, wiperY);
-            ctx.lineTo(POT_X + 25, wiperY - 8);
-            ctx.lineTo(POT_X + 25, wiperY + 8);
-            ctx.fill();
-
-            // 5. Draw Output Circuit (Load)
-            // Bottom wire extends to output
-            ctx.strokeStyle = '#94a3b8';
-            ctx.beginPath();
-            ctx.moveTo(POT_X, bottomWireY);
-            ctx.lineTo(circuitRightX, bottomWireY); // To Output Terminal -
+            ctx.moveTo(sx + 80, sliderY); ctx.lineTo(sx + 80, (sliderY + (sy + h/2)) / 2 - 20);
+            ctx.moveTo(sx + 80, sy + h/2); ctx.lineTo(sx + 80, (sliderY + (sy + h/2)) / 2 + 20);
             ctx.stroke();
 
-            // Output Terminals
-            drawTerminal(ctx, circuitRightX, wiperY, 'Vout (+)');
-            drawTerminal(ctx, circuitRightX, bottomWireY, 'GND (-)');
-
-            // Load Resistor (if attached)
-            if (loadR !== Infinity) {
-                // Wire connecting terminals
+            // Load (Bulb) if connected
+            if (loadConnected) {
+                const lx = sx + 140;
+                const ly = (sliderY + (sy + h/2)) / 2;
+                
+                ctx.strokeStyle = '#e2e8f0';
+                ctx.setLineDash([5, 5]);
                 ctx.beginPath();
-                ctx.moveTo(circuitRightX, wiperY);
-                ctx.lineTo(circuitRightX + 50, wiperY);
-                ctx.lineTo(circuitRightX + 50, bottomWireY);
-                ctx.lineTo(circuitRightX, bottomWireY);
+                // Top wire
+                ctx.moveTo(sx + 80, sliderY); ctx.lineTo(lx, sliderY); ctx.lineTo(lx, ly - 20);
+                // Bottom wire
+                ctx.moveTo(sx + 80, sy + h/2); ctx.lineTo(lx, sy + h/2); ctx.lineTo(lx, ly + 20);
                 ctx.stroke();
-                
-                // Resistor Box
-                const loadY = (wiperY + bottomWireY) / 2;
-                ctx.fillStyle = '#3b82f6'; // Blue Load
-                ctx.fillRect(circuitRightX + 30, loadY - 20, 40, 40);
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 12px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText("Load", circuitRightX + 50, loadY + 5);
+                ctx.setLineDash([]);
+
+                // Draw Bulb
+                drawBulb(ctx, lx, ly, physics.vout);
             }
 
-            // 6. Draw Voltmeter (Visual)
-            drawVoltmeter(ctx, circuitRightX + 100, (wiperY + bottomWireY)/2, vout);
+            // --- 2. Realistic View (Right) ---
+            const rx = REALISTIC_X;
+            const ry = CENTER_Y;
+            const rw = 40; // resistor width
+            const rh = 250; // resistor height
 
-            // 7. Electrons
-            if (showElectrons) {
-                // Main Loop Current
-                // Top wire (Bat -> Pot)
-                drawElectrons(ctx, batX, topWireY, POT_X, topWireY, iTotal);
-                // Resistor Top Part
-                // Resistor Bottom Part
-                // Bottom wire (Pot -> Bat)
-                drawElectrons(ctx, POT_X, bottomWireY, batX, bottomWireY, iTotal);
-                
-                // Load Current (Wiper -> Load -> Bottom)
-                if (loadR !== Infinity) {
-                     drawElectrons(ctx, POT_X + 50, wiperY, circuitRightX + 50, wiperY, iLoad); // Out
-                     // Return path is shared on bottom wire? Physics gets complex visual.
-                     // Let's simplify: Main loop carries I_total.
-                     // Load loop carries I_load.
-                }
+            // Draw Resistor Body
+            const grad = ctx.createLinearGradient(rx - rw/2, 0, rx + rw/2, 0);
+            grad.addColorStop(0, '#334155');
+            grad.addColorStop(0.5, '#475569');
+            grad.addColorStop(1, '#334155');
+            ctx.fillStyle = grad;
+            ctx.fillRect(rx - rw/2, ry - rh/2, rw, rh);
+            
+            // Wire windings visual
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = 1;
+            for(let i=0; i<rh; i+=4) {
+                ctx.beginPath(); ctx.moveTo(rx - rw/2, ry - rh/2 + i); ctx.lineTo(rx + rw/2, ry - rh/2 + i + 2); ctx.stroke();
             }
+
+            // Slider Handle (Physical)
+            const handleY = (ry + rh/2) - (sliderPos / 100) * rh;
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(rx - rw/2 - 10, handleY - 10, rw + 20, 20);
             
-            // Labels
-            ctx.fillStyle = '#94a3b8';
-            ctx.font = '12px monospace';
-            ctx.fillText(`R1: ${r1.toFixed(0)}Ω`, POT_X - 40, potTopY + 20);
-            ctx.fillText(`R2: ${r2.toFixed(0)}Ω`, POT_X - 40, potBottomY - 20);
+            // Terminals
+            // Top (Vin)
+            drawTerminal(ctx, rx, ry - rh/2 - 10, '#ef4444'); // Red
+            // Bottom (GND)
+            drawTerminal(ctx, rx, ry + rh/2 + 10, '#000000'); // Black
+            // Slider (Vout)
+            drawTerminal(ctx, rx + rw/2 + 15, handleY, '#38bdf8'); // Blue
 
-        };
+            // Wires connecting terminals
+            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(rx, ry - rh/2 - 10); ctx.lineTo(rx, ry - rh/2 - 50); ctx.stroke();
+            ctx.fillStyle = '#ef4444'; ctx.fillText(`+${vin}V`, rx - 10, ry - rh/2 - 60);
 
-        const drawBattery = (ctx, x, y, v) => {
-            // Vertical Battery
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = '#fff';
-            
-            // Wire connections
-            ctx.beginPath(); ctx.moveTo(x, 50); ctx.lineTo(x, y - 20); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(x, 400); ctx.lineTo(x, y + 20); ctx.stroke();
+            ctx.strokeStyle = '#64748b'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(rx, ry + rh/2 + 10); ctx.lineTo(rx, ry + rh/2 + 50); ctx.stroke();
+            ctx.fillStyle = '#94a3b8'; ctx.fillText(`0V`, rx - 5, ry + rh/2 + 65);
 
-            // Plates
-            ctx.beginPath(); ctx.moveTo(x - 15, y - 20); ctx.lineTo(x + 15, y - 20); ctx.stroke(); // Long +
-            ctx.lineWidth = 6;
-            ctx.beginPath(); ctx.moveTo(x - 8, y + 20); ctx.lineTo(x + 8, y + 20); ctx.stroke(); // Short -
-            
-            ctx.fillStyle = '#facc15';
-            ctx.font = 'bold 16px sans-serif';
-            ctx.textAlign = 'right';
-            ctx.fillText(`${v}V`, x - 25, y + 5);
-        };
-
-        const drawTerminal = (ctx, x, y, label) => {
-            ctx.beginPath();
-            ctx.arc(x, y, 6, 0, Math.PI*2);
-            ctx.fillStyle = '#fff';
-            ctx.fill();
+            // Output Wire
+            ctx.strokeStyle = '#38bdf8';
+            ctx.beginPath(); 
+            // Curve wire from slider to right
+            ctx.moveTo(rx + rw/2 + 15, handleY); 
+            ctx.bezierCurveTo(rx + 100, handleY, rx + 100, ry, rx + 150, ry);
             ctx.stroke();
-            ctx.fillStyle = '#94a3b8';
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText(label, x + 10, y + 4);
+
+            // Label Physical R1/R2
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'right';
+            if (sliderPos < 95) ctx.fillText(`R1: ${physics.r1.toFixed(1)}kΩ`, rx - 40, (ry - rh/2 + handleY)/2);
+            if (sliderPos > 5) ctx.fillText(`R2: ${physics.r2.toFixed(1)}kΩ`, rx - 40, (ry + rh/2 + handleY)/2);
+
+            // Labels
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("Schematic Diagram", sx, 50);
+            ctx.fillText("Physical Wiring", rx, 50);
+        };
+
+        // --- Drawing Helpers ---
+        const drawBattery = (ctx, x, y, v) => {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            const h = 20;
+            // Clear wire behind
+            ctx.clearRect(x-10, y-15, 20, 30);
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(x-10, y-15, 20, 30);
+            
+            // Long line (Positive)
+            ctx.beginPath(); ctx.moveTo(x-10, y-10); ctx.lineTo(x+10, y-10); ctx.stroke();
+            // Short line (Negative)
+            ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(x-6, y+5); ctx.lineTo(x+6, y+5); ctx.stroke();
+            
+            ctx.font = '12px monospace'; ctx.fillStyle = '#cbd5e1'; 
+            ctx.fillText(`${v}V`, x - 30, y);
+        };
+
+        const drawResistor = (ctx, x, y1, x2, y2) => {
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            const h = y2 - y1;
+            const step = h / 10;
+            ctx.moveTo(x, y1);
+            for(let i=1; i<10; i++) {
+                const offset = (i%2 === 0) ? -8 : 8;
+                ctx.lineTo(x + offset, y1 + i*step);
+            }
+            ctx.lineTo(x, y2);
+            ctx.stroke();
         };
 
         const drawVoltmeter = (ctx, x, y, v) => {
-            // Box
-            ctx.fillStyle = '#1e293b';
-            ctx.strokeStyle = '#475569';
+            ctx.fillStyle = '#020617';
+            ctx.strokeStyle = '#38bdf8';
             ctx.lineWidth = 2;
-            ctx.fillRect(x - 40, y - 30, 80, 60);
-            ctx.strokeRect(x - 40, y - 30, 80, 60);
+            ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.fill(); ctx.stroke();
             
-            // Screen
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x - 30, y - 20, 60, 40);
-            
-            // Text
-            ctx.fillStyle = '#ef4444'; // LED Red
-            ctx.font = 'bold 20px monospace';
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(v.toFixed(2), x, y + 8);
-            
-            // Leads (connected to terminals logic not drawn to avoid clutter)
+            ctx.fillText(v.toFixed(1) + "V", x, y + 4);
         };
 
-        const drawElectrons = (ctx, x1, y1, x2, y2, current) => {
-            if (current < 0.001) return;
-            const dist = Math.hypot(x2 - x1, y2 - y1);
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-            
-            const speed = Math.min(5, current * 200); 
-            const spacing = 30;
-            const offset = (electronOffsetRef.current * (speed/2)) % spacing;
-            
-            ctx.fillStyle = '#fef08a';
-            for (let d = offset; d < dist; d += spacing) {
-                const ex = x1 + d * Math.cos(angle);
-                const ey = y1 + d * Math.sin(angle);
-                ctx.beginPath(); ctx.arc(ex, ey, 2, 0, Math.PI*2); ctx.fill();
-            }
+        const drawTerminal = (ctx, x, y, color) => {
+            ctx.fillStyle = color;
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
         };
 
-        // Interaction
-        const handleMouseDown = (e) => {
-            const rect = canvasRef.current.getBoundingClientRect();
-            const y = e.clientY - rect.top;
-            const x = e.clientX - rect.left;
+        const drawBulb = (ctx, x, y, v) => {
+            // Brightness based on V
+            // Max brightness at 12V?
+            const brightness = Math.min(1, v / 12);
             
-            // Check Pot area
-            if (Math.abs(x - POT_X) < 40 && y > POT_Y - POT_HEIGHT/2 && y < POT_Y + POT_HEIGHT/2) {
-                updateWiper(y);
-                // Add drag listener
-                const moveHandler = (ev) => updateWiper(ev.clientY - rect.top);
-                const upHandler = () => {
-                    window.removeEventListener('mousemove', moveHandler);
-                    window.removeEventListener('mouseup', upHandler);
-                };
-                window.addEventListener('mousemove', moveHandler);
-                window.addEventListener('mouseup', upHandler);
-            }
+            ctx.fillStyle = `rgba(253, 224, 71, ${0.1 + brightness * 0.9})`; // Yellow glow
+            ctx.shadowColor = '#facc15';
+            ctx.shadowBlur = brightness * 30;
+            
+            ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Filament
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); 
+            ctx.moveTo(x-8, y+10); 
+            ctx.lineTo(x-5, y); 
+            ctx.lineTo(x, y-5);
+            ctx.lineTo(x+5, y);
+            ctx.lineTo(x+8, y+10);
+            ctx.stroke();
         };
 
-        const updateWiper = (mouseY) => {
-            const top = POT_Y - POT_HEIGHT/2;
-            const bottom = POT_Y + POT_HEIGHT/2;
-            let pos = (bottom - mouseY) / POT_HEIGHT;
-            if (pos < 0) pos = 0;
-            if (pos > 1) pos = 1;
-            setWiperPos(pos);
-        };
+        useEffect(() => {
+            draw();
+        }, [physics, sliderPos]); // Redraw on calculation update
 
         useEffect(() => {
             if (window.lucide) window.lucide.createIcons();
         });
 
-        // Load R selection
-        const toggleLoad = () => {
-            if (loadR === Infinity) setLoadR(1000); // Add 1k Ohm load
-            else setLoadR(Infinity);
-        };
+        // Safe percentage calc
+        const ratioPercent = (physics.r1 + physics.r2_eff) > 0 
+            ? (physics.r2_eff / (physics.r1 + physics.r2_eff) * 100).toFixed(1) 
+            : "0.0";
 
         return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
                     <div className="flex items-center space-x-3">
-                        <div className="bg-cyan-500/20 p-2 rounded-lg">
-                            <i data-lucide="sliders" className="w-6 h-6 text-cyan-400"></i>
+                        <div className="bg-amber-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="zap" className="w-5 h-5 text-amber-400"></i>
                         </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Potential Divider Lab</h1>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Potential Divider Lab</h1>
                     </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Circuit Design
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Circuit Theory
                     </div>
                 </nav>
 
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation */}
-                    <div className="lg:col-span-8 flex flex-col gap-6">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
                             <canvas 
                                 ref={canvasRef} 
                                 width={CANVAS_WIDTH} 
                                 height={CANVAS_HEIGHT}
-                                onMouseDown={handleMouseDown}
-                                className="w-full h-full object-contain bg-slate-950 rounded-xl canvas-container"
+                                className="w-full h-full object-contain"
                             />
-                            
-                            <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-xs shadow-lg space-y-1">
-                                <span className="text-slate-400 font-bold block mb-1">CIRCUIT STATUS</span>
-                                <div className="flex justify-between gap-4">
-                                    <span>Total Resistance</span>
-                                    <span className="text-blue-300 font-mono">{(vin/iTotal).toFixed(0)} Ω</span>
-                                </div>
-                                <div className="flex justify-between gap-4">
-                                    <span>Source Current</span>
-                                    <span className="text-yellow-300 font-mono">{(iTotal * 1000).toFixed(1)} mA</span>
-                                </div>
-                            </div>
-
-                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-800/90 px-4 py-2 rounded-full border border-slate-600 text-sm text-slate-300 pointer-events-none">
-                                Drag the yellow slider to change $V_{out}$
+                            {/* Drag Instructions Overlay */}
+                            <div className="absolute top-1/2 left-[60%] -translate-x-1/2 mt-32 text-[10px] text-slate-500 pointer-events-none animate-pulse">
+                                Use slider on right to move &uarr;
                             </div>
                         </div>
 
-                        {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
                             
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-xs text-indigo-300 font-bold mb-1">
-                                    Input Voltage ($V_{in}$) <span className="text-white">{vin} V</span>
-                                </label>
-                                <input 
-                                    type="range" min="1" max="24" step="1" 
-                                    value={vin} onChange={(e) => setVin(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-blue" 
-                                />
+                            {/* 1. Results */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur sticky top-0 z-10">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Output ($V_{out}$)</h3>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
+                                    <div className="text-4xl font-mono font-bold text-sky-400">{physics.vout.toFixed(2)} V</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        Ratio: {ratioPercent}% of $V_{in}$
+                                    </div>
+                                </div>
                             </div>
 
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-xs text-cyan-300 font-bold mb-1">
-                                    Potentiometer ($R_{total}$) <span className="text-white">{totalR} Ω</span>
-                                </label>
-                                <input 
-                                    type="range" min="100" max="10000" step="100" 
-                                    value={totalR} onChange={(e) => setTotalR(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-cyan" 
-                                />
+                            {/* 2. Primary Controls */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Slider Position (Potentiometer) */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-amber-400 mb-2">
+                                        Slider Position
+                                        <span>{sliderPos}%</span>
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-500">0V</span>
+                                        <input 
+                                            type="range" min="0" max="100" step="1" 
+                                            value={sliderPos} onChange={(e) => setSliderPos(Number(e.target.value))}
+                                            className="flex-1 h-3 bg-slate-700 rounded-lg slider-thumb thumb-amber" 
+                                        />
+                                        <span className="text-[10px] text-slate-500">Max</span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1">
+                                        Moves the contact point Up/Down.
+                                    </p>
+                                </div>
+
+                                <div className="h-px bg-slate-800"></div>
+
+                                {/* Input Voltage */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-slate-300 mb-1">
+                                        Input Voltage ($V_{in}$)
+                                        <span className="font-mono">{vin}V</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="1" max="24" step="1" 
+                                        value={vin} onChange={(e) => setVin(Number(e.target.value))}
+                                        className="w-full h-1.5 bg-slate-700 rounded-lg slider-thumb" 
+                                    />
+                                </div>
+
+                                {/* Load Control */}
+                                <div className="bg-slate-800 p-3 rounded border border-slate-700">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <span className="text-xs font-bold text-white flex items-center gap-2">
+                                            <i data-lucide="lightbulb" className="w-4 h-4 text-yellow-400"></i>
+                                            External Load
+                                        </span>
+                                        <button 
+                                            onClick={() => setLoadConnected(!loadConnected)}
+                                            className={`px-3 py-1 rounded text-[10px] font-bold transition ${loadConnected ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400'}`}
+                                        >
+                                            {loadConnected ? "ON" : "OFF"}
+                                        </button>
+                                    </div>
+                                    
+                                    {loadConnected && (
+                                        <div className="animate-in fade-in slide-in-from-top-1">
+                                            <label className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                                Load Resistance ($R_L$)
+                                                <span>{loadR} kΩ</span>
+                                            </label>
+                                            <input 
+                                                type="range" min="1" max="50" step="1" 
+                                                value={loadR} onChange={(e) => setLoadR(Number(e.target.value))}
+                                                className="w-full h-1.5 bg-slate-900 rounded-lg slider-thumb" 
+                                            />
+                                            <p className="text-[9px] text-rose-400 mt-2 leading-tight">
+                                                <strong>Notice:</strong> Connecting a load lowers $V_{out}$ because it reduces the effective resistance of the bottom section.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
                             </div>
-
-                            <button 
-                                onClick={toggleLoad}
-                                className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${loadR !== Infinity ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400'}`}
-                            >
-                                <i data-lucide="cpu" className="w-5 h-5"></i>
-                                {loadR !== Infinity ? "Load Attached" : "Attach Load"}
-                            </button>
-
                         </div>
-                    </div>
-
-                    {/* Right: Analysis */}
-                    <div className="lg:col-span-4 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-6 flex items-center">
-                                <i data-lucide="calculator" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                Voltage Divider Formula
-                            </h2>
-                            
-                            <div className="p-4 bg-slate-900 rounded-xl border border-slate-700 text-center mb-4">
-                                <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">Output Voltage</div>
-                                <div className="text-4xl font-mono font-bold text-white mb-1">
-                                    {vout.toFixed(2)} <span className="text-lg text-slate-400">V</span>
-                                </div>
-                                <div className="text-[10px] text-slate-500">
-                                    Ratio: {(wiperPos * 100).toFixed(1)}%
-                                </div>
-                            </div>
-
-                            <div className="space-y-3 font-mono text-xs text-slate-300">
-                                <div className="bg-slate-900/50 p-2 rounded flex justify-between">
-                                    <span>$V_{out} = V_{in} \times \frac{R_2}{R_1 + R_2}$</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-700 pb-1">
-                                    <span>$R_1$ (Top)</span>
-                                    <span>{r1.toFixed(0)} Ω</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-700 pb-1">
-                                    <span>$R_2$ (Bottom)</span>
-                                    <span>{r2.toFixed(0)} Ω</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {loadR !== Infinity && (
-                            <div className="bg-orange-900/10 border border-orange-500/20 p-5 rounded-2xl">
-                                <h3 className="text-orange-300 font-bold text-sm mb-2 flex items-center">
-                                    <i data-lucide="alert-triangle" className="w-4 h-4 mr-2"></i> Loading Effect
-                                </h3>
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    Notice $V_{out}$ dropped? Adding a load resistor in parallel with $R_2$ reduces the effective resistance of the bottom part, pulling the voltage down.
-                                    <br/><br/>
-                                    <strong>Real World:</strong> This is why sensors need "Buffer Amplifiers" to read accurate voltages!
-                                </p>
-                            </div>
-                        )}
 
                     </div>
-
                 </main>
             </div>
         );
