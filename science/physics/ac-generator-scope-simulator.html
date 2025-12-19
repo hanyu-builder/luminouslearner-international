@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AC Generator Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+        .thumb-rose::-webkit-slider-thumb { background: #f43f5e; }
+        .grid-bg {
+            background-image: linear-gradient(to right, #1e293b 1px, transparent 1px),
+                              linear-gradient(to bottom, #1e293b 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    const App = () => {
+        // --- State ---
+        const [speed, setSpeed] = useState(1.0); // Angular velocity factor
+        const [fieldStrength, setFieldStrength] = useState(1.0); // B
+        const [area, setArea] = useState(1.0); // Coil Area
+        
+        const [isRunning, setIsRunning] = useState(false);
+        const [showField, setShowField] = useState(true);
+        
+        // Real-time Data
+        const [voltage, setVoltage] = useState(0);
+        const [angleDeg, setAngleDeg] = useState(0);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const lastTimeRef = useRef(0);
+        
+        // Physics Refs
+        const physicsRef = useRef({
+            angle: 0,
+            history: [] // Array of {t, v}
+        });
+        
+        const paramsRef = useRef({ speed, fieldStrength, area });
+
+        // Sync params
+        useEffect(() => {
+            paramsRef.current = { speed, fieldStrength, area };
+        }, [speed, fieldStrength, area]);
+
+        // --- Logic ---
+        const startSim = () => {
+            if (isRunning) return;
+            setIsRunning(true);
+            lastTimeRef.current = performance.now();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        const stopSim = () => {
+            setIsRunning(false);
+            cancelAnimationFrame(requestRef.current);
+        };
+
+        const resetSim = () => {
+            stopSim();
+            physicsRef.current = { angle: 0, history: [] };
+            setVoltage(0);
+            setAngleDeg(0);
+            // Force redraw
+            setTimeout(() => draw(), 50);
+        };
+
+        const loop = (timestamp) => {
+            const dt = (timestamp - lastTimeRef.current) / 1000;
+            lastTimeRef.current = timestamp;
+            
+            const state = physicsRef.current;
+            const p = paramsRef.current;
+
+            // Physics: E = NBAw sin(wt)
+            // Ideally w is rad/s. Let's say speed slider is w.
+            // Voltage = B * A * w * sin(angle)
+            
+            // Update Angle
+            state.angle += p.speed * 2.0 * dt; // Scale speed for visual
+            
+            // Calculate Voltage (Instantaneous EMF)
+            // Flux Phi = B A cos(theta).
+            // EMF = -dPhi/dt = B A w sin(theta).
+            // Let's assume theta=0 is vertical (max flux).
+            // At vertical, velocity is parallel to field -> V=0. Correct.
+            // At horizontal, velocity is perp to field -> V=Max. Correct.
+            
+            const currentV = p.fieldStrength * p.area * p.speed * Math.sin(state.angle);
+            
+            // Record History
+            state.history.push(currentV);
+            if (state.history.length > 200) state.history.shift(); // Keep last 200 frames
+
+            // Sync UI
+            setVoltage(currentV);
+            setAngleDeg((state.angle * 180 / Math.PI) % 360);
+            
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- 3D Projection Helper ---
+        const project = (x, y, z) => {
+            const scale = 300 / (300 + z);
+            return {
+                x: 200 + x * scale, // Shift center to Left side (200)
+                y: CENTER_Y + y * scale,
+                scale: scale
+            };
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const state = physicsRef.current;
+            const theta = state.angle;
+            
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // --- 1. Draw Generator (Left Side) ---
+            
+            // Magnetic Field
+            if (showField) {
+                const grad = ctx.createLinearGradient(50, 0, 350, 0);
+                grad.addColorStop(0, 'rgba(56, 189, 248, 0)');
+                grad.addColorStop(0.2, 'rgba(56, 189, 248, 0.2)');
+                grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.2)');
+                grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+                
+                ctx.fillStyle = grad;
+                ctx.fillRect(50, 100, 300, 250);
+                
+                // Lines
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+                ctx.lineWidth = 1;
+                for (let y = 120; y < 350; y+=30) {
+                    ctx.beginPath(); ctx.moveTo(50, y); ctx.lineTo(350, y); ctx.stroke();
+                    // Arrow
+                    ctx.fillStyle = 'rgba(56, 189, 248, 0.5)';
+                    ctx.beginPath(); ctx.moveTo(200, y); ctx.lineTo(195, y-3); ctx.lineTo(195, y+3); ctx.fill();
+                }
+                ctx.font = "bold 20px sans-serif";
+                ctx.fillStyle = "#38bdf8";
+                ctx.fillText("B", 200, 90);
+            }
+
+            // Magnets
+            const magW = 60, magH = 200;
+            // N (Left)
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(50 - magW, CENTER_Y - magH/2, magW, magH);
+            ctx.fillStyle = 'white'; ctx.fillText("N", 50 - 30, CENTER_Y);
+            // S (Right)
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(350, CENTER_Y - magH/2, magW, magH);
+            ctx.fillStyle = 'white'; ctx.fillText("S", 350 + 20, CENTER_Y);
+
+            // Coil
+            const coilW = 160 * paramsRef.current.area; // Scale width by area param
+            const coilH = 100;
+            const r = coilH / 2;
+            const halfW = coilW / 2;
+            
+            // Rotate around X-axis (Horizontal axis on screen)
+            // But visually better: Magnets Left/Right, Coil rotates around Z axis (Depth)?
+            // No, Magnets Left/Right -> B Field is Horizontal (X).
+            // Axle must be Z axis (Into screen) for coil sides to cut flux.
+            // Let's visualize coil rotating around Z axis (2D rotation on screen).
+            // This is simpler and clearer for "cutting lines".
+            
+            ctx.save();
+            ctx.translate(200, CENTER_Y); // Move to Generator Center
+            
+            // Draw Axle
+            ctx.fillStyle = '#64748b';
+            ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+            
+            // Rotate Coil
+            ctx.rotate(theta);
+            
+            // Coil Frame (Rect)
+            ctx.strokeStyle = '#f59e0b'; // Amber wire
+            ctx.lineWidth = 6;
+            ctx.lineJoin = 'round';
+            ctx.strokeRect(-halfW, -r, coilW, coilH);
+            
+            // Current Direction Arrows (if moving)
+            if (Math.abs(voltage) > 0.1) {
+                // Determine direction based on voltage sign
+                // V > 0: Current CCW?
+                const dir = voltage > 0 ? 1 : -1;
+                
+                ctx.fillStyle = '#fff';
+                // Top wire arrow
+                drawArrowHead(ctx, 0, -r, dir * 10, 0);
+                // Bottom wire arrow
+                drawArrowHead(ctx, 0, r, -dir * 10, 0);
+            }
+            
+            ctx.restore();
+
+            // Slip Rings & Brushes (Side View Illusion)
+            // Draw statically below or overlay? 
+            // Let's draw schematic connection to scope
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#94a3b8';
+            ctx.beginPath();
+            ctx.moveTo(200, CENTER_Y); // Center axle
+            ctx.lineTo(200, CENTER_Y + 150); // Down
+            ctx.lineTo(400, CENTER_Y + 150); // Right to Scope
+            ctx.stroke();
+
+
+            // --- 2. Draw Oscilloscope (Right Side) ---
+            const scopeX = 400;
+            const scopeY = 50;
+            const scopeW = 380;
+            const scopeH = 300;
+            const scopeCenterY = scopeY + scopeH / 2;
+
+            // Screen Bezel
+            ctx.fillStyle = '#1e1e1e';
+            ctx.fillRect(scopeX, scopeY, scopeW, scopeH);
+            ctx.strokeStyle = '#475569';
+            ctx.strokeRect(scopeX, scopeY, scopeW, scopeH);
+
+            // Grid
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            // Horizontal center
+            ctx.moveTo(scopeX, scopeCenterY); ctx.lineTo(scopeX + scopeW, scopeCenterY);
+            // Vertical lines
+            for (let i=0; i<=scopeW; i+=40) {
+                ctx.moveTo(scopeX + i, scopeY); ctx.lineTo(scopeX + i, scopeY + scopeH);
+            }
+            // Horizontal lines
+            for (let i=0; i<=scopeH; i+=40) {
+                ctx.moveTo(scopeX, scopeY + i); ctx.lineTo(scopeX + scopeW, scopeY + i);
+            }
+            ctx.stroke();
+
+            // Waveform
+            ctx.strokeStyle = '#10b981'; // Green Trace
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            // Map history to graph
+            // history contains voltage values
+            // x step = 2px
+            const history = state.history;
+            if (history.length > 0) {
+                const startX = scopeX + scopeW; // Draw from right to left (scrolling)
+                
+                for (let i = 0; i < history.length; i++) {
+                    const val = history[history.length - 1 - i];
+                    const x = startX - i * 2;
+                    if (x < scopeX) break;
+                    
+                    // Scale V to Y pixels. Max V approx 5 * 1.5 * 2 ~ 15?
+                    // Let's auto scale or fixed scale. Fixed scale is better to show amplitude change.
+                    // Max height = 100px. Max V = 20.
+                    const y = scopeCenterY - val * 5; 
+                    
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+            }
+            ctx.stroke();
+            
+            // Current Value Indicator (Dot)
+            if (history.length > 0) {
+                const currentY = scopeCenterY - history[history.length-1] * 5;
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(scopeX + scopeW - 2, currentY, 4, 0, Math.PI*2);
+                ctx.fill();
+                
+                // Digital Readout
+                ctx.font = '24px monospace';
+                ctx.fillStyle = '#10b981';
+                ctx.textAlign = 'right';
+                ctx.fillText(history[history.length-1].toFixed(2) + " V", scopeX + scopeW - 20, scopeY + 40);
+            }
+        };
+
+        const drawArrowHead = (ctx, x, y, dx, dy) => {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            // perpendicular vector (-dy, dx)
+            // Normalized direction
+            const len = Math.sqrt(dx*dx + dy*dy);
+            if(len === 0) return;
+            const udx = dx/len;
+            const udy = dy/len;
+            
+            // Tip is at x+dx, y+dy. Base is at x, y.
+            // Draw triangle at tip
+            ctx.moveTo(x + dx, y + dy);
+            ctx.lineTo(x + dx - 6*udx - 4*udy, y + dy - 6*udy + 4*udx);
+            ctx.lineTo(x + dx - 6*udx + 4*udy, y + dy - 6*udy - 4*udx);
+            ctx.fill();
+        };
+
+        useEffect(() => {
+            draw();
+            return () => cancelAnimationFrame(requestRef.current);
+        }, []); // Initial draw
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="activity" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">AC Generator Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Electromagnetism
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-12">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute top-4 left-4 flex gap-4">
+                                <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs shadow-lg">
+                                    <div className="text-slate-400 font-bold uppercase mb-1">Coil Angle</div>
+                                    <div className="text-white font-mono">{Math.round(angleDeg)}°</div>
+                                </div>
+                                <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs shadow-lg">
+                                    <div className="text-slate-400 font-bold uppercase mb-1">Instant EMF</div>
+                                    <div className={`text-xl font-mono font-bold ${voltage > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {voltage.toFixed(2)} V
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-8">
+                            
+                            {/* Rotation Speed */}
+                            <div>
+                                <label className="flex justify-between text-xs text-indigo-300 font-bold mb-2">
+                                    Rotation Speed ($\omega$) <span>{speed.toFixed(1)}x</span>
+                                </label>
+                                <input 
+                                    type="range" min="0" max="5.0" step="0.1" 
+                                    value={speed} onChange={(e) => setSpeed(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-indigo" 
+                                />
+                            </div>
+
+                            {/* Field Strength */}
+                            <div>
+                                <label className="flex justify-between text-xs text-rose-300 font-bold mb-2">
+                                    Magnetic Field ($B$) <span>{fieldStrength.toFixed(1)} T</span>
+                                </label>
+                                <input 
+                                    type="range" min="0" max="3.0" step="0.5" 
+                                    value={fieldStrength} onChange={(e) => setFieldStrength(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-rose" 
+                                />
+                            </div>
+
+                            {/* Area */}
+                            <div>
+                                <label className="flex justify-between text-xs text-emerald-300 font-bold mb-2">
+                                    Coil Area ($A$) <span>{area.toFixed(1)} m²</span>
+                                </label>
+                                <input 
+                                    type="range" min="0.5" max="1.5" step="0.1" 
+                                    value={area} onChange={(e) => setArea(Number(e.target.value))}
+                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-green" 
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right: Actions */}
+                    <div className="lg:col-span-4 flex flex-col gap-4">
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 h-full flex flex-col justify-center gap-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <button 
+                                    onClick={isRunning ? stopSim : startSim}
+                                    className={`py-4 rounded-xl font-bold flex flex-col items-center justify-center transition-all shadow-lg ${isRunning ? 'bg-slate-700 text-slate-400' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                >
+                                    <i data-lucide={isRunning ? "pause" : "play"} className="w-6 h-6 mb-1"></i>
+                                    {isRunning ? "Pause" : "Spin"}
+                                </button>
+                                <button 
+                                    onClick={resetSim}
+                                    className="py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex flex-col items-center justify-center transition-colors"
+                                >
+                                    <i data-lucide="rotate-ccw" className="w-6 h-6 mb-1"></i>
+                                    Reset
+                                </button>
+                            </div>
+                            
+                            <label className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-lg border border-slate-600 cursor-pointer hover:bg-slate-700 transition">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showField} 
+                                    onChange={() => setShowField(!showField)}
+                                    className="w-5 h-5 rounded text-indigo-500 bg-slate-800 border-slate-500 focus:ring-0"
+                                />
+                                <span className="text-sm font-bold text-slate-300">Show B-Field Lines</span>
+                            </label>
+                        </div>
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
