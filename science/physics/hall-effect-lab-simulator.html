@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hall Effect Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-blue::-webkit-slider-thumb { background: #3b82f6; }
+        .thumb-purple::-webkit-slider-thumb { background: #a855f7; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+    const PLATE_WIDTH = 600;
+    const PLATE_HEIGHT = 200;
+    
+    // Physics Constants
+    const CHARGE_E = 1.6e-19; // C
+    
+    const App = () => {
+        // --- State ---
+        const [current, setCurrent] = useState(2.0); // Amps
+        const [bField, setBField] = useState(0.5); // Tesla
+        const [carrierType, setCarrierType] = useState("Electron"); // Electron or Hole
+        const [showForces, setShowForces] = useState(true);
+        const [isEquilibrium, setIsEquilibrium] = useState(false); // Has VH stabilized?
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        
+        // Simulation State
+        const simRef = useRef({
+            charges: [], // Array of particles
+            accumulatedCharge: 0, // Net charge on top/bottom (+/-)
+            hallVoltage: 0 // Current VH
+        });
+
+        // Derived Values
+        // Force Direction Logic:
+        // B is INTO screen (X). 
+        // Current I is RIGHT (+x direction).
+        // If Carriers are Electrons (v is Left, q is -):
+        // F = q(v x B). v=(-v,0,0), B=(0,0,-B). v x B = (0, -vB, 0).
+        // F = -e * (-vB) y_hat = +evB y_hat (UP).
+        // So Electrons deflect UP. Top plate becomes Negative.
+        
+        // If Carriers are Holes (v is Right, q is +):
+        // F = q(v x B). v=(v,0,0), B=(0,0,-B). v x B = (0, vB, 0).
+        // F = +e * (vB) y_hat = +evB y_hat (UP).
+        // So Holes deflect UP. Top plate becomes Positive.
+        
+        // Hall Voltage Formula: Vh = (I * B) / (n * q * t)
+        // Let's simulate the buildup instead of just calculating it.
+        
+        const qSign = carrierType === "Electron" ? -1 : 1;
+        const driftVelocity = current * 2.0 * qSign; // Visual speed
+        // Magnetic Force F_B = q * v * B
+        // Visual Force = qSign * drift * B
+        // Real logic: Both deflect UP visually because v and q flip signs.
+        // Wait, let's recheck:
+        // Electron: v is Left (-). B is In (-). F = q(v x B).
+        // Cross prod: (-1, 0, 0) x (0, 0, -1) = (0, -1, 0) -> Down?
+        // Let's use Right Hand Rule for v x B.
+        // v (Left), B (In). Thumb points DOWN.
+        // F = q(v x B). q is negative. So Force is UP. Correct.
+        
+        // Hole: v is Right (+). B is In (-).
+        // v (Right), B (In). Thumb points UP.
+        // q is positive. Force is UP. Correct.
+        
+        // So BOTH deflect UP in this B-field configuration.
+        // Difference is: Electrons make Top Negative. Holes make Top Positive.
+        
+        // --- Physics Engine ---
+        const initCharges = () => {
+            const charges = [];
+            for (let i=0; i<40; i++) {
+                charges.push(spawnCharge());
+            }
+            simRef.current.charges = charges;
+            simRef.current.accumulatedCharge = 0;
+            simRef.current.hallVoltage = 0;
+            setIsEquilibrium(false);
+        };
+
+        const spawnCharge = () => {
+            return {
+                x: Math.random() * PLATE_WIDTH + (CANVAS_WIDTH - PLATE_WIDTH)/2,
+                y: Math.random() * PLATE_HEIGHT + (CANVAS_HEIGHT - PLATE_HEIGHT)/2,
+                vx: 0,
+                vy: 0
+            };
+        };
+
+        const updatePhysics = () => {
+            const state = simRef.current;
+            const dt = 1.0;
+            
+            // Hall Voltage Buildup Logic
+            // As charges hit the top/bottom walls, they "accumulate" surface charge
+            // This creates an opposing Electric Field E_H.
+            // E_H = V_H / d
+            // F_E = q * E_H
+            // Equilibrium when F_E + F_B = 0
+            
+            // Theoretical Max VH (Visual scale)
+            const targetVH = current * bField * 15 * qSign; // Scale factor
+            
+            // Approach target (charging capacitor model)
+            const rate = 0.02;
+            state.hallVoltage += (targetVH - state.hallVoltage) * rate;
+            
+            if (Math.abs(state.hallVoltage - targetVH) < 0.1) setIsEquilibrium(true);
+            else setIsEquilibrium(false);
+
+            const electricForceY = -state.hallVoltage * 0.5; // F_E pushes DOWN if Top is + (VH > 0) for + charge
+            // If VH is + (Top +), E is Down. Force on + is Down. Force on - is Up.
+            // Wait, F_E should oppose F_B.
+            // F_B is UP. So F_E must be DOWN.
+            // If Holes (+): Deflect Up. Top gets +. E field Down. F_E on + is Down. OK.
+            // If Electrons (-): Deflect Up. Top gets -. E field Up. F_E on - is Down. OK.
+            // So F_E is always DOWN (opposing accumulation).
+            
+            // Apply Forces to particles
+            const magneticForceY = -Math.abs(driftVelocity * bField * 2); // Always UP (visual -y)
+            const netForceY = magneticForceY - (electricForceY * qSign * (carrierType === "Electron" ? -1 : 1)); 
+            // Let's simplify visual logic:
+            // Magnetic pushes Up. Electric pushes Down (proportional to accumulated voltage).
+            
+            // Visual Electric Force grows to match Magnetic Force
+            const f_mag_visual = -5 * Math.abs(current) * bField; // Up (Negative Y)
+            
+            // E-field force depends on VH. 
+            // VH is potential difference Top - Bottom.
+            // If Carriers are Holes: Top becomes +, VH > 0. E points Down. Force on + is Down (+Y).
+            // If Carriers are Electrons: Top becomes -, VH < 0. E points Up. Force on - is Down (+Y).
+            // So Electric Force is always Down (+Y) to oppose Magnetic Up.
+            const f_elec_visual = Math.abs(state.hallVoltage) * 0.3; // Down (+Y)
+            
+            const totalForceY = f_mag_visual + f_elec_visual;
+
+            state.charges.forEach(p => {
+                // Horizontal Motion
+                p.x += driftVelocity;
+                
+                // Vertical Motion (Deflection)
+                // Add some random thermal motion
+                p.y += totalForceY * dt + (Math.random() - 0.5) * 2;
+                
+                // Wrap around X
+                const leftBound = (CANVAS_WIDTH - PLATE_WIDTH)/2;
+                const rightBound = leftBound + PLATE_WIDTH;
+                if (driftVelocity > 0 && p.x > rightBound) p.x = leftBound;
+                if (driftVelocity < 0 && p.x < leftBound) p.x = rightBound;
+                
+                // Bound Y (Walls)
+                const topBound = (CANVAS_HEIGHT - PLATE_HEIGHT)/2;
+                const bottomBound = topBound + PLATE_HEIGHT;
+                
+                if (p.y < topBound) {
+                    p.y = topBound;
+                }
+                if (p.y > bottomBound) {
+                    p.y = bottomBound;
+                }
+            });
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            const topY = (CANVAS_HEIGHT - PLATE_HEIGHT)/2;
+            const bottomY = topY + PLATE_HEIGHT;
+            const leftX = (CANVAS_WIDTH - PLATE_WIDTH)/2;
+            const rightX = leftX + PLATE_WIDTH;
+
+            // 1. Draw Conductor Plate
+            const grad = ctx.createLinearGradient(0, topY, 0, bottomY);
+            grad.addColorStop(0, '#334155');
+            grad.addColorStop(0.5, '#1e293b');
+            grad.addColorStop(1, '#334155');
+            ctx.fillStyle = grad;
+            ctx.fillRect(leftX, topY, PLATE_WIDTH, PLATE_HEIGHT);
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(leftX, topY, PLATE_WIDTH, PLATE_HEIGHT);
+
+            // 2. Draw Charges
+            const state = simRef.current;
+            ctx.fillStyle = carrierType === "Electron" ? '#38bdf8' : '#f472b6'; // Blue vs Pink
+            state.charges.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
+                ctx.fill();
+            });
+            
+            // 3. Draw Accumulated Charge (Surface Charge)
+            // Top Plate
+            const chargeCount = Math.floor(Math.abs(state.hallVoltage) / 5);
+            ctx.font = '16px monospace';
+            ctx.textAlign = 'center';
+            
+            // Determine Polarity signs
+            let topSign = "";
+            let bottomSign = "";
+            if (state.hallVoltage !== 0) {
+                // If Holes: Top +, Bottom -
+                // If Electrons: Top -, Bottom +
+                const isTopPos = carrierType === "Hole";
+                topSign = isTopPos ? "+" : "-";
+                bottomSign = isTopPos ? "-" : "+";
+                
+                const signColor = isTopPos ? '#f472b6' : '#38bdf8';
+                const oppColor = isTopPos ? '#38bdf8' : '#f472b6';
+                
+                ctx.fillStyle = signColor;
+                for(let i=0; i<chargeCount; i++) {
+                    ctx.fillText(topSign, leftX + 30 + i*40, topY - 5);
+                }
+                ctx.fillStyle = oppColor;
+                for(let i=0; i<chargeCount; i++) {
+                    ctx.fillText(bottomSign, leftX + 30 + i*40, bottomY + 15);
+                }
+            }
+
+            // 4. Draw Magnetic Field (X for Into)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.font = '20px sans-serif';
+            for (let x = leftX + 50; x < rightX; x += 100) {
+                for (let y = topY + 50; y < bottomY; y += 100) {
+                    ctx.fillText("✕", x, y); // B Into screen
+                }
+            }
+            ctx.fillStyle = '#64748b';
+            ctx.fillText(`B = ${bField} T (Into)`, rightX - 80, bottomY + 40);
+
+            // 5. Draw Voltmeter
+            const meterX = rightX + 80;
+            const meterY = CENTER_Y;
+            
+            // Wires to meter
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.beginPath();
+            ctx.moveTo(rightX - 50, topY); ctx.lineTo(rightX - 50, topY - 50); ctx.lineTo(meterX, topY - 50); ctx.lineTo(meterX, meterY - 30);
+            ctx.moveTo(rightX - 50, bottomY); ctx.lineTo(rightX - 50, bottomY + 50); ctx.lineTo(meterX, bottomY + 50); ctx.lineTo(meterX, meterY + 30);
+            ctx.stroke();
+            
+            // Meter Body
+            ctx.fillStyle = '#0f172a';
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(meterX, meterY, 40, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            
+            // Reading
+            const vDisplay = Math.abs(state.hallVoltage).toFixed(2);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 20px monospace';
+            ctx.fillText(vDisplay + "mV", meterX, meterY + 5);
+            ctx.font = '10px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText("Hall Voltage", meterX, meterY - 15);
+            
+            // 6. Force Vectors (on a sample particle)
+            if (showForces && state.charges.length > 0) {
+                const p = state.charges[20]; // Pick one
+                // Draw Forces on this particle
+                const f_mag = 40; // Scale
+                const f_elec = Math.min(40, Math.abs(state.hallVoltage) * 2);
+                
+                // Magnetic Force (Up)
+                drawArrow(ctx, p.x, p.y, 0, -f_mag, '#22c55e', 'F_B');
+                
+                // Electric Force (Down)
+                if (f_elec > 1) {
+                    drawArrow(ctx, p.x + 5, p.y, 0, f_elec, '#ef4444', 'F_E');
+                }
+            }
+        };
+
+        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 2;
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + dx, y + dy);
+            ctx.stroke();
+            
+            // Head
+            const angle = Math.atan2(dy, dx);
+            const headLen = 8;
+            ctx.beginPath();
+            ctx.moveTo(x + dx, y + dy);
+            ctx.lineTo(x + dx - headLen * Math.cos(angle - Math.PI/6), y + dy - headLen * Math.sin(angle - Math.PI/6));
+            ctx.lineTo(x + dx - headLen * Math.cos(angle + Math.PI/6), y + dy - headLen * Math.sin(angle + Math.PI/6));
+            ctx.fill();
+            
+            ctx.font = '10px sans-serif';
+            ctx.fillText(label, x + dx + 5, y + dy);
+            ctx.restore();
+        };
+
+        useEffect(() => {
+            initCharges();
+        }, [carrierType]); // Reset when type changes
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [current, bField, carrierType, showForces]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="zap" className="w-5 h-5 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Hall Effect Simulator</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Electromagnetism
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                            {/* Legend */}
+                            <div className="absolute top-4 left-4 bg-slate-900/80 p-3 rounded-xl border border-slate-700 text-xs">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <div className="w-3 h-3 rounded-full bg-blue-400"></div> <span>Electron (-)</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded-full bg-pink-400"></div> <span>Hole (+)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Status Panel */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur sticky top-0 z-10">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">State</h3>
+                                <div className={`p-3 rounded-lg border text-center transition-colors ${isEquilibrium ? 'bg-emerald-900/30 border-emerald-500/50' : 'bg-amber-900/30 border-amber-500/50'}`}>
+                                    <div className={`text-sm font-bold ${isEquilibrium ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                        {isEquilibrium ? "Equilibrium Reached" : "Adjusting..."}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-1">
+                                        F<sub>B</sub> = F<sub>E</sub>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Controls */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Charge Carrier */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-300 mb-2 block">Charge Carrier</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button 
+                                            onClick={() => setCarrierType("Electron")}
+                                            className={`py-2 rounded text-xs font-bold border transition-all ${carrierType === "Electron" ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                        >
+                                            Electron (-)
+                                        </button>
+                                        <button 
+                                            onClick={() => setCarrierType("Hole")}
+                                            className={`py-2 rounded text-xs font-bold border transition-all ${carrierType === "Hole" ? 'bg-pink-600 border-pink-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                        >
+                                            Hole (+)
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Current Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-blue-400 mb-1">
+                                        Current (I)
+                                        <span>{current} A</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.5" max="5" step="0.5" 
+                                        value={current} onChange={(e) => setCurrent(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-blue" 
+                                    />
+                                    <p className="text-[9px] text-slate-500 mt-1">Increases drift velocity (v).</p>
+                                </div>
+
+                                {/* B-Field Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-purple-400 mb-1">
+                                        Magnetic Field (B)
+                                        <span>{bField} T</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0.1" max="1.0" step="0.1" 
+                                        value={bField} onChange={(e) => setBField(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-purple" 
+                                    />
+                                    <p className="text-[9px] text-slate-500 mt-1">Increases magnetic force (F<sub>B</sub>).</p>
+                                </div>
+
+                                {/* Toggles */}
+                                <label className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-750 transition mt-4">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showForces} 
+                                        onChange={() => setShowForces(!showForces)}
+                                        className="w-4 h-4 rounded text-blue-500 bg-slate-900 border-slate-600 focus:ring-0"
+                                    />
+                                    <span className="text-xs font-bold text-slate-300">Show Force Vectors</span>
+                                </label>
+
+                                <div className="mt-auto p-3 bg-slate-800 border border-slate-700 rounded-lg">
+                                    <h4 className="text-slate-200 font-bold text-xs mb-1">
+                                        Hall Voltage Formula
+                                    </h4>
+                                    <p className="text-[10px] text-slate-400 font-mono leading-tight">
+                                        V<sub>H</sub> = (I &times; B) / (n &times; q &times; t)
+                                    </p>
+                                    <p className="text-[9px] text-slate-500 mt-2">
+                                        n = charge density, t = thickness
+                                    </p>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
