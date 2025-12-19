@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>電磁波譜探究 (EM Spectrum Explorer) | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 20px; height: 20px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff; background: #3b82f6;
+        }
+        .spectrum-bg {
+            background: linear-gradient(to right, 
+                #ef4444 0%,    /* Radio - Red-ish */
+                #f97316 15%,   /* Micro - Orange */
+                #eab308 30%,   /* IR - Yellow */
+                #22c55e 45%,   /* Visible - Green center */
+                #3b82f6 60%,   /* UV - Blue */
+                #a855f7 75%,   /* X-ray - Purple */
+                #64748b 100%   /* Gamma - Grey/Black */
+            );
+        }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    
+    // Spectrum Data (Log scale approximation for slider 0-100)
+    // Frequency Range: 10^4 Hz to 10^20 Hz
+    const SPECTRUM_REGIONS = [
+        { name: "無線電波 (Radio Waves)", min: 0, max: 20, color: "#ef4444", icon: "radio-tower", desc: "通訊、廣播、Wi-Fi", hazard: "通常安全，過量可能產生熱效應" },
+        { name: "微波 (Microwaves)", min: 20, max: 35, color: "#f97316", icon: "microwave", desc: "加熱食物、雷達、衛星通訊", hazard: "可導致人體組織內部加熱" },
+        { name: "紅外線 (Infrared)", min: 35, max: 50, color: "#eab308", icon: "thermometer-sun", desc: "遙控器、熱成像儀、光纖", hazard: "可導致皮膚灼傷" },
+        { name: "可見光 (Visible Light)", min: 50, max: 60, color: "#22c55e", icon: "eye", desc: "視覺、攝影、光合作用", hazard: "極高強度可損害視網膜" },
+        { name: "紫外線 (Ultraviolet)", min: 60, max: 75, color: "#3b82f6", icon: "sun", desc: "驗鈔、殺菌、曬黑", hazard: "皮膚癌、白內障 (游離輻射)" },
+        { name: "X 射線 (X-rays)", min: 75, max: 90, color: "#a855f7", icon: "bone", desc: "醫學成像、機場安檢", hazard: "破壞細胞、致癌 (高能量游離輻射)" },
+        { name: "伽馬射線 (Gamma Rays)", min: 90, max: 100, color: "#64748b", icon: "radiation", desc: "癌症治療、滅菌、核反應", hazard: "極度危險，嚴重破壞 DNA" }
+    ];
+
+    const App = () => {
+        // --- State ---
+        const [sliderVal, setSliderVal] = useState(55); // 0-100
+        const [waveOffset, setWaveOffset] = useState(0);
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // --- Logic ---
+        const currentRegion = useMemo(() => {
+            return SPECTRUM_REGIONS.find(r => sliderVal >= r.min && sliderVal <= r.max) || SPECTRUM_REGIONS[SPECTRUM_REGIONS.length-1];
+        }, [sliderVal]);
+
+        // Scientific Values (Logarithmic mapping)
+        // Freq: 10^4 to 10^20. Range = 16 orders of magnitude.
+        // logF = 4 + (slider/100)*16
+        const logFreq = 4 + (sliderVal / 100) * 16;
+        const frequency = Math.pow(10, logFreq);
+        const wavelength = 3e8 / frequency;
+        const photonEnergy = 6.63e-34 * frequency; // Joules
+        const photonEnergyEV = photonEnergy / 1.6e-19; // eV
+
+        // Formatting
+        const formatSci = (num, unit) => {
+            const exp = Math.floor(Math.log10(num));
+            const mantissa = num / Math.pow(10, exp);
+            return (
+                <span>
+                    {mantissa.toFixed(2)} &times; 10<sup>{exp}</sup> {unit}
+                </span>
+            );
+        };
+
+        // --- Animation Loop ---
+        const loop = () => {
+            // Update wave animation speed based on slider (just visual representation)
+            // Low freq -> slow, High freq -> fast
+            // To avoid seizure-inducing speeds, map visually
+            const visualSpeed = 2 + (sliderVal / 100) * 15;
+            setWaveOffset(prev => prev + visualSpeed);
+            
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            const cx = CANVAS_WIDTH / 2;
+            const cy = CANVAS_HEIGHT / 2;
+
+            // 1. Draw Wave (Transverse)
+            // Wavelength visual: Low freq -> Long, High freq -> Short
+            // Map slider 0-100 to visual wavelength 200px - 10px
+            const visualWavelength = 300 - (sliderVal / 100) * 290;
+            const amplitude = 80;
+
+            ctx.beginPath();
+            ctx.strokeStyle = currentRegion.color;
+            ctx.lineWidth = 4;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = currentRegion.color;
+
+            for (let x = 0; x <= CANVAS_WIDTH; x+=2) {
+                const y = cy + Math.sin((x + waveOffset) * (2 * Math.PI / visualWavelength)) * amplitude;
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 2. Draw EM Field Vectors (E and B) - Stylized
+            // Just draw a few vertical arrows to indicate oscillation direction
+            ctx.lineWidth = 2;
+            ctx.fillStyle = currentRegion.color;
+            for (let x = 50; x < CANVAS_WIDTH; x += visualWavelength) {
+                // Find y at this x
+                const phase = (x + waveOffset) * (2 * Math.PI / visualWavelength);
+                const y = cy + Math.sin(phase) * amplitude;
+                
+                // Draw E-field vector (Vertical)
+                ctx.beginPath();
+                ctx.moveTo(x, cy);
+                ctx.lineTo(x, y);
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.stroke();
+                
+                // Circle at tip
+                ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+            }
+
+            // 3. Scale Reference (Atom vs Building)
+            // Just a static visual hint
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText("Electric Field (E)", CANVAS_WIDTH - 20, cy - 100);
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [sliderVal, waveOffset]); // Dependency for redraw
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                {/* Navbar */}
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-blue-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="waves" className="w-5 h-5 text-blue-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">電磁波譜探究 (EM Spectrum Explorer)</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Wave Motion
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas (Wave Visualization) */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                            
+                            {/* Overlay Info */}
+                            <div className="absolute top-6 left-6">
+                                <h2 className="text-3xl font-bold mb-1 drop-shadow-lg" style={{color: currentRegion.color}}>
+                                    {currentRegion.name}
+                                </h2>
+                                <div className="flex items-center gap-2 text-sm text-slate-300 bg-slate-900/80 px-3 py-1 rounded-full w-fit backdrop-blur border border-slate-700">
+                                    <i data-lucide={currentRegion.icon} className="w-4 h-4"></i>
+                                    {currentRegion.desc}
+                                </div>
+                            </div>
+
+                            {/* Spectrum Slider (Bottom Overlay) */}
+                            <div className="absolute bottom-8 left-8 right-8 bg-slate-900/90 p-4 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur">
+                                <div className="flex justify-between text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-2">
+                                    <span>Radio</span>
+                                    <span>Micro</span>
+                                    <span>IR</span>
+                                    <span>Visible</span>
+                                    <span>UV</span>
+                                    <span>X-Ray</span>
+                                    <span>Gamma</span>
+                                </div>
+                                <div className="relative h-4 rounded-full spectrum-bg mb-4">
+                                    <input 
+                                        type="range" min="0" max="100" step="0.1" 
+                                        value={sliderVal} onChange={(e) => setSliderVal(Number(e.target.value))}
+                                        className="absolute top-[-6px] left-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                                    />
+                                    {/* Custom Thumb Indicator */}
+                                    <div 
+                                        className="absolute top-[-4px] w-6 h-6 bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.8)] border-4 transition-all duration-75 pointer-events-none"
+                                        style={{
+                                            left: `calc(${sliderVal}% - 12px)`,
+                                            borderColor: currentRegion.color
+                                        }}
+                                    ></div>
+                                </div>
+                                <div className="text-center text-xs text-slate-500">
+                                    拖動滑桿以改變頻率
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* RIGHT: Data Panel */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Scientific Data */}
+                            <div className="p-6 space-y-6">
+                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-700 pb-2">
+                                        物理參數 (Parameters)
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 mb-1">頻率 (Frequency, f)</div>
+                                            <div className="text-xl font-mono text-white flex items-baseline gap-2">
+                                                {formatSci(frequency, "Hz")}
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 mb-1">波長 (Wavelength, &lambda;)</div>
+                                            <div className="text-xl font-mono text-emerald-400 flex items-baseline gap-2">
+                                                {formatSci(wavelength, "m")}
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div className="text-[10px] text-slate-500 mb-1">光子能量 (Photon Energy, E)</div>
+                                            <div className="text-lg font-mono text-blue-400">
+                                                {formatSci(photonEnergy, "J")}
+                                            </div>
+                                            <div className="text-xs font-mono text-slate-500">
+                                                ({formatSci(photonEnergyEV, "eV")})
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* 2. Application & Hazard */}
+                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-1 h-full" style={{backgroundColor: currentRegion.color}}></div>
+                                    
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                        特性與應用
+                                    </h3>
+                                    
+                                    <div className="mb-4">
+                                        <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                                            <i data-lucide="zap" className="w-4 h-4 text-yellow-400"></i> 典型應用
+                                        </h4>
+                                        <p className="text-xs text-slate-300 leading-relaxed pl-6">
+                                            {currentRegion.desc}
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                                            <i data-lucide="triangle-alert" className="w-4 h-4 text-rose-500"></i> 潛在危險
+                                        </h4>
+                                        <p className="text-xs text-rose-200/80 leading-relaxed pl-6">
+                                            {currentRegion.hazard}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* 3. Formula Reference */}
+                                <div className="p-4 bg-slate-950/50 rounded-xl border border-slate-800 text-center">
+                                    <p className="font-mono text-lg text-slate-400 mb-1">c = f&lambda;</p>
+                                    <p className="text-[10px] text-slate-600">光速 = 頻率 &times; 波長</p>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
