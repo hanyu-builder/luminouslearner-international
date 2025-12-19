@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rectification & Smoothing Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-purple::-webkit-slider-thumb { background: #a855f7; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .scope-grid {
+            background-image: linear-gradient(rgba(51, 65, 85, 0.5) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(51, 65, 85, 0.5) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    const SCOPE_HEIGHT = 300;
+    
+    // Physics Constants
+    const FREQ = 1; // Hz (Slowed down for visual)
+    const V_PEAK = 10; // Volts
+
+    const App = () => {
+        // --- State ---
+        const [mode, setMode] = useState("Half-Wave"); // Half-Wave or Full-Wave
+        const [capacitance, setCapacitance] = useState(0); // uF (0 = Open switch)
+        const [resistance, setResistance] = useState(10); // kOhm
+        const [isPaused, setIsPaused] = useState(false);
+        const [timeBase, setTimeBase] = useState(1); // Speed factor
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        
+        // Simulation State
+        const simRef = useRef({
+            time: 0,
+            capacitorV: 0, // Voltage across capacitor
+            history: [] // {t, vin, vout}
+        });
+
+        // --- Physics Engine ---
+        const updatePhysics = () => {
+            if (isPaused) return;
+
+            const dt = 0.05 * timeBase;
+            const state = simRef.current;
+            state.time += dt;
+
+            // 1. Input AC Voltage
+            // V_in = Vp * sin(wt)
+            const omega = 2 * Math.PI * FREQ;
+            const vin = V_PEAK * Math.sin(omega * state.time);
+
+            // 2. Rectification Logic
+            let rectifiedV = 0;
+            if (mode === "Half-Wave") {
+                // Diode conducts only positive cycle
+                rectifiedV = Math.max(0, vin);
+            } else {
+                // Full-Wave Bridge: Absolute value
+                rectifiedV = Math.abs(vin);
+            }
+
+            // 3. Smoothing (Capacitor Discharge)
+            // If Vin > Vcap, diode conducts, capacitor charges to Vin (Instant charge model for simplicity)
+            // If Vin < Vcap, diode blocks, capacitor discharges through R
+            // Discharge: V = Vo * e^(-t/RC)
+            
+            let vout = 0;
+            
+            if (capacitance === 0) {
+                // No capacitor
+                vout = rectifiedV;
+                state.capacitorV = vout;
+            } else {
+                // With capacitor
+                // Calculate discharge since last frame
+                // dV/dt = -V / (RC)
+                // C in uF, R in kOhm -> RC time constant in ms?
+                // Let's use arbitrary units to make visual nice
+                // RC factor: Higher C or Higher R -> Slower discharge
+                const rcFactor = capacitance * resistance * 0.5; // Tuned constant
+                
+                // Exponential decay step
+                let dischargeV = state.capacitorV * (1 - dt / rcFactor);
+                
+                // Charging phase
+                if (rectifiedV > dischargeV) {
+                    vout = rectifiedV;
+                    state.capacitorV = rectifiedV; // Charge up
+                } else {
+                    vout = dischargeV;
+                    state.capacitorV = dischargeV; // Discharge
+                }
+            }
+
+            // Store history
+            state.history.push({ t: state.time, vin, vout });
+            if (state.history.length > 400) state.history.shift(); // Limit history
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // --- 1. Oscilloscope Screen (Top) ---
+            const scopeX = 50;
+            const scopeY = 20;
+            const scopeW = CANVAS_WIDTH - 100;
+            
+            // Draw Grid
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(scopeX, scopeY, scopeW, SCOPE_HEIGHT);
+            ctx.clip();
+            
+            // Background
+            ctx.fillStyle = '#1e293b';
+            ctx.fill();
+            
+            // Grid Lines
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            ctx.beginPath();
+            for(let x=scopeX; x<scopeX+scopeW; x+=gridSize) { ctx.moveTo(x, scopeY); ctx.lineTo(x, scopeY+SCOPE_HEIGHT); }
+            for(let y=scopeY; y<scopeY+SCOPE_HEIGHT; y+=gridSize) { ctx.moveTo(scopeX, y); ctx.lineTo(scopeX+scopeW, y); }
+            ctx.stroke();
+
+            // Center Line (0V)
+            const centerY = scopeY + SCOPE_HEIGHT / 2;
+            ctx.strokeStyle = '#94a3b8';
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(scopeX, centerY); ctx.lineTo(scopeX+scopeW, centerY); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Plot Waves
+            // Map t to X (scrolling), V to Y
+            const history = simRef.current.history;
+            const timeScale = 20; // px per dt
+            const vScale = 10; // px per Volt
+
+            if (history.length > 1) {
+                const now = simRef.current.time;
+                
+                // Draw Input (Vin) - Grey/Dashed
+                ctx.beginPath();
+                ctx.strokeStyle = '#64748b';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([2, 4]);
+                for (let i = 0; i < history.length; i++) {
+                    const p = history[i];
+                    const x = scopeX + scopeW - (now - p.t) * timeScale * 10; // *10 scale
+                    const y = centerY - p.vin * vScale;
+                    if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Draw Output (Vout) - Colored
+                ctx.beginPath();
+                ctx.strokeStyle = capacitance > 0 ? '#f472b6' : '#22c55e'; // Pink if smoothed, Green if raw
+                ctx.lineWidth = 3;
+                for (let i = 0; i < history.length; i++) {
+                    const p = history[i];
+                    const x = scopeX + scopeW - (now - p.t) * timeScale * 10;
+                    const y = centerY - p.vout * vScale;
+                    if (i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+            
+            // Labels
+            ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif'; ctx.fillText("Input AC", scopeX + 10, scopeY + 20);
+            ctx.fillStyle = capacitance > 0 ? '#f472b6' : '#22c55e'; ctx.fillText("Output DC", scopeX + 10, scopeY + 40);
+
+            ctx.restore(); // End Clip
+            
+            // Scope Bezel
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(scopeX, scopeY, scopeW, SCOPE_HEIGHT);
+
+            // --- 2. Circuit Diagram (Bottom) ---
+            const circY = SCOPE_HEIGHT + 50;
+            const circX = CANVAS_WIDTH / 2;
+            
+            // Draw AC Source
+            drawACSource(ctx, circX - 200, circY + 50);
+            
+            // Draw Rectifier Box
+            ctx.fillStyle = '#334155';
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            ctx.fillRect(circX - 100, circY, 100, 100);
+            ctx.strokeRect(circX - 100, circY, 100, 100);
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText(mode === "Half-Wave" ? "Half-Wave" : "Full Bridge", circX - 50, circY + 55);
+            // Diode Symbol inside
+            drawDiode(ctx, circX - 50, circY + 30);
+
+            // Connecting Wires
+            ctx.beginPath();
+            ctx.strokeStyle = '#cbd5e1';
+            // AC to Rect
+            ctx.moveTo(circX - 180, circY + 30); ctx.lineTo(circX - 100, circY + 30);
+            ctx.moveTo(circX - 180, circY + 70); ctx.lineTo(circX - 100, circY + 70);
+            
+            // Rect to Output
+            // Top Rail
+            ctx.moveTo(circX, circY + 20); ctx.lineTo(circX + 250, circY + 20);
+            // Bottom Rail
+            ctx.moveTo(circX, circY + 80); ctx.lineTo(circX + 250, circY + 80);
+            ctx.stroke();
+
+            // Capacitor (Parallel)
+            if (capacitance > 0) {
+                drawCapacitor(ctx, circX + 80, circY + 20, circY + 80);
+                ctx.fillStyle = '#f472b6';
+                ctx.fillText(`${capacitance} \u00B5F`, circX + 80, circY + 100);
+            } else {
+                // Open switch visual
+                ctx.fillStyle = '#64748b'; ctx.fillText("No Cap", circX + 80, circY + 50);
+            }
+
+            // Resistor (Load)
+            drawResistor(ctx, circX + 180, circY + 20, circY + 80);
+            ctx.fillStyle = '#22c55e';
+            ctx.fillText(`Load ${resistance} k\u03A9`, circX + 180, circY + 100);
+        };
+
+        // --- Helpers ---
+        const drawACSource = (ctx, x, y) => {
+            ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.strokeStyle = '#fff'; ctx.stroke();
+            ctx.beginPath(); 
+            ctx.moveTo(x-10, y); 
+            ctx.bezierCurveTo(x-5, y-10, x+5, y+10, x+10, y); 
+            ctx.stroke();
+            ctx.font = '12px monospace'; ctx.fillStyle = '#fff'; ctx.fillText("AC", x, y + 35);
+        };
+
+        const drawDiode = (ctx, x, y) => {
+            ctx.beginPath();
+            ctx.moveTo(x-10, y-10); ctx.lineTo(x-10, y+10); ctx.lineTo(x+10, y); ctx.closePath();
+            ctx.fillStyle = '#94a3b8'; ctx.fill();
+            ctx.beginPath(); ctx.moveTo(x+10, y-10); ctx.lineTo(x+10, y+10); ctx.strokeStyle='#fff'; ctx.stroke();
+        };
+
+        const drawCapacitor = (ctx, x, topY, bottomY) => {
+            ctx.beginPath();
+            ctx.moveTo(x, topY); ctx.lineTo(x, topY + 25);
+            ctx.moveTo(x, bottomY); ctx.lineTo(x, bottomY - 25);
+            ctx.stroke();
+            
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(x-15, topY + 25); ctx.lineTo(x+15, topY + 25); // Top plate
+            ctx.moveTo(x-15, bottomY - 25); ctx.lineTo(x+15, bottomY - 25); // Bottom plate
+            ctx.stroke();
+            ctx.lineWidth = 2;
+        };
+
+        const drawResistor = (ctx, x, topY, bottomY) => {
+            ctx.beginPath();
+            ctx.moveTo(x, topY); ctx.lineTo(x, topY + 10);
+            let y = topY + 10;
+            const h = bottomY - topY - 20;
+            const step = h / 6;
+            for(let i=0; i<6; i++) {
+                ctx.lineTo(i%2===0 ? x+10 : x-10, y + step/2 + i*step);
+            }
+            ctx.lineTo(x, bottomY - 10);
+            ctx.lineTo(x, bottomY);
+            ctx.stroke();
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [mode, capacitance, resistance, isPaused]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-purple-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="activity" className="w-5 h-5 text-purple-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Rectification Lab</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Electronics
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Circuit Mode */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Rectifier Type</h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button 
+                                        onClick={() => setMode("Half-Wave")}
+                                        className={`py-2 rounded text-xs font-bold border transition-all ${mode === "Half-Wave" ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                    >
+                                        Half-Wave
+                                    </button>
+                                    <button 
+                                        onClick={() => setMode("Full-Wave")}
+                                        className={`py-2 rounded text-xs font-bold border transition-all ${mode === "Full-Wave" ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                    >
+                                        Full-Wave
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* 2. Components */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Capacitor Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-pink-400 mb-2">
+                                        Smoothing Capacitor (C)
+                                        <span>{capacitance} &mu;F</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="0" max="100" step="10" 
+                                        value={capacitance} onChange={(e) => setCapacitance(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-purple mb-1" 
+                                    />
+                                    <div className="flex justify-between text-[10px] text-slate-500">
+                                        <span>None (Rough)</span>
+                                        <span>Large (Smooth)</span>
+                                    </div>
+                                </div>
+
+                                {/* Resistor Slider */}
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold text-green-400 mb-2">
+                                        Load Resistance (R)
+                                        <span>{resistance} k&Omega;</span>
+                                    </label>
+                                    <input 
+                                        type="range" min="1" max="20" step="1" 
+                                        value={resistance} onChange={(e) => setResistance(Number(e.target.value))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-green mb-1" 
+                                    />
+                                    <p className="text-[10px] text-slate-400 mt-2">
+                                        Lower R = Faster discharge = More Ripple.
+                                        <br/>
+                                        Time Constant &tau; = R &times; C
+                                    </p>
+                                </div>
+
+                                <div className="h-px bg-slate-800"></div>
+
+                                {/* Animation Control */}
+                                <button 
+                                    onClick={() => setIsPaused(!isPaused)}
+                                    className={`w-full py-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all 
+                                        ${isPaused ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                                >
+                                    <i data-lucide={isPaused ? "play" : "pause"} className="w-4 h-4"></i>
+                                    {isPaused ? "Resume Scope" : "Freeze Scope"}
+                                </button>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
