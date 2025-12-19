@@ -18,8 +18,12 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@0.263.1"></script>
 
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js" type="module"></script>
+    <!-- Note: OrbitControls is usually a module. To use in standard script, we might need a specific CDN bundle or a shim. 
+         Safest for single-file without modules: Use a CDN that exposes THREE.OrbitControls globally or implement simple drag.
+         Let's try to implement simple drag rotation manually to be 100% safe. -->
 
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
@@ -37,12 +41,19 @@
 <div id="root"></div>
 
 <script type="text/babel">
-    const { useState, useEffect, useRef, useMemo } = React;
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+    // Error Boundary
+    class ErrorBoundary extends React.Component {
+        constructor(props) { super(props); this.state = { hasError: false }; }
+        static getDerivedStateFromError(error) { return { hasError: true }; }
+        render() { if (this.state.hasError) return <div className="p-4 text-red-500">3D Engine Error. Please Refresh.</div>; return this.props.children; }
+    }
 
     const App = () => {
         // --- State ---
         const [charges, setCharges] = useState([
-            { x: -2, z: 0, q: 1, id: 1 }, // Initial Dipole
+            { x: -2, z: 0, q: 1, id: 1 },
             { x: 2, z: 0, q: -1, id: 2 }
         ]);
         const [showMesh, setShowMesh] = useState(true);
@@ -53,28 +64,37 @@
         const sceneRef = useRef(null);
         const rendererRef = useRef(null);
         const cameraRef = useRef(null);
-        const meshRef = useRef(null);
-        const contoursRef = useRef(null);
-        const chargesGroupRef = useRef(null);
+        const rootGroupRef = useRef(null); // Group to hold everything for rotation
         
-        // --- 3D Scene Setup ---
+        // Refs for mutable values in animation loop
+        const autoRotateRef = useRef(autoRotate);
+        const isDraggingRef = useRef(false);
+        const prevMouseRef = useRef({ x: 0, y: 0 });
+        const rotationRef = useRef({ x: 0, y: 0 });
+
+        // Update refs when state changes
+        useEffect(() => { autoRotateRef.current = autoRotate; }, [autoRotate]);
+
+        // --- 3D Engine Setup ---
         useEffect(() => {
+            if (!mountRef.current) return;
+
             const width = mountRef.current.clientWidth;
             const height = mountRef.current.clientHeight;
 
             // Scene
             const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x020617); // Dark slate
+            scene.background = new THREE.Color(0x020617);
             sceneRef.current = scene;
 
             // Camera
             const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-            camera.position.set(0, 15, 15);
+            camera.position.set(0, 15, 20); // High angle
             camera.lookAt(0, 0, 0);
             cameraRef.current = camera;
 
             // Renderer
-            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(width, height);
             mountRef.current.appendChild(renderer.domElement);
             rendererRef.current = renderer;
@@ -82,222 +102,240 @@
             // Lights
             const ambientLight = new THREE.AmbientLight(0x404040);
             scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
             dirLight.position.set(5, 10, 5);
             scene.add(dirLight);
 
-            // Grid Helper
-            const gridHelper = new THREE.GridHelper(20, 20, 0x334155, 0x1e293b);
-            scene.add(gridHelper);
+            // Root Group (for manual rotation)
+            const rootGroup = new THREE.Group();
+            scene.add(rootGroup);
+            rootGroupRef.current = rootGroup;
 
-            // Initialize Geometry
-            updatePotentialMap();
+            // Grid
+            const gridHelper = new THREE.GridHelper(20, 20, 0x334155, 0x1e293b);
+            rootGroup.add(gridHelper);
+
+            // Initial Render Trigger
+            // We can't call updatePotentialMap here easily because it depends on state.
+            // But the second useEffect will trigger it.
 
             // Animation Loop
             let frameId;
             const animate = () => {
-                if (autoRotate && sceneRef.current) {
-                    sceneRef.current.rotation.y += 0.002;
+                if (autoRotateRef.current && !isDraggingRef.current && rootGroupRef.current) {
+                    rootGroupRef.current.rotation.y += 0.003;
                 }
+                // Manual Rotation Application
+                if (rootGroupRef.current) {
+                    // Smoothly blend manual rotation? Or just set it?
+                    // For simplicity, we just add auto-rotation or let mouse control modify rotation.
+                    // If not auto-rotating, we respect the current rotation.
+                }
+
                 renderer.render(scene, camera);
                 frameId = requestAnimationFrame(animate);
             };
             animate();
 
-            // Cleanup
+            // Handle Resize
+            const handleResize = () => {
+                const w = mountRef.current.clientWidth;
+                const h = mountRef.current.clientHeight;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            };
+            window.addEventListener('resize', handleResize);
+
             return () => {
                 cancelAnimationFrame(frameId);
+                window.removeEventListener('resize', handleResize);
                 if (mountRef.current && renderer.domElement) {
                     mountRef.current.removeChild(renderer.domElement);
                 }
-                // Dispose geometries/materials to prevent leak
+                // Clean up Three.js resources
+                renderer.dispose();
             };
-        }, []); // Run once on mount
+        }, []);
 
-        // --- Physics & Geometry Update ---
+        // --- Mouse Interaction for Rotation ---
+        const handleMouseDown = (e) => {
+            isDraggingRef.current = true;
+            prevMouseRef.current = { x: e.clientX, y: e.clientY };
+        };
+
+        const handleMouseMove = (e) => {
+            if (!isDraggingRef.current || !rootGroupRef.current) return;
+            const dx = e.clientX - prevMouseRef.current.x;
+            const dy = e.clientY - prevMouseRef.current.y;
+            
+            rootGroupRef.current.rotation.y += dx * 0.01;
+            // Optional X rotation limits
+            // rootGroupRef.current.rotation.x += dy * 0.01; 
+            
+            prevMouseRef.current = { x: e.clientX, y: e.clientY };
+        };
+
+        const handleMouseUp = () => {
+            isDraggingRef.current = false;
+        };
+
+        // --- Physics & Geometry Update Logic ---
         useEffect(() => {
-            updatePotentialMap();
-        }, [charges, showMesh, showContours]);
+            if (!rootGroupRef.current) return;
+            
+            const group = rootGroupRef.current;
 
-        const updatePotentialMap = () => {
-            if (!sceneRef.current) return;
+            // Clear dynamic objects (find by name or type)
+            // Easier: Remove everything except Grid (which is type GridHelper)
+            for (let i = group.children.length - 1; i >= 0; i--) {
+                const child = group.children[i];
+                if (child.type !== 'GridHelper') {
+                    group.remove(child);
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (child.material.map) child.material.map.dispose();
+                        child.material.dispose();
+                    }
+                }
+            }
 
-            // 1. Clear old meshes
-            if (meshRef.current) sceneRef.current.remove(meshRef.current);
-            if (contoursRef.current) sceneRef.current.remove(contoursRef.current);
-            if (chargesGroupRef.current) sceneRef.current.remove(chargesGroupRef.current);
-
-            // 2. Add Charge Markers
-            const chargeGroup = new THREE.Group();
+            // 1. Add Charges
             charges.forEach(c => {
-                const geometry = new THREE.SphereGeometry(0.4, 32, 32);
-                const material = new THREE.MeshPhongMaterial({ 
-                    color: c.q > 0 ? 0xff4444 : 0x4444ff,
-                    emissive: c.q > 0 ? 0x550000 : 0x000055
+                const geo = new THREE.SphereGeometry(0.3, 16, 16);
+                const mat = new THREE.MeshPhongMaterial({ 
+                    color: c.q > 0 ? 0xff4444 : 0x3b82f6,
+                    emissive: c.q > 0 ? 0x330000 : 0x000033
                 });
-                const sphere = new THREE.Mesh(geometry, material);
-                sphere.position.set(c.x, 0, c.z); // Charges on Y=0 plane
-                chargeGroup.add(sphere);
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(c.x, 0, c.z);
+                group.add(mesh);
                 
-                // Pole/Stand
+                // Stick
                 const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.5, 8);
                 const poleMat = new THREE.MeshBasicMaterial({ color: 0x64748b });
                 const pole = new THREE.Mesh(poleGeo, poleMat);
                 pole.position.set(c.x, -0.25, c.z);
-                chargeGroup.add(pole);
+                group.add(pole);
             });
-            sceneRef.current.add(chargeGroup);
-            chargesGroupRef.current = chargeGroup;
 
-            // 3. Generate Potential Surface
-            const size = 20;
-            const segments = 60; // Resolution
-            const geometry = new THREE.PlaneGeometry(size, size, segments, segments);
-            const posAttribute = geometry.attributes.position;
-
-            // Calculate V at each vertex
-            // V = k * sum(q_i / r_i)
-            // To visualize: Y (height) = V * scale
-            // Clamp height to avoid infinity at r=0
-            const k = 2.0; // Visual scaling factor
-            
-            for (let i = 0; i < posAttribute.count; i++) {
-                const x = posAttribute.getX(i);
-                const z = posAttribute.getY(i); // PlaneGeo is initially X-Y, we rotate it later
-                
-                let vTotal = 0;
-                charges.forEach(c => {
-                    const dx = x - c.x;
-                    const dz = z - c.z;
-                    const dist = Math.sqrt(dx*dx + dz*dz);
-                    // Soften core to prevent infinite spike
-                    const safeDist = Math.max(0.5, dist); 
-                    vTotal += c.q / safeDist;
-                });
-
-                // Apply height
-                let y = vTotal * k;
-                // Clamp visual height
-                y = Math.max(-5, Math.min(5, y));
-                
-                // Update Z (which is Y in our PlaneGeo before rotation)
-                posAttribute.setZ(i, y);
-            }
-            
-            geometry.computeVertexNormals();
-
-            // Create Mesh
+            // 2. Generate 3D Potential Surface
             if (showMesh) {
-                const material = new THREE.MeshPhongMaterial({
+                const size = 16;
+                const segs = 64;
+                const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+                const pos = geo.attributes.position;
+                
+                // V = kQ/r
+                const k_const = 1.5; // Visual height scale
+
+                for (let i = 0; i < pos.count; i++) {
+                    const x = pos.getX(i);
+                    const z = pos.getY(i); // Plane is XY initially
+                    
+                    let v = 0;
+                    charges.forEach(c => {
+                        const dist = Math.sqrt((x - c.x)**2 + (z - c.z)**2);
+                        const safeDist = Math.max(0.4, dist); // Avoid infinity spike
+                        v += c.q / safeDist;
+                    });
+                    
+                    // Set Height (Z in geo, will be Y in world)
+                    let h = v * k_const;
+                    h = Math.max(-4, Math.min(4, h)); // Clamp
+                    pos.setZ(i, h);
+                }
+                geo.computeVertexNormals();
+
+                const mat = new THREE.MeshPhongMaterial({
                     color: 0x38bdf8,
                     side: THREE.DoubleSide,
-                    wireframe: false,
-                    flatShading: false,
-                    shininess: 50,
                     transparent: true,
-                    opacity: 0.8
+                    opacity: 0.7,
+                    shininess: 60,
+                    flatShading: false
                 });
-                
-                // Use vertex colors for heatmap effect?
-                // Let's stick to simple blue material with lighting for now for cleaner look
-                
-                const mesh = new THREE.Mesh(geometry, material);
-                mesh.rotation.x = -Math.PI / 2; // Rotate to lie flat on X-Z
-                mesh.position.y = 0; // Center
-                sceneRef.current.add(mesh);
-                meshRef.current = mesh;
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.rotation.x = -Math.PI / 2;
+                group.add(mesh);
             }
 
-            // 4. Generate Contours (Equipotential Lines)
+            // 3. Generate 2D Contours (Texture on Floor)
             if (showContours) {
-                // We can cheat by creating horizontal planes that intersect the mesh?
-                // Or simply draw lines on the texture?
-                // Or create line segments.
-                // Simpler: Draw a 2D canvas texture with calculated contours and map it to a flat plane below.
+                const cvs = document.createElement('canvas');
+                cvs.width = 512;
+                cvs.height = 512;
+                const ctx = cvs.getContext('2d');
                 
-                const canvas = document.createElement('canvas');
-                canvas.width = 512;
-                canvas.height = 512;
-                const ctx = canvas.getContext('2d');
-                
-                // Draw background
+                // Fill dark
                 ctx.fillStyle = '#0f172a';
-                ctx.fillRect(0, 0, 512, 512);
-                
-                // Calculate pixels
-                const imgData = ctx.getImageData(0, 0, 512, 512);
+                ctx.fillRect(0,0,512,512);
+
+                const imgData = ctx.getImageData(0,0,512,512);
                 const data = imgData.data;
+                const size = 16;
+                const scale = 2.0; // Contour spacing
                 
-                for (let py = 0; py < 512; py++) {
-                    for (let px = 0; px < 512; px++) {
-                        // Map px,py to world coordinates
-                        const worldX = (px / 512 - 0.5) * size;
-                        const worldZ = (py / 512 - 0.5) * size;
+                for (let y=0; y<512; y++) {
+                    for (let x=0; x<512; x++) {
+                        // World coords
+                        const wx = (x/512 - 0.5) * size;
+                        const wz = (y/512 - 0.5) * size;
                         
-                        let vTotal = 0;
-                        charges.forEach(c => {
-                            const dx = worldX - c.x;
-                            const dz = worldZ - c.z;
-                            const dist = Math.sqrt(dx*dx + dz*dz);
-                            vTotal += c.q / Math.max(0.1, dist);
-                        });
+                        let v = 0;
+                        for (let c of charges) {
+                            const d = Math.sqrt((wx-c.x)**2 + (wz-c.z)**2);
+                            v += c.q / Math.max(0.2, d);
+                        }
                         
-                        // Check if V is close to a contour level
-                        // Levels: -2, -1.5, -1, ..., 1, 1.5, 2
-                        const levelStep = 0.5;
-                        const vScaled = vTotal * k;
-                        const rem = Math.abs(vScaled % levelStep);
-                        const isContour = rem < 0.05 || (levelStep - rem) < 0.05;
+                        // Contour logic
+                        const val = v * 2.0; // density
+                        const interval = 1.0;
+                        const rem = Math.abs(val % interval);
+                        const isLine = rem < 0.1 || rem > 0.9;
                         
-                        if (isContour) {
-                            const index = (py * 512 + px) * 4;
-                            // Color based on V
-                            if (vTotal > 0) { // Reddish
-                                data[index] = 255; data[index+1] = 100; data[index+2] = 100;
-                            } else { // Blueish
-                                data[index] = 100; data[index+1] = 100; data[index+2] = 255;
+                        if (isLine) {
+                            const idx = (y*512 + x)*4;
+                            if (v > 0) { // Positive: Red
+                                data[idx] = 239; data[idx+1] = 68; data[idx+2] = 68; 
+                            } else { // Negative: Blue
+                                data[idx] = 59; data[idx+1] = 130; data[idx+2] = 246; 
                             }
-                            data[index+3] = 255; // Alpha
+                            data[idx+3] = 255;
                         }
                     }
                 }
                 ctx.putImageData(imgData, 0, 0);
                 
-                const texture = new THREE.CanvasTexture(canvas);
+                const tex = new THREE.CanvasTexture(cvs);
                 const planeGeo = new THREE.PlaneGeometry(size, size);
                 const planeMat = new THREE.MeshBasicMaterial({ 
-                    map: texture, 
+                    map: tex, 
                     side: THREE.DoubleSide,
                     transparent: true,
-                    opacity: 0.6
+                    opacity: 0.8 
                 });
-                const contourPlane = new THREE.Mesh(planeGeo, planeMat);
-                contourPlane.rotation.x = -Math.PI / 2;
-                contourPlane.position.y = -5.1; // Below the main graph
-                sceneRef.current.add(contourPlane);
-                contoursRef.current = contourPlane;
+                const plane = new THREE.Mesh(planeGeo, planeMat);
+                plane.rotation.x = -Math.PI / 2;
+                plane.position.y = -5; // Floor
+                group.add(plane);
             }
-        };
 
-        // --- Interaction Handlers ---
+        }, [charges, showMesh, showContours]); // Re-run when state changes
+
+
+        // --- UI Handlers ---
         const addCharge = (q) => {
-            const newId = Math.max(...charges.map(c => c.id), 0) + 1;
-            // Place randomly but somewhat centrally
-            const rx = (Math.random() - 0.5) * 6;
-            const rz = (Math.random() - 0.5) * 6;
-            setCharges([...charges, { x: rx, z: rz, q: q, id: newId }]);
+            const id = Date.now();
+            const x = (Math.random() - 0.5) * 6;
+            const z = (Math.random() - 0.5) * 6;
+            setCharges([...charges, { x, z, q, id }]);
         };
-
-        const removeCharge = (id) => {
-            setCharges(charges.filter(c => c.id !== id));
-        };
-
+        const removeCharge = (id) => setCharges(charges.filter(c => c.id !== id));
         const reset = () => {
-            setCharges([
-                { x: -2, z: 0, q: 1, id: 1 },
-                { x: 2, z: 0, q: -1, id: 2 }
-            ]);
-            if (sceneRef.current) sceneRef.current.rotation.y = 0;
+            setCharges([{ x: -2, z: 0, q: 1, id: 1 }, { x: 2, z: 0, q: -1, id: 2 }]);
+            if (rootGroupRef.current) rootGroupRef.current.rotation.y = 0;
+            setAutoRotate(true);
         };
 
         return (
@@ -319,7 +357,14 @@
                         
                         {/* LEFT: 3D Viewport */}
                         <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
-                            <div ref={mountRef} className="w-full h-full cursor-move" />
+                            <div 
+                                ref={mountRef} 
+                                className="w-full h-full cursor-move active:cursor-grabbing"
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                            />
                             
                             {/* Controls Overlay */}
                             <div className="absolute top-4 left-4 flex gap-2">
@@ -333,7 +378,7 @@
                                 <button 
                                     onClick={() => setShowMesh(!showMesh)}
                                     className={`p-2 rounded border transition-all ${showMesh ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
-                                    title="Toggle 3D Potential Surface"
+                                    title="Toggle 3D Surface"
                                 >
                                     <i data-lucide="layers" className="w-4 h-4"></i>
                                 </button>
@@ -349,11 +394,11 @@
                             <div className="absolute bottom-4 left-4 bg-slate-900/80 p-3 rounded-xl border border-slate-700 text-xs text-slate-400 backdrop-blur pointer-events-none">
                                 <div className="flex items-center gap-2 mb-1">
                                     <div className="w-3 h-3 rounded-full bg-red-500"></div> 
-                                    <span>Positive Charge (Mountain)</span>
+                                    <span>Positive (Mountain)</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <div className="w-3 h-3 rounded-full bg-blue-500"></div> 
-                                    <span>Negative Charge (Valley)</span>
+                                    <span>Negative (Valley)</span>
                                 </div>
                             </div>
                         </div>
@@ -365,9 +410,9 @@
                             <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur sticky top-0 z-10">
                                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Electric Potential (V)</h3>
                                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
-                                    <div className="text-lg font-mono font-bold text-white mb-1">V = kQ / r</div>
+                                    <div className="text-lg font-mono font-bold text-white mb-1">V = &Sigma; kQ / r</div>
                                     <div className="text-[10px] text-slate-500">
-                                        Scalar sum of potentials from all charges.
+                                        Scalar Sum (Superposition)
                                     </div>
                                 </div>
                             </div>
@@ -422,13 +467,13 @@
                                         <i data-lucide="info" className="w-3 h-3 mr-1"></i> Analogy
                                     </h4>
                                     <p className="text-[10px] text-slate-400 leading-tight">
-                                        Think of Electric Potential as <strong>Height</strong>.
+                                        Potential (V) is <strong>Height</strong>.
                                         <br/><br/>
-                                        Positive charges are <strong>Hills</strong>.
+                                        +Q are <strong>Mountains</strong>.
                                         <br/>
-                                        Negative charges are <strong>Holes</strong>.
+                                        -Q are <strong>Valleys</strong>.
                                         <br/>
-                                        Electric Field lines point <strong>Downhill</strong> (steepest slope).
+                                        Field lines run downhill.
                                     </p>
                                 </div>
 
@@ -442,7 +487,11 @@
     };
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    root.render(
+        <ErrorBoundary>
+            <App />
+        </ErrorBoundary>
+    );
 </script>
 </body>
 </html>
