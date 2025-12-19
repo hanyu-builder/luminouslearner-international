@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PV Cycle Engine | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    
+    // Physics Constants
+    const R = 8.31; // Gas constant
+    const GAMMA = 1.4; // Adiabatic index for air
+    const N_MOLES = 1;
+
+    const App = () => {
+        // --- State ---
+        const [cycleType, setCycleType] = useState("Carnot"); // Carnot or Otto
+        const [animationSpeed, setAnimationSpeed] = useState(1);
+        const [isPaused, setIsPaused] = useState(false);
+        const [points, setPoints] = useState([]); // Array of {V, P, T}
+        
+        // Simulation State
+        const simRef = useRef({
+            t: 0, // Time in cycle (0 to 4)
+            currentV: 0,
+            currentP: 0,
+            currentT: 0,
+            currentStage: 0 // 0, 1, 2, 3
+        });
+        
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const dragRef = useRef({ isDragging: false, pointIndex: -1 });
+
+        // --- Initialization ---
+        useEffect(() => {
+            resetCycle(cycleType);
+        }, [cycleType]);
+
+        const resetCycle = (type) => {
+            let newPoints = [];
+            // Basic values (V in L, P in atm) -> Scale later
+            // Let's use arbitrary units for simulation stability: V: 1-10, P: 1-10
+            
+            if (type === "Carnot") {
+                // 1->2 Isothermal Exp (Th)
+                // 2->3 Adiabatic Exp
+                // 3->4 Isothermal Comp (Tc)
+                // 4->1 Adiabatic Comp
+                const p1 = { V: 2, P: 8 };
+                const p2 = { V: 5, P: 3.2 }; // P1V1 = P2V2 (IsoT) -> 16 = 5*3.2
+                // Adiabatic: PV^gamma = const
+                // P2 V2^1.4 = P3 V3^1.4
+                const p3 = { V: 8, P: 1.5 }; // approximate
+                const p4 = { V: 3.5, P: 3.5 }; // approximate
+                newPoints = [p1, p2, p3, p4];
+            } else {
+                // Otto (Petrol Engine)
+                // 1->2 Adiabatic Comp
+                // 2->3 Isochoric Heating
+                // 3->4 Adiabatic Exp
+                // 4->1 Isochoric Cooling
+                const p1 = { V: 8, P: 1 };
+                const p2 = { V: 2, P: 12 }; // High compression
+                const p3 = { V: 2, P: 20 }; // Ignition
+                const p4 = { V: 8, P: 2.5 }; // Exhaust/Expansion
+                newPoints = [p1, p2, p3, p4];
+            }
+            // Recalculate strict physics constraints
+            // We allow user to drag points, but constraints apply
+            // For now, let's just initialize editable points
+            setPoints(newPoints);
+        };
+
+        // --- Physics Engine ---
+        // Helper to get state at time t (0 to 4)
+        const getState = (t, pts) => {
+            const stage = Math.floor(t) % 4;
+            const progress = t % 1;
+            const pStart = pts[stage];
+            const pEnd = pts[(stage + 1) % 4];
+            
+            // Linear interpolation for V is easiest for animation control
+            // Real physics: Process equation defines P(V)
+            
+            const V = pStart.V + (pEnd.V - pStart.V) * progress;
+            let P = 0;
+            
+            // Determine Process Type based on Cycle
+            let processType = "Linear"; // Default
+            
+            if (cycleType === "Carnot") {
+                if (stage === 0) { // IsoT (PV=C)
+                    const C = pStart.P * pStart.V;
+                    P = C / V;
+                } else if (stage === 1) { // Adiabatic (PV^g=C)
+                    const C = pStart.P * Math.pow(pStart.V, GAMMA);
+                    P = C / Math.pow(V, GAMMA);
+                } else if (stage === 2) { // IsoT
+                    const C = pStart.P * pStart.V;
+                    P = C / V;
+                } else { // Adiabatic
+                    const C = pStart.P * Math.pow(pStart.V, GAMMA);
+                    P = C / Math.pow(V, GAMMA);
+                }
+            } else { // Otto
+                if (stage === 0) { // Adiabatic Comp (1->2 is usually bottom to top left? Wait Otto numbering)
+                    // Standard Otto: 1->2 Adiabatic Comp, 2->3 Isochoric Heat, 3->4 Adiabatic Exp, 4->1 Isochoric Cool
+                    // My init points: 1(BotR), 2(TopL), 3(TopL+), 4(BotR+)
+                    // Let's interpolate
+                    if (Math.abs(pStart.V - pEnd.V) < 0.1) {
+                         // Isochoric
+                         P = pStart.P + (pEnd.P - pStart.P) * progress;
+                    } else {
+                         // Adiabatic
+                         const C = pStart.P * Math.pow(pStart.V, GAMMA);
+                         P = C / Math.pow(V, GAMMA);
+                    }
+                } else if (stage === 1) { // Isochoric
+                    P = pStart.P + (pEnd.P - pStart.P) * progress;
+                } else if (stage === 2) { // Adiabatic Exp
+                     const C = pStart.P * Math.pow(pStart.V, GAMMA);
+                     P = C / Math.pow(V, GAMMA);
+                } else { // Isochoric
+                    P = pStart.P + (pEnd.P - pStart.P) * progress;
+                }
+            }
+            
+            // T approx PV
+            const T = P * V * 10; // Scale K
+            return { V, P, T, stage };
+        };
+
+        const updatePhysics = () => {
+            if (isPaused) return;
+            const state = simRef.current;
+            state.t += 0.01 * animationSpeed;
+            if (state.t >= 4) state.t = 0;
+            
+            const current = getState(state.t, points);
+            Object.assign(state, { currentV: current.V, currentP: current.P, currentT: current.T, currentStage: current.stage });
+        };
+
+        const loop = () => {
+            updatePhysics();
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+            const state = simRef.current;
+
+            // Clear
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Layout
+            const graphX = 50;
+            const graphY = 50;
+            const graphW = 400;
+            const graphH = 400;
+            
+            const engineX = 550;
+            const engineY = 100;
+            
+            // --- 1. Draw PV Graph ---
+            // Draw Axes
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(graphX, graphY); ctx.lineTo(graphX, graphY + graphH); ctx.lineTo(graphX + graphW, graphY + graphH);
+            ctx.stroke();
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px sans-serif';
+            ctx.fillText("Pressure (P)", graphX - 20, graphY);
+            ctx.fillText("Volume (V)", graphX + graphW, graphY + graphH + 20);
+
+            // Scale factors
+            const maxV = 12;
+            const maxP = 25;
+            const scaleX = graphW / maxV;
+            const scaleY = graphH / maxP;
+
+            // Draw Cycle Path
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#38bdf8'; // Blue path
+            ctx.beginPath();
+            
+            // Trace the full path mathematically
+            for (let t = 0; t <= 4; t += 0.05) {
+                const s = getState(t, points);
+                const x = graphX + s.V * scaleX;
+                const y = graphY + graphH - s.P * scaleY;
+                if (t===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            
+            // Fill Area (Work Done)
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.1)';
+            ctx.fill();
+
+            // Draw Points (Draggable)
+            points.forEach((p, i) => {
+                const x = graphX + p.V * scaleX;
+                const y = graphY + graphH - p.P * scaleY;
+                
+                ctx.fillStyle = i === state.currentStage ? '#facc15' : '#fff';
+                ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2); ctx.fill();
+                
+                // Labels
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText(i+1, x + 10, y - 10);
+            });
+
+            // Draw Current State Dot
+            const curX = graphX + state.currentV * scaleX;
+            const curY = graphY + graphH - state.currentP * scaleY;
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath(); ctx.arc(curX, curY, 8, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+
+            // --- 2. Draw Engine (Piston) ---
+            const cylW = 150;
+            const cylH = 250;
+            const pistonH = 20;
+            
+            // Gas Color based on Temp
+            // Map Temp (PV) roughly: 200 to 2000
+            const tempRatio = Math.min(1, state.currentT / 1500);
+            const gasR = Math.floor(tempRatio * 255);
+            const gasB = Math.floor((1 - tempRatio) * 255);
+            
+            // Piston Y position based on Volume
+            // Map V (1-10) to Height (20-200)
+            const gasHeight = (state.currentV / 10) * 200 + 20;
+            
+            // Cylinder
+            ctx.fillStyle = `rgb(${gasR}, 50, ${gasB})`; // Gas
+            ctx.fillRect(engineX, engineY + cylH - gasHeight, cylW, gasHeight);
+            
+            // Cylinder Walls
+            ctx.strokeStyle = '#cbd5e1';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(engineX, engineY); ctx.lineTo(engineX, engineY + cylH); ctx.lineTo(engineX + cylW, engineY + cylH); ctx.lineTo(engineX + cylW, engineY);
+            ctx.stroke();
+
+            // Piston Head
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(engineX + 2, engineY + cylH - gasHeight - pistonH, cylW - 4, pistonH);
+            
+            // Connecting Rod
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.moveTo(engineX + cylW/2, engineY + cylH - gasHeight - pistonH);
+            ctx.lineTo(engineX + cylW/2, engineY - 50); // Up to crankshaft visual (simplified)
+            ctx.stroke();
+
+            // Stats
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(`P: ${state.currentP.toFixed(2)} atm`, engineX + 200, engineY + 50);
+            ctx.fillText(`V: ${state.currentV.toFixed(2)} L`, engineX + 200, engineY + 80);
+            ctx.fillText(`T: ${state.currentT.toFixed(0)} K`, engineX + 200, engineY + 110);
+            
+            // Work/Heat Arrows
+            // Check process type to draw heat flow
+            const stage = state.currentStage;
+            let heatDir = 0; // 0 none, 1 in, -1 out
+            
+            if (cycleType === "Carnot") {
+                if (stage === 0) heatDir = 1; // Exp (Hot)
+                if (stage === 2) heatDir = -1; // Comp (Cold)
+            } else {
+                if (stage === 1) heatDir = 1; // Heat add
+                if (stage === 3) heatDir = -1; // Exhaust
+            }
+            
+            if (heatDir !== 0) {
+                const arrowY = engineY + cylH - gasHeight / 2;
+                ctx.font = 'bold 20px sans-serif';
+                if (heatDir === 1) {
+                    drawArrow(ctx, engineX - 60, arrowY, engineX - 10, arrowY, '#ef4444');
+                    ctx.fillStyle = '#ef4444'; ctx.fillText("Q in", engineX - 80, arrowY - 10);
+                } else {
+                    drawArrow(ctx, engineX + cylW + 10, arrowY, engineX + cylW + 60, arrowY, '#3b82f6');
+                    ctx.fillStyle = '#3b82f6'; ctx.fillText("Q out", engineX + cylW + 10, arrowY - 10);
+                }
+            }
+        };
+
+        const drawArrow = (ctx, x1, y1, x2, y2, color) => {
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            const angle = Math.atan2(y2-y1, x2-x1);
+            ctx.beginPath();
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 - 10*Math.cos(angle-Math.PI/6), y2 - 10*Math.sin(angle-Math.PI/6));
+            ctx.lineTo(x2 - 10*Math.cos(angle+Math.PI/6), y2 - 10*Math.sin(angle+Math.PI/6));
+            ctx.fill();
+        };
+
+        // --- Interaction ---
+        const handleMouseDown = (e) => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            
+            // Check points hit
+            const graphX = 50; const graphY = 50; const graphW = 400; const graphH = 400;
+            const scaleX = graphW / 12;
+            const scaleY = graphH / 25;
+            
+            points.forEach((p, i) => {
+                const px = graphX + p.V * scaleX;
+                const py = graphY + graphH - p.P * scaleY;
+                if (Math.hypot(mx - px, my - py) < 15) {
+                    dragRef.current = { isDragging: true, pointIndex: i };
+                }
+            });
+        };
+
+        const handleMouseMove = (e) => {
+            if (dragRef.current.isDragging) {
+                const rect = canvasRef.current.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                
+                const graphX = 50; const graphY = 50; const graphW = 400; const graphH = 400;
+                const scaleX = graphW / 12;
+                const scaleY = graphH / 25;
+                
+                let newV = (mx - graphX) / scaleX;
+                let newP = (graphY + graphH - my) / scaleY;
+                
+                // Clamp
+                newV = Math.max(0.5, Math.min(12, newV));
+                newP = Math.max(0.5, Math.min(25, newP));
+                
+                // Update Points
+                const idx = dragRef.current.pointIndex;
+                const newPoints = [...points];
+                newPoints[idx] = { V: newV, P: newP };
+                setPoints(newPoints);
+            }
+        };
+
+        const handleMouseUp = () => {
+            dragRef.current.isDragging = false;
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [cycleType, points, isPaused]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+        
+        // Calculate Efficiency
+        const efficiency = useMemo(() => {
+            if (points.length < 4) return 0;
+            // Area under curve approx (Shoelace formula for polygon area approx)
+            let area = 0;
+            // For work done (Loop area)
+            // Area = 0.5 * sum( (xi*y_i+1 - x_i+1*yi) ) ... this is for polygon
+            // For curved PV diagram, W = integral P dV.
+            // Simplified estimate for display based on P V range
+            // W approx (P_high - P_low) * (V_high - V_low) * factor based on cycle
+            
+            // Carnot eff = 1 - Tc/Th
+            // Tc approx lowest T, Th approx highest T
+            const Ts = points.map(p => p.P * p.V);
+            const Th = Math.max(...Ts);
+            const Tc = Math.min(...Ts);
+            const eff = 1 - (Tc/Th);
+            return (eff * 100).toFixed(1);
+        }, [points]);
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-rose-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="thermometer-sun" className="w-5 h-5 text-rose-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">Heat Engine Cycles</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Thermodynamics
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain cursor-grab active:cursor-grabbing"
+                                onMouseDown={handleMouseDown}
+                                onMouseMove={handleMouseMove}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseUp}
+                            />
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Results */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 backdrop-blur">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Efficiency ($\eta$)</h3>
+                                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
+                                    <div className="text-4xl font-mono font-bold text-rose-400">{efficiency}%</div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        Theoretical Maximum
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Controls */}
+                            <div className="p-5 space-y-6 flex-1">
+                                
+                                {/* Cycle Type */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-300 mb-2 block">Engine Cycle</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button 
+                                            onClick={() => setCycleType("Carnot")}
+                                            className={`py-2 rounded text-xs font-bold border transition-all ${cycleType === "Carnot" ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                        >
+                                            Carnot (Ideal)
+                                        </button>
+                                        <button 
+                                            onClick={() => setCycleType("Otto")}
+                                            className={`py-2 rounded text-xs font-bold border transition-all ${cycleType === "Otto" ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}
+                                        >
+                                            Otto (Petrol)
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Animation Control */}
+                                <button 
+                                    onClick={() => setIsPaused(!isPaused)}
+                                    className={`w-full py-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all 
+                                        ${isPaused ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                                >
+                                    <i data-lucide={isPaused ? "play" : "pause"} className="w-4 h-4"></i>
+                                    {isPaused ? "Resume" : "Pause"}
+                                </button>
+
+                                {/* Guide */}
+                                <div className="mt-auto p-3 bg-slate-800 border border-slate-700 rounded-lg">
+                                    <h4 className="text-slate-200 font-bold text-xs mb-1 flex items-center">
+                                        <i data-lucide="info" className="w-3 h-3 mr-1 text-sky-400"></i>
+                                        Cycle Stages
+                                    </h4>
+                                    <div className="text-[10px] text-slate-400 space-y-1">
+                                        {cycleType === "Carnot" ? (
+                                            <>
+                                                <p>1-2: Isothermal Expansion ($Q_{in}$)</p>
+                                                <p>2-3: Adiabatic Expansion (Work)</p>
+                                                <p>3-4: Isothermal Compression ($Q_{out}$)</p>
+                                                <p>4-1: Adiabatic Compression</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p>1-2: Adiabatic Compression</p>
+                                                <p>2-3: Isochoric Heating (Ignition)</p>
+                                                <p>3-4: Adiabatic Expansion (Power)</p>
+                                                <p>4-1: Isochoric Cooling (Exhaust)</p>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
