@@ -47,40 +47,45 @@
 
     const CANVAS_WIDTH = 800;
     const CANVAS_HEIGHT = 450;
-    const MAX_PARTICLES = 30; // Keep low for performance in JS loop
+    const MAX_PARTICLES = 30; 
 
     const App = () => {
         // --- State ---
-        const [temperature, setTemperature] = useState(10); // Million Kelvin (10 - 200)
-        const [pressure, setPressure] = useState(1.0); // atm (compression factor 1.0 - 3.0)
+        const [temperature, setTemperature] = useState(10); 
+        const [pressure, setPressure] = useState(1.0); 
         const [isRunning, setIsRunning] = useState(false);
-        const [energyOutput, setEnergyOutput] = useState(0); // Total energy produced
+        const [energyOutput, setEnergyOutput] = useState(0); 
         const [fusionCount, setFusionCount] = useState(0);
 
         const canvasRef = useRef(null);
         const requestRef = useRef();
         
         // Physics Objects
-        const particlesRef = useRef([]); // {x, y, vx, vy, type: 'D'|'T'|'He'|'n', r}
-        const effectsRef = useRef([]); // {x, y, life, maxLife}
-        const containerRef = useRef({ w: 600, h: 300 }); // Dynamic size based on pressure
+        const particlesRef = useRef([]); 
+        const effectsRef = useRef([]); 
+        const containerRef = useRef({ w: 600, h: 300 });
 
-        // Refs for parameters (Fixes Stale Closure)
+        // Refs for loop state (Fixes Stale Closure)
         const paramsRef = useRef({ temperature: 10, pressure: 1.0 });
+        const isRunningRef = useRef(false);
 
         // Sync State to Refs
         useEffect(() => {
             paramsRef.current = { temperature, pressure };
         }, [temperature, pressure]);
 
+        useEffect(() => {
+            isRunningRef.current = isRunning;
+        }, [isRunning]);
+
         // --- Init ---
         const resetSim = () => {
             setIsRunning(false);
+            isRunningRef.current = false;
             cancelAnimationFrame(requestRef.current);
             setEnergyOutput(0);
             setFusionCount(0);
             
-            // Spawn D and T
             const ps = [];
             const w = CANVAS_WIDTH * 0.8;
             const h = CANVAS_HEIGHT * 0.8;
@@ -105,22 +110,23 @@
         const toggleSim = () => {
             if (!isRunning) {
                 setIsRunning(true);
+                // Ref updated in useEffect, but for immediate loop start:
+                isRunningRef.current = true; 
                 requestRef.current = requestAnimationFrame(loop);
             } else {
                 setIsRunning(false);
+                isRunningRef.current = false;
                 cancelAnimationFrame(requestRef.current);
             }
         };
 
         // --- Physics Loop ---
         const loop = () => {
-            if (!isRunning) return;
+            if (!isRunningRef.current) return;
 
-            // Use Ref values to get latest updates during animation
             const { temperature: currentTemp, pressure: currentPress } = paramsRef.current;
 
-            // 1. Update Container Size (Pressure)
-            // Higher pressure = Smaller box
+            // 1. Update Container
             const targetW = 700 / currentPress;
             const targetH = 400 / currentPress;
             containerRef.current.w += (targetW - containerRef.current.w) * 0.1;
@@ -134,17 +140,12 @@
             };
 
             // 2. Update Particles
-            // Speed factor based on Temperature
-            // KE ~ T -> v ~ sqrt(T)
             const speedScale = Math.sqrt(currentTemp) * 0.5;
-
             const ps = particlesRef.current;
             
             for (let i = 0; i < ps.length; i++) {
                 let p1 = ps[i];
                 
-                // Move
-                // If He or n (products), they move very fast
                 const typeScale = (p1.type === 'He' || p1.type === 'n') ? 3.0 : 1.0;
                 
                 p1.x += p1.vx * speedScale * typeScale;
@@ -156,8 +157,7 @@
                 if (p1.y < bounds.top + p1.r) { p1.y = bounds.top + p1.r; p1.vy *= -1; }
                 if (p1.y > bounds.bottom - p1.r) { p1.y = bounds.bottom - p1.r; p1.vy *= -1; }
 
-                // Particle Interactions (Fusion Check)
-                // Only check D + T
+                // Fusion Check
                 if (p1.type === 'D' || p1.type === 'T') {
                     for (let j = i + 1; j < ps.length; j++) {
                         let p2 = ps[j];
@@ -168,7 +168,7 @@
                             const minDist = p1.r + p2.r;
                             
                             if (distSq < minDist * minDist) {
-                                // Collision!
+                                // Collision
                                 if (currentTemp > 60 && Math.random() < (currentTemp/200)) {
                                     // FUSION!
                                     p1.type = 'He';
@@ -181,16 +181,15 @@
                                     p2.vx = -p1.vx * 4; 
                                     p2.vy = -p1.vy * 4;
                                     
-                                    // Add Effect
                                     effectsRef.current.push({
                                         x: (p1.x+p2.x)/2, y: (p1.y+p2.y)/2,
                                         life: 1.0, maxLife: 1.0
                                     });
                                     
                                     setFusionCount(c => c + 1);
-                                    setEnergyOutput(e => e + 17.6); // MeV
+                                    setEnergyOutput(e => e + 17.6); 
                                 } else {
-                                    // Repulsion Bounce
+                                    // Bounce
                                     const tempVx = p1.vx; p1.vx = p2.vx; p2.vx = tempVx;
                                     const tempVy = p1.vy; p1.vy = p2.vy; p2.vy = tempVy;
                                     
@@ -214,12 +213,12 @@
             const ctx = canvasRef.current?.getContext('2d');
             if (!ctx) return;
 
-            // Use Ref value for rendering visuals
+            // Use Ref for drawing visuals too
             const { temperature: currentTemp } = paramsRef.current;
 
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
             
-            // 1. Draw Container (Tokamak)
+            // 1. Draw Container
             const b = {
                 x: (CANVAS_WIDTH - containerRef.current.w)/2,
                 y: (CANVAS_HEIGHT - containerRef.current.h)/2,
@@ -227,7 +226,6 @@
                 h: containerRef.current.h
             };
             
-            // Glow effect proportional to Temp
             const glowOpacity = Math.min(0.8, currentTemp / 200);
             const glowColor = `rgba(249, 115, 22, ${glowOpacity})`;
             
@@ -236,9 +234,8 @@
             ctx.strokeStyle = `rgba(148, 163, 184, 0.5)`;
             ctx.lineWidth = 10;
             ctx.strokeRect(b.x, b.y, b.w, b.h);
-            ctx.shadowBlur = 0; // Reset
+            ctx.shadowBlur = 0; 
             
-            // Fill background
             ctx.fillStyle = `rgba(15, 23, 42, 0.8)`;
             ctx.fillRect(b.x, b.y, b.w, b.h);
 
@@ -247,20 +244,20 @@
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
                 
-                if (p.type === 'D') ctx.fillStyle = '#3b82f6'; // Blue
-                else if (p.type === 'T') ctx.fillStyle = '#ef4444'; // Red
+                if (p.type === 'D') ctx.fillStyle = '#3b82f6'; 
+                else if (p.type === 'T') ctx.fillStyle = '#ef4444'; 
                 else if (p.type === 'He') {
-                    ctx.fillStyle = '#facc15'; // Yellow
+                    ctx.fillStyle = '#facc15'; 
                     ctx.shadowColor = '#facc15';
                     ctx.shadowBlur = 10;
                 }
-                else if (p.type === 'n') ctx.fillStyle = '#9ca3af'; // Grey
+                else if (p.type === 'n') ctx.fillStyle = '#9ca3af'; 
                 
                 ctx.fill();
                 ctx.shadowBlur = 0;
             });
 
-            // 3. Draw Effects (Explosions)
+            // 3. Draw Effects
             effectsRef.current.forEach(e => {
                 e.life -= 0.05;
                 if (e.life > 0) {
