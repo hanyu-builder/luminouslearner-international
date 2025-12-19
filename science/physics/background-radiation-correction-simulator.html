@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Background Radiation Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Digital-7&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .digital-font { font-family: 'Courier New', monospace; letter-spacing: -1px; }
+        .canvas-container { cursor: default; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 400;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+    
+    const SOURCE_X = 100;
+    const BARRIER_X = 400;
+    const DETECTOR_X = 700;
+
+    const App = () => {
+        // --- State ---
+        const [sourceType, setSourceType] = useState('alpha'); // alpha, beta, gamma
+        const [barrierType, setBarrierType] = useState('none'); // none, paper, aluminium, lead
+        const [thickness, setThickness] = useState(5); // mm (visual width)
+        const [isRunning, setIsRunning] = useState(true);
+        const [soundEnabled, setSoundEnabled] = useState(false);
+        
+        // Data
+        const [cpm, setCpm] = useState(0); // Counts Per Minute
+        const [timer, setTimer] = useState(0); // Timer state for UI display
+        const [isCounting, setIsCounting] = useState(false);
+        const [mode, setMode] = useState('background');
+        const [totalCounts, setTotalCounts] = useState(0);
+
+        // Stored Values
+        const [bgRate, setBgRate] = useState(null); 
+        const [sourceRate, setSourceRate] = useState(null); 
+        const [correctedRate, setCorrectedRate] = useState(null);
+
+        // Use Ref for particles to allow synchronous updates in loop
+        const particlesRef = useRef([]);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const audioCtxRef = useRef(null);
+        const lastTickRef = useRef(0);
+        
+        // Refs for loop access to current state
+        const paramsRef = useRef({ sourceType, barrierType });
+
+        // Sync params
+        useEffect(() => {
+            paramsRef.current = { sourceType, barrierType };
+        }, [sourceType, barrierType]);
+
+        // --- Physics Logic ---
+        const getPenetrationChance = (type, barrier) => {
+            if (barrier === 'none') return 1.0; 
+
+            if (type === 'alpha') {
+                if (barrier === 'paper') return 0.0;
+                if (barrier === 'aluminium') return 0.0;
+                if (barrier === 'lead') return 0.0;
+            }
+            if (type === 'beta') {
+                if (barrier === 'paper') return 0.95;
+                if (barrier === 'aluminium') return 0.0;
+                if (barrier === 'lead') return 0.0;
+            }
+            if (type === 'gamma') {
+                if (barrier === 'paper') return 1.0;
+                if (barrier === 'aluminium') return 0.95;
+                if (barrier === 'lead') return 0.1;
+            }
+            return 1.0;
+        };
+
+        // --- Audio ---
+        const playClick = () => {
+            if (!soundEnabled) return;
+            
+            if (!audioCtxRef.current) {
+                audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+
+            const osc = audioCtxRef.current.createOscillator();
+            const gain = audioCtxRef.current.createGain();
+
+            osc.type = 'square';
+            osc.frequency.value = 800 + Math.random() * 200;
+            
+            gain.gain.setValueAtTime(0.1, audioCtxRef.current.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtxRef.current.currentTime + 0.05);
+
+            osc.connect(gain);
+            gain.connect(audioCtxRef.current.destination);
+            
+            osc.start();
+            osc.stop(audioCtxRef.current.currentTime + 0.05);
+        };
+        
+        const startCount = () => {
+            if (isCounting) return;
+            setIsCounting(true);
+            setTimer(0);
+            setTotalCounts(0);
+            setCpm(0);
+            lastTickRef.current = performance.now();
+        };
+
+        const stopCount = () => {
+            setIsCounting(false);
+            // Save result
+            const finalRate = Math.round(totalCounts / (timer / 60)); // CPM
+            if (mode === 'background') setBgRate(finalRate);
+            else setSourceRate(finalRate);
+        };
+
+        const reset = () => {
+            setIsCounting(false);
+            setTimer(0);
+            setTotalCounts(0);
+            setCpm(0);
+            setBgRate(null);
+            setSourceRate(null);
+            setCorrectedRate(null);
+        };
+        
+        const calculateCorrection = () => {
+            if (bgRate !== null && sourceRate !== null) {
+                setCorrectedRate(sourceRate - bgRate);
+            }
+        };
+
+        const setBarrier = (type) => {
+            setBarrierType(type);
+            if (type === 'paper') setThickness(2);
+            else if (type === 'aluminium') setThickness(10);
+            else if (type === 'lead') setThickness(40);
+        };
+
+        // --- Simulation Loop ---
+        const loop = (timestamp) => {
+            if (!isRunning) return;
+            
+            const dt = (timestamp - lastTickRef.current) / 1000;
+            // Only update timer if counting is active
+            if (isCounting) {
+                 // Check if dt is reasonable (prevent jump on resume)
+                 if (dt < 0.1) {
+                     setTimer(t => {
+                         const nextT = t + dt;
+                         if (nextT >= 60) {
+                             stopCount();
+                             return 60;
+                         }
+                         return nextT;
+                     });
+                 }
+                 lastTickRef.current = timestamp;
+            } else {
+                lastTickRef.current = timestamp; // Keep updating reference
+            }
+
+            const { sourceType: currentSource, barrierType: currentBarrier } = paramsRef.current;
+
+            // 1. Spawn Particles
+            if (Math.random() < 0.3) {
+                particlesRef.current.push({
+                    x: SOURCE_X + 40,
+                    y: CENTER_Y + (Math.random() - 0.5) * 40,
+                    vx: (5 + Math.random() * 2),
+                    vy: (Math.random() - 0.5) * 0.5,
+                    type: currentSource,
+                    dead: false,
+                    passed: false
+                });
+            }
+
+            // 2. Update Particles
+            let hits = 0;
+            
+            particlesRef.current = particlesRef.current.map(p => {
+                if (p.dead) return p;
+
+                let nextX = p.x + p.vx;
+                let nextY = p.y + p.vy;
+                let isDead = false;
+
+                // Barrier Collision
+                if (!p.passed && nextX >= BARRIER_X - thickness && nextX <= BARRIER_X + thickness) {
+                    const chance = getPenetrationChance(p.type, currentBarrier);
+                    if (Math.random() > chance) { // Blocked
+                        isDead = true; 
+                        nextX = BARRIER_X - Math.random() * 5; 
+                    } else {
+                        p.passed = true; // Passed through
+                    }
+                }
+
+                // Detector Collision
+                if (nextX >= DETECTOR_X - 20 && nextX <= DETECTOR_X + 20 && Math.abs(nextY - CENTER_Y) < 40) {
+                    isDead = true;
+                    hits++;
+                    playClick();
+                }
+
+                // Out of bounds
+                if (nextX > CANVAS_WIDTH) isDead = true;
+
+                return { ...p, x: nextX, y: nextY, dead: isDead };
+            }).filter(p => p.x < CANVAS_WIDTH + 50 && !(p.dead && Math.random() > 0.9));
+
+            // 3. Update CPM
+            if (isCounting) {
+                if (hits > 0) {
+                    setTotalCounts(prev => prev + hits);
+                    setCpm(prev => prev + hits * 50); 
+                }
+                // Decay
+                setCpm(prev => Math.max(0, prev * 0.95)); 
+            } else {
+                 // Idle noise for CPM visual?
+                 setCpm(prev => Math.max(0, prev * 0.9));
+            }
+
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            const { sourceType: currentSource, barrierType: currentBarrier } = paramsRef.current;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Source Block
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(SOURCE_X - 40, CENTER_Y - 40, 80, 80);
+            ctx.fillStyle = '#facc15';
+            ctx.beginPath();
+            ctx.moveTo(SOURCE_X, CENTER_Y - 20);
+            ctx.lineTo(SOURCE_X + 20, CENTER_Y + 15);
+            ctx.lineTo(SOURCE_X - 20, CENTER_Y + 15);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(currentSource.toUpperCase(), SOURCE_X, CENTER_Y + 50);
+
+            // 2. Barrier
+            if (currentBarrier !== 'none') {
+                if (currentBarrier === 'paper') ctx.fillStyle = '#fefce8';
+                else if (currentBarrier === 'aluminium') ctx.fillStyle = '#94a3b8';
+                else if (currentBarrier === 'lead') ctx.fillStyle = '#475569';
+                
+                ctx.fillRect(BARRIER_X - thickness, CENTER_Y - 100, thickness * 2, 200);
+                
+                ctx.fillStyle = '#fff';
+                ctx.fillText(currentBarrier.charAt(0).toUpperCase() + currentBarrier.slice(1), BARRIER_X, CENTER_Y - 110);
+            }
+
+            // 3. Detector
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(DETECTOR_X, CENTER_Y - 40, 80, 80);
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(DETECTOR_X, CENTER_Y - 40, 10, 80); 
+            ctx.beginPath(); ctx.moveTo(DETECTOR_X + 80, CENTER_Y); ctx.lineTo(CANVAS_WIDTH, CENTER_Y); ctx.stroke();
+
+            // 4. Particles
+            particlesRef.current.forEach(p => {
+                ctx.beginPath();
+                
+                if (p.type === 'alpha') {
+                    ctx.fillStyle = '#ef4444';
+                    ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
+                } else if (p.type === 'beta') {
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.arc(p.x, p.y, 2, 0, Math.PI*2);
+                } else {
+                    ctx.strokeStyle = '#facc15';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x - 5, p.y);
+                    ctx.quadraticCurveTo(p.x, p.y - 3, p.x + 5, p.y);
+                    ctx.stroke();
+                    return; 
+                }
+                ctx.fill();
+            });
+            
+            // Visual Effect for Radiation (Random Background lines)
+            const currentTime = Date.now() / 1000;
+            const seed = Math.floor(currentTime * 10);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+            ctx.lineWidth = 1;
+            for(let i=0; i<5; i++) {
+                const x = (Math.sin(seed + i) * 0.5 + 0.5) * CANVAS_WIDTH;
+                const y = (Math.cos(seed * i) * 0.5 + 0.5) * CANVAS_HEIGHT;
+                const len = 20;
+                const angle = Math.random() * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + Math.cos(angle)*len, y + Math.sin(angle)*len);
+                ctx.stroke();
+            }
+        };
+
+        useEffect(() => {
+            if (isRunning) {
+                lastTickRef.current = performance.now();
+                requestRef.current = requestAnimationFrame(loop);
+            } else {
+                cancelAnimationFrame(requestRef.current);
+            }
+            return () => cancelAnimationFrame(requestRef.current);
+        }, [isRunning]); 
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-yellow-500/20 p-2 rounded-lg">
+                            <i data-lucide="radio" className="w-6 h-6 text-yellow-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Background Radiation Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Nuclear Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation Canvas */}
+                    <div className="lg:col-span-8 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[400px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            {/* Counter Overlay */}
+                            <div className="absolute top-[295px] left-[510px] w-[120px] text-right font-mono text-emerald-400 font-bold text-2xl tracking-widest digital-font">
+                                {totalCounts.toString().padStart(4, '0')}
+                            </div>
+                            
+                            <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-xs shadow-lg space-y-1">
+                                <div className="flex justify-between gap-4">
+                                    <span className="text-slate-400">Timer</span>
+                                    <span className="text-white font-mono">{timer.toFixed(1)}s</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                    <span className="text-slate-400">Current Rate</span>
+                                    <span className="text-yellow-400 font-mono">{cpm} CPM</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center justify-between">
+                            
+                            {/* Mode Select */}
+                            <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700">
+                                <button 
+                                    onClick={() => { setMode('background'); reset(); }}
+                                    disabled={isCounting}
+                                    className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${mode === 'background' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Measure Background
+                                </button>
+                                <button 
+                                    onClick={() => { setMode('source'); reset(); }}
+                                    disabled={isCounting}
+                                    className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${mode === 'source' ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Measure Source
+                                </button>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button 
+                                    onClick={isCounting ? stopCount : startCount}
+                                    className={`px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${isCounting ? 'bg-slate-700 text-slate-300' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                                >
+                                    <i data-lucide={isCounting ? "square" : "play"} className="w-5 h-5"></i>
+                                    {isCounting ? "Stop" : "Start Count"}
+                                </button>
+                                <button onClick={reset} className="px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors">
+                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Data Analysis */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-6 flex items-center">
+                                <i data-lucide="clipboard-list" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Lab Results
+                            </h2>
+                            
+                            <div className="space-y-4">
+                                <div className="p-4 rounded-xl bg-blue-900/10 border border-blue-500/20">
+                                    <div className="text-xs text-blue-400 uppercase tracking-widest mb-1">Background Rate</div>
+                                    <div className="text-2xl font-mono font-bold text-white">
+                                        {bgRate !== null ? bgRate : '--'} <span className="text-sm text-slate-500">CPM</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        Radiation from environment (must be subtracted!)
+                                    </div>
+                                </div>
+
+                                <div className="p-4 rounded-xl bg-red-900/10 border border-red-500/20">
+                                    <div className="text-xs text-red-400 uppercase tracking-widest mb-1">Source + Background</div>
+                                    <div className="text-2xl font-mono font-bold text-white">
+                                        {sourceRate !== null ? sourceRate : '--'} <span className="text-sm text-slate-500">CPM</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-1">
+                                        Total reading with source present
+                                    </div>
+                                </div>
+
+                                <div className="border-t border-slate-700 my-4"></div>
+
+                                <button 
+                                    onClick={calculateCorrection}
+                                    disabled={bgRate === null || sourceRate === null}
+                                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-bold transition-colors"
+                                >
+                                    Calculate Corrected Rate
+                                </button>
+
+                                <div className="p-4 rounded-xl bg-emerald-900/20 border border-emerald-500/50 text-center">
+                                    <div className="text-xs text-emerald-400 uppercase tracking-widest mb-1">True Source Rate</div>
+                                    <div className="text-3xl font-mono font-bold text-white">
+                                        {correctedRate !== null ? correctedRate : '--'} <span className="text-lg text-slate-500">CPM</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-2 font-mono">
+                                        = {sourceRate || 'Total'} - {bgRate || 'Background'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
