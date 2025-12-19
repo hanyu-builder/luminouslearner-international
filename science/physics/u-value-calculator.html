@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>U-Value Calculator | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    const CANVAS_WIDTH = 900;
+    const CANVAS_HEIGHT = 550;
+    
+    // Material Database (k in W/mK)
+    const MATERIALS = [
+        { name: "Brick", k: 0.84, color: "#9a3412", pattern: "brick" },
+        { name: "Concrete", k: 1.40, color: "#64748b", pattern: "dots" },
+        { name: "Insulation (Wool)", k: 0.04, color: "#fef3c7", pattern: "wool" },
+        { name: "Wood", k: 0.14, color: "#a87748", pattern: "grain" },
+        { name: "Plasterboard", k: 0.19, color: "#e2e8f0", pattern: "solid" },
+        { name: "Glass", k: 1.05, color: "#bae6fd", pattern: "solid" },
+        { name: "Air Gap", k: 0.025, color: "#f1f5f9", pattern: "air" } // Simplified k for gap
+    ];
+
+    // Standard Surface Resistances (m²K/W)
+    const R_SI = 0.13; // Inside
+    const R_SE = 0.04; // Outside
+
+    const App = () => {
+        // --- State ---
+        const [layers, setLayers] = useState([
+            { id: 1, type: "Plasterboard", d: 15 }, // mm
+            { id: 2, type: "Insulation (Wool)", d: 100 },
+            { id: 3, type: "Brick", d: 110 }
+        ]);
+        const [tempIn, setTempIn] = useState(20); // °C
+        const [tempOut, setTempOut] = useState(0); // °C
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+
+        // --- Calculations ---
+        const calculations = useMemo(() => {
+            let totalR = R_SI + R_SE;
+            const layerData = layers.map(l => {
+                const mat = MATERIALS.find(m => m.name === l.type);
+                const d_meters = l.d / 1000;
+                const r_value = d_meters / mat.k;
+                totalR += r_value;
+                return { ...l, mat, r_value, d_meters };
+            });
+
+            const uValue = 1 / totalR;
+            const heatFlow = uValue * (tempIn - tempOut); // W/m²
+
+            // Calculate Interface Temperatures
+            let currentTemp = tempIn;
+            // Drop across inside air film
+            const t_si = currentTemp - (heatFlow * R_SI);
+            
+            const interfaces = [{ x: 0, temp: t_si, label: "Inside Wall" }];
+            let accumulatedR = R_SI;
+            
+            layerData.forEach(l => {
+                accumulatedR += l.r_value;
+                const t_next = tempIn - (heatFlow * accumulatedR);
+                interfaces.push({ temp: t_next, label: l.type });
+            });
+
+            return { totalR, uValue, layerData, interfaces };
+        }, [layers, tempIn, tempOut]);
+
+        // --- Drawing ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            // Clear
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // Setup Layout
+            const WALL_START_X = 100;
+            const WALL_MAX_WIDTH = 700;
+            const SCALE_Y = 300; // Height of wall section
+            const WALL_TOP = 150;
+
+            // Total visual thickness unit (arbitrary for visualization)
+            // We scale visual width not purely linearly by thickness because 10mm plaster vs 100mm brick
+            // Let's use a non-linear or minimum width scale to ensure visibility
+            const totalVisualUnits = layers.reduce((acc, l) => acc + Math.max(l.d, 30), 0);
+            const scaleX = WALL_MAX_WIDTH / totalVisualUnits;
+
+            let currentX = WALL_START_X;
+
+            // 1. Draw Environment (Left/Right)
+            ctx.font = "bold 20px sans-serif";
+            
+            // Inside (Left)
+            ctx.fillStyle = tempIn > tempOut ? '#fca5a5' : '#93c5fd';
+            ctx.fillText(`Inside: ${tempIn}°C`, 20, 100);
+            ctx.fillStyle = 'rgba(255,255,255,0.05)';
+            ctx.fillRect(0, 0, WALL_START_X, CANVAS_HEIGHT);
+
+            // Outside (Right)
+            ctx.fillStyle = tempOut > tempIn ? '#fca5a5' : '#93c5fd';
+            ctx.fillText(`Outside: ${tempOut}°C`, CANVAS_WIDTH - 150, 100);
+            
+            // 2. Draw Layers
+            calculations.layerData.forEach((l, idx) => {
+                const visualWidth = Math.max(l.d, 30) * scaleX;
+                
+                // Draw Material Rect
+                ctx.fillStyle = l.mat.color;
+                ctx.fillRect(currentX, WALL_TOP, visualWidth, SCALE_Y);
+                
+                // Draw Pattern Overlay
+                if (l.mat.pattern === 'brick') drawBrickPattern(ctx, currentX, WALL_TOP, visualWidth, SCALE_Y);
+                if (l.mat.pattern === 'wool') drawWoolPattern(ctx, currentX, WALL_TOP, visualWidth, SCALE_Y);
+                if (l.mat.pattern === 'dots') drawDotsPattern(ctx, currentX, WALL_TOP, visualWidth, SCALE_Y);
+                if (l.mat.pattern === 'grain') drawGrainPattern(ctx, currentX, WALL_TOP, visualWidth, SCALE_Y);
+
+                // Outline
+                ctx.strokeStyle = '#0f172a';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(currentX, WALL_TOP, visualWidth, SCALE_Y);
+
+                // Dimension Label
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${l.d}mm`, currentX + visualWidth/2, WALL_TOP + SCALE_Y + 20);
+                
+                // Store visual coordinates for temperature line
+                l.visualXStart = currentX;
+                l.visualWidth = visualWidth;
+
+                currentX += visualWidth;
+            });
+
+            // 3. Draw Temperature Gradient Line
+            const tempScaleY = 4; // pixels per degree difference relative to center
+            const tempBaseY = WALL_TOP + SCALE_Y / 2;
+
+            ctx.beginPath();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ef4444'; // Red line
+            ctx.lineJoin = 'round'; // Fixed: Property assignment, not function call
+
+            // Start Point (Inside Air)
+            // Visual X for Inside Air temp is slightly left of wall
+            const startY = tempBaseY - (tempIn - (tempIn+tempOut)/2) * tempScaleY;
+            ctx.moveTo(20, startY);
+            
+            // Surface Inside
+            const surfInY = tempBaseY - (calculations.interfaces[0].temp - (tempIn+tempOut)/2) * tempScaleY;
+            ctx.lineTo(WALL_START_X, surfInY);
+
+            // Interfaces
+            calculations.layerData.forEach((l, idx) => {
+                const tempAtInterface = calculations.interfaces[idx+1].temp;
+                const y = tempBaseY - (tempAtInterface - (tempIn+tempOut)/2) * tempScaleY;
+                ctx.lineTo(l.visualXStart + l.visualWidth, y);
+            });
+
+            // End Point (Outside Air)
+            const endY = tempBaseY - (tempOut - (tempIn+tempOut)/2) * tempScaleY;
+            ctx.lineTo(CANVAS_WIDTH - 20, endY);
+            ctx.stroke();
+
+            // Draw Temperature Dots & Labels at interfaces
+            calculations.layerData.forEach((l, idx) => {
+                const temp = calculations.interfaces[idx+1].temp;
+                const x = l.visualXStart + l.visualWidth;
+                const y = tempBaseY - (temp - (tempIn+tempOut)/2) * tempScaleY;
+
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
+                
+                // Temp Label
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.fillText(temp.toFixed(1) + "°C", x, y - 10);
+            });
+        };
+
+        // Pattern Helpers
+        const drawBrickPattern = (ctx, x, y, w, h) => {
+            ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1; ctx.beginPath();
+            for(let i=0; i<h; i+=20) {
+                ctx.moveTo(x, y+i); ctx.lineTo(x+w, y+i);
+                for(let j=0; j<w; j+=30) {
+                    const offset = (i/20)%2 === 0 ? 0 : 15;
+                    ctx.moveTo(x+j+offset, y+i); ctx.lineTo(x+j+offset, Math.min(y+i+20, y+h));
+                }
+            }
+            ctx.stroke();
+        }
+        const drawWoolPattern = (ctx, x, y, w, h) => {
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.lineWidth = 1.5; ctx.beginPath();
+            for(let i=0; i<w; i+=10) {
+                ctx.moveTo(x+i, y); 
+                ctx.bezierCurveTo(x+i+5, y+h/3, x+i-5, y+2*h/3, x+i, y+h);
+            }
+            ctx.stroke();
+        }
+        const drawDotsPattern = (ctx, x, y, w, h) => {
+            ctx.fillStyle = 'rgba(255,255,255,0.1)';
+            for(let i=0; i<20; i++) {
+                ctx.beginPath(); ctx.arc(x+Math.random()*w, y+Math.random()*h, 2, 0, Math.PI*2); ctx.fill();
+            }
+        }
+        const drawGrainPattern = (ctx, x, y, w, h) => {
+            ctx.strokeStyle = 'rgba(50,20,0,0.1)'; ctx.lineWidth = 1; ctx.beginPath();
+            for(let i=0; i<w; i+=5) {
+                ctx.moveTo(x+i, y); ctx.lineTo(x+i, y+h);
+            }
+            ctx.stroke();
+        }
+
+        // --- Layer Actions ---
+        const addLayer = () => {
+            const newId = Math.max(...layers.map(l => l.id), 0) + 1;
+            setLayers([...layers, { id: newId, type: "Insulation (Wool)", d: 50 }]);
+        };
+        const removeLayer = (id) => {
+            if (layers.length <= 1) return;
+            setLayers(layers.filter(l => l.id !== id));
+        };
+        const updateLayer = (id, field, value) => {
+            setLayers(layers.map(l => l.id === id ? { ...l, [field]: value } : l));
+        };
+
+        useEffect(() => {
+            draw();
+        }, [calculations]);
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        return (
+            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
+                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-orange-500/20 p-1.5 rounded-lg">
+                            <i data-lucide="thermometer-snowflake" className="w-5 h-5 text-orange-400"></i>
+                        </div>
+                        <h1 className="text-lg font-bold text-white tracking-wide">U-Value Calculator</h1>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
+                        Topic: Energy Efficiency
+                    </div>
+                </nav>
+
+                <main className="flex-1 overflow-hidden">
+                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
+                        
+                        {/* LEFT: Canvas */}
+                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+
+                        {/* RIGHT: Controls */}
+                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
+                            
+                            {/* 1. Results Panel */}
+                            <div className="p-4 bg-slate-800/50 border-b border-slate-700 sticky top-0 z-10 backdrop-blur">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Performance</h3>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center bg-slate-900 p-3 rounded border border-slate-700">
+                                        <div className="text-xs text-slate-400">Total U-Value</div>
+                                        <div className="text-right">
+                                            <div className="text-2xl font-mono font-bold text-emerald-400">{calculations.uValue.toFixed(2)}</div>
+                                            <div className="text-[10px] text-slate-500">W / m²K</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="bg-slate-900 p-2 rounded border border-slate-700">
+                                            <div className="text-[10px] text-slate-500">Total R-Value</div>
+                                            <div className="font-mono font-bold text-blue-400">{calculations.totalR.toFixed(2)}</div>
+                                        </div>
+                                        <div className="bg-slate-900 p-2 rounded border border-slate-700">
+                                            <div className="text-[10px] text-slate-500">Heat Loss</div>
+                                            <div className="font-mono font-bold text-rose-400">
+                                                {(calculations.uValue * Math.abs(tempIn - tempOut)).toFixed(1)} W/m²
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 2. Construction Controls */}
+                            <div className="p-4 flex-1">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Wall Layers</h3>
+                                    <button 
+                                        onClick={addLayer}
+                                        className="text-[10px] bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded flex items-center gap-1"
+                                    >
+                                        <i data-lucide="plus" className="w-3 h-3"></i> Add
+                                    </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {layers.map((layer, index) => (
+                                        <div key={layer.id} className="bg-slate-800 p-3 rounded border border-slate-700 group relative">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className="text-xs font-bold text-slate-300 bg-slate-700 px-1.5 rounded">{index + 1}. Inside</span>
+                                                <button onClick={() => removeLayer(layer.id)} className="text-slate-500 hover:text-red-400">
+                                                    <i data-lucide="trash-2" className="w-3 h-3"></i>
+                                                </button>
+                                            </div>
+                                            
+                                            <div className="space-y-2">
+                                                <select 
+                                                    value={layer.type} 
+                                                    onChange={(e) => updateLayer(layer.id, "type", e.target.value)}
+                                                    className="w-full bg-slate-900 border border-slate-600 text-xs text-white rounded p-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                                                >
+                                                    {MATERIALS.map(m => (
+                                                        <option key={m.name} value={m.name}>{m.name} (k={m.k})</option>
+                                                    ))}
+                                                </select>
+
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-[10px] text-slate-400 w-16">Thickness:</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={layer.d} 
+                                                        onChange={(e) => updateLayer(layer.id, "d", Number(e.target.value))}
+                                                        className="flex-1 bg-slate-900 border border-slate-600 text-xs text-white rounded p-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                                                    />
+                                                    <span className="text-[10px] text-slate-500">mm</span>
+                                                </div>
+
+                                                <div className="text-[10px] text-right text-slate-500 font-mono">
+                                                    R = {(layer.d / 1000 / MATERIALS.find(m => m.name === layer.type).k).toFixed(2)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            {/* 3. Temp Controls */}
+                            <div className="p-4 border-t border-slate-700 bg-slate-900">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Conditions</h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[10px] text-slate-500 block mb-1">Inside Temp (°C)</label>
+                                        <input type="number" value={tempIn} onChange={(e) => setTempIn(Number(e.target.value))} className="w-full bg-slate-800 border border-slate-600 text-xs p-1.5 rounded text-white"/>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-500 block mb-1">Outside Temp (°C)</label>
+                                        <input type="number" value={tempOut} onChange={(e) => setTempOut(Number(e.target.value))} className="w-full bg-slate-800 border border-slate-600 text-xs p-1.5 rounded text-white"/>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                    </div>
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
