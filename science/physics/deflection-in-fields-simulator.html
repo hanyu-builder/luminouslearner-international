@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deflection in Fields Lab | Luminous Learner</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        }
+        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
+        .thumb-pink::-webkit-slider-thumb { background: #ec4899; }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CANVAS_WIDTH = 800;
+    const CANVAS_HEIGHT = 450;
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    // Field Region
+    const FIELD_X_START = 200;
+    const FIELD_X_END = 600;
+    const FIELD_Y_START = 50;
+    const FIELD_Y_END = 400;
+
+    const PARTICLES = {
+        'alpha': { m: 4.0, q: 2.0, color: '#ef4444', label: 'α (Alpha)' },
+        'beta_minus': { m: 0.05, q: -1.0, color: '#3b82f6', label: 'β⁻ (Electron)' }, // Mass scaled for visual
+        'beta_plus': { m: 0.05, q: 1.0, color: '#a855f7', label: 'β⁺ (Positron)' },
+        'gamma': { m: 0.0, q: 0.0, color: '#facc15', label: 'γ (Gamma)' }
+    };
+
+    const App = () => {
+        // --- State ---
+        const [fieldType, setFieldType] = useState('electric'); // 'electric' or 'magnetic'
+        const [fieldStrength, setFieldStrength] = useState(5.0); // +/-
+        const [velocity, setVelocity] = useState(5.0); // Initial speed
+        const [selectedParticle, setSelectedParticle] = useState('alpha');
+        
+        const [particles, setParticles] = useState([]); // Active particles
+        const [showTrails, setShowTrails] = useState(true);
+
+        const canvasRef = useRef(null);
+        const requestRef = useRef();
+        const prevTimeRef = useRef(0);
+
+        // --- Logic ---
+        const fire = () => {
+            const pType = PARTICLES[selectedParticle];
+            setParticles(prev => [...prev, {
+                x: 50,
+                y: CENTER_Y,
+                vx: velocity * 20, // Scale to pixels
+                vy: 0,
+                type: selectedParticle,
+                trail: [],
+                active: true
+            }]);
+        };
+
+        const clear = () => setParticles([]);
+
+        const loop = (timestamp) => {
+            const dt = (timestamp - prevTimeRef.current) / 1000;
+            prevTimeRef.current = timestamp;
+            const safeDt = Math.min(dt, 0.05);
+
+            setParticles(prev => prev.map(p => {
+                if (!p.active) return p;
+
+                const props = PARTICLES[p.type];
+                let ax = 0;
+                let ay = 0;
+
+                // Check if inside field region
+                if (p.x >= FIELD_X_START && p.x <= FIELD_X_END && p.y >= FIELD_Y_START && p.y <= FIELD_Y_END) {
+                    
+                    if (fieldType === 'electric') {
+                        // F = qE. E is vertical (Up/Down).
+                        // Let's say positive fieldStrength means E points DOWN (+Y).
+                        // F = q * E. ay = (q * E) / m
+                        
+                        // Force direction based on charge and field sign
+                        // q(+), E(+) -> F(+) Down
+                        // q(-), E(+) -> F(-) Up
+                        
+                        const E = fieldStrength * 50; // Scale
+                        ay = (props.q * E) / props.m;
+                        
+                    } else {
+                        // Magnetic Field
+                        // F = q(v x B). 
+                        // B is perpendicular to screen (Z).
+                        // Positive fieldStrength = B Out of page (+Z)? Or Into?
+                        // Let's say B > 0 means INTO page (X).
+                        // v is Right (+X). B is In (+Z).
+                        // F = q (v x B).
+                        // v=(v,0,0), B=(0,0,B). Cross = (0, -vB, 0) = Up (-Y)?
+                        // Let's use Right Hand Rule: v(Right), B(In) -> F(Up).
+                        // So for +q, Force is Up (-Y).
+                        // ay = -(q * v * B) / m
+                        
+                        const B = fieldStrength * 2; // Scale
+                        
+                        // Force is always perpendicular to velocity
+                        // F_mag = q * v * B
+                        // a_mag = (q * v * B) / m
+                        // Direction is rotated 90 deg from v
+                        
+                        // Current velocity vector
+                        const vMag = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                        if (vMag > 0 && props.m > 0) {
+                            const aMag = (props.q * vMag * B) / props.m;
+                            
+                            // Perpendicular vector (-vy, vx) or (vy, -vx)
+                            // If B is IN, +q turns Up (Left turn relative to velocity).
+                            // (1, 0) -> (0, -1).
+                            // So vector is (vy, -vx) ?
+                            // Check: v=(1,0). perp=(0, -1). Correct (Up is -Y in canvas).
+                            
+                            ax = (p.vy / vMag) * aMag;
+                            ay = -(p.vx / vMag) * aMag;
+                        }
+                    }
+                }
+
+                // Update Vel
+                const newVx = p.vx + ax * safeDt;
+                const newVy = p.vy + ay * safeDt;
+                
+                // Update Pos
+                const newX = p.x + newVx * safeDt;
+                const newY = p.y + newVy * safeDt;
+
+                // Trail
+                const newTrail = [...p.trail];
+                if (showTrails && (newTrail.length === 0 || Math.hypot(newX - newTrail[newTrail.length-1].x, newY - newTrail[newTrail.length-1].y) > 5)) {
+                    newTrail.push({x: newX, y: newY});
+                }
+                
+                // Bounds
+                const isActive = newX < CANVAS_WIDTH + 50 && newY > -50 && newY < CANVAS_HEIGHT + 50;
+
+                return { ...p, x: newX, y: newY, vx: newVx, vy: newVy, trail: newTrail, active: isActive };
+
+            }).filter(p => p.active)); // Keep active
+
+            draw();
+            requestRef.current = requestAnimationFrame(loop);
+        };
+
+        // --- Rendering ---
+        const draw = () => {
+            const ctx = canvasRef.current?.getContext('2d');
+            if (!ctx) return;
+
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Draw Field Region
+            // Background color hint
+            ctx.fillStyle = fieldType === 'electric' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(236, 72, 153, 0.1)';
+            ctx.fillRect(FIELD_X_START, FIELD_Y_START, FIELD_X_END - FIELD_X_START, FIELD_Y_END - FIELD_Y_START);
+            ctx.strokeStyle = fieldType === 'electric' ? '#6366f1' : '#ec4899';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(FIELD_X_START, FIELD_Y_START, FIELD_X_END - FIELD_X_START, FIELD_Y_END - FIELD_Y_START);
+
+            // Field Indicators
+            if (fieldType === 'electric') {
+                // Draw Plates
+                // Top
+                ctx.fillStyle = fieldStrength > 0 ? '#ef4444' : '#3b82f6'; // + or -
+                ctx.fillRect(FIELD_X_START, FIELD_Y_START - 10, FIELD_X_END - FIELD_X_START, 10);
+                // Bottom
+                ctx.fillStyle = fieldStrength > 0 ? '#3b82f6' : '#ef4444';
+                ctx.fillRect(FIELD_X_START, FIELD_Y_END, FIELD_X_END - FIELD_X_START, 10);
+                
+                // Arrows (Field Lines)
+                const dir = fieldStrength > 0 ? 1 : -1; // 1 = Down
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                const spacing = 40;
+                for(let x=FIELD_X_START + 20; x<FIELD_X_END; x+=spacing) {
+                    for(let y=FIELD_Y_START + 20; y<FIELD_Y_END; y+=spacing) {
+                         // Draw Arrow
+                         ctx.beginPath();
+                         if (dir > 0) { // Down
+                             ctx.moveTo(x, y-5); ctx.lineTo(x, y+5);
+                             ctx.lineTo(x-3, y+2); ctx.moveTo(x, y+5); ctx.lineTo(x+3, y+2);
+                         } else { // Up
+                             ctx.moveTo(x, y+5); ctx.lineTo(x, y-5);
+                             ctx.lineTo(x-3, y-2); ctx.moveTo(x, y-5); ctx.lineTo(x+3, y-2);
+                         }
+                         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                         ctx.stroke();
+                    }
+                }
+
+            } else {
+                // Magnetic Field (Crosses or Dots)
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                const spacing = 40;
+                for(let x=FIELD_X_START + 20; x<FIELD_X_END; x+=spacing) {
+                    for(let y=FIELD_Y_START + 20; y<FIELD_Y_END; y+=spacing) {
+                         ctx.beginPath();
+                         if (fieldStrength > 0) { // Into Page (X)
+                             ctx.moveTo(x-4, y-4); ctx.lineTo(x+4, y+4);
+                             ctx.moveTo(x+4, y-4); ctx.lineTo(x-4, y+4);
+                             ctx.stroke();
+                         } else { // Out of Page (Dot)
+                             ctx.arc(x, y, 2, 0, Math.PI*2);
+                             ctx.fill();
+                             ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2); ctx.stroke();
+                         }
+                    }
+                }
+            }
+            
+            // Label
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText(fieldType === 'electric' ? "Electric Field (E)" : "Magnetic Field (B)", FIELD_X_START + 10, FIELD_Y_START - 20);
+
+            // 2. Draw Particles
+            particles.forEach(p => {
+                // Trail
+                if (showTrails && p.trail.length > 0) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = PARTICLES[p.type].color;
+                    ctx.lineWidth = 2;
+                    ctx.moveTo(p.trail[0].x, p.trail[0].y);
+                    for (let i=1; i<p.trail.length; i++) ctx.lineTo(p.trail[i].x, p.trail[i].y);
+                    ctx.stroke();
+                }
+                
+                // Body
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 6, 0, Math.PI*2);
+                ctx.fillStyle = PARTICLES[p.type].color;
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+
+            // 3. Gun
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(0, CENTER_Y - 20, 50, 40);
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillRect(50, CENTER_Y - 5, 10, 10); // Nozzle
+        };
+
+        useEffect(() => {
+            requestRef.current = requestAnimationFrame(loop);
+            return () => cancelAnimationFrame(requestRef.current);
+        });
+
+        useEffect(() => {
+            if (window.lucide) window.lucide.createIcons();
+        });
+
+        const reset = () => {
+            setParticles([]);
+            setFieldStrength(5.0);
+        };
+
+        return (
+            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
+                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center space-x-3">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <i data-lucide="crosshair" className="w-6 h-6 text-indigo-400"></i>
+                        </div>
+                        <h1 className="text-xl font-bold text-white tracking-wide">Deflection Fields Lab</h1>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
+                        Topic: Atomic Physics
+                    </div>
+                </nav>
+
+                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left: Simulation */}
+                    <div className="lg:col-span-9 flex flex-col gap-6">
+                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
+                            <canvas 
+                                ref={canvasRef} 
+                                width={CANVAS_WIDTH} 
+                                height={CANVAS_HEIGHT}
+                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
+                            />
+                            
+                            <div className="absolute bottom-4 left-4 flex gap-2">
+                                <button onClick={() => setFieldType('electric')} className={`px-4 py-2 rounded text-sm font-bold border transition ${fieldType==='electric' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>Electric Field</button>
+                                <button onClick={() => setFieldType('magnetic')} className={`px-4 py-2 rounded text-sm font-bold border transition ${fieldType==='magnetic' ? 'bg-pink-600 border-pink-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>Magnetic Field</button>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-start">
+                            
+                            {/* Particle Selector */}
+                            <div className="space-y-3">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase">Particle Type</h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {Object.keys(PARTICLES).map(key => (
+                                        <button 
+                                            key={key}
+                                            onClick={() => setSelectedParticle(key)}
+                                            className={`px-3 py-2 rounded text-xs font-bold border transition text-left ${selectedParticle === key ? 'bg-slate-600 border-white text-white' : 'bg-slate-700 border-slate-600 text-slate-400'}`}
+                                            style={{ borderColor: selectedParticle === key ? PARTICLES[key].color : '' }}
+                                        >
+                                            {PARTICLES[key].label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Sliders */}
+                            <div className="flex-1 min-w-[200px] space-y-4">
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold mb-1 text-slate-300">
+                                        Field Strength <span className="text-white">{fieldStrength.toFixed(1)}</span>
+                                    </label>
+                                    <input type="range" min="-10" max="10" step="1" value={fieldStrength} onChange={(e) => setFieldStrength(Number(e.target.value))} className={`w-full h-2 bg-slate-600 rounded-lg slider-thumb ${fieldType==='electric'?'thumb-indigo':'thumb-pink'}`} />
+                                    <div className="flex justify-between text-[10px] text-slate-500">
+                                        <span>Reverse</span><span>0</span><span>Forward</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="flex justify-between text-xs font-bold mb-1 text-slate-300">
+                                        Particle Velocity <span className="text-white">{velocity.toFixed(1)}</span>
+                                    </label>
+                                    <input type="range" min="1" max="10" step="0.5" value={velocity} onChange={(e) => setVelocity(Number(e.target.value))} className="w-full h-2 bg-slate-600 rounded-lg slider-thumb" />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                                <button onClick={fire} className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2">
+                                    <i data-lucide="zap" className="w-5 h-5"></i> Fire
+                                </button>
+                                <button onClick={clear} className="px-8 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors">
+                                    Clear
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    {/* Right: Info */}
+                    <div className="lg:col-span-3 space-y-6">
+                        
+                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+                            <h2 className="text-white font-bold mb-4 flex items-center">
+                                <i data-lucide="book-open" className="w-5 h-5 mr-2 text-indigo-400"></i>
+                                Observations
+                            </h2>
+                            <div className="space-y-4 text-xs text-slate-300 leading-relaxed">
+                                <p>
+                                    <strong className="text-white block mb-1">Electric Field:</strong>
+                                    Particles follow a <strong>Parabolic</strong> path. The force is constant in direction ($F=qE$).
+                                </p>
+                                <p>
+                                    <strong className="text-white block mb-1">Magnetic Field:</strong>
+                                    Particles follow a <strong>Circular</strong> path. The force is always perpendicular to motion ($F \perp v$).
+                                </p>
+                                <p>
+                                    <strong className="text-white block mb-1">Gamma Rays:</strong>
+                                    No charge ($q=0$), so they travel straight through both fields!
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-700/50 flex items-center gap-3">
+                            <input type="checkbox" checked={showTrails} onChange={() => setShowTrails(!showTrails)} className="w-5 h-5 rounded text-blue-500 bg-slate-800 border-slate-600 focus:ring-0 cursor-pointer" />
+                            <span className="text-sm font-bold text-slate-300">Show Particle Trails</span>
+                        </div>
+
+                    </div>
+
+                </main>
+            </div>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>
