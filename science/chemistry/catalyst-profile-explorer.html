@@ -3,522 +3,464 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Catalyst Profile Explorer</title>
+    <title>Catalyst Energy Profile Diagram | Kinetics Explorer</title>
+    <meta name="description" content="Catalyst energy profile diagram interactive simulator. Explore Arrhenius collision theory, Maxwell-Boltzmann distributions, and reaction pathways.">
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Recharts Dependencies (Prop-types is often required for UMD) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-    
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Plotly.js for Scientific Graphing -->
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
+
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* Custom Animations */
-        .adsorb { animation: adsorb 2s infinite ease-in-out; }
-        @keyframes adsorb {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(10px); }
+        body { 
+            margin: 0; 
+            background-color: #0F172A; 
+            color: #E2E8F0;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            overflow: hidden; 
         }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
         
-        .fade-in { animation: fadeIn 0.5s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        /* Custom range sliders */
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: transparent;
+            width: 100%;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 6px;
+            border-radius: 3px;
+            background: #334155;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: currentColor;
+            margin-top: -6px;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        /* Toggle Switch Animation */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #10B981;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #10B981;
+        }
     </style>
 </head>
 <body>
-    <div id="root"></div>
+
+    <div id="root" class="w-full h-screen max-h-[1000px] flex justify-center items-center p-2 md:p-4"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- MATH ENGINE FOR PLOTLY ---
         
-        // Ensure Recharts is loaded from window object
-        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } = window.Recharts;
-
-        // Safe Icon Component
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        // Generates the Energy Profile Curve using a logistic step + Gaussian peak
+        const generateEnergyProfile = (Er, Ep, Ea) => {
+            const data = [];
+            for (let x = 0; x <= 100; x++) {
+                // Logistic drop/rise from Reactants to Products
+                const base = Er + (Ep - Er) / (1 + Math.exp(-0.15 * (x - 50)));
+                // Amplitude calculation ensuring the peak exactly hits Er + Ea
+                const amp = Ea + (Er - Ep)/2;
+                // Gaussian curve centered at x=50
+                const peak = amp * Math.exp(-0.003 * Math.pow(x - 50, 2));
+                data.push({ x, y: base + peak });
+            }
+            return data;
         };
 
-        // --- ENERGY PROFILE DATA ---
-        const ENERGY_DATA = [
-            { x: 0, uncatalyzed: 20, catalyzed: 20 },
-            { x: 20, uncatalyzed: 20, catalyzed: 20 },
-            { x: 40, uncatalyzed: 60, catalyzed: 40 }, // Transition State
-            { x: 50, uncatalyzed: 80, catalyzed: 50 }, // Peak
-            { x: 60, uncatalyzed: 60, catalyzed: 40 },
-            { x: 80, uncatalyzed: 10, catalyzed: 10 },
-            { x: 100, uncatalyzed: 10, catalyzed: 10 }
-        ];
+        // Generates the Maxwell-Boltzmann surrogate function curve: y = (x / T^2) * e^(-x/T)
+        // Scaled visually so the peak is readable.
+        const generateMBDistribution = (T) => {
+            const data = [];
+            for (let x = 0; x <= 200; x++) {
+                // To keep visually normalized, we scale the Y output relative to T
+                const y = (x / Math.pow(T, 2)) * Math.exp(-x / T) * 1000;
+                data.push({ x, y });
+            }
+            return data;
+        };
 
-        // --- MAXWELL-BOLTZMANN DATA ---
-        // Generating a curve that looks like Maxwell-Boltzmann distribution
-        const MB_DATA = [];
-        for (let i = 0; i <= 100; i+=2) {
-            const y = Math.pow(i, 2) * Math.exp(-i / 15) * 100; // Simplified model
-            MB_DATA.push({ energy: i, particles: y });
-        }
+        // Calculates the definite integral of the surrogate MB function from Ea to Infinity
+        // Representing the fraction of particles with Energy > Ea
+        // Formula: Integral = e^(-Ea/T) * (1 + Ea/T)
+        const calculateSuccessFraction = (Ea, T) => {
+            return Math.exp(-Ea / T) * (1 + Ea / T);
+        };
 
-        // --- HETEROGENEOUS ANIMATION (Canvas) ---
-        const HeteroAnimation = ({ isPlaying }) => {
-            const canvasRef = useRef(null);
+        // --- REACT COMPONENTS ---
+
+        function App() {
+            // --- STATE ---
+            const [isCatalyzed, setIsCatalyzed] = useState(false);
             
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                let animationFrameId;
-                let step = 0;
-
-                const draw = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    
-                    // 1. Catalyst Surface (Solid)
-                    ctx.fillStyle = '#475569';
-                    ctx.fillRect(50, 150, 300, 20);
-                    ctx.fillStyle = '#94a3b8';
-                    for(let i=0; i<6; i++) {
-                        ctx.beginPath();
-                        ctx.arc(75 + i*50, 150, 25, 0, Math.PI, true); // Surface atoms
-                        ctx.fill();
-                    }
-
-                    // 2. Reactants (Adsorption -> Reaction -> Desorption)
-                    // Molecule A (Red)
-                    ctx.beginPath();
-                    ctx.arc(100, 100 + (step < 100 ? step : 100) * 0.5, 10, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#ef4444';
-                    ctx.fill();
-
-                    // Molecule B (Blue)
-                    ctx.beginPath();
-                    ctx.arc(140, 100 + (step < 100 ? step : 100) * 0.5, 10, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#3b82f6';
-                    ctx.fill();
-
-                    // If reacted (step > 150), draw bond
-                    if (step > 150) {
-                        ctx.beginPath();
-                        ctx.moveTo(100, 100 + 50 - (step > 200 ? (step-200)*0.5 : 0));
-                        ctx.lineTo(140, 100 + 50 - (step > 200 ? (step-200)*0.5 : 0));
-                        ctx.strokeStyle = '#22c55e';
-                        ctx.lineWidth = 4;
-                        ctx.stroke();
-                    }
-
-                    // Text Labels
-                    ctx.fillStyle = 'white';
-                    ctx.font = '12px Arial';
-                    if (step < 100) ctx.fillText("1. Diffusion & Adsorption", 10, 30);
-                    else if (step < 200) ctx.fillText("2. Reaction on Surface", 10, 30);
-                    else ctx.fillText("3. Desorption", 10, 30);
-
-                    if (isPlaying) {
-                        step = (step + 1) % 300;
-                        animationFrameId = requestAnimationFrame(draw);
-                    }
-                };
-                
-                if (isPlaying) draw();
-                else {
-                    // Static initial state
-                    step = 0;
-                    draw();
-                }
-
-                return () => cancelAnimationFrame(animationFrameId);
-            }, [isPlaying]);
-
-            return <canvas ref={canvasRef} width={400} height={200} className="w-full h-full bg-slate-800 rounded-xl" />;
-        };
-
-        // --- HOMOGENEOUS ANIMATION (Canvas) ---
-        const HomoAnimation = ({ isPlaying }) => {
-            const canvasRef = useRef(null);
+            // Thermodynamic & Kinetic Variables
+            const [temperature, setTemperature] = useState(30); // Defines spread of MB curve
+            const [baseEa, setBaseEa] = useState(120); // Uncatalyzed Activation Energy
+            const [catalystEfficiency, setCatalystEfficiency] = useState(40); // % reduction in Ea
             
+            // Constants for the simulation
+            const Er = 40; // Energy of Reactants
+            const Ep = 20; // Energy of Products (Exothermic)
+
+            // Derived values
+            const catEa = baseEa * (1 - catalystEfficiency / 100);
+
+            const fracUncat = calculateSuccessFraction(baseEa, temperature);
+            const fracCat = calculateSuccessFraction(catEa, temperature);
+            const rateMultiplier = fracCat / fracUncat;
+
+            // Refs for Plotly divs
+            const epGraphRef = useRef(null);
+            const mbGraphRef = useRef(null);
+
+            // --- PLOTLY RENDERING (ENERGY PROFILE) ---
             useEffect(() => {
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                let animationFrameId;
-                let step = 0;
+                if (!epGraphRef.current) return;
 
-                const draw = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    
-                    // Background (Solution)
-                    // Clear makes it transparent, but we can add a slight tint if needed
-                    // ctx.fillStyle = 'rgba(30, 41, 59, 0.5)';
-                    // ctx.fillRect(0, 0, canvas.width, canvas.height);
+                const uncatData = generateEnergyProfile(Er, Ep, baseEa);
+                const catData = generateEnergyProfile(Er, Ep, catEa);
 
-                    const centerX = canvas.width / 2;
-                    const centerY = canvas.height / 2;
-
-                    // Initial Positions
-                    let catX = centerX, catY = centerY + 50; // Catalyst (Purple)
-                    let aX = centerX - 60, aY = centerY - 30; // Reactant A (Red)
-                    let bX = centerX + 60, bY = centerY - 30; // Reactant B (Blue)
-
-                    // Calculate positions based on step
-                    if (step < 100) {
-                        // Phase 1: Catalyst approaches A
-                        const progress = step / 100;
-                        catX = centerX - (progress * 30); 
-                        catY = centerY + 50 - (progress * 40); 
-                        aX = centerX - 60 + (progress * 30);
-                        aY = centerY - 30 + (progress * 40);
-                        bX = centerX + 60 + Math.sin(step * 0.1) * 5; // Idle hover
-                    } else if (step < 200) {
-                        // Phase 2: Intermediate AC moves to B
-                        const progress = (step - 100) / 100;
-                        const acX = centerX - 30 + (progress * 60);
-                        const acY = centerY + 10 - (progress * 40);
-                        catX = acX; catY = acY + 10;
-                        aX = acX; aY = acY - 10;
-                        bX = centerX + 60 - (progress * 30);
-                        bY = centerY - 30;
-                    } else {
-                        // Phase 3: Product AB forms, Catalyst leaves
-                        const progress = (step - 200) / 100;
-                        catX = centerX + 30; 
-                        catY = centerY - 30 + 60 * progress; // Drops down
-                        
-                        // Product moves up
-                        aX = centerX + 20; aY = centerY - 30 - progress * 40;
-                        bX = centerX + 40; bY = centerY - 30 - progress * 40;
-                    }
-
-                    // Draw Catalyst (C)
-                    ctx.beginPath();
-                    ctx.arc(catX, catY, 15, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#a855f7'; // Purple
-                    ctx.fill();
-                    ctx.fillStyle = 'white';
-                    ctx.font = '10px Arial';
-                    ctx.fillText("Cat", catX-8, catY+4);
-
-                    // Draw Reactants/Product
-                    if (step < 200) {
-                        // A
-                        ctx.beginPath();
-                        ctx.arc(aX, aY, 12, 0, 2 * Math.PI);
-                        ctx.fillStyle = '#ef4444'; // Red
-                        ctx.fill();
-                        ctx.fillStyle = 'white';
-                        ctx.fillText("A", aX-4, aY+4);
-
-                        // B
-                        ctx.beginPath();
-                        ctx.arc(bX, bY, 12, 0, 2 * Math.PI);
-                        ctx.fillStyle = '#3b82f6'; // Blue
-                        ctx.fill();
-                        ctx.fillStyle = 'white';
-                        ctx.fillText("B", bX-4, bY+4);
-                        
-                        // Intermediate Bond (A-C)
-                        if (step >= 100) {
-                            ctx.beginPath();
-                            ctx.strokeStyle = 'white';
-                            ctx.lineWidth = 2;
-                            ctx.moveTo(aX, aY);
-                            ctx.lineTo(catX, catY);
-                            ctx.stroke();
-                        }
-                    } else {
-                        // Product Bond (A-B)
-                        ctx.beginPath();
-                        ctx.strokeStyle = '#22c55e'; // Green bond
-                        ctx.lineWidth = 4;
-                        ctx.moveTo(aX, aY);
-                        ctx.lineTo(bX, bY);
-                        ctx.stroke();
-
-                        // A
-                        ctx.beginPath();
-                        ctx.arc(aX, aY, 12, 0, 2 * Math.PI);
-                        ctx.fillStyle = '#ef4444';
-                        ctx.fill();
-                        // B
-                        ctx.beginPath();
-                        ctx.arc(bX, bY, 12, 0, 2 * Math.PI);
-                        ctx.fillStyle = '#3b82f6';
-                        ctx.fill();
-                    }
-
-                    // Labels
-                    ctx.fillStyle = 'white';
-                    ctx.font = '12px Arial';
-                    if (step < 100) ctx.fillText("1. Catalyst approaches Reactant A", 10, 30);
-                    else if (step < 200) ctx.fillText("2. Intermediate Species Forms", 10, 30);
-                    else ctx.fillText("3. Product Forms & Catalyst Regenerates", 10, 30);
-
-                    if (isPlaying) {
-                        step = (step + 1) % 300;
-                        animationFrameId = requestAnimationFrame(draw);
-                    }
+                const traceUncat = {
+                    x: uncatData.map(d => d.x),
+                    y: uncatData.map(d => d.y),
+                    mode: 'lines',
+                    name: 'Uncatalyzed Pathway',
+                    line: { color: '#F43F5E', width: 4 },
+                    hoverinfo: 'none'
                 };
-                
-                if (isPlaying) draw();
-                else {
-                    step = 0;
-                    draw();
+
+                const traceCat = {
+                    x: catData.map(d => d.x),
+                    y: catData.map(d => d.y),
+                    mode: 'lines',
+                    name: 'Catalyzed Pathway',
+                    line: { color: '#10B981', width: 4, dash: 'dash' },
+                    visible: isCatalyzed ? true : false,
+                    hoverinfo: 'none'
+                };
+
+                // Annotations
+                const annotations = [
+                    {
+                        x: 10, y: Er, text: 'Reactants',
+                        showarrow: false, font: { color: '#94A3B8' }, yanchor: 'bottom', yshift: 5
+                    },
+                    {
+                        x: 90, y: Ep, text: 'Products',
+                        showarrow: false, font: { color: '#94A3B8' }, yanchor: 'bottom', yshift: 5
+                    }
+                ];
+
+                const layout = {
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    margin: { t: 20, r: 20, l: 50, b: 40 },
+                    xaxis: { 
+                        title: 'Reaction Progress', color: '#64748B', 
+                        showgrid: false, zeroline: false, showticklabels: false 
+                    },
+                    yaxis: { 
+                        title: 'Potential Energy (kJ/mol)', color: '#64748B', 
+                        showgrid: true, gridcolor: '#1E293B', zeroline: false,
+                        range: [0, 220]
+                    },
+                    showlegend: false,
+                    annotations: annotations
+                };
+
+                Plotly.react(epGraphRef.current, [traceUncat, traceCat], layout, {displayModeBar: false, responsive: true});
+            }, [baseEa, catEa, isCatalyzed]);
+
+            // --- PLOTLY RENDERING (MAXWELL-BOLTZMANN) ---
+            useEffect(() => {
+                if (!mbGraphRef.current) return;
+
+                const mbData = generateMBDistribution(temperature);
+                const xVals = mbData.map(d => d.x);
+                const yVals = mbData.map(d => d.y);
+
+                // Main Curve
+                const traceMain = {
+                    x: xVals,
+                    y: yVals,
+                    mode: 'lines',
+                    name: 'Distribution',
+                    line: { color: '#38BDF8', width: 3 },
+                    hoverinfo: 'none'
+                };
+
+                // Filled Area (Uncatalyzed) - E > baseEa
+                const uncatFillX = xVals.filter(x => x >= baseEa);
+                const uncatFillY = uncatFillX.map(x => mbData.find(d => d.x === x).y);
+                const traceFillUncat = {
+                    x: [baseEa, ...uncatFillX, 200],
+                    y: [0, ...uncatFillY, 0],
+                    fill: 'tozeroy',
+                    type: 'scatter',
+                    name: 'E > Ea (Uncat)',
+                    fillcolor: 'rgba(244, 63, 94, 0.4)', // Rose with opacity
+                    line: { width: 0 },
+                    hoverinfo: 'none'
+                };
+
+                // Filled Area (Catalyzed) - catEa < E < baseEa (The extra area gained)
+                const catFillX = xVals.filter(x => x >= catEa && x < baseEa);
+                const catFillY = catFillX.map(x => mbData.find(d => d.x === x).y);
+                const traceFillCat = {
+                    x: [catEa, ...catFillX, baseEa, baseEa],
+                    y: [0, ...catFillY, mbData.find(d=>d.x === baseEa)?.y || 0, 0],
+                    fill: 'tozeroy',
+                    type: 'scatter',
+                    name: 'Extra Collisions',
+                    fillcolor: 'rgba(16, 185, 129, 0.5)', // Emerald with opacity
+                    line: { width: 0 },
+                    visible: isCatalyzed ? true : false,
+                    hoverinfo: 'none'
+                };
+
+                // Vertical lines for thresholds
+                const shapes = [
+                    {
+                        type: 'line', x0: baseEa, x1: baseEa, y0: 0, y1: 15,
+                        line: { color: '#F43F5E', width: 2, dash: 'dot' }
+                    }
+                ];
+                const annotations = [
+                    { x: baseEa, y: 15.5, text: 'Ea', showarrow: false, font: {color: '#F43F5E'} }
+                ];
+
+                if (isCatalyzed) {
+                    shapes.push({
+                        type: 'line', x0: catEa, x1: catEa, y0: 0, y1: 15,
+                        line: { color: '#10B981', width: 2, dash: 'dot' }
+                    });
+                    annotations.push(
+                        { x: catEa, y: 15.5, text: 'Ea(cat)', showarrow: false, font: {color: '#10B981'} }
+                    );
                 }
 
-                return () => cancelAnimationFrame(animationFrameId);
-            }, [isPlaying]);
+                const layout = {
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    margin: { t: 20, r: 20, l: 50, b: 40 },
+                    xaxis: { 
+                        title: 'Kinetic Energy (E)', color: '#64748B', 
+                        showgrid: false, zeroline: false, range: [0, 200]
+                    },
+                    yaxis: { 
+                        title: 'Number of Particles', color: '#64748B', 
+                        showgrid: false, zeroline: false, showticklabels: false,
+                        range: [0, 16] // Fixed Y range to prevent bouncing when T changes
+                    },
+                    showlegend: false,
+                    shapes: shapes,
+                    annotations: annotations
+                };
 
-            return <canvas ref={canvasRef} width={400} height={200} className="w-full h-full bg-slate-800 rounded-xl" />;
-        };
+                Plotly.react(mbGraphRef.current, [traceMain, traceFillUncat, traceFillCat], layout, {displayModeBar: false, responsive: true});
+            }, [temperature, baseEa, catEa, isCatalyzed]);
 
-        const App = () => {
-            const [view, setView] = useState('energy'); // energy, boltzmann, mechanism
-            const [showCatalyzed, setShowCatalyzed] = useState(true);
-            const [mechanismType, setMechanismType] = useState('hetero'); // hetero, homo
-            const [isPlaying, setIsPlaying] = useState(false);
+            // --- RENDER HELPERS ---
+            // Format multiplier beautifully (e.g., handles massive numbers like 2.5x10^4)
+            const formatMultiplier = (val) => {
+                if (val < 1000) return val.toFixed(1) + 'x';
+                return val.toExponential(2) + 'x';
+            };
 
             return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
+                <div className="w-full max-w-7xl h-full flex flex-col bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden">
                     
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="zap" className="text-yellow-400" /> Catalyst Profile
+                    {/* Header */}
+                    <header className="bg-slate-800/80 backdrop-blur p-4 md:p-6 border-b border-slate-700 flex justify-between items-center shrink-0 z-10">
+                        <div>
+                            <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-500">
+                                Catalyst Profile Explorer
                             </h1>
-                            <p className="text-xs text-slate-400 mt-1">Principles of Catalysis</p>
+                            <p className="text-slate-400 text-xs mt-1 uppercase tracking-wider font-semibold">
+                                Arrhenius Mathematical Engine & Reaction Pathways
+                            </p>
                         </div>
+                        
+                        {/* THE MASTER TOGGLE */}
+                        <div className="flex items-center gap-3 bg-slate-950 px-4 py-2 rounded-xl border border-slate-800">
+                            <span className={`text-sm font-bold uppercase tracking-wider ${isCatalyzed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                Enable Catalyst
+                            </span>
+                            <div className="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                                <input 
+                                    type="checkbox" 
+                                    name="toggle" 
+                                    id="toggle" 
+                                    checked={isCatalyzed}
+                                    onChange={() => setIsCatalyzed(!isCatalyzed)}
+                                    className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-slate-700 appearance-none cursor-pointer z-10 top-0 left-0 transition-all duration-300"
+                                />
+                                <label htmlFor="toggle" className="toggle-label block overflow-hidden h-6 rounded-full bg-slate-700 cursor-pointer transition-colors duration-300"></label>
+                            </div>
+                        </div>
+                    </header>
 
-                        <div className="p-4 space-y-2">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-2 mb-2 block">Visualization Mode</label>
+                    {/* Main Workspace */}
+                    <div className="flex-grow flex flex-col overflow-y-auto hide-scrollbar">
+                        
+                        {/* Upper Section: The Graphs Side-by-Side */}
+                        <div className="flex flex-col lg:flex-row border-b border-slate-800 h-[350px] md:h-[400px] shrink-0">
                             
-                            <button 
-                                onClick={() => setView('energy')}
-                                className={`w-full text-left p-4 rounded-xl border transition-all flex items-center gap-3
-                                    ${view === 'energy' ? 'bg-slate-800 border-emerald-500 ring-1 ring-emerald-500/50' : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
-                                `}
-                            >
-                                <Icon name="activity" className="text-emerald-400" />
-                                <div>
-                                    <div className="text-sm font-bold text-white">Energy Profile</div>
-                                    <div className="text-xs text-slate-400">Ea & Reaction Pathway</div>
+                            {/* Energy Profile Diagram */}
+                            <div className="w-full lg:w-1/2 p-4 flex flex-col border-r border-slate-800 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800/50 to-transparent">
+                                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest text-center mb-2">Energy Profile Diagram</h2>
+                                <div className="flex-grow w-full relative">
+                                    <div ref={epGraphRef} className="absolute inset-0"></div>
                                 </div>
-                            </button>
+                            </div>
 
-                            <button 
-                                onClick={() => setView('boltzmann')}
-                                className={`w-full text-left p-4 rounded-xl border transition-all flex items-center gap-3
-                                    ${view === 'boltzmann' ? 'bg-slate-800 border-blue-500 ring-1 ring-blue-500/50' : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
-                                `}
-                            >
-                                <Icon name="bar-chart-2" className="text-blue-400" />
-                                <div>
-                                    <div className="text-sm font-bold text-white">Boltzmann Dist.</div>
-                                    <div className="text-xs text-slate-400">Kinetic Energy & Rate</div>
+                            {/* Maxwell-Boltzmann Distribution */}
+                            <div className="w-full lg:w-1/2 p-4 flex flex-col bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800/50 to-transparent">
+                                <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest text-center mb-2">Maxwell-Boltzmann Distribution</h2>
+                                <div className="flex-grow w-full relative">
+                                    <div ref={mbGraphRef} className="absolute inset-0"></div>
                                 </div>
-                            </button>
+                            </div>
 
-                            <button 
-                                onClick={() => setView('mechanism')}
-                                className={`w-full text-left p-4 rounded-xl border transition-all flex items-center gap-3
-                                    ${view === 'mechanism' ? 'bg-slate-800 border-purple-500 ring-1 ring-purple-500/50' : 'bg-slate-900/50 border-slate-700 hover:bg-slate-800'}
-                                `}
-                            >
-                                <Icon name="settings" className="text-purple-400" />
-                                <div>
-                                    <div className="text-sm font-bold text-white">Mechanism</div>
-                                    <div className="text-xs text-slate-400">Surface & Intermediate</div>
-                                </div>
-                            </button>
                         </div>
 
-                        {/* Controls based on view */}
-                        <div className="mt-auto p-6 border-t border-slate-800">
-                            {view === 'energy' && (
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm font-bold text-slate-300">Show Catalyst Path</span>
-                                        <button 
-                                            onClick={() => setShowCatalyzed(!showCatalyzed)}
-                                            className={`w-12 h-6 rounded-full transition-colors relative ${showCatalyzed ? 'bg-emerald-600' : 'bg-slate-700'}`}
-                                        >
-                                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${showCatalyzed ? 'left-7' : 'left-1'}`}></div>
-                                        </button>
-                                    </div>
-                                    <p className="text-xs text-slate-500">Catalyst provides an alternative pathway with lower Activation Energy (Ea).</p>
-                                </div>
-                            )}
-
-                            {view === 'boltzmann' && (
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm font-bold text-slate-300">Lower Ea Barrier</span>
-                                        <button 
-                                            onClick={() => setShowCatalyzed(!showCatalyzed)}
-                                            className={`w-12 h-6 rounded-full transition-colors relative ${showCatalyzed ? 'bg-blue-600' : 'bg-slate-700'}`}
-                                        >
-                                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${showCatalyzed ? 'left-7' : 'left-1'}`}></div>
-                                        </button>
-                                    </div>
-                                    <p className="text-xs text-slate-500">Catalyst shifts the Ea line to the left, increasing the shaded area (successful collisions).</p>
-                                </div>
-                            )}
-
-                            {view === 'mechanism' && (
-                                <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button 
-                                            onClick={() => setMechanismType('hetero')}
-                                            className={`py-2 text-xs font-bold rounded-lg transition-all ${mechanismType === 'hetero' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                                        >
-                                            Heterogeneous
-                                        </button>
-                                        <button 
-                                            onClick={() => setMechanismType('homo')}
-                                            className={`py-2 text-xs font-bold rounded-lg transition-all ${mechanismType === 'homo' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                                        >
-                                            Homogeneous
-                                        </button>
-                                    </div>
-                                    <button 
-                                        onClick={() => setIsPlaying(!isPlaying)}
-                                        className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
-                                    >
-                                        <Icon name={isPlaying ? "pause" : "play"} size={16} /> {isPlaying ? 'Pause' : 'Play Animation'}
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-slate-900/50 p-4 md:p-12 flex flex-col justify-center items-center relative overflow-hidden">
-                        <div className="absolute inset-0 opacity-10 pointer-events-none" 
-                            style={{backgroundImage: 'linear-gradient(#334155 1px, transparent 1px), linear-gradient(90deg, #334155 1px, transparent 1px)', backgroundSize: '40px 40px'}}>
-                        </div>
-
-                        <div className="w-full max-w-4xl h-[500px] bg-slate-800/80 backdrop-blur rounded-3xl border border-slate-700 p-6 shadow-2xl relative z-10 flex flex-col fade-in">
+                        {/* Lower Section: Controls & Telemetry */}
+                        <div className="flex flex-col lg:flex-row flex-grow bg-slate-950 relative">
                             
-                            {/* View Content */}
-                            {view === 'energy' && (
-                                <div className="w-full h-full flex flex-col">
-                                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                        <Icon name="trending-up" className="text-emerald-400"/> Energy Profile Diagram
-                                    </h2>
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <LineChart data={ENERGY_DATA} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                            <XAxis dataKey="x" type="number" hide />
-                                            <YAxis hide domain={[0, 100]} />
-                                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} />
-                                            
-                                            {/* Uncatalyzed Path */}
-                                            <Line type="monotone" dataKey="uncatalyzed" stroke="#ef4444" strokeWidth={3} dot={false} name="Uncatalyzed" />
-                                            
-                                            {/* Catalyzed Path */}
-                                            {showCatalyzed && (
-                                                <Line type="monotone" dataKey="catalyzed" stroke="#10b981" strokeWidth={3} strokeDasharray="5 5" dot={false} name="Catalyzed" />
-                                            )}
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                    <div className="flex justify-center gap-6 mt-4">
-                                        <div className="flex items-center gap-2 text-sm text-red-400 font-bold">
-                                            <div className="w-4 h-1 bg-red-500"></div> Uncatalyzed (High Ea)
+                            {/* Controls Left */}
+                            <div className="w-full lg:w-1/2 p-6 lg:p-8 border-r border-slate-800 flex flex-col gap-6">
+                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-2">Variables</h3>
+                                
+                                {/* Temperature Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-end">
+                                        <label className="text-sm font-bold text-sky-400">Temperature (Kinetic Energy)</label>
+                                        <span className="font-mono text-white bg-slate-900 px-2 py-1 rounded text-sm border border-slate-700">T-Scale: {temperature.toFixed(1)}</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="15" max="60" step="1" 
+                                        value={temperature} 
+                                        onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                                        className="text-sky-500"
+                                    />
+                                    <p className="text-[10px] text-slate-500">Flattens and shifts the distribution curve to the right.</p>
+                                </div>
+
+                                {/* Base Activation Energy Slider */}
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-end">
+                                        <label className="text-sm font-bold text-rose-400">Standard Activation Energy ($E_a$)</label>
+                                        <span className="font-mono text-white bg-slate-900 px-2 py-1 rounded text-sm border border-slate-700">{baseEa} kJ/mol</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="60" max="180" step="5" 
+                                        value={baseEa} 
+                                        onChange={(e) => setBaseEa(parseFloat(e.target.value))}
+                                        className="text-rose-500"
+                                    />
+                                    <p className="text-[10px] text-slate-500">The minimum energy barrier required for a successful collision.</p>
+                                </div>
+
+                                {/* Catalyst Efficiency Slider */}
+                                <div className={`space-y-2 transition-opacity duration-300 ${isCatalyzed ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                                    <div className="flex justify-between items-end">
+                                        <label className="text-sm font-bold text-emerald-400">Catalyst Pathway Efficiency</label>
+                                        <span className="font-mono text-emerald-300 bg-emerald-900/20 px-2 py-1 rounded text-sm border border-emerald-500/30">-{catalystEfficiency}% $E_a$</span>
+                                    </div>
+                                    <input 
+                                        type="range" min="10" max="80" step="5" 
+                                        value={catalystEfficiency} 
+                                        onChange={(e) => setCatalystEfficiency(parseFloat(e.target.value))}
+                                        className="text-emerald-500"
+                                    />
+                                    <p className="text-[10px] text-emerald-500/70">A catalyst provides an alternative pathway with a lower activation energy threshold.</p>
+                                </div>
+
+                            </div>
+
+                            {/* Telemetry Right */}
+                            <div className="w-full lg:w-1/2 p-6 lg:p-8 flex flex-col justify-center relative overflow-hidden">
+                                
+                                {/* Background Watermark */}
+                                <div className="absolute -right-10 -bottom-10 opacity-5 pointer-events-none">
+                                    <svg width="300" height="300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                                </div>
+
+                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-2 mb-6 z-10">Kinetics Analysis</h3>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 z-10">
+                                    {/* Uncatalyzed Stats */}
+                                    <div className="bg-rose-900/10 border border-rose-500/20 p-4 rounded-xl flex flex-col justify-between">
+                                        <span className="text-[10px] text-rose-400 uppercase tracking-widest font-bold mb-2">Base Successful Collisions</span>
+                                        <div className="flex items-baseline gap-1">
+                                            <span className="text-2xl font-mono text-white font-bold">{(fracUncat * 10000).toPrecision(3)}</span>
+                                            <span className="text-xs text-slate-500">units</span>
                                         </div>
-                                        {showCatalyzed && (
-                                            <div className="flex items-center gap-2 text-sm text-emerald-400 font-bold">
-                                                <div className="w-4 h-1 bg-emerald-500 border-b-2 border-dashed border-emerald-900"></div> Catalyzed (Lower Ea)
-                                            </div>
-                                        )}
+                                    </div>
+
+                                    {/* Catalyzed Stats */}
+                                    <div className={`border p-4 rounded-xl flex flex-col justify-between transition-colors duration-500 ${isCatalyzed ? 'bg-emerald-900/20 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.15)]' : 'bg-slate-900/50 border-slate-800 opacity-50'}`}>
+                                        <span className={`text-[10px] uppercase tracking-widest font-bold mb-2 ${isCatalyzed ? 'text-emerald-400' : 'text-slate-500'}`}>Catalyzed Collisions</span>
+                                        <div className="flex items-baseline gap-1">
+                                            <span className="text-2xl font-mono text-white font-bold">{isCatalyzed ? (fracCat * 10000).toPrecision(3) : '---'}</span>
+                                            <span className="text-xs text-slate-500">units</span>
+                                        </div>
                                     </div>
                                 </div>
-                            )}
 
-                            {view === 'boltzmann' && (
-                                <div className="w-full h-full flex flex-col">
-                                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                        <Icon name="bar-chart" className="text-blue-400"/> Maxwell-Boltzmann Distribution
-                                    </h2>
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <ComposedChart data={MB_DATA} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                            <XAxis dataKey="energy" label={{ value: 'Kinetic Energy', position: 'insideBottom', fill: '#94a3b8' }} />
-                                            <YAxis label={{ value: 'Number of Particles', angle: -90, position: 'insideLeft', fill: '#94a3b8' }} />
-                                            
-                                            {/* The Curve */}
-                                            <Area type="monotone" dataKey="particles" stroke="#60a5fa" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
-
-                                            {/* Ea Line Uncatalyzed */}
-                                            <ReferenceLine x={70} stroke="#ef4444" label={{ value: "Ea (Uncat)", fill: "#ef4444", position: 'top' }} />
-                                            
-                                            {/* Ea Line Catalyzed */}
-                                            {showCatalyzed && (
-                                                <ReferenceLine x={50} stroke="#10b981" strokeDasharray="5 5" label={{ value: "Ea (Cat)", fill: "#10b981", position: 'top' }} />
-                                            )}
-                                        </ComposedChart>
-                                    </ResponsiveContainer>
-                                    <div className="text-center text-sm text-slate-400 mt-4">
-                                        Shaded area beyond Ea represents particles with sufficient energy to react. <br/>
-                                        <span className="text-emerald-400 font-bold">Catalyst moves Ea to the left</span>, increasing this area.
-                                    </div>
-                                </div>
-                            )}
-
-                            {view === 'mechanism' && (
-                                <div className="w-full h-full flex flex-col items-center justify-center">
-                                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2 self-start">
-                                        <Icon name="settings" className="text-purple-400"/> {mechanismType === 'hetero' ? 'Heterogeneous Catalysis' : 'Homogeneous Catalysis'}
-                                    </h2>
+                                {/* The Big Reveal Box */}
+                                <div className={`mt-auto p-6 rounded-2xl border-2 transition-all duration-500 relative overflow-hidden z-10
+                                    ${isCatalyzed ? 'bg-indigo-900/30 border-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.2)]' : 'bg-slate-900 border-slate-700'}`}>
                                     
-                                    <div className="w-full max-w-lg aspect-video bg-slate-900 rounded-2xl border border-slate-700 overflow-hidden relative">
-                                        {mechanismType === 'hetero' ? (
-                                            <HeteroAnimation isPlaying={isPlaying} />
-                                        ) : (
-                                            <HomoAnimation isPlaying={isPlaying} />
-                                        )}
+                                    <div className="flex flex-col">
+                                        <span className={`text-xs font-bold uppercase tracking-widest mb-1 transition-colors ${isCatalyzed ? 'text-indigo-400' : 'text-slate-500'}`}>Reaction Rate Multiplier</span>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className={`text-5xl font-mono font-bold transition-all duration-1000 ${isCatalyzed ? 'text-white' : 'text-slate-600'}`}>
+                                                {isCatalyzed ? formatMultiplier(rateMultiplier) : '1.0x'}
+                                            </span>
+                                            {isCatalyzed && <span className="text-indigo-300 font-bold text-sm animate-pulse">FASTER</span>}
+                                        </div>
                                     </div>
-
-                                    <div className="mt-6 bg-slate-700/50 p-4 rounded-xl border border-slate-600 w-full">
-                                        <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Key Concept</h4>
-                                        <p className="text-sm text-white">
-                                            {mechanismType === 'hetero' 
-                                                ? "Adsorption weakens bonds in reactant molecules, making them easier to react. The product then desorbs from the surface." 
-                                                : "Catalyst forms a temporary intermediate species with reactants, providing an alternative pathway with lower activation energy."}
-                                        </p>
-                                    </div>
+                                    
+                                    <p className={`text-xs mt-4 leading-relaxed transition-colors ${isCatalyzed ? 'text-indigo-200' : 'text-slate-500'}`}>
+                                        {isCatalyzed 
+                                            ? "Mathematical insight: Because the Maxwell-Boltzmann distribution drops exponentially, a small linear decrease in activation energy results in an exponential increase in the number of particles that possess enough energy to react." 
+                                            : "Enable the catalyst above to see how an alternative reaction pathway fundamentally alters the reaction kinetics."}
+                                    </p>
                                 </div>
-                            )}
 
+                            </div>
                         </div>
-                    </div>
 
+                    </div>
                 </div>
             );
-        };
+        }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
