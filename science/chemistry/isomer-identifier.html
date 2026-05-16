@@ -3,399 +3,661 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Isomer Hunter - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Isomer Hunter | Structural Isomers Drawing Tool</title>
+    <meta name="description" content="Interactive structural isomers drawing tool. Draw alkanes, test graph-theory based valency, and discover all topological stereoisomers dynamically.">
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        .atom-btn { transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
-        .atom-btn:hover { transform: scale(1.1); }
-        .atom-btn:active { transform: scale(0.95); }
-        
-        @keyframes pop-success {
-            0% { transform: scale(0.5); opacity: 0; }
-            50% { transform: scale(1.1); opacity: 1; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-        .animate-pop { animation: pop-success 0.5s ease-out forwards; }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col">
-
-    <div id="root" class="flex-grow flex flex-col"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#151e2e',
+                            900: '#0F172A',
+                            950: '#020617',
+                        },
+                        chem: {
+                            carbon: '#38BDF8', // Cyan for valid carbon/bonds
+                            error: '#F43F5E',  // Rose for valency errors
+                            success: '#10B981',// Emerald for success states
+                        }
                     }
                 }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
+            }
+        }
+    </script>
+    
+    <!-- SmilesDrawer Library for rendering SMILES strings into 2D structures -->
+    <script src="https://unpkg.com/smiles-drawer@1.0.10/dist/smiles-drawer.min.js"></script>
 
-        // --- Game Data (Internationalized) ---
-        const Levels = {
-            C4: { formula: 'C₄H₁₀', target: 4, isomers: ['Butane', '2-methylpropane'] },
-            C5: { formula: 'C₅H₁₂', target: 5, isomers: ['Pentane', '2-methylbutane', '2,2-dimethylpropane'] },
-            C6: { formula: 'C₆H₁₄', target: 6, isomers: ['Hexane', '2-methylpentane', '3-methylpentane', '2,2-dimethylbutane', '2,3-dimethylbutane'] }
-        };
+    <style>
+        /* Base structural constraints */
+        body { margin: 0; overflow: hidden; background-color: #0F172A; touch-action: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Grid Canvas */
+        #draw-canvas {
+            cursor: crosshair;
+            background-image: radial-gradient(circle at 2px 2px, #334155 1px, transparent 0);
+            background-size: 40px 40px;
+            background-position: -19px -19px;
+        }
+        
+        /* Animation for newly found isomers */
+        @keyframes popIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .isomer-card { animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen max-h-[1000px] w-full text-slate-100 font-sans selection:bg-cyan-500 selection:text-white">
 
-        // --- IUPAC Naming Logic Helper ---
-        const analyzeStructure = (chainLength, branches) => {
-            // 1. Build Graph
-            const nodes = [];
-            for(let i=0; i<chainLength; i++) nodes.push({ id: i, neighbors: [] });
+    <!-- Left Panel: UI & Isomer Collection -->
+    <aside class="w-full md:w-[350px] lg:w-[400px] bg-slate-900 border-b md:border-b-0 md:border-r border-slate-700 flex flex-col z-10 shadow-2xl h-[45vh] md:h-full">
+        
+        <!-- Header & Controls -->
+        <div class="p-6 pb-4 border-b border-slate-800">
+            <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500">
+                Isomer Hunter
+            </h1>
+            <p class="text-xs text-slate-400 mt-1 mb-4">Structural Isomers Drawing Tool</p>
             
-            // Connect Main Chain
-            for(let i=0; i<chainLength-1; i++) {
-                nodes[i].neighbors.push(i+1);
-                nodes[i+1].neighbors.push(i);
+            <div class="flex flex-col gap-3">
+                <label class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Target Alkane</label>
+                <select id="target-selector" class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-slate-200 outline-none focus:border-cyan-500 transition-colors">
+                    <option value="4">Butane (C4H10) - 2 Isomers</option>
+                    <option value="5" selected>Pentane (C5H12) - 3 Isomers</option>
+                    <option value="6">Hexane (C6H14) - 5 Isomers</option>
+                    <option value="7">Heptane (C7H16) - 9 Isomers</option>
+                </select>
+
+                <div class="flex items-center justify-between mt-2">
+                    <div class="text-sm text-slate-400">Progress: <span id="progress-text" class="text-cyan-400 font-bold">0 / 3</span></div>
+                    <button onclick="clearGrid()" class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded transition-colors">Clear Grid</button>
+                </div>
+                
+                <!-- Progress Bar -->
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-1 overflow-hidden">
+                    <div id="progress-bar" class="bg-gradient-to-r from-cyan-500 to-blue-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Collection Area -->
+        <div class="p-6 flex-grow overflow-y-auto no-scrollbar bg-slate-900/50 shadow-inner">
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Discovered Isomers</h2>
+            
+            <!-- Dynamic Grid for found SMILES -->
+            <div id="isomer-list" class="grid grid-cols-2 gap-4">
+                <!-- Populated via JS -->
+            </div>
+
+            <!-- Empty State -->
+            <div id="empty-state" class="text-center text-slate-500 text-sm mt-8">
+                Draw on the grid to discover structural isomers. Connect carbon atoms to form the target molecule.
+            </div>
+        </div>
+        
+        <!-- Validation Feedback -->
+        <div id="validation-msg" class="p-4 bg-slate-800 text-xs text-slate-400 text-center border-t border-slate-700 transition-colors">
+            Engine Ready. Draw connections.
+        </div>
+    </aside>
+
+    <!-- Right Panel: Drawing Grid -->
+    <main class="flex-grow relative bg-slate-950 flex flex-col h-[55vh] md:h-full">
+        <canvas id="draw-canvas" class="absolute inset-0 w-full h-full"></canvas>
+        
+        <!-- Interactive Overlay -->
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/80 backdrop-blur-md border border-slate-700/50 text-slate-300 text-xs py-2 px-4 rounded-full pointer-events-none flex items-center gap-2 shadow-xl whitespace-nowrap">
+            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            Click & drag between points to draw bonds
+        </div>
+    </main>
+
+    <!-- Application Logic -->
+    <script>
+        // --- 1. DATA & STATE ---
+        const CHALLENGES = {
+            4: { name: "Butane", total: 2 },
+            5: { name: "Pentane", total: 3 },
+            6: { name: "Hexane", total: 5 },
+            7: { name: "Heptane", total: 9 }
+        };
+
+        let currentTarget = 5; // C count
+        let foundIsomerHashes = new Set();
+        let smilesDrawer;
+
+        // Grid & Graph State
+        const canvas = document.getElementById('draw-canvas');
+        const ctx = canvas.getContext('2d');
+        const GRID_SIZE = 50; // Spacing between nodes
+        
+        let nodes = []; // {id, x, y, degree}
+        let edges = []; // {u: id, v: id}
+        let adjacencyList = {}; // id -> [neighborIds]
+        
+        // Interaction State
+        let hoveredNode = null;
+        let draggingFrom = null;
+        let mousePos = { x: 0, y: 0 };
+
+        // --- 2. INITIALIZATION ---
+        function init() {
+            // Setup Canvas resolution
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Initialize SmilesDrawer configured for dark theme UI
+            smilesDrawer = new SmilesDrawer.Drawer({
+                width: 150, height: 150,
+                compactDrawing: false,
+                themes: { dark: { C: '#38BDF8', O: '#F43F5E', N: '#34D399', BACKGROUND: 'transparent' } }
+            });
+
+            // Generate Grid Nodes dynamically based on screen size
+            generateGrid();
+
+            // Setup Listeners
+            canvas.addEventListener('mousedown', handlePointerDown);
+            canvas.addEventListener('mousemove', handlePointerMove);
+            canvas.addEventListener('mouseup', handlePointerUp);
+            canvas.addEventListener('touchstart', handleTouch, {passive: false});
+            canvas.addEventListener('touchmove', handleTouch, {passive: false});
+            canvas.addEventListener('touchend', handleTouch, {passive: false});
+
+            document.getElementById('target-selector').addEventListener('change', (e) => {
+                currentTarget = parseInt(e.target.value);
+                resetChallenge();
+            });
+
+            render();
+        }
+
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            generateGrid(); // Regenerate grid if size changes significantly
+        }
+
+        function generateGrid() {
+            nodes = [];
+            adjacencyList = {};
+            edges = [];
+            foundIsomerHashes.clear();
+            
+            const cols = Math.floor(canvas.width / GRID_SIZE);
+            const rows = Math.floor(canvas.height / GRID_SIZE);
+            const offsetX = (canvas.width - (cols - 1) * GRID_SIZE) / 2;
+            const offsetY = (canvas.height - (rows - 1) * GRID_SIZE) / 2;
+
+            let idCounter = 0;
+            // Create a staggered/hex-like appearance for better chemical structures
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const staggerX = (r % 2 === 0) ? 0 : GRID_SIZE / 2;
+                    if (c === cols - 1 && r % 2 !== 0) continue; // align edges
+                    
+                    const id = idCounter++;
+                    nodes.push({
+                        id: id,
+                        x: offsetX + c * GRID_SIZE + staggerX,
+                        y: offsetY + r * GRID_SIZE,
+                        degree: 0
+                    });
+                    adjacencyList[id] = [];
+                }
+            }
+        }
+
+        window.clearGrid = function() {
+            edges = [];
+            nodes.forEach(n => n.degree = 0);
+            for(let key in adjacencyList) adjacencyList[key] = [];
+            validateGraph();
+            render();
+        }
+
+        function resetChallenge() {
+            clearGrid();
+            foundIsomerHashes.clear();
+            document.getElementById('isomer-list').innerHTML = '';
+            document.getElementById('empty-state').style.display = 'block';
+            updateUI();
+        }
+
+        // --- 3. INTERACTION LOGIC ---
+        function getNearestNode(x, y, threshold = 20) {
+            let nearest = null;
+            let minDist = threshold * threshold;
+            for (let n of nodes) {
+                let dx = n.x - x;
+                let dy = n.y - y;
+                let distSq = dx * dx + dy * dy;
+                if (distSq < minDist) {
+                    minDist = distSq;
+                    nearest = n;
+                }
+            }
+            return nearest;
+        }
+
+        function getMousePos(evt) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+            const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function handlePointerDown(e) {
+            mousePos = getMousePos(e);
+            const node = getNearestNode(mousePos.x, mousePos.y);
+            if (node) draggingFrom = node;
+            render();
+        }
+
+        function handlePointerMove(e) {
+            mousePos = getMousePos(e);
+            hoveredNode = getNearestNode(mousePos.x, mousePos.y);
+            if (draggingFrom) render(); // re-render drag line
+        }
+
+        function handlePointerUp(e) {
+            if (draggingFrom && hoveredNode && draggingFrom.id !== hoveredNode.id) {
+                toggleEdge(draggingFrom, hoveredNode);
+            }
+            draggingFrom = null;
+            validateGraph();
+            render();
+        }
+
+        // Touch normalizer
+        function handleTouch(e) {
+            e.preventDefault();
+            if (e.type === 'touchstart') handlePointerDown(e);
+            else if (e.type === 'touchmove') handlePointerMove(e);
+            else if (e.type === 'touchend') handlePointerUp(e);
+        }
+
+        function toggleEdge(n1, n2) {
+            const u = Math.min(n1.id, n2.id);
+            const v = Math.max(n1.id, n2.id);
+            
+            const existingIndex = edges.findIndex(e => e.u === u && e.v === v);
+            
+            if (existingIndex > -1) {
+                // Remove edge
+                edges.splice(existingIndex, 1);
+                adjacencyList[u] = adjacencyList[u].filter(id => id !== v);
+                adjacencyList[v] = adjacencyList[v].filter(id => id !== u);
+                n1.degree--;
+                n2.degree--;
+            } else {
+                // Add edge (Valency check happens later to allow visual errors for education)
+                edges.push({u, v});
+                adjacencyList[u].push(v);
+                adjacencyList[v].push(u);
+                n1.degree++;
+                n2.degree++;
+            }
+        }
+
+        // --- 4. GRAPH THEORY & SCIENTIFIC VALIDATION LOGIC ---
+        
+        /**
+         * SCIENTIFIC EXPLANATION:
+         * 1. Finds all connected components (groups of bonded atoms).
+         * 2. Checks if any Carbon exceeds 4 bonds (Valency rule).
+         * 3. Checks if a component matches the target C count (e.g., C5 for Pentane).
+         * 4. Alkanes must be Trees (No cycles: Edges = Vertices - 1).
+         * 5. If valid, uses a Tree Isomorphism Algorithm to calculate a canonical hash.
+         * This ensures differently drawn identical shapes are correctly recognized as the same isomer.
+         */
+        function validateGraph() {
+            let msgBox = document.getElementById('validation-msg');
+            let hasValencyError = nodes.some(n => n.degree > 4);
+            
+            if (hasValencyError) {
+                setMsg("Error: Carbon atom exceeds valency of 4!", "bg-rose-900/50 text-rose-400");
+                return;
             }
 
-            // Add Branches
-            let nextId = chainLength;
-            Object.entries(branches).forEach(([posStr, type]) => {
-                const pos = parseInt(posStr);
-                
-                if (type === 'methyl') {
-                    nodes.push({ id: nextId, neighbors: [pos] });
-                    nodes[pos].neighbors.push(nextId);
-                    nextId++;
-                } 
-                else if (type === 'dimethyl') {
-                    // Add 2 separate methyls
-                    nodes.push({ id: nextId, neighbors: [pos] });
-                    nodes[pos].neighbors.push(nextId);
-                    nextId++;
-                    
-                    nodes.push({ id: nextId, neighbors: [pos] });
-                    nodes[pos].neighbors.push(nextId);
-                    nextId++;
-                }
-                else if (type === 'ethyl') {
-                    // Add Ethyl chain (C-C) attached to pos
-                    const c1 = nextId++;
-                    const c2 = nextId++;
-                    
-                    nodes.push({ id: c1, neighbors: [pos, c2] }); // Attached to main
-                    nodes.push({ id: c2, neighbors: [c1] });      // Attached to c1
-                    
-                    nodes[pos].neighbors.push(c1);
+            // Find connected components using Breadth-First Search (BFS)
+            let visited = new Set();
+            let components = [];
+
+            nodes.forEach(startNode => {
+                if (startNode.degree > 0 && !visited.has(startNode.id)) {
+                    let comp = [];
+                    let queue = [startNode.id];
+                    visited.add(startNode.id);
+
+                    while (queue.length > 0) {
+                        let curr = queue.shift();
+                        comp.push(curr);
+                        adjacencyList[curr].forEach(neighbor => {
+                            if (!visited.has(neighbor)) {
+                                visited.add(neighbor);
+                                queue.push(neighbor);
+                            }
+                        });
+                    }
+                    components.push(comp);
                 }
             });
 
-            const totalCarbons = nodes.length;
+            // Analyze components
+            let targetFound = false;
+            let cycleError = false;
 
-            // 2. Find Longest Path (Diameter of Tree)
-            const getFurthest = (startNode) => {
-                const visited = new Set();
-                const stack = [{ node: startNode, dist: 1, path: [startNode] }];
-                let max = { node: startNode, dist: 0, path: [] };
-                
-                while(stack.length > 0) {
-                    const current = stack.pop();
-                    visited.add(current.node);
-                    if (current.dist > max.dist) max = current;
-                    nodes[current.node].neighbors.forEach(n => {
-                        if (!visited.has(n)) {
-                            stack.push({ node: n, dist: current.dist + 1, path: [...current.path, n] });
-                        }
-                    });
-                }
-                return max;
-            };
+            for (let comp of components) {
+                if (comp.length === currentTarget) {
+                    // Check for cycles (Tree Property: E = V - 1)
+                    let edgeCount = 0;
+                    comp.forEach(id => edgeCount += adjacencyList[id].length);
+                    edgeCount = edgeCount / 2; // undirected graph
 
-            const endA = getFurthest(0);
-            const endB = getFurthest(endA.node);
-            
-            const longestChainLen = endB.dist;
-            const longestPath = endB.path; 
-
-            // 3. Identify Branches
-            const calculateName = (path) => {
-                const pathSet = new Set(path);
-                const substituents = []; 
-                
-                path.forEach((nodeId, idx) => {
-                    // Check neighbors of this node
-                    nodes[nodeId].neighbors.forEach(n => {
-                        if (!pathSet.has(n)) {
-                            // Found a branch. Is it Methyl or Ethyl?
-                            // Check if this branch node has neighbors not in path
-                            const subNeighbors = nodes[n].neighbors.filter(sn => sn !== nodeId);
-                            if (subNeighbors.length > 0) {
-                                substituents.push({ pos: idx + 1, type: 'ethyl' }); // Simplified: In this game, complex branch = ethyl
-                            } else {
-                                substituents.push({ pos: idx + 1, type: 'methyl' });
-                            }
-                        }
-                    });
-                });
-                return substituents;
-            };
-
-            const subsForward = calculateName(longestPath);
-            const subsBackward = calculateName([...longestPath].reverse());
-
-            // Compare locants
-            let finalSubs = subsForward;
-            // Simple comparison logic (lexicographical on sorted pos)
-            const getScore = (subs) => subs.map(s => s.pos).sort((a,b)=>a-b).join('');
-            const scoreF = getScore(subsForward);
-            const scoreB = getScore(subsBackward);
-            
-            if (scoreB < scoreF) finalSubs = subsBackward; // Simplified rule
-
-            // Construct Name
-            const rootNames = ['', 'Methane', 'Ethane', 'Propane', 'Butane', 'Pentane', 'Hexane', 'Heptane', 'Octane'];
-            const parentName = rootNames[longestChainLen] || `C${longestChainLen}-alkane`;
-            
-            if (finalSubs.length === 0) return { name: parentName, carbons: totalCarbons };
-
-            // Group substituents
-            const counts = { methyl: [], ethyl: [] };
-            finalSubs.forEach(s => counts[s.type].push(s.pos));
-            
-            let nameParts = [];
-            
-            // Ethyls
-            if (counts.ethyl.length > 0) {
-                counts.ethyl.sort((a,b)=>a-b);
-                const prefix = ['', '', 'di', 'tri'][counts.ethyl.length];
-                nameParts.push(`${counts.ethyl.join(',')}-${prefix}ethyl`);
-            }
-            
-            // Methyls
-            if (counts.methyl.length > 0) {
-                counts.methyl.sort((a,b)=>a-b);
-                const prefix = ['', '', 'di', 'tri', 'tetra'][counts.methyl.length];
-                nameParts.push(`${counts.methyl.join(',')}-${prefix}methyl`);
-            }
-            
-            const fullName = `${nameParts.join('-')}${parentName.toLowerCase()}`;
-            return { name: fullName.charAt(0).toUpperCase() + fullName.slice(1), carbons: totalCarbons };
-        };
-
-        const App = () => {
-            const [level, setLevel] = useState('C6');
-            const [found, setFound] = useState([]); 
-            const [message, setMessage] = useState({ text: 'Start building!', type: 'info' });
-            
-            const [chainLen, setChainLen] = useState(4);
-            const [branches, setBranches] = useState({}); // { index: 'methyl' | 'dimethyl' | 'ethyl' }
-
-            useEffect(() => {
-                setFound([]);
-                setBranches({});
-                setChainLen(Math.max(1, Levels[level].target - 2));
-                setMessage({ text: `Target: Find ${Levels[level].isomers.length} Isomers (${Levels[level].formula})`, type: 'info' });
-            }, [level]);
-
-            // Updated Toggle Logic
-            const toggleBranch = (idx) => {
-                setBranches(prev => {
-                    const current = prev[idx];
-                    let next;
-                    if (!current) next = 'methyl';
-                    else if (current === 'methyl') next = 'dimethyl';
-                    else if (current === 'dimethyl') next = 'ethyl';
-                    else next = null; // Clear
-                    
-                    // Clean up
-                    const newBranches = { ...prev };
-                    if (next) newBranches[idx] = next;
-                    else delete newBranches[idx];
-                    
-                    return newBranches;
-                });
-            };
-
-            const handleCheck = () => {
-                const result = analyzeStructure(chainLen, branches);
-
-                if (result.carbons !== Levels[level].target) {
-                    setMessage({ text: `Wrong Carbon count! You have ${result.carbons}, target is ${Levels[level].target}.`, type: 'error' });
-                    return;
-                }
-
-                const targetIsomers = Levels[level].isomers;
-                // Case-insensitive check
-                const match = targetIsomers.find(iso => iso.toLowerCase() === result.name.toLowerCase());
-
-                if (match) {
-                    if (found.includes(match)) {
-                        setMessage({ text: `You already found this one! It's ${match}.`, type: 'warning' });
+                    if (edgeCount >= comp.length) {
+                        cycleError = true;
                     } else {
-                        setFound(prev => [...prev, match]);
-                        setMessage({ text: `Great! Found new isomer: ${match}`, type: 'success' });
+                        targetFound = true;
+                        processValidIsomer(comp);
                     }
-                } else {
-                    console.log("Generated:", result.name);
-                    setMessage({ text: `This is ${result.name}, but it's not in the target list (duplicate or invalid).`, type: 'warning' });
                 }
-            };
+            }
 
-            const renderAtom = (index, branchType) => (
-                <div 
-                    key={index}
-                    onClick={() => !branchType && toggleBranch(index)}
-                    className={`
-                        relative flex items-center justify-center w-14 h-14 rounded-full border-4 shadow-lg z-10 select-none
-                        ${branchType 
-                            ? (branchType === 'ethyl' ? 'bg-blue-500 border-blue-600 text-white w-12 h-12 mt-2' : 'bg-teal-500 border-teal-600 text-teal-100 w-10 h-10 mt-2') 
-                            : 'bg-slate-700 border-slate-500 text-slate-300 cursor-pointer hover:bg-slate-600 hover:scale-105 active:scale-95 atom-btn'}
-                    `}
-                >
-                    <span className="font-bold font-mono text-xs md:text-base">
-                        {branchType === 'ethyl' ? 'C₂H₅' : branchType ? 'CH₃' : 'C'}
-                    </span>
-                    {!branchType && branches[index] === 'dimethyl' && (
-                        <div className="absolute -top-2 -right-2 bg-teal-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-slate-800">
-                            x2
-                        </div>
-                    )}
-                </div>
-            );
+            if (cycleError) {
+                setMsg("Cycloalkanes are valid, but this tool focuses on acyclic alkanes. Remove cycles.", "bg-amber-900/50 text-amber-400");
+            } else if (targetFound) {
+                setMsg("Valid isomer drawn! Keep searching for others.", "bg-emerald-900/50 text-emerald-400");
+            } else if (components.length > 0) {
+                setMsg(`Connect exactly ${currentTarget} carbons.`, "bg-slate-800 text-slate-400");
+            } else {
+                setMsg("Engine Ready. Draw connections.", "bg-slate-800 text-slate-400");
+            }
+        }
 
-            return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
-                    
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-teal-400 flex items-center gap-2">
-                                <Icon name="Crosshair" /> Isomer Hunter
-                            </h1>
-                            <p className="text-slate-400 text-sm">Build & Find Structural Isomers</p>
-                        </div>
-                        
-                        <div className="flex bg-slate-800 rounded-lg p-1">
-                            {Object.keys(Levels).map(lvl => (
-                                <button
-                                    key={lvl}
-                                    onClick={() => setLevel(lvl)}
-                                    className={`px-4 py-1 rounded font-bold text-sm transition-all
-                                        ${level === lvl ? 'bg-teal-600 text-white shadow' : 'text-slate-400 hover:text-white'}
-                                    `}
-                                >
-                                    {lvl}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+        function setMsg(text, classes) {
+            let el = document.getElementById('validation-msg');
+            el.className = `p-4 text-xs text-center border-t border-slate-700 transition-colors ${classes}`;
+            el.textContent = text;
+        }
 
-                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
-                        
-                        {/* Left: Builder */}
-                        <div className="w-full lg:w-2/3 flex flex-col gap-4">
-                            <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-inner flex-grow flex flex-col items-center justify-center relative min-h-[400px]">
-                                <div className="absolute inset-0 opacity-10" style={{backgroundImage: 'radial-gradient(#2dd4bf 1px, transparent 1px)', backgroundSize: '20px 20px'}}></div>
-                                
-                                <div className="flex items-start gap-1 relative z-10">
-                                    {Array.from({length: chainLen}).map((_, i) => (
-                                        <div key={i} className="flex flex-col items-center">
-                                            {renderAtom(i)}
-                                            {i < chainLen - 1 && <div className="absolute w-8 h-2 bg-slate-600 top-6 -right-4 -z-10"></div>}
-                                            
-                                            {/* Branches */}
-                                            <div className="flex flex-col items-center transition-all duration-300">
-                                                {branches[i] && (
-                                                    <>
-                                                        <div className="h-4 w-1 bg-slate-500 my-1"></div>
-                                                        {renderAtom(`b-${i}`, branches[i])}
-                                                    </>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+        // --- 5. ISOMER UNIQUENESS (TREE HASHING) & SMILES GENERATION ---
+        
+        function processValidIsomer(compIds) {
+            // 1. Calculate Canonical Tree Hash
+            const hash = calculateTreeHash(compIds);
+            
+            // 2. Check if already found
+            if (!foundIsomerHashes.has(hash)) {
+                foundIsomerHashes.add(hash);
+                
+                // 3. Generate SMILES string for rendering
+                const smiles = generateSMILES(compIds);
+                addIsomerToUI(smiles);
+            }
+        }
 
-                                <div className="absolute bottom-4 flex flex-col items-center text-xs text-slate-500 gap-1">
-                                    <div className="flex gap-4">
-                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-teal-500"></span> Methyl</span>
-                                        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-500"></span> Ethyl</span>
-                                    </div>
-                                    <p>Click carbon to toggle branches</p>
-                                </div>
-                            </div>
+        /**
+         * Calculates a unique string representation for any tree graph.
+         * Method: Find tree center(s), then build a rooted tree signature recursively.
+         */
+        function calculateTreeHash(compIds) {
+            // Find Tree Centers (peel away leaves iteratively)
+            let degrees = {};
+            let leaves = [];
+            compIds.forEach(id => {
+                degrees[id] = adjacencyList[id].length;
+                if (degrees[id] <= 1) leaves.push(id);
+            });
+            
+            let remaining = compIds.length;
+            while (remaining > 2) {
+                let newLeaves = [];
+                leaves.forEach(leaf => {
+                    remaining--;
+                    adjacencyList[leaf].forEach(neighbor => {
+                        degrees[neighbor]--;
+                        if (degrees[neighbor] === 1) newLeaves.push(neighbor);
+                    });
+                });
+                leaves = newLeaves;
+            }
+            
+            // remaining 'leaves' are the 1 or 2 centers.
+            let hashes = leaves.map(centerId => encodeNode(centerId, null));
+            hashes.sort(); // If 2 centers, ensure determinism
+            return hashes[0];
+        }
 
-                            <div className="bg-white p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 border border-slate-200 shadow-lg">
-                                <div className="flex items-center gap-4 w-full md:w-auto">
-                                    <label className="text-sm font-bold text-slate-600">Main Chain Length:</label>
-                                    <input 
-                                        type="range" min="1" max="6" 
-                                        value={chainLen} onChange={(e) => setChainLen(parseInt(e.target.value))}
-                                        className="accent-teal-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer flex-grow"
-                                    />
-                                    <span className="text-xl font-mono font-bold text-teal-600 w-8 text-center">{chainLen}</span>
-                                </div>
-                                <button 
-                                    onClick={handleCheck}
-                                    className="px-8 py-3 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-xl shadow-md transition-transform active:scale-95 w-full md:w-auto"
-                                >
-                                    Check Structure
-                                </button>
-                            </div>
+        // Recursive tree encoding: sort children strings and wrap in parens
+        function encodeNode(nodeId, parentId) {
+            let childrenStr = [];
+            adjacencyList[nodeId].forEach(neighborId => {
+                if (neighborId !== parentId) {
+                    childrenStr.push(encodeNode(neighborId, nodeId));
+                }
+            });
+            childrenStr.sort();
+            return "(" + childrenStr.join("") + ")";
+        }
 
-                            <div className={`p-4 rounded-xl border-l-4 text-sm font-bold flex items-center gap-3 transition-all
-                                ${message.type === 'success' ? 'bg-green-900/30 border-green-500 text-green-300' : 
-                                  message.type === 'error' ? 'bg-red-900/30 border-red-500 text-red-300' : 
-                                  'bg-slate-800 border-slate-600 text-slate-400'}
-                            `}>
-                                {message.type === 'success' ? <Icon name="CheckCircle"/> : 
-                                 message.type === 'error' ? <Icon name="XCircle"/> : <Icon name="Info"/>}
-                                {message.text}
-                            </div>
-                        </div>
+        /**
+         * Generates a valid SMILES string from the user's graph.
+         * Finds the longest path to use as the main carbon chain for prettiest rendering.
+         */
+        function generateSMILES(compIds) {
+            if (compIds.length === 1) return "C";
+            
+            // Find diameter of tree using double BFS
+            let start = compIds[0];
+            let furthest1 = bfsFurthest(start).node;
+            let result = bfsFurthest(furthest1);
+            let endpoint = result.node;
+            
+            // Reconstruct path to find the 'main chain'
+            let mainChainSet = new Set();
+            let curr = endpoint;
+            while (curr !== null) {
+                mainChainSet.add(curr);
+                curr = result.parents[curr];
+            }
 
-                        {/* Right: Collection */}
-                        <div className="w-full lg:w-1/3 flex flex-col gap-4">
-                            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg flex-grow">
-                                <div className="flex justify-between items-end mb-4">
-                                    <h3 className="text-lg font-bold text-white">Collection</h3>
-                                    <span className="text-sm font-mono text-teal-400 font-bold">{found.length} / {Levels[level].isomers.length}</span>
-                                </div>
-                                <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden mb-6">
-                                    <div className="h-full bg-teal-500 transition-all duration-1000" style={{width: `${(found.length / Levels[level].isomers.length) * 100}%`}}></div>
-                                </div>
-                                <div className="space-y-3">
-                                    {Levels[level].isomers.map((iso, idx) => (
-                                        <div key={iso} className={`p-3 rounded-xl border transition-all flex items-center gap-3 ${found.includes(iso) ? 'bg-teal-900/20 border-teal-500/50 text-teal-100 animate-pop' : 'bg-slate-900/50 border-slate-700 text-slate-600'}`}>
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${found.includes(iso) ? 'bg-teal-600 text-white' : 'bg-slate-700 text-slate-500'}`}>{idx + 1}</div>
-                                            <div className="font-mono text-sm">{found.includes(iso) ? iso : '???????'}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div className="text-center text-slate-500 text-xs mt-8 border-t border-slate-800 pt-4">
-                        Luminous Learner Science Tools | HKDSE Topic XI
-                    </div>
-                </div>
-            );
-        };
+            // Recursive SMILES builder starting from 'furthest1' (one end of longest chain)
+            return buildSMILES(furthest1, null, mainChainSet);
+        }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        function bfsFurthest(startNode) {
+            let queue = [startNode];
+            let dist = { [startNode]: 0 };
+            let parents = { [startNode]: null };
+            let furthestNode = startNode;
+            let maxDist = 0;
+
+            while(queue.length > 0) {
+                let curr = queue.shift();
+                if (dist[curr] > maxDist) {
+                    maxDist = dist[curr];
+                    furthestNode = curr;
+                }
+                adjacencyList[curr].forEach(n => {
+                    if (dist[n] === undefined) {
+                        dist[n] = dist[curr] + 1;
+                        parents[n] = curr;
+                        queue.push(n);
+                    }
+                });
+            }
+            return { node: furthestNode, parents: parents };
+        }
+
+        function buildSMILES(nodeId, parentId, mainChainSet) {
+            let children = adjacencyList[nodeId].filter(id => id !== parentId);
+            if (children.length === 0) return "C";
+
+            // Prioritize traversing the main chain last (no parentheses needed)
+            children.sort((a, b) => {
+                let aIsMain = mainChainSet.has(a) ? 1 : 0;
+                let bIsMain = mainChainSet.has(b) ? 1 : 0;
+                return aIsMain - bIsMain; // main chain items go to end of array
+            });
+
+            let str = "C";
+            for (let i = 0; i < children.length; i++) {
+                let childSMILES = buildSMILES(children[i], nodeId, mainChainSet);
+                if (i < children.length - 1) {
+                    str += "(" + childSMILES + ")"; // Branch
+                } else {
+                    str += childSMILES; // Main continuation
+                }
+            }
+            return str;
+        }
+
+        // --- 6. UI & RENDERING ---
+        
+        function addIsomerToUI(smiles) {
+            document.getElementById('empty-state').style.display = 'none';
+            
+            const list = document.getElementById('isomer-list');
+            const card = document.createElement('div');
+            card.className = "isomer-card bg-slate-800 rounded-lg p-2 border border-slate-700 flex flex-col items-center justify-center relative";
+            
+            const canvasId = 'smiles-' + Date.now() + Math.floor(Math.random()*1000);
+            card.innerHTML = `
+                <canvas id="${canvasId}" width="150" height="150" class="w-full h-auto"></canvas>
+                <div class="absolute bottom-1 right-2 text-[10px] font-mono text-slate-500">${smiles}</div>
+            `;
+            list.appendChild(card);
+
+            // Use SmilesDrawer to parse and render
+            SmilesDrawer.parse(smiles, function(tree) {
+                smilesDrawer.draw(tree, canvasId, 'dark', false);
+            }, function(err) {
+                console.error(err);
+            });
+
+            updateUI();
+            
+            // Clear grid automatically after a short delay for convenience, if target reached
+            const targetTotal = CHALLENGES[currentTarget].total;
+            if (foundIsomerHashes.size < targetTotal) {
+                 setTimeout(clearGrid, 800);
+            }
+        }
+
+        function updateUI() {
+            const targetTotal = CHALLENGES[currentTarget].total;
+            const current = foundIsomerHashes.size;
+            
+            document.getElementById('progress-text').textContent = `${current} / ${targetTotal}`;
+            
+            const pct = (current / targetTotal) * 100;
+            document.getElementById('progress-bar').style.width = `${pct}%`;
+
+            if (current >= targetTotal) {
+                setMsg("🎉 All Isomers Found! Try the next challenge.", "bg-cyan-900/50 text-cyan-400 font-bold");
+                confettiEffect(); // basic visual feedback
+            }
+        }
+
+        function confettiEffect() {
+            // A simple canvas-based flash or effect could go here, for now just change canvas bg briefly
+            canvas.style.transition = "background-color 0.5s";
+            canvas.style.backgroundColor = "#082f49"; // dark cyan
+            setTimeout(() => { canvas.style.backgroundColor = "transparent"; }, 500);
+        }
+
+        // Main HTML Canvas render loop for the grid
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Dragging Line
+            if (draggingFrom) {
+                ctx.beginPath();
+                ctx.moveTo(draggingFrom.x, draggingFrom.y);
+                ctx.lineTo(mousePos.x, mousePos.y);
+                ctx.strokeStyle = "rgba(56, 189, 248, 0.4)"; // cyan-400 with opacity
+                ctx.lineWidth = 4;
+                ctx.setLineDash([8, 8]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Draw Edges (Bonds)
+            ctx.lineWidth = 6;
+            ctx.lineCap = "round";
+            edges.forEach(e => {
+                const n1 = nodes.find(n => n.id === e.u);
+                const n2 = nodes.find(n => n.id === e.v);
+                
+                // Color based on valency error
+                if (n1.degree > 4 || n2.degree > 4) {
+                    ctx.strokeStyle = "#F43F5E"; // rose-500
+                    ctx.shadowColor = "#F43F5E";
+                } else {
+                    ctx.strokeStyle = "#38BDF8"; // cyan-400
+                    ctx.shadowColor = "#38BDF8";
+                }
+                ctx.shadowBlur = 8;
+                
+                ctx.beginPath();
+                ctx.moveTo(n1.x, n1.y);
+                ctx.lineTo(n2.x, n2.y);
+                ctx.stroke();
+            });
+            ctx.shadowBlur = 0; // reset
+
+            // Draw Nodes
+            nodes.forEach(n => {
+                // Determine node visual state
+                let isHovered = hoveredNode && hoveredNode.id === n.id;
+                let isActive = n.degree > 0;
+                let isError = n.degree > 4;
+
+                // Outer circle
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, isActive ? 12 : 8, 0, Math.PI * 2);
+                
+                if (isError) {
+                    ctx.fillStyle = "#9f1239"; // rose-900
+                    ctx.strokeStyle = "#F43F5E"; // rose-500
+                } else if (isActive) {
+                    ctx.fillStyle = "#0c4a6e"; // sky-900
+                    ctx.strokeStyle = "#38BDF8"; // cyan-400
+                } else {
+                    ctx.fillStyle = "#1e293b"; // slate-800
+                    ctx.strokeStyle = isHovered ? "#94a3b8" : "#334155"; // slate-400 : slate-700
+                }
+                
+                ctx.fill();
+                ctx.lineWidth = isActive || isHovered ? 2 : 1;
+                ctx.stroke();
+
+                // Draw 'C' if active
+                if (isActive) {
+                    ctx.fillStyle = isError ? "#F43F5E" : "#E0F2FE"; // sky-100
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText("C", n.x, n.y + 1);
+                }
+            });
+        }
+
+        // Start
+        window.onload = init;
+
     </script>
 </body>
 </html>
