@@ -12,6 +12,7 @@
     
     <!-- Three.js Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
     <!-- GSAP for Animation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
@@ -22,16 +23,6 @@
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
         
-        /* 3D Canvas Container */
-        #webgl-container {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 0;
-        }
-
         /* HTML Overlay Labels */
         .atom-label {
             position: absolute;
@@ -129,16 +120,11 @@
         </section>
 
         <!-- RIGHT PANEL: 3D Canvas Area -->
-        <section class="flex-1 rounded-xl overflow-hidden relative pointer-events-auto" id="canvas-container">
-            <!-- 3D Canvas sits behind this due to absolute positioning -->
+        <section class="flex-1 rounded-xl overflow-hidden relative pointer-events-auto bg-[#0B1120] shadow-[inset_0_0_50px_rgba(0,0,0,0.5)]" id="canvas-container">
+            <!-- Dynamic Labels Container -->
+            <div id="labels-container" class="absolute inset-0 pointer-events-none z-10"></div>
         </section>
     </main>
-
-    <!-- 3D WebGL Container -->
-    <div id="webgl-container"></div>
-    
-    <!-- Dynamic Labels Container -->
-    <div id="labels-container"></div>
 
     <!-- Application Logic (Three.js + GSAP) -->
     <script>
@@ -154,7 +140,7 @@
             badgeStep1: document.getElementById('badge-step1'),
             badgeStep2: document.getElementById('badge-step2'),
             badgeStep3: document.getElementById('badge-step3'),
-            webglContainer: document.getElementById('webgl-container'),
+            canvasContainer: document.getElementById('canvas-container'),
             labelsContainer: document.getElementById('labels-container')
         };
 
@@ -234,15 +220,22 @@
 
         // --- 3. THREE.JS INITIALIZATION ---
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x0F172A, 0.03);
+        scene.fog = new THREE.FogExp2(0x0B1120, 0.02);
 
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 3, 15);
+        const container = ui.canvasContainer;
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+        camera.position.set(0, 2, 18);
 
         const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        ui.webglContainer.appendChild(renderer.domElement);
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.0;
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
@@ -391,9 +384,10 @@
             latticeGroup = new THREE.Group();
             sceneGroup.add(latticeGroup);
 
-            // Reset Camera & Rotation
-            gsap.to(camera.position, {x: 0, y: 3, z: 15, duration: 1.5, ease: "power2.inOut"});
+            // Reset Camera & Controls
+            gsap.to(camera.position, {x: 0, y: 2, z: 18, duration: 1.5, ease: "power2.inOut"});
             gsap.to(sceneGroup.rotation, {x: 0.2, y: 0, z: 0, duration: 1});
+            controls.target.set(0, 0, 0);
         }
 
         // --- 5. ANIMATIONS ---
@@ -477,12 +471,16 @@
             });
             state.activeLabels.forEach(l => l.div.style.opacity = '0');
 
-            gsap.to(camera.position, {x: 0, y: 8, z: 20, duration: 2, ease: "power2.inOut"});
+            gsap.to(camera.position, {
+                x: 0, y: 4, z: 20, 
+                duration: 2, 
+                ease: "power2.inOut",
+                onUpdate: () => controls.update()
+            });
 
             const config = compounds[state.compoundKey];
             const ratioM = config.ratio[0];
             const ratioNM = config.ratio[1];
-            const totalRatio = ratioM + ratioNM;
 
             const gridSize = 3;
             const spacing = 2.2;
@@ -492,10 +490,19 @@
                 for (let y = 0; y < gridSize; y++) {
                     for (let z = 0; z < gridSize; z++) {
                         
-                        // Stoichiometric distribution logic
-                        // Distribute based on modulo to approximate the correct ratio visually in a simple cubic grid
-                        const indexScore = (x * 9 + y * 3 + z) % totalRatio;
-                        const isMetal = indexScore < ratioM;
+                        // Stoichiometric distribution logic for 3x3x3 grid (27 atoms total)
+                        let isMetal = true;
+                        
+                        if (ratioM === 1 && ratioNM === 1) {
+                            // 1:1 Ratio (14 vs 13 atoms) - Standard alternating checkerboard
+                            isMetal = (x + y + z) % 2 === 0;
+                        } else if (ratioM === 1 && ratioNM === 2) {
+                            // 1:2 Ratio (9 vs 18 atoms) - Diagonal planes of metals
+                            isMetal = (x + y + z) % 3 === 0;
+                        } else if (ratioM === 2 && ratioNM === 1) {
+                            // 2:1 Ratio (18 vs 9 atoms) - Diagonal planes of non-metals
+                            isMetal = (x + y + z) % 3 !== 0;
+                        }
                         
                         const refData = isMetal ? config.metals[0] : config.nonmetals[0];
                         
@@ -556,6 +563,9 @@
         // --- 6. RENDER LOOP & EVENTS ---
         function updateLabels() {
             if (state.phase === 0 || state.phase === 1) {
+                const width = ui.canvasContainer.clientWidth;
+                const height = ui.canvasContainer.clientHeight;
+                
                 state.activeLabels.forEach(l => {
                     const vector = new THREE.Vector3();
                     l.group.getObjectByName("core")?.getWorldPosition(vector);
@@ -563,8 +573,8 @@
                     vector.y += 2.2;
                     vector.project(camera);
 
-                    const x = (vector.x * .5 + .5) * window.innerWidth;
-                    const y = (vector.y * -.5 + .5) * window.innerHeight;
+                    const x = (vector.x * .5 + .5) * width;
+                    const y = (vector.y * -.5 + .5) * height;
 
                     l.div.style.left = `${x}px`;
                     l.div.style.top = `${y}px`;
@@ -575,8 +585,9 @@
         function animate() {
             requestAnimationFrame(animate);
 
+            controls.update();
+
             if (sceneGroup) {
-                sceneGroup.rotation.y += 0.003;
                 if (state.phase === 0) {
                     metalGroups.forEach(g => g.children[1].rotation.x += 0.01);
                     nonMetalGroups.forEach(g => g.children[1].rotation.x -= 0.01);
@@ -588,9 +599,11 @@
         }
 
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            const width = ui.canvasContainer.clientWidth;
+            const height = ui.canvasContainer.clientHeight;
+            camera.aspect = width / height;
             camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setSize(width, height);
         });
 
         ui.compoundSelect.addEventListener('change', (e) => {
