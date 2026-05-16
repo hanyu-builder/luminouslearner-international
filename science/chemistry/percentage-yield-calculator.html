@@ -1,455 +1,391 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Percentage Yield Calculator - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { AlertCircle, ArrowRight, Beaker, Scale, Activity, Info } from 'lucide-react';
+
+export default function App() {
+  // --- 1. STATE MANAGEMENT ---
+  // Reactant State
+  const [rMass, setRMass] = useState(10);
+  const [rUnit, setRUnit] = useState('g');
+  const [rMolarMass, setRMolarMass] = useState(100); // g/mol
+  const [rCoeff, setRCoeff] = useState(1);
+
+  // Product State
+  const [pMass, setPMass] = useState(8);
+  const [pUnit, setPUnit] = useState('g');
+  const [pMolarMass, setPMolarMass] = useState(50); // g/mol
+  const [pCoeff, setPCoeff] = useState(1);
+
+  // System State
+  const [d3Loaded, setD3Loaded] = useState(false);
+  const chartRef = useRef(null);
+
+  // --- 2. DYNAMIC SCRIPT INJECTION (D3.js) ---
+  useEffect(() => {
+    if (window.d3) {
+      setD3Loaded(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = "https://d3js.org/d3.v7.min.js";
+    script.onload = () => setD3Loaded(true);
+    document.head.appendChild(script);
+  }, []);
+
+  // --- 3. DIMENSIONAL ANALYSIS & CALCULATIONS ---
+  const results = useMemo(() => {
+    let isValid = true;
+    let warnings = [];
+
+    // Validation
+    if (rMass < 0 || pMass < 0 || rMolarMass <= 0 || pMolarMass <= 0 || rCoeff <= 0 || pCoeff <= 0) {
+      isValid = false;
+      warnings.push("All inputs must be positive numbers > 0.");
+    }
+
+    if (!isValid) return { isValid: false, warnings };
+
+    // Convert Reactant to Base Moles
+    let rGrams = 0;
+    let rMoles = 0;
+    if (rUnit === 'g') {
+      rGrams = rMass;
+      rMoles = rMass / rMolarMass;
+    } else if (rUnit === 'kg') {
+      rGrams = rMass * 1000;
+      rMoles = rGrams / rMolarMass;
+    } else if (rUnit === 'mol') {
+      rMoles = rMass;
+      rGrams = rMoles * rMolarMass;
+    }
+
+    // Theoretical Product
+    const pTheoreticalMoles = rMoles * (pCoeff / rCoeff);
+    const pTheoreticalGrams = pTheoreticalMoles * pMolarMass;
+
+    // Convert Actual Product to Base Grams
+    let pActualGrams = 0;
+    let pActualMoles = 0;
+    if (pUnit === 'g') {
+      pActualGrams = pMass;
+      pActualMoles = pMass / pMolarMass;
+    } else if (pUnit === 'kg') {
+      pActualGrams = pMass * 1000;
+      pActualMoles = pActualGrams / pMolarMass;
+    } else if (pUnit === 'mol') {
+      pActualMoles = pMass;
+      pActualGrams = pActualMoles * pMolarMass;
+    }
+
+    // Percentage Yield
+    let yieldPct = 0;
+    if (pTheoreticalGrams > 0) {
+      yieldPct = (pActualGrams / pTheoreticalGrams) * 100;
+    }
+
+    if (yieldPct > 100) {
+      warnings.push("Yield exceeds 100%. Check for unreacted impurities, solvent retention, or input errors.");
+    }
+
+    return {
+      isValid: true,
+      warnings,
+      rMoles,
+      pTheoreticalMoles,
+      pTheoreticalGrams,
+      pActualGrams,
+      yieldPct
+    };
+  }, [rMass, rUnit, rMolarMass, rCoeff, pMass, pUnit, pMolarMass, pCoeff]);
+
+  // --- 4. D3.JS VISUALIZATION ---
+  useEffect(() => {
+    if (!d3Loaded || !chartRef.current || !results.isValid) return;
+
+    const d3 = window.d3;
+    const container = d3.select(chartRef.current);
+    container.selectAll("*").remove(); // Clear previous render
+
+    // Dimensions setup
+    const margin = { top: 30, right: 30, bottom: 40, left: 60 };
+    const width = chartRef.current.clientWidth - margin.left - margin.right;
+    const height = 280 - margin.top - margin.bottom;
+
+    const svg = container
+      .append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const data = [
+      { label: "Theoretical Yield", value: results.pTheoreticalGrams, color: "#3b82f6" }, // Blue
+      { label: "Actual Yield", value: results.pActualGrams, color: results.yieldPct > 100 ? "#ef4444" : "#10b981" } // Emerald or Red
+    ];
+
+    const maxVal = d3.max(data, d => d.value) * 1.2 || 10;
+
+    // Scales
+    const x = d3.scaleBand()
+      .domain(data.map(d => d.label))
+      .range([0, width])
+      .padding(0.3);
+
+    const y = d3.scaleLinear()
+      .domain([0, maxVal])
+      .nice()
+      .range([height, 0]);
+
+    // Grid lines
+    svg.append("g")
+      .attr("class", "grid")
+      .attr("color", "#334155")
+      .attr("stroke-dasharray", "3,3")
+      .attr("opacity", 0.5)
+      .call(d3.axisLeft(y).tickSize(-width).tickFormat(""));
+
+    // Axes
+    svg.append("g")
+      .attr("transform", `translate(0,${height})`)
+      .call(d3.axisBottom(x))
+      .attr("color", "#94a3b8")
+      .attr("font-size", "12px");
+
+    svg.append("g")
+      .call(d3.axisLeft(y))
+      .attr("color", "#94a3b8")
+      .attr("font-size", "12px");
+
+    // Y-axis label
+    svg.append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("y", 0 - margin.left)
+      .attr("x", 0 - (height / 2))
+      .attr("dy", "1em")
+      .style("text-anchor", "middle")
+      .style("fill", "#64748b")
+      .text("Mass (grams)");
+
+    // Bars
+    svg.selectAll(".bar")
+      .data(data)
+      .enter()
+      .append("rect")
+      .attr("class", "bar")
+      .attr("x", d => x(d.label))
+      .attr("width", x.bandwidth())
+      .attr("fill", d => d.color)
+      .attr("rx", 4) // Rounded corners
+      .attr("y", y(0))
+      .attr("height", 0)
+      .transition()
+      .duration(800)
+      .ease(d3.easeCubicOut)
+      .attr("y", d => y(d.value))
+      .attr("height", d => height - y(d.value));
+
+    // Value Labels on top of bars
+    svg.selectAll(".label")
+      .data(data)
+      .enter()
+      .append("text")
+      .attr("class", "label")
+      .attr("x", d => x(d.label) + x.bandwidth() / 2)
+      .attr("y", d => y(d.value) - 10)
+      .attr("text-anchor", "middle")
+      .style("fill", "#f8fafc")
+      .style("font-size", "12px")
+      .style("font-weight", "bold")
+      .text(d => `${d.value.toFixed(2)} g`)
+      .style("opacity", 0)
+      .transition()
+      .delay(400)
+      .duration(400)
+      .style("opacity", 1);
+
+  }, [results, d3Loaded]);
+
+  // --- 5. RENDER COMPONENTS ---
+  const InputGroup = ({ label, value, onChange, placeholder }) => (
+    <div className="flex flex-col gap-1 w-full">
+      <label className="text-xs text-slate-400 font-semibold">{label}</label>
+      <input
+        type="number"
+        min="0"
+        step="any"
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        placeholder={placeholder}
+        className="bg-slate-900 border border-slate-700 rounded-md p-2 text-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition font-mono"
+      />
+    </div>
+  );
+
+  return (
+    <div className="bg-[#0F172A] text-slate-200 min-h-screen flex flex-col font-sans select-none overflow-hidden">
+      
+      {/* Header */}
+      <header className="bg-[#1E293B] border-b border-slate-800 p-4 shadow-md shrink-0">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+              <Activity className="text-blue-400 w-6 h-6" /> Percentage Yield Calculator
+            </h1>
+            <p className="text-sm text-slate-400 mt-1 hidden sm:block">
+              Percentage yield calculator chemistry tool. Evaluate synthetic efficiency visually.
+            </p>
+          </div>
+          <div className="bg-slate-900 border border-slate-700 px-4 py-2 rounded-lg font-mono text-xs text-center hidden md:block">
+            <span className="text-slate-500">Formula:</span><br/>
+            <span className="text-blue-400 font-bold">% Yield</span> = (Actual / Theoretical) &times; 100
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 w-full max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto">
         
-        .result-card { transition: all 0.3s ease; }
-        .result-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
-
-        /* Progress Bar Animation */
-        @keyframes fill-bar {
-            from { width: 0; }
-            to { width: var(--target-width); }
-        }
-        .progress-bar-fill {
-            animation: fill-bar 1.5s ease-out forwards;
-        }
-
-        .input-focus-ring:focus-within {
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
-            border-color: #6366f1;
-        }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col">
-
-    <div id="root" class="flex-grow flex flex-col"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        const AtomicMasses = {
-            H: 1.0, C: 12.0, N: 14.0, O: 16.0, Na: 23.0, Mg: 24.3, S: 32.1, Cl: 35.5, K: 39.1, Cu: 63.5, Fe: 55.8, Ag: 107.9, Ca: 40.1, Ba: 137.3, Pb: 207.2
-        };
-
-        const ExampleCategories = [
-            {
-                name: 'Combustion (Mg)',
-                items: [
-                    { name: 'Mg + O₂ → MgO', a: { f: 'Mg', c: 2, m: 2.43 }, p: { f: 'MgO', c: 2 }, actual: 3.5 }
-                ]
-            },
-            {
-                name: 'Decomposition',
-                items: [
-                    { name: 'CuSO₄·5H₂O → CuSO₄', a: { f: 'CuSO4.5H2O', c: 1, m: 5.0 }, p: { f: 'CuSO4', c: 1 }, actual: 3.0 }
-                ]
-            },
-            {
-                name: 'Neutralization',
-                items: [
-                    { name: 'NaOH + HCl → NaCl', a: { f: 'NaOH', c: 1, m: 4.0 }, p: { f: 'NaCl', c: 1 }, actual: 5.2 }
-                ]
-            },
-             {
-                name: 'Metal & Acid',
-                items: [
-                    // Fe + H2SO4 -> FeSO4 + H2
-                    // Note: Calculating yield of H2 gas usually involves volume, here we stick to mass for simplicity or assume FeSO4
-                    { name: 'Fe + H₂SO₄ → FeSO₄', a: { f: 'Fe', c: 1, m: 10.0 }, p: { f: 'FeSO4', c: 1 }, actual: 25.0 }
-                ]
-            },
-            {
-                name: 'Organic Synthesis',
-                items: [
-                    // Aspirin Synthesis: C7H6O3 + C4H6O3 -> C9H8O4 + C2H4O2
-                    // Salicylic Acid (138.1) + Acetic Anhydride -> Aspirin (180.2) + Acetic Acid
-                    { name: 'Aspirin Synthesis', a: { f: 'C7H6O3', c: 1, m: 10.0 }, p: { f: 'C9H8O4', c: 1 }, actual: 11.5 }
-                ]
-            },
-            {
-                name: 'Precipitation',
-                items: [
-                    // AgNO3 + NaCl -> AgCl + NaNO3
-                    { name: 'AgNO₃ + NaCl → AgCl', a: { f: 'AgNO3', c: 1, m: 17.0 }, p: { f: 'AgCl', c: 1 }, actual: 13.5 }
-                ]
-            }
-        ];
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
-                    }
-                }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
-
-        const App = () => {
-            // Inputs
-            const [reactant, setReactant] = useState({ formula: 'Mg', coeff: 2, mass: '' });
-            const [product, setProduct] = useState({ formula: 'MgO', coeff: 2, actualMass: '' });
-            const [activeCategory, setActiveCategory] = useState(0);
-
-            // Results
-            const [theoreticalYield, setTheoreticalYield] = useState(null);
-            const [percentageYield, setPercentageYield] = useState(null);
-            const [error, setError] = useState('');
-            const [steps, setSteps] = useState(null);
+        {/* LEFT COLUMN: Input Panels */}
+        <section className="col-span-1 lg:col-span-5 flex flex-col gap-6">
+          
+          {/* Reactant Panel */}
+          <div className="bg-[#1E293B] border border-slate-800 rounded-xl p-5 shadow-lg relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+            <div className="flex items-center gap-2 mb-4">
+              <Scale className="text-blue-400 w-5 h-5" />
+              <h2 className="text-sm uppercase tracking-wider text-slate-300 font-bold">1. Limiting Reactant</h2>
+            </div>
             
-            // Helper function to calculate Molar Mass
-            const calculateMolarMass = (formula) => {
-                if (!formula) return 0;
-                let mass = 0;
-                // Handle hydrates dot
-                const parts = formula.split('.');
-                
-                const parseSingleFormula = (f) => {
-                    let singleMass = 0;
-                    let i = 0;
-                    const len = f.length;
-
-                    while (i < len) {
-                        const char = f[i];
-                        if (/[A-Z]/.test(char)) {
-                            let element = char; i++;
-                            if (i < len && /[a-z]/.test(f[i])) { element += f[i]; i++; }
-                            let numStr = '';
-                            while (i < len && /\d/.test(f[i])) { numStr += f[i]; i++; }
-                            const count = numStr ? parseInt(numStr) : 1;
-                            
-                            let elKey = element;
-                            if (!AtomicMasses[elKey]) {
-                                 const match = Object.keys(AtomicMasses).find(k => k.toLowerCase() === element.toLowerCase());
-                                 if (match) elKey = match;
-                            }
-
-                            if (AtomicMasses[elKey]) {
-                                singleMass += AtomicMasses[elKey] * count;
-                            } else {
-                                // Skip unknown for demo stability, or throw
-                                // throw new Error(`Unknown element: ${element}`);
-                            }
-                        } else { i++; }
-                    }
-                    return singleMass;
-                };
-
-                try {
-                    let totalMass = 0;
-                    totalMass += parseSingleFormula(parts[0]);
-                    
-                    if (parts.length > 1) {
-                         const hydratePart = parts[1];
-                         const match = hydratePart.match(/^(\d*)(.*)/);
-                         if (match) {
-                             const multiplier = match[1] ? parseInt(match[1]) : 1;
-                             const subFormula = match[2];
-                             if (subFormula) {
-                                 totalMass += parseSingleFormula(subFormula) * multiplier;
-                             }
-                         }
-                    }
-
-                    return totalMass;
-                } catch (e) {
-                    throw e;
-                }
-            };
-
-            const handleCalculate = () => {
-                setError('');
-                setTheoreticalYield(null);
-                setPercentageYield(null);
-                setSteps(null);
-
-                const massA = parseFloat(reactant.mass);
-                const actualP = parseFloat(product.actualMass);
-                const coeffA = parseFloat(reactant.coeff);
-                const coeffP = parseFloat(product.coeff);
-                
-                if (isNaN(massA) || massA <= 0 || isNaN(actualP) || actualP < 0) {
-                    setError('Please enter valid positive numbers for Mass and Actual Yield.');
-                    return;
-                }
-                if (isNaN(coeffA) || coeffA <= 0 || isNaN(coeffP) || coeffP <= 0) {
-                    setError('Coefficients must be positive integers.');
-                    return;
-                }
-
-                try {
-                    const mmA = calculateMolarMass(reactant.formula.trim());
-                    const mmP = calculateMolarMass(product.formula.trim());
-
-                    if (mmA === 0 || mmP === 0) throw new Error('Invalid Chemical Formula');
-
-                    // Step 1: Mass A -> Mole A
-                    const moleA = massA / mmA;
-
-                    // Step 2: Mole A -> Theoretical Mole P
-                    const moleP_theo = moleA * (coeffP / coeffA);
-
-                    // Step 3: Theoretical Mole P -> Theoretical Mass P
-                    const massP_theo = moleP_theo * mmP;
-                    
-                    // Step 4: Calculate Percentage Yield
-                    const yieldPercent = (actualP / massP_theo) * 100;
-                    
-                    if (yieldPercent > 110) { 
-                        setError('Warning: Yield > 110%. Check for impurities or wet product.');
-                    }
-
-                    setTheoreticalYield(massP_theo.toFixed(2));
-                    setPercentageYield(yieldPercent.toFixed(1));
-                    setSteps({ massA, mmA, moleP_theo, mmP, massP_theo, actualP, yieldPercent });
-
-                } catch (e) {
-                    setError(`Calculation Error: ${e.message}`);
-                }
-            };
-
-            const loadExampleData = (ex) => {
-                setReactant({ formula: ex.a.f, coeff: ex.a.c, mass: ex.a.m.toString() });
-                setProduct({ formula: ex.p.f, coeff: ex.p.c, actualMass: ex.actual.toString() });
-                setError('');
-                setTheoreticalYield(null);
-                setPercentageYield(null);
-                setSteps(null);
-            };
-
-            return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
-                    
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
-                                <Icon name="Percent" /> Percentage Yield Calculator
-                            </h1>
-                            <p className="text-slate-500 text-sm">Efficiency of Chemical Reactions</p>
-                        </div>
-                        <button 
-                            onClick={() => { 
-                                setReactant({...reactant, mass: ''}); 
-                                setProduct({...product, actualMass: ''}); 
-                                setTheoreticalYield(null); 
-                                setPercentageYield(null); 
-                                setError(''); 
-                                setSteps(null);
-                            }} 
-                            className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 hover:text-white font-bold text-sm flex items-center gap-2 transition-colors border border-slate-700"
-                        >
-                            <Icon name="RotateCcw" size={16} /> Reset
-                        </button>
-                    </div>
-
-                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
-                        
-                        {/* Left: Input */}
-                        <div className="w-full lg:w-5/12 flex flex-col gap-6">
-                            
-                            {/* Examples */}
-                            <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
-                                        <Icon name="Zap" size={14} /> Quick Load Preset
-                                    </h4>
-                                </div>
-                                
-                                <div className="relative mb-3">
-                                    <select 
-                                        value={activeCategory}
-                                        onChange={(e) => setActiveCategory(Number(e.target.value))}
-                                        className="w-full p-2 pl-3 pr-8 bg-slate-800 border border-slate-700 rounded-lg text-indigo-400 font-bold text-sm appearance-none cursor-pointer focus:ring-2 focus:ring-indigo-500/50 outline-none transition-all"
-                                    >
-                                        {ExampleCategories.map((cat, idx) => (
-                                            <option key={idx} value={idx}>{cat.name}</option>
-                                        ))}
-                                    </select>
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-500">
-                                        <Icon name="ChevronDown" size={16} />
-                                    </div>
-                                </div>
-                                
-                                <div className="flex gap-2 flex-wrap">
-                                    {ExampleCategories[activeCategory].items.map((item, idx) => (
-                                        <button 
-                                            key={idx} 
-                                            onClick={() => loadExampleData(item)}
-                                            className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-indigo-900/30 hover:text-indigo-400 hover:border-indigo-500/50 text-xs font-bold transition-all shadow-sm"
-                                        >
-                                            {item.name.split(' ')[0]}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Input Form */}
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
-                                <h3 className="text-lg font-bold mb-4 text-slate-300 flex items-center gap-2">
-                                    <Icon name="Beaker" size={18} className="text-indigo-500"/> Input Data
-                                </h3>
-
-                                {/* Reactant A */}
-                                <div className="p-3 bg-blue-900/10 rounded-xl border border-blue-500/30 mb-4 relative input-focus-ring transition-all">
-                                    <div className="absolute -top-2.5 left-3 bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Limiting Reactant</div>
-                                    <div className="grid grid-cols-12 gap-2 mt-2">
-                                        <div className="col-span-3">
-                                            <input type="number" value={reactant.coeff} onChange={(e) => setReactant({...reactant, coeff: e.target.value})} className="w-full p-2 rounded text-center font-bold border border-slate-600 bg-slate-800 text-white placeholder-slate-500" placeholder="n"/>
-                                        </div>
-                                        <div className="col-span-9">
-                                            <input type="text" value={reactant.formula} onChange={(e) => setReactant({...reactant, formula: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-mono placeholder-slate-500" placeholder="Formula"/>
-                                        </div>
-                                        <div className="col-span-12 relative">
-                                            <input type="number" value={reactant.mass} onChange={(e) => setReactant({...reactant, mass: e.target.value})} className="w-full p-2 pl-3 pr-8 rounded border border-slate-600 bg-slate-800 text-white font-bold placeholder-slate-500" placeholder="Mass used"/>
-                                            <span className="absolute right-3 top-2 text-xs text-slate-500 font-bold">g</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="flex justify-center -my-3 relative z-10">
-                                    <div className="bg-slate-900 p-1 rounded-full border border-slate-700 text-slate-500">
-                                        <Icon name="ArrowDown" size={20} />
-                                    </div>
-                                </div>
-
-                                {/* Product P */}
-                                <div className="p-3 bg-emerald-900/10 rounded-xl border border-emerald-500/30 relative input-focus-ring transition-all mt-2">
-                                    <div className="absolute -top-2.5 left-3 bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">Target Product</div>
-                                    <div className="grid grid-cols-12 gap-2 mt-2">
-                                        <div className="col-span-3">
-                                            <input type="number" value={product.coeff} onChange={(e) => setProduct({...product, coeff: e.target.value})} className="w-full p-2 rounded text-center font-bold border border-slate-600 bg-slate-800 text-white placeholder-slate-500" placeholder="n"/>
-                                        </div>
-                                        <div className="col-span-9">
-                                            <input type="text" value={product.formula} onChange={(e) => setProduct({...product, formula: e.target.value})} className="w-full p-2 rounded border border-slate-600 bg-slate-800 text-white font-mono placeholder-slate-500" placeholder="Formula"/>
-                                        </div>
-                                        <div className="col-span-12 relative">
-                                            <input type="number" value={product.actualMass} onChange={(e) => setProduct({...product, actualMass: e.target.value})} className="w-full p-2 pl-3 pr-8 rounded border border-slate-600 bg-slate-800 text-white font-bold placeholder-slate-500" placeholder="Actual Yield"/>
-                                            <span className="absolute right-3 top-2 text-xs text-slate-500 font-bold">g</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {error && <div className="text-red-400 text-xs font-bold mt-3 text-center flex items-center justify-center gap-1"><Icon name="AlertTriangle" size={12}/> {error}</div>}
-
-                                <button onClick={handleCalculate} className="w-full mt-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-500 transition-all active:scale-95 text-lg flex items-center justify-center gap-2 border border-indigo-500/50">
-                                    <Icon name="Calculator" /> Calculate Yield
-                                </button>
-                            </div>
-
-                        </div>
-
-                        {/* Right: Result */}
-                        <div className="w-full lg:w-7/12 flex flex-col gap-6">
-                            
-                            {theoreticalYield ? (
-                                <div className="animate-in slide-in-from-right duration-500 h-full flex flex-col gap-6">
-                                    
-                                    {/* Final Result Card */}
-                                    <div className="bg-slate-800 rounded-2xl p-8 shadow-xl text-white border border-slate-700 relative overflow-hidden result-card">
-                                        <div className="relative z-10 text-center">
-                                            <div className="text-sm text-emerald-400 font-bold uppercase mb-2 tracking-widest">Percentage Yield</div>
-                                            <div className={`text-7xl font-mono font-black tracking-tighter ${parseFloat(percentageYield) > 90 ? 'text-emerald-400' : parseFloat(percentageYield) < 40 ? 'text-red-400' : 'text-yellow-400'}`}>
-                                                {percentageYield}%
-                                            </div>
-                                            
-                                            <div className="mt-6 w-full bg-slate-900 rounded-full h-4 overflow-hidden border border-slate-600">
-                                                <div className={`progress-bar-fill h-full ${parseFloat(percentageYield) > 90 ? 'bg-emerald-500' : parseFloat(percentageYield) < 40 ? 'bg-red-500' : 'bg-yellow-500'}`} 
-                                                     style={{ '--target-width': `${Math.min(100, parseFloat(percentageYield))}%` }}>
-                                                </div>
-                                            </div>
-                                            <div className="flex justify-between text-xs text-slate-500 mt-2 font-mono">
-                                                <span>0%</span>
-                                                <span>50%</span>
-                                                <span>100%</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    {/* Breakdown Table */}
-                                    <div className="bg-slate-800 rounded-2xl border border-slate-700 overflow-hidden shadow-lg flex-grow flex flex-col">
-                                        <div className="bg-slate-800 p-4 border-b border-slate-700 font-bold text-slate-300 flex items-center gap-2">
-                                            <Icon name="ListOrdered" size={18} className="text-indigo-400" /> Calculation Breakdown
-                                        </div>
-                                        <div className="p-6 space-y-6 flex-grow">
-                                            
-                                            <div className="grid grid-cols-2 gap-8 text-sm">
-                                                <div className="space-y-1">
-                                                    <span className="text-slate-500 uppercase text-xs font-bold block">Actual Yield (Given)</span>
-                                                    <div className="text-2xl font-mono font-bold text-white">{steps.actualP} g</div>
-                                                </div>
-                                                <div className="space-y-1 text-right">
-                                                    <span className="text-slate-500 uppercase text-xs font-bold block">Theoretical Yield</span>
-                                                    <div className="text-2xl font-mono font-bold text-indigo-300">{steps.massP_theo.toFixed(2)} g</div>
-                                                </div>
-                                            </div>
-
-                                            <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-600">
-                                                <div className="text-xs font-bold text-slate-500 uppercase mb-3">Formulas Used</div>
-                                                <div className="space-y-3 font-mono text-sm text-slate-300">
-                                                    <div className="flex gap-2">
-                                                        <span className="text-slate-500">1.</span>
-                                                        <span>
-                                                            <span className="text-blue-400">Mol R</span> = {steps.massA}g ÷ {steps.mmA.toFixed(1)} = {steps.massA/steps.mmA.toFixed(3)} mol
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <span className="text-slate-500">2.</span>
-                                                        <span>
-                                                            <span className="text-purple-400">Mol P (Theo)</span> = Mol R × ({product.coeff}/{reactant.coeff}) = {steps.moleP_theo.toFixed(3)} mol
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <span className="text-slate-500">3.</span>
-                                                        <span>
-                                                            <span className="text-indigo-400">Mass P (Theo)</span> = {steps.moleP_theo.toFixed(3)} × {steps.mmP.toFixed(1)} = {steps.massP_theo.toFixed(2)} g
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                </div>
-                            ) : (
-                                <div className="flex-grow flex flex-col items-center justify-center text-slate-500 border-4 border-dashed border-slate-700 rounded-3xl bg-slate-800/30 p-12 min-h-[400px]">
-                                    <Icon name="Percent" size={64} className="mb-6 opacity-20" />
-                                    <p className="text-xl text-center font-medium mb-2 text-slate-400">Waiting for Data...</p>
-                                    <p className="text-sm text-center opacity-50">Enter reactant mass and actual yield to see the magic.</p>
-                                </div>
-                            )}
-
-                        </div>
-                    </div>
-                    
-                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
-                        Luminous Learner International | IB/A-Level Chemistry
-                    </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <InputGroup label="Mass / Amount" value={rMass} onChange={setRMass} placeholder="10" />
+              </div>
+              <div className="col-span-2 sm:col-span-1 flex flex-col gap-1">
+                <label className="text-xs text-slate-400 font-semibold">Unit</label>
+                <div className="flex bg-slate-900 border border-slate-700 rounded-md p-1">
+                  {['g', 'kg', 'mol'].map(u => (
+                    <button
+                      key={u}
+                      onClick={() => setRUnit(u)}
+                      className={`flex-1 text-xs py-1 rounded transition ${rUnit === u ? 'bg-blue-500 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                      {u}
+                    </button>
+                  ))}
                 </div>
-            );
-        };
+              </div>
+              <InputGroup label="Molar Mass (g/mol)" value={rMolarMass} onChange={setRMolarMass} placeholder="100.0" />
+              <InputGroup label="Stoichiometric Coeff." value={rCoeff} onChange={setRCoeff} placeholder="1" />
+            </div>
+            {results.isValid && rUnit !== 'mol' && (
+              <div className="mt-4 pt-3 border-t border-slate-800 text-xs text-slate-500 flex justify-between font-mono">
+                <span>Calculated Moles:</span>
+                <span className="text-blue-300">{results.rMoles.toFixed(4)} mol</span>
+              </div>
+            )}
+          </div>
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+          <div className="flex justify-center text-slate-600 -my-3">
+            <ArrowRight className="w-6 h-6 rotate-90 lg:rotate-0" />
+          </div>
+
+          {/* Product Panel */}
+          <div className="bg-[#1E293B] border border-slate-800 rounded-xl p-5 shadow-lg relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
+            <div className="flex items-center gap-2 mb-4">
+              <Beaker className="text-emerald-400 w-5 h-5" />
+              <h2 className="text-sm uppercase tracking-wider text-slate-300 font-bold">2. Actual Product</h2>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <InputGroup label="Actual Mass / Amount" value={pMass} onChange={setPMass} placeholder="8.0" />
+              </div>
+              <div className="col-span-2 sm:col-span-1 flex flex-col gap-1">
+                <label className="text-xs text-slate-400 font-semibold">Unit</label>
+                <div className="flex bg-slate-900 border border-slate-700 rounded-md p-1">
+                  {['g', 'kg', 'mol'].map(u => (
+                    <button
+                      key={u}
+                      onClick={() => setPUnit(u)}
+                      className={`flex-1 text-xs py-1 rounded transition ${pUnit === u ? 'bg-emerald-500 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <InputGroup label="Molar Mass (g/mol)" value={pMolarMass} onChange={setPMolarMass} placeholder="50.0" />
+              <InputGroup label="Stoichiometric Coeff." value={pCoeff} onChange={setPCoeff} placeholder="1" />
+            </div>
+          </div>
+
+        </section>
+
+        {/* RIGHT COLUMN: Results & Visualization */}
+        <section className="col-span-1 lg:col-span-7 flex flex-col gap-6">
+          
+          {/* Headline Results */}
+          <div className="bg-[#1E293B] border border-slate-800 rounded-xl p-6 shadow-lg flex flex-col items-center justify-center relative">
+            <h2 className="text-sm uppercase tracking-wider text-slate-400 font-bold mb-4">Calculated Percentage Yield</h2>
+            
+            {results.isValid ? (
+              <div className="text-center w-full">
+                <div className="text-7xl font-black tracking-tighter mb-2">
+                  <span className={results.yieldPct > 100 ? "text-red-400" : "text-white"}>
+                    {results.yieldPct.toFixed(1)}
+                  </span>
+                  <span className="text-3xl text-slate-500 ml-1">%</span>
+                </div>
+                
+                {/* Secondary Stats */}
+                <div className="flex justify-center gap-6 mt-6 pt-6 border-t border-slate-800">
+                  <div className="text-center font-mono">
+                    <div className="text-xs text-slate-500 uppercase">Theoretical Yield</div>
+                    <div className="text-lg text-blue-400 font-bold">{results.pTheoreticalGrams.toFixed(2)} g</div>
+                  </div>
+                  <div className="w-px bg-slate-800"></div>
+                  <div className="text-center font-mono">
+                    <div className="text-xs text-slate-500 uppercase">Actual Yield</div>
+                    <div className="text-lg text-emerald-400 font-bold">{results.pActualGrams.toFixed(2)} g</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-slate-500 italic py-10 text-center">
+                Please enter valid positive numbers to calculate yield.
+              </div>
+            )}
+
+            {/* Warnings */}
+            {results.warnings.map((warn, idx) => (
+              <div key={idx} className="mt-4 w-full bg-red-900/20 border border-red-800/50 rounded-lg p-3 flex gap-3 items-start text-sm text-red-400">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <p>{warn}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* D3.js Chart Container */}
+          <div className="bg-[#1E293B] border border-slate-800 rounded-xl p-6 shadow-lg flex-1 min-h-[350px] flex flex-col">
+            <div className="flex items-center justify-between mb-2 border-b border-slate-800 pb-4">
+              <h2 className="text-sm uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
+                <Activity className="w-4 h-4" /> Visual Analysis (D3.js)
+              </h2>
+              {!d3Loaded && <span className="text-xs text-slate-500 animate-pulse">Loading engine...</span>}
+            </div>
+            
+            <div className="flex-1 w-full relative pt-4" ref={chartRef}>
+              {/* D3 SVG injects here */}
+            </div>
+
+            <div className="mt-4 bg-slate-900/50 rounded p-3 text-xs text-slate-400 flex items-start gap-2">
+              <Info className="w-4 h-4 shrink-0 text-blue-400" />
+              <p>Dimensional analysis engine automatically maps kilograms and moles into base grams for accurate theoretical vs. actual mass comparison rendering.</p>
+            </div>
+          </div>
+
+        </section>
+      </main>
+    </div>
+  );
+}
