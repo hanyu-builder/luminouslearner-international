@@ -1,393 +1,450 @@
-import React, { useState, useMemo } from 'react';
-
-/**
- * Energy Profile Diagram Maker
- * * This simulator helps students visualize the thermodynamic pathway of chemical reactions.
- * It dynamically calculates and plots the energy profile curve based on standard 
- * enthalpy change (ΔH) and activation energy (Ea).
- */
-export default function App() {
-  // --- STATE MANAGEMENT ---
-  // Reactant Energy (H_reactants): Initial potential energy of the reacting molecules.
-  const [reactantEnergy, setReactantEnergy] = useState(80);
-  
-  // Product Energy (H_products): Final potential energy of the products.
-  const [productEnergy, setProductEnergy] = useState(30);
-  
-  // Activation Energy (Ea): The minimum extra amount of energy required by a reacting 
-  // molecule to get converted into product (reach the transition state).
-  const [activationEnergyInput, setActivationEnergyInput] = useState(80);
-  
-  // Catalyst Toggle: Simulates the presence of a catalyst, which provides an alternative 
-  // reaction pathway with a lower activation energy.
-  const [isCatalyzed, setIsCatalyzed] = useState(false);
-
-  // --- PRESETS (REAL WORLD EXAMPLES) ---
-  const [activePreset, setActivePreset] = useState("Custom");
-  const [presetInfo, setPresetInfo] = useState("");
-  
-  const presets = {
-    "Combustion": { r: 160, p: 40, ea: 30, cat: false, info: "Combustion (e.g., Methane): Highly exothermic. The products (CO₂, H₂O) are much more stable than the reactants. A small initial activation energy (a spark) releases massive heat." },
-    "Haber Process": { r: 110, p: 60, ea: 130, cat: true, info: "Haber Process (Ammonia Synthesis): Exothermic, but breaking the N≡N triple bond requires huge activation energy. An iron catalyst provides an alternative pathway, significantly lowering Ea." },
-    "Photosynthesis": { r: 30, p: 150, ea: 140, cat: false, info: "Photosynthesis: Highly endothermic. Plants absorb continuous solar energy (which acts to overcome Ea and drive the reaction) to convert stable CO₂ and H₂O into higher-energy glucose." },
-  };
-
-  const applyPreset = (name) => {
-    setActivePreset(name);
-    if (name === "Custom") {
-      setPresetInfo("");
-      return;
-    }
-    setReactantEnergy(presets[name].r);
-    setProductEnergy(presets[name].p);
-    setActivationEnergyInput(presets[name].ea);
-    setIsCatalyzed(presets[name].cat);
-    setPresetInfo(presets[name].info);
-  };
-
-  const handleManualChange = (setter) => (e) => {
-    setter(Number(e.target.value));
-    if (activePreset !== "Custom") {
-      setActivePreset("Custom");
-      setPresetInfo("");
-    }
-  };
-
-  // --- SCIENTIFIC CALCULATIONS ---
-  // Ensure physical accuracy: The peak (Transition State) MUST be higher than both 
-  // reactant and product energies. If the reaction is endothermic (products > reactants),
-  // the activation energy MUST at least bridge the gap to the products.
-  const minimumEa = productEnergy > reactantEnergy ? (productEnergy - reactantEnergy) + 10 : 10;
-  const actualEa = Math.max(activationEnergyInput, minimumEa);
-
-  // Enthalpy Change (ΔH) = H_products - H_reactants
-  // Negative ΔH means energy is released (Exothermic).
-  // Positive ΔH means energy is absorbed (Endothermic).
-  const deltaH = productEnergy - reactantEnergy;
-  
-  // Peak Energy (Transition State Complex): Highest energy point in the pathway.
-  const peakEnergy = reactantEnergy + actualEa;
-
-  // Catalyzed Activation Energy: Lowered by a simulated factor (e.g., 40% of original Ea)
-  // but still strictly ensuring it's above both reactants and products.
-  const catalyzedEa = Math.max(actualEa * 0.4, minimumEa);
-  const catalyzedPeakEnergy = reactantEnergy + catalyzedEa;
-
-  // Reaction Classification
-  const isExothermic = deltaH < 0;
-  const reactionTypeStr = isExothermic ? "Exothermic" : (deltaH > 0 ? "Endothermic" : "Isothermic");
-
-  // --- SVG GRAPHING LOGIC ---
-  // Constants for coordinate mapping
-  const SVG_WIDTH = 600;
-  const SVG_HEIGHT = 400;
-  const PADDING = { top: 40, right: 40, bottom: 60, left: 80 };
-  const GRAPH_W = SVG_WIDTH - PADDING.left - PADDING.right;
-  const GRAPH_H = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-  
-  const MAX_ENERGY = 250; // Maximum y-axis value (kJ/mol)
-
-  // Mapping functions: Convert scientific values to SVG canvas pixels
-  const mapX = (progressPercentage) => PADDING.left + (progressPercentage / 100) * GRAPH_W;
-  
-  // In SVG, Y=0 is the top. We invert it so higher energy is higher on the screen.
-  const mapY = (energy) => PADDING.top + GRAPH_H - (energy / MAX_ENERGY) * GRAPH_H;
-
-  // Generate the main SVG path string using Cubic Bezier Curves
-  // M = Move to (start), L = Line to, C = Cubic Bezier Curve (controlX1, controlY1, controlX2, controlY2, endX, endY)
-  const generatePath = (peakY) => {
-    const yR = mapY(reactantEnergy);
-    const yP = mapY(productEnergy);
-    const yPeak = mapY(peakY);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Energy Profile Diagram Maker</title>
+    <meta name="description" content="Interactive energy profile diagram generator. Map thermodynamic pathways, visualize activation energy, enthalpy changes, and catalyzed reactions dynamically.">
     
-    // X coordinates along the reaction progress
-    const x0 = mapX(0);   const xReactEnd = mapX(25);
-    const xPeak = mapX(50);
-    const xProdStart = mapX(75); const x100 = mapX(100);
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-    // Control points for smooth bell curve
-    const cp1x = mapX(35); const cp2x = mapX(35); // Curve up to peak
-    const cp3x = mapX(65); const cp4x = mapX(65); // Curve down from peak
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    return `
-      M ${x0} ${yR} 
-      L ${xReactEnd} ${yR} 
-      C ${cp1x} ${yR}, ${cp2x} ${yPeak}, ${xPeak} ${yPeak}
-      C ${cp3x} ${yPeak}, ${cp4x} ${yP}, ${xProdStart} ${yP}
-      L ${x100} ${yP}
-    `;
-  };
+    <style>
+        body { 
+            margin: 0; 
+            background-color: #0F172A; 
+        }
+        /* Custom styling for cross-browser range sliders, matching Tailwind accent colors */
+        input[type="range"] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 0.5rem;
+            border-radius: 0.5rem;
+            background: #334155;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 1.25rem;
+            width: 1.25rem;
+            border-radius: 50%;
+            background: currentColor;
+            margin-top: -0.375rem;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
 
-  const uncatalyzedPath = generatePath(peakEnergy);
-  const catalyzedPath = generatePath(catalyzedPeakEnergy);
+    <div id="root"></div>
 
-  return (
-    <div className="min-h-screen max-h-[1000px] bg-[#0F172A] text-slate-200 font-sans p-4 md:p-8 flex flex-col items-center overflow-hidden">
-      
-      {/* Header Section */}
-      <header className="w-full max-w-6xl mb-6 text-center">
-        <h1 className="text-3xl md:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
-          Energy Profile Diagram Maker
-        </h1>
-        <p className="text-slate-400 mt-2 text-sm md:text-base">
-          Map the thermodynamic pathway of a chemical reaction. Adjust energies to explore Endothermic, Exothermic, and Catalyzed reactions.
-        </p>
-      </header>
+    <script type="text/babel">
+        const { useState, useMemo } = React;
 
-      {/* Main Simulator UI: Split Graph and Controls */}
-      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-6 flex-grow min-h-0">
-        
-        {/* Left Side: Interactive Graph (Canvas) */}
-        <div className="flex-grow bg-slate-800/50 border border-slate-700 rounded-2xl p-4 shadow-2xl relative">
-          <svg viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} className="w-full h-full drop-shadow-lg">
-            
-            <defs>
-              {/* Arrowheads for dimension lines */}
-              <marker id="arrow-up" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8" />
-              </marker>
-              <marker id="arrow-down" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8" />
-              </marker>
-              
-              {/* Glow filter for the primary curve */}
-              <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur stdDeviation="3" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-
-            {/* Axes */}
-            <line x1={PADDING.left} y1={PADDING.top} x2={PADDING.left} y2={SVG_HEIGHT - PADDING.bottom} stroke="#475569" strokeWidth="2" />
-            <line x1={PADDING.left} y1={SVG_HEIGHT - PADDING.bottom} x2={SVG_WIDTH - PADDING.right} y2={SVG_HEIGHT - PADDING.bottom} stroke="#475569" strokeWidth="2" />
-            
-            {/* Axis Labels */}
-            <text x={PADDING.left - 40} y={SVG_HEIGHT / 2} transform={`rotate(-90, ${PADDING.left - 40}, ${SVG_HEIGHT / 2})`} fill="#94A3B8" fontSize="14" textAnchor="middle" fontWeight="bold">
-              Potential Energy (kJ/mol)
-            </text>
-            <text x={SVG_WIDTH / 2} y={SVG_HEIGHT - 20} fill="#94A3B8" fontSize="14" textAnchor="middle" fontWeight="bold">
-              Reaction Progress
-            </text>
-
-            {/* Y-axis Ticks (0, 50, 100, 150, 200, 250) */}
-            {[0, 50, 100, 150, 200, 250].map(tick => (
-              <g key={`tick-${tick}`}>
-                <line x1={PADDING.left - 5} y1={mapY(tick)} x2={PADDING.left} y2={mapY(tick)} stroke="#475569" strokeWidth="1" />
-                <text x={PADDING.left - 10} y={mapY(tick) + 4} fill="#64748B" fontSize="12" textAnchor="end">{tick}</text>
-              </g>
-            ))}
-
-            {/* Reference Lines (Dotted) */}
-            <line x1={PADDING.left} y1={mapY(reactantEnergy)} x2={SVG_WIDTH - PADDING.right} y2={mapY(reactantEnergy)} stroke="#3B82F6" strokeWidth="1" strokeDasharray="4 4" opacity="0.4" />
-            <line x1={mapX(50)} y1={mapY(peakEnergy)} x2={SVG_WIDTH - PADDING.right} y2={mapY(peakEnergy)} stroke="#F43F5E" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
-
-            {/* Uncatalyzed Curve */}
-            <path 
-              d={uncatalyzedPath} 
-              fill="none" 
-              stroke="#F8FAFC" 
-              strokeWidth="4" 
-              strokeLinecap="round" 
-              strokeLinejoin="round"
-              filter="url(#glow)"
-            />
-
-            {/* Catalyzed Curve (Conditional) */}
-            {isCatalyzed && (
-              <path 
-                d={catalyzedPath} 
-                fill="none" 
-                stroke="#FBBF24" 
-                strokeWidth="4" 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-                strokeDasharray="8 6"
-                filter="url(#glow)"
-              />
-            )}
-
-            {/* Annotation: Activation Energy (Ea) */}
-            <g>
-              <line 
-                x1={mapX(48)} y1={mapY(reactantEnergy)} 
-                x2={mapX(48)} y2={mapY(peakEnergy)} 
-                stroke="#94A3B8" strokeWidth="2" 
-                markerStart="url(#arrow-down)" markerEnd="url(#arrow-up)" 
-              />
-              <rect x={mapX(48) - 35} y={mapY(reactantEnergy + actualEa / 2) - 10} width="30" height="20" fill="#0F172A" rx="4" />
-              <text x={mapX(48) - 20} y={mapY(reactantEnergy + actualEa / 2) + 4} fill="#F8FAFC" fontSize="12" textAnchor="middle" fontWeight="bold">Ea</text>
-            </g>
-
-            {/* Annotation: Catalyzed Ea (if active) */}
-            {isCatalyzed && (
-              <g>
-                <line 
-                  x1={mapX(40)} y1={mapY(reactantEnergy)} 
-                  x2={mapX(40)} y2={mapY(catalyzedPeakEnergy)} 
-                  stroke="#FBBF24" strokeWidth="2" 
-                  markerStart="url(#arrow-down)" markerEnd="url(#arrow-up)" 
-                />
-                <rect x={mapX(40) - 45} y={mapY(reactantEnergy + catalyzedEa / 2) - 10} width="40" height="20" fill="#0F172A" rx="4" />
-                <text x={mapX(40) - 25} y={mapY(reactantEnergy + catalyzedEa / 2) + 4} fill="#FBBF24" fontSize="12" textAnchor="middle" fontWeight="bold">Ea(cat)</text>
-              </g>
-            )}
-
-            {/* Annotation: Enthalpy Change (ΔH) */}
-            <g>
-              <line 
-                x1={mapX(85)} y1={mapY(reactantEnergy)} 
-                x2={mapX(85)} y2={mapY(productEnergy)} 
-                stroke={isExothermic ? "#EF4444" : "#3B82F6"} strokeWidth="2" 
-                markerEnd="url(#arrow-up)"
-              />
-              <rect x={mapX(85) + 10} y={mapY(reactantEnergy + deltaH / 2) - 12} width="40" height="24" fill="#0F172A" rx="4" border="1px solid white"/>
-              <text x={mapX(85) + 30} y={mapY(reactantEnergy + deltaH / 2) + 4} fill={isExothermic ? "#EF4444" : "#3B82F6"} fontSize="12" textAnchor="middle" fontWeight="bold">
-                ΔH
-              </text>
-            </g>
-
-            {/* Labels for Reactants and Products */}
-            <rect x={mapX(12.5) - 40} y={mapY(reactantEnergy) + 15} width="80" height="24" fill="#1E293B" rx="4" stroke="#3B82F6" />
-            <text x={mapX(12.5)} y={mapY(reactantEnergy) + 31} fill="#F8FAFC" fontSize="12" textAnchor="middle">Reactants</text>
-            
-            <rect x={mapX(87.5) - 40} y={mapY(productEnergy) + 15} width="80" height="24" fill="#1E293B" rx="4" stroke={isExothermic ? "#10B981" : "#3B82F6"} />
-            <text x={mapX(87.5)} y={mapY(productEnergy) + 31} fill="#F8FAFC" fontSize="12" textAnchor="middle">Products</text>
-            
-          </svg>
-        </div>
-
-        {/* Right Side: Controls and Output */}
-        <div className="w-full lg:w-80 flex flex-col gap-4">
+        /**
+         * Energy Profile Diagram Maker
+         * This simulator helps students visualize the thermodynamic pathway of chemical reactions.
+         * It dynamically calculates and plots the energy profile curve based on standard 
+         * enthalpy change (ΔH) and activation energy (Ea).
+         */
+        function App() {
+          // --- STATE MANAGEMENT ---
+          // Reactant Energy (H_reactants): Initial potential energy of the reacting molecules.
+          const [reactantEnergy, setReactantEnergy] = useState(80);
           
-          {/* Reaction Status Panel */}
-          <div className={`p-5 rounded-2xl border ${isExothermic ? 'bg-red-500/10 border-red-500/30' : 'bg-blue-500/10 border-blue-500/30'}`}>
-            <div className="flex justify-between items-start">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Reaction Type</h3>
-                <p className={`text-2xl font-bold ${isExothermic ? 'text-red-400' : 'text-blue-400'}`}>
-                  {reactionTypeStr}
-                </p>
-              </div>
-              <div className="text-right">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">ΔH</h3>
-                <p className="text-2xl font-bold text-white">
-                  {deltaH > 0 ? '+' : ''}{deltaH} <span className="text-sm font-normal">kJ/mol</span>
-                </p>
-              </div>
-            </div>
-            <p className="mt-3 text-sm text-slate-300">
-              {isExothermic 
-                ? "Energy is released to the surroundings. The products are more stable than the reactants."
-                : "Energy is absorbed from the surroundings. The products are less stable than the reactants."}
-            </p>
-          </div>
+          // Product Energy (H_products): Final potential energy of the products.
+          const [productEnergy, setProductEnergy] = useState(30);
+          
+          // Activation Energy (Ea): The minimum extra amount of energy required by a reacting 
+          // molecule to get converted into product (reach the transition state).
+          const [activationEnergyInput, setActivationEnergyInput] = useState(80);
+          
+          // Catalyst Toggle: Simulates the presence of a catalyst, which provides an alternative 
+          // reaction pathway with a lower activation energy.
+          const [isCatalyzed, setIsCatalyzed] = useState(false);
 
-          {/* Real-World Examples (Presets) */}
-          <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5 flex flex-col gap-3">
-            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Real-World Examples</h3>
-            <div className="flex flex-wrap gap-2">
-              {["Custom", "Combustion", "Haber Process", "Photosynthesis"].map(name => (
-                <button
-                  key={name}
-                  onClick={() => applyPreset(name)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                    activePreset === name 
-                      ? "bg-blue-500 text-white shadow-md shadow-blue-500/20" 
-                      : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                  }`}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-            {presetInfo && (
-              <div className="mt-2 p-3 bg-slate-900/80 rounded-xl border border-slate-700 text-sm text-slate-300 leading-relaxed">
-                {presetInfo}
-              </div>
-            )}
-          </div>
+          // --- PRESETS (REAL WORLD EXAMPLES) ---
+          const [activePreset, setActivePreset] = useState("Custom");
+          const [presetInfo, setPresetInfo] = useState("");
+          
+          const presets = {
+            "Combustion": { r: 160, p: 40, ea: 30, cat: false, info: "Combustion (e.g., Methane): Highly exothermic. The products (CO₂, H₂O) are much more stable than the reactants. A small initial activation energy (a spark) releases massive heat." },
+            "Haber Process": { r: 110, p: 60, ea: 130, cat: true, info: "Haber Process (Ammonia Synthesis): Exothermic, but breaking the N≡N triple bond requires huge activation energy. An iron catalyst provides an alternative pathway, significantly lowering Ea." },
+            "Photosynthesis": { r: 30, p: 150, ea: 140, cat: false, info: "Photosynthesis: Highly endothermic. Plants absorb continuous solar energy (which acts to overcome Ea and drive the reaction) to convert stable CO₂ and H₂O into higher-energy glucose." },
+          };
 
-          {/* Interactive Controls */}
-          <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5 flex-grow flex flex-col gap-5">
+          const applyPreset = (name) => {
+            setActivePreset(name);
+            if (name === "Custom") {
+              setPresetInfo("");
+              return;
+            }
+            setReactantEnergy(presets[name].r);
+            setProductEnergy(presets[name].p);
+            setActivationEnergyInput(presets[name].ea);
+            setIsCatalyzed(presets[name].cat);
+            setPresetInfo(presets[name].info);
+          };
+
+          const handleManualChange = (setter) => (e) => {
+            setter(Number(e.target.value));
+            if (activePreset !== "Custom") {
+              setActivePreset("Custom");
+              setPresetInfo("");
+            }
+          };
+
+          // --- SCIENTIFIC CALCULATIONS ---
+          // Ensure physical accuracy: The peak (Transition State) MUST be higher than both 
+          // reactant and product energies. If the reaction is endothermic (products > reactants),
+          // the activation energy MUST at least bridge the gap to the products.
+          const minimumEa = productEnergy > reactantEnergy ? (productEnergy - reactantEnergy) + 10 : 10;
+          const actualEa = Math.max(activationEnergyInput, minimumEa);
+
+          // Enthalpy Change (ΔH) = H_products - H_reactants
+          // Negative ΔH means energy is released (Exothermic).
+          // Positive ΔH means energy is absorbed (Endothermic).
+          const deltaH = productEnergy - reactantEnergy;
+          
+          // Peak Energy (Transition State Complex): Highest energy point in the pathway.
+          const peakEnergy = reactantEnergy + actualEa;
+
+          // Catalyzed Activation Energy: Lowered by a simulated factor (e.g., 40% of original Ea)
+          // but still strictly ensuring it's above both reactants and products.
+          const catalyzedEa = Math.max(actualEa * 0.4, minimumEa);
+          const catalyzedPeakEnergy = reactantEnergy + catalyzedEa;
+
+          // Reaction Classification
+          const isExothermic = deltaH < 0;
+          const reactionTypeStr = isExothermic ? "Exothermic" : (deltaH > 0 ? "Endothermic" : "Isothermic");
+
+          // --- SVG GRAPHING LOGIC ---
+          // Constants for coordinate mapping
+          const SVG_WIDTH = 600;
+          const SVG_HEIGHT = 400;
+          const PADDING = { top: 40, right: 40, bottom: 60, left: 80 };
+          const GRAPH_W = SVG_WIDTH - PADDING.left - PADDING.right;
+          const GRAPH_H = SVG_HEIGHT - PADDING.top - PADDING.bottom;
+          
+          const MAX_ENERGY = 250; // Maximum y-axis value (kJ/mol)
+
+          // Mapping functions: Convert scientific values to SVG canvas pixels
+          const mapX = (progressPercentage) => PADDING.left + (progressPercentage / 100) * GRAPH_W;
+          
+          // In SVG, Y=0 is the top. We invert it so higher energy is higher on the screen.
+          const mapY = (energy) => PADDING.top + GRAPH_H - (energy / MAX_ENERGY) * GRAPH_H;
+
+          // Generate the main SVG path string using Cubic Bezier Curves
+          // M = Move to (start), L = Line to, C = Cubic Bezier Curve (controlX1, controlY1, controlX2, controlY2, endX, endY)
+          const generatePath = (peakY) => {
+            const yR = mapY(reactantEnergy);
+            const yP = mapY(productEnergy);
+            const yPeak = mapY(peakY);
             
-            {/* Reactant Energy Slider */}
-            <div>
-              <div className="flex justify-between mb-2">
-                <label className="text-sm font-semibold text-blue-300">Reactant Energy</label>
-                <span className="text-sm text-slate-300 font-mono">{reactantEnergy} kJ/mol</span>
-              </div>
-              <input 
-                type="range" 
-                min="10" max="200" step="5"
-                value={reactantEnergy} 
-                onChange={handleManualChange(setReactantEnergy)}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              />
-            </div>
+            // X coordinates along the reaction progress
+            const x0 = mapX(0);   const xReactEnd = mapX(25);
+            const xPeak = mapX(50);
+            const xProdStart = mapX(75); const x100 = mapX(100);
 
-            {/* Product Energy Slider */}
-            <div>
-              <div className="flex justify-between mb-2">
-                <label className="text-sm font-semibold text-emerald-300">Product Energy</label>
-                <span className="text-sm text-slate-300 font-mono">{productEnergy} kJ/mol</span>
-              </div>
-              <input 
-                type="range" 
-                min="10" max="200" step="5"
-                value={productEnergy} 
-                onChange={handleManualChange(setProductEnergy)}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-              />
-            </div>
+            // Control points for smooth bell curve
+            const cp1x = mapX(35); const cp2x = mapX(35); // Curve up to peak
+            const cp3x = mapX(65); const cp4x = mapX(65); // Curve down from peak
 
-            {/* Activation Energy Slider */}
-            <div>
-              <div className="flex justify-between mb-2">
-                <label className="text-sm font-semibold text-rose-300">Activation Energy (Ea)</label>
-                <span className="text-sm text-slate-300 font-mono">{actualEa} kJ/mol</span>
-              </div>
-              <input 
-                type="range" 
-                min="10" max="200" step="5"
-                value={activationEnergyInput} 
-                onChange={handleManualChange(setActivationEnergyInput)}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-rose-500"
-              />
-              {actualEa > activationEnergyInput && (
-                <p className="text-xs text-rose-400 mt-1">
-                  * Ea auto-adjusted to bridge the gap to products.
+            return `
+              M ${x0} ${yR} 
+              L ${xReactEnd} ${yR} 
+              C ${cp1x} ${yR}, ${cp2x} ${yPeak}, ${xPeak} ${yPeak}
+              C ${cp3x} ${yPeak}, ${cp4x} ${yP}, ${xProdStart} ${yP}
+              L ${x100} ${yP}
+            `;
+          };
+
+          const uncatalyzedPath = generatePath(peakEnergy);
+          const catalyzedPath = generatePath(catalyzedPeakEnergy);
+
+          return (
+            <div className="min-h-screen max-h-[1000px] bg-[#0F172A] text-slate-200 font-sans p-4 md:p-8 flex flex-col items-center overflow-hidden">
+              
+              {/* Header Section */}
+              <header className="w-full max-w-6xl mb-6 text-center">
+                <h1 className="text-3xl md:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
+                  Energy Profile Diagram Maker
+                </h1>
+                <p className="text-slate-400 mt-2 text-sm md:text-base">
+                  Map the thermodynamic pathway of a chemical reaction. Adjust energies to explore Endothermic, Exothermic, and Catalyzed reactions.
                 </p>
-              )}
+              </header>
+
+              {/* Main Simulator UI: Split Graph and Controls */}
+              <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-6 flex-grow min-h-0">
+                
+                {/* Left Side: Interactive Graph (Canvas) */}
+                <div className="flex-grow bg-slate-800/50 border border-slate-700 rounded-2xl p-4 shadow-2xl relative min-h-[400px]">
+                  <svg viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} className="w-full h-full drop-shadow-lg">
+                    
+                    <defs>
+                      {/* Arrowheads for dimension lines */}
+                      <marker id="arrow-up" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8" />
+                      </marker>
+                      <marker id="arrow-down" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#94A3B8" />
+                      </marker>
+                      
+                      {/* Glow filter for the primary curve */}
+                      <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feMerge>
+                          <feMergeNode in="blur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+
+                    {/* Axes */}
+                    <line x1={PADDING.left} y1={PADDING.top} x2={PADDING.left} y2={SVG_HEIGHT - PADDING.bottom} stroke="#475569" strokeWidth="2" />
+                    <line x1={PADDING.left} y1={SVG_HEIGHT - PADDING.bottom} x2={SVG_WIDTH - PADDING.right} y2={SVG_HEIGHT - PADDING.bottom} stroke="#475569" strokeWidth="2" />
+                    
+                    {/* Axis Labels */}
+                    <text x={PADDING.left - 40} y={SVG_HEIGHT / 2} transform={`rotate(-90, ${PADDING.left - 40}, ${SVG_HEIGHT / 2})`} fill="#94A3B8" fontSize="14" textAnchor="middle" fontWeight="bold">
+                      Potential Energy (kJ/mol)
+                    </text>
+                    <text x={SVG_WIDTH / 2} y={SVG_HEIGHT - 20} fill="#94A3B8" fontSize="14" textAnchor="middle" fontWeight="bold">
+                      Reaction Progress
+                    </text>
+
+                    {/* Y-axis Ticks (0, 50, 100, 150, 200, 250) */}
+                    {[0, 50, 100, 150, 200, 250].map(tick => (
+                      <g key={`tick-${tick}`}>
+                        <line x1={PADDING.left - 5} y1={mapY(tick)} x2={PADDING.left} y2={mapY(tick)} stroke="#475569" strokeWidth="1" />
+                        <text x={PADDING.left - 10} y={mapY(tick) + 4} fill="#64748B" fontSize="12" textAnchor="end">{tick}</text>
+                      </g>
+                    ))}
+
+                    {/* Reference Lines (Dotted) */}
+                    <line x1={PADDING.left} y1={mapY(reactantEnergy)} x2={SVG_WIDTH - PADDING.right} y2={mapY(reactantEnergy)} stroke="#3B82F6" strokeWidth="1" strokeDasharray="4 4" opacity="0.4" />
+                    <line x1={mapX(50)} y1={mapY(peakEnergy)} x2={SVG_WIDTH - PADDING.right} y2={mapY(peakEnergy)} stroke="#F43F5E" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
+
+                    {/* Uncatalyzed Curve */}
+                    <path 
+                      d={uncatalyzedPath} 
+                      fill="none" 
+                      stroke="#F8FAFC" 
+                      strokeWidth="4" 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round"
+                      filter="url(#glow)"
+                    />
+
+                    {/* Catalyzed Curve (Conditional) */}
+                    {isCatalyzed && (
+                      <path 
+                        d={catalyzedPath} 
+                        fill="none" 
+                        stroke="#FBBF24" 
+                        strokeWidth="4" 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round"
+                        strokeDasharray="8 6"
+                        filter="url(#glow)"
+                      />
+                    )}
+
+                    {/* Annotation: Activation Energy (Ea) */}
+                    <g>
+                      <line 
+                        x1={mapX(48)} y1={mapY(reactantEnergy)} 
+                        x2={mapX(48)} y2={mapY(peakEnergy)} 
+                        stroke="#94A3B8" strokeWidth="2" 
+                        markerStart="url(#arrow-down)" markerEnd="url(#arrow-up)" 
+                      />
+                      <rect x={mapX(48) - 35} y={mapY(reactantEnergy + actualEa / 2) - 10} width="30" height="20" fill="#0F172A" rx="4" />
+                      <text x={mapX(48) - 20} y={mapY(reactantEnergy + actualEa / 2) + 4} fill="#F8FAFC" fontSize="12" textAnchor="middle" fontWeight="bold">Ea</text>
+                    </g>
+
+                    {/* Annotation: Catalyzed Ea (if active) */}
+                    {isCatalyzed && (
+                      <g>
+                        <line 
+                          x1={mapX(40)} y1={mapY(reactantEnergy)} 
+                          x2={mapX(40)} y2={mapY(catalyzedPeakEnergy)} 
+                          stroke="#FBBF24" strokeWidth="2" 
+                          markerStart="url(#arrow-down)" markerEnd="url(#arrow-up)" 
+                        />
+                        <rect x={mapX(40) - 45} y={mapY(reactantEnergy + catalyzedEa / 2) - 10} width="40" height="20" fill="#0F172A" rx="4" />
+                        <text x={mapX(40) - 25} y={mapY(reactantEnergy + catalyzedEa / 2) + 4} fill="#FBBF24" fontSize="12" textAnchor="middle" fontWeight="bold">Ea(cat)</text>
+                      </g>
+                    )}
+
+                    {/* Annotation: Enthalpy Change (ΔH) */}
+                    <g>
+                      <line 
+                        x1={mapX(85)} y1={mapY(reactantEnergy)} 
+                        x2={mapX(85)} y2={mapY(productEnergy)} 
+                        stroke={isExothermic ? "#EF4444" : "#3B82F6"} strokeWidth="2" 
+                        markerEnd="url(#arrow-up)"
+                      />
+                      <rect x={mapX(85) + 10} y={mapY(reactantEnergy + deltaH / 2) - 12} width="40" height="24" fill="#0F172A" rx="4" border="1px solid white"/>
+                      <text x={mapX(85) + 30} y={mapY(reactantEnergy + deltaH / 2) + 4} fill={isExothermic ? "#EF4444" : "#3B82F6"} fontSize="12" textAnchor="middle" fontWeight="bold">
+                        ΔH
+                      </text>
+                    </g>
+
+                    {/* Labels for Reactants and Products */}
+                    <rect x={mapX(12.5) - 40} y={mapY(reactantEnergy) + 15} width="80" height="24" fill="#1E293B" rx="4" stroke="#3B82F6" />
+                    <text x={mapX(12.5)} y={mapY(reactantEnergy) + 31} fill="#F8FAFC" fontSize="12" textAnchor="middle">Reactants</text>
+                    
+                    <rect x={mapX(87.5) - 40} y={mapY(productEnergy) + 15} width="80" height="24" fill="#1E293B" rx="4" stroke={isExothermic ? "#10B981" : "#3B82F6"} />
+                    <text x={mapX(87.5)} y={mapY(productEnergy) + 31} fill="#F8FAFC" fontSize="12" textAnchor="middle">Products</text>
+                    
+                  </svg>
+                </div>
+
+                {/* Right Side: Controls and Output */}
+                <div className="w-full lg:w-80 flex flex-col gap-4">
+                  
+                  {/* Reaction Status Panel */}
+                  <div className={`p-5 rounded-2xl border ${isExothermic ? 'bg-red-500/10 border-red-500/30' : 'bg-blue-500/10 border-blue-500/30'}`}>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Reaction Type</h3>
+                        <p className={`text-2xl font-bold ${isExothermic ? 'text-red-400' : 'text-blue-400'}`}>
+                          {reactionTypeStr}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">ΔH</h3>
+                        <p className="text-2xl font-bold text-white">
+                          {deltaH > 0 ? '+' : ''}{deltaH} <span className="text-sm font-normal">kJ/mol</span>
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-300">
+                      {isExothermic 
+                        ? "Energy is released to the surroundings. The products are more stable than the reactants."
+                        : "Energy is absorbed from the surroundings. The products are less stable than the reactants."}
+                    </p>
+                  </div>
+
+                  {/* Real-World Examples (Presets) */}
+                  <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5 flex flex-col gap-3">
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Real-World Examples</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {["Custom", "Combustion", "Haber Process", "Photosynthesis"].map(name => (
+                        <button
+                          key={name}
+                          onClick={() => applyPreset(name)}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                            activePreset === name 
+                              ? "bg-blue-500 text-white shadow-md shadow-blue-500/20" 
+                              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                    {presetInfo && (
+                      <div className="mt-2 p-3 bg-slate-900/80 rounded-xl border border-slate-700 text-sm text-slate-300 leading-relaxed">
+                        {presetInfo}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Interactive Controls */}
+                  <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-5 flex-grow flex flex-col gap-5">
+                    
+                    {/* Reactant Energy Slider */}
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <label className="text-sm font-semibold text-blue-300">Reactant Energy</label>
+                        <span className="text-sm text-slate-300 font-mono">{reactantEnergy} kJ/mol</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="10" max="200" step="5"
+                        value={reactantEnergy} 
+                        onChange={handleManualChange(setReactantEnergy)}
+                        className="w-full text-blue-500"
+                      />
+                    </div>
+
+                    {/* Product Energy Slider */}
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <label className="text-sm font-semibold text-emerald-300">Product Energy</label>
+                        <span className="text-sm text-slate-300 font-mono">{productEnergy} kJ/mol</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="10" max="200" step="5"
+                        value={productEnergy} 
+                        onChange={handleManualChange(setProductEnergy)}
+                        className="w-full text-emerald-500"
+                      />
+                    </div>
+
+                    {/* Activation Energy Slider */}
+                    <div>
+                      <div className="flex justify-between mb-2">
+                        <label className="text-sm font-semibold text-rose-300">Activation Energy (Ea)</label>
+                        <span className="text-sm text-slate-300 font-mono">{actualEa} kJ/mol</span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="10" max="200" step="5"
+                        value={activationEnergyInput} 
+                        onChange={handleManualChange(setActivationEnergyInput)}
+                        className="w-full text-rose-500"
+                      />
+                      {actualEa > activationEnergyInput && (
+                        <p className="text-xs text-rose-400 mt-1">
+                          * Ea auto-adjusted to bridge the gap to products.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="border-t border-slate-700 my-2"></div>
+
+                    {/* Catalyst Checkbox */}
+                    <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-700/50 transition-colors">
+                      <div className="relative flex items-center">
+                        <input 
+                          type="checkbox" 
+                          checked={isCatalyzed}
+                          onChange={(e) => {
+                            setIsCatalyzed(e.target.checked);
+                            setActivePreset("Custom");
+                            setPresetInfo("");
+                          }}
+                          className="w-6 h-6 rounded border-slate-600 bg-slate-800 accent-amber-500 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-amber-400">Add Catalyst</p>
+                        <p className="text-xs text-slate-400">Lowers Ea without changing ΔH</p>
+                      </div>
+                    </label>
+
+                  </div>
+                </div>
+              </div>
             </div>
+          );
+        }
 
-            <div className="border-t border-slate-700 my-2"></div>
-
-            {/* Catalyst Checkbox */}
-            <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl hover:bg-slate-700/50 transition-colors">
-              <div className="relative flex items-center">
-                <input 
-                  type="checkbox" 
-                  checked={isCatalyzed}
-                  onChange={(e) => {
-                    setIsCatalyzed(e.target.checked);
-                    setActivePreset("Custom");
-                    setPresetInfo("");
-                  }}
-                  className="w-6 h-6 rounded border-slate-600 bg-slate-800 accent-amber-500 cursor-pointer"
-                />
-              </div>
-              <div>
-                <p className="font-semibold text-amber-400">Add Catalyst</p>
-                <p className="text-xs text-slate-400">Lowers Ea without changing ΔH</p>
-              </div>
-            </label>
-
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+        // Render Application
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
