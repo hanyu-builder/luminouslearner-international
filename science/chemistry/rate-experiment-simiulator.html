@@ -3,462 +3,611 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rate of Reaction Lab Simulator - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Rate of Reaction Simulation | Lab Simulator</title>
+    <meta name="description" content="Interactive rate of reaction simulation. Explore how surface area, temperature, and concentration affect the rate of hydrogen gas evolution using a virtual gas syringe.">
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#151e2e', 900: '#0F172A', 950: '#020617' },
+                        rxn: {
+                            acid: 'rgba(14, 165, 233, 0.3)', // Sky 500 low opacity
+                            mg: '#94A3B8',       // Slate 400
+                            gas: '#E2E8F0',      // Slate 200
+                            chart: '#0EA5E9',    // Sky 500
+                            success: '#10B981'   // Emerald
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- p5.js for Visual Canvas Engine -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    
+    <!-- Chart.js for Graph Plotting -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-
-        /* Disappearing Cross Animations */
-        .cloudy-layer {
-            transition: background-color 0.2s;
-        }
+        body { margin: 0; background-color: #020617; overflow: hidden; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* Syringe Animation */
-        .plunger {
-            transition: width 0.1s linear;
+        /* Custom Sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+            width: 100%;
         }
-
-        /* Bubbles */
-        @keyframes bubble-rise {
-            0% { transform: translateY(0) scale(0.5); opacity: 0; }
-            50% { opacity: 1; }
-            100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
-        }
-        .bubble {
-            position: absolute;
-            background: rgba(255,255,255,0.6);
-            border-radius: 50%;
-            animation: bubble-rise 1s infinite linear;
-        }
-
-        /* Slider Thumb */
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 16px;
-            width: 16px;
+            height: 18px; width: 18px;
             border-radius: 50%;
-            background: #ffffff;
-            border: 2px solid currentColor;
-            margin-top: -6px;
+            background: #0EA5E9;
             cursor: pointer;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            margin-top: -7px;
+            box-shadow: 0 0 10px rgba(14, 165, 233, 0.6);
         }
         input[type=range]::-webkit-slider-runnable-track {
-            width: 100%;
-            height: 4px;
+            width: 100%; height: 4px;
             cursor: pointer;
-            background: #334155; /* Slate 700 for Dark Mode */
+            background: #334155;
             border-radius: 2px;
+        }
+
+        /* Custom Radio Buttons */
+        .radio-custom:checked + div {
+            border-color: #0EA5E9;
+            background-color: rgba(14, 165, 233, 0.1);
+        }
+        .radio-custom:checked + div .radio-dot {
+            background-color: #0EA5E9;
+            transform: scale(1);
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="text-slate-200 font-sans selection:bg-sky-500 selection:text-white flex items-center justify-center h-screen max-h-[1000px] w-full">
 
-    <div id="root" class="flex-grow flex flex-col"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
-                    }
-                }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
-
-        const App = () => {
-            const [mode, setMode] = useState('cross'); // 'cross' or 'gas'
+    <div class="w-full h-full flex flex-col md:flex-row">
+        
+        <!-- Left Panel: Controls & Telemetry -->
+        <aside class="w-full md:w-[400px] lg:w-[420px] bg-slate-900 border-b md:border-b-0 md:border-r border-slate-700 flex flex-col z-10 shadow-2xl h-[45vh] md:h-full shrink-0">
             
-            // Common State
-            const [isRunning, setIsRunning] = useState(false);
-            const [time, setTime] = useState(0);
-            const [concentration, setConcentration] = useState(1.0); // M
-            const [temperature, setTemperature] = useState(25); // Celsius
-            
-            // Cross Experiment State
-            const [opacity, setOpacity] = useState(0); // 0 (clear) to 1 (opaque/disappeared)
-            const [crossResults, setCrossResults] = useState([]);
-            
-            // Gas Experiment State
-            const [volume, setVolume] = useState(0);
-            const [surfaceArea, setSurfaceArea] = useState('chips'); // chips or powder
-            const [gasDataPoints, setGasDataPoints] = useState([{x:0, y:0}]);
+            <!-- Header -->
+            <div class="p-6 pb-4 border-b border-slate-800">
+                <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-blue-500 leading-tight">
+                    Rate of Reaction Lab
+                </h1>
+                <p class="text-xs text-slate-400 mt-1">Mg(s) + 2HCl(aq) → MgCl₂(aq) + H₂(g)</p>
+            </div>
 
-            // Chart Ref
-            const chartRef = useRef(null);
-            const chartInstance = useRef(null);
-
-            // --- Logic: Disappearing Cross ---
-            useEffect(() => {
-                let interval;
-                if (mode === 'cross' && isRunning) {
-                    const tempFactor = Math.pow(2, (temperature - 25) / 10);
-                    const rate = 0.02 * concentration * tempFactor; 
+            <div class="flex flex-col flex-grow overflow-y-auto no-scrollbar p-6 space-y-6">
+                
+                <!-- Independent Variables -->
+                <div class="space-y-5">
+                    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-2">Independent Variables</h2>
                     
-                    interval = setInterval(() => {
-                        setTime(t => t + 0.1);
-                        setOpacity(prev => {
-                            const next = prev + rate;
-                            if (next >= 1) {
-                                setIsRunning(false);
-                                recordResult(1);
-                                return 1;
-                            }
-                            return next;
-                        });
-                    }, 100);
-                }
-                return () => clearInterval(interval);
-            }, [mode, isRunning, concentration, temperature]);
-
-            // --- Logic: Gas Collection ---
-            useEffect(() => {
-                let interval;
-                if (mode === 'gas' && isRunning) {
-                    const tempFactor = Math.pow(1.5, (temperature - 25) / 10);
-                    const surfaceFactor = surfaceArea === 'powder' ? 3 : 1;
-                    const maxVolume = 100;
-                    // k is the reaction constant (initial rate dependence)
-                    const k = 0.01 * concentration * tempFactor * surfaceFactor; 
-
-                    interval = setInterval(() => {
-                        setTime(prevTime => {
-                            const newTime = prevTime + 0.1;
-                            setVolume(prevVol => {
-                                // Simplified first-order decay simulation (rate slows as reactants are consumed)
-                                const instantaneousRate = k * (maxVolume - prevVol);
-                                const newVol = Math.min(maxVolume, prevVol + instantaneousRate);
-                                
-                                // Record point every 0.5s
-                                if (Math.floor(newTime * 10) % 5 === 0) { 
-                                    setGasDataPoints(current => [...current, {x: parseFloat(newTime.toFixed(1)), y: parseFloat(newVol.toFixed(1))}]);
-                                }
-                                
-                                if (newVol >= 99.5) {
-                                    setIsRunning(false);
-                                    return 100;
-                                }
-                                return newVol;
-                            });
-                            return newTime;
-                        });
-                    }, 100);
-                }
-                return () => clearInterval(interval);
-            }, [mode, isRunning, concentration, temperature, surfaceArea]);
-
-            // Chart Effect
-            useEffect(() => {
-                if (mode === 'gas' && chartRef.current) {
-                    if (chartInstance.current) chartInstance.current.destroy();
-                    
-                    const ctx = chartRef.current.getContext('2d');
-
-                    // Dark Mode Chart Overrides
-                    const colorPrimary = '#e2e8f0'; // Text/Axis color
-                    const gridColor = '#334155';
-                    const fontStyle = 'Inter';
-
-                    chartInstance.current = new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            datasets: [{
-                                label: 'Volume of Gas (cm³)',
-                                data: gasDataPoints,
-                                borderColor: '#3b82f6',
-                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                                borderWidth: 2,
-                                pointRadius: 2,
-                                pointBackgroundColor: '#3b82f6',
-                                fill: true,
-                                tension: 0.4
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            animation: false,
-                            scales: {
-                                x: { 
-                                    type: 'linear', 
-                                    title: { display: true, text: 'Time (s)', font: { color: colorPrimary, family: fontStyle } }, 
-                                    min: 0,
-                                    ticks: { color: colorPrimary, font: { family: fontStyle } },
-                                    grid: { color: gridColor }
-                                },
-                                y: { 
-                                    title: { display: true, text: 'Volume (cm³)', font: { color: colorPrimary, family: fontStyle } }, 
-                                    min: 0, max: 100,
-                                    ticks: { color: colorPrimary, font: { family: fontStyle } },
-                                    grid: { color: gridColor }
-                                }
-                            },
-                            plugins: {
-                                legend: { 
-                                    labels: { color: colorPrimary, font: { family: fontStyle } }
-                                },
-                                title: {
-                                    display: true,
-                                    text: 'Gas Volume vs. Time Graph',
-                                    color: colorPrimary,
-                                    font: { family: fontStyle }
-                                }
-                            }
-                        }
-                    });
-                }
-            }, [mode, gasDataPoints]);
-
-            const reset = () => {
-                setIsRunning(false);
-                setTime(0);
-                setOpacity(0);
-                setVolume(0);
-                setGasDataPoints([{x:0, y:0}]);
-                if (chartInstance.current) chartInstance.current.destroy();
-            };
-
-            const recordResult = (finalOpacity) => {
-                if (mode === 'cross' && finalOpacity >= 1) {
-                    setCrossResults([...crossResults, { 
-                        conc: concentration, temp: temperature, time: time.toFixed(1) 
-                    }]);
-                }
-            };
-
-            return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
-                    
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
-                                <Icon name="Timer" /> Rate of Reaction Lab Simulator
-                            </h1>
-                            <p className="text-slate-500 text-sm">Investigating Kinetic Factors</p>
+                    <!-- Concentration -->
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-slate-300">Acid Molarity [HCl]</label>
+                            <span id="val-conc" class="font-mono text-sky-400 font-bold">1.0 M</span>
                         </div>
+                        <input type="range" id="slider-conc" min="0.5" max="2.0" step="0.1" value="1.0">
                     </div>
 
-                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
-                        
-                        {/* Left: Controls */}
-                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
-                            
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
-                                
-                                {/* 1. Mode Selection */}
-                                <div className="mb-6">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">Select Experiment Mode</h3>
-                                    <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
-                                        <button 
-                                            onClick={() => { setMode('cross'); reset(); }}
-                                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'cross' ? 'bg-slate-950 text-indigo-400 shadow-sm ring-1 ring-indigo-900/50' : 'text-slate-500 hover:text-slate-300'}`}
-                                        >
-                                            <Icon name="X" size={16}/> Disappearing Cross
-                                        </button>
-                                        <button 
-                                            onClick={() => { setMode('gas'); reset(); }}
-                                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${mode === 'gas' ? 'bg-slate-950 text-blue-400 shadow-sm ring-1 ring-blue-900/50' : 'text-slate-500 hover:text-slate-300'}`}
-                                        >
-                                            <Icon name="Syringe" size={16}/> Gas Collection
-                                        </button>
-                                    </div>
-                                </div>
-                                
-                                <h3 className="text-sm font-bold text-slate-500 uppercase mb-4 flex items-center gap-2 pt-4 border-t border-slate-800">
-                                    <Icon name="Sliders" size={16}/> Experiment Parameters
-                                </h3>
-
-                                {/* Concentration */}
-                                <div className="mb-4">
-                                    <div className="flex justify-between mb-1">
-                                        <label className="text-xs font-bold text-blue-400">Concentration</label>
-                                        <span className="text-xs font-mono font-bold bg-slate-800 text-blue-300 px-2 rounded border border-slate-700">{concentration} M</span>
-                                    </div>
-                                    <input type="range" min="0.1" max="2.0" step="0.1" value={concentration} onChange={(e) => setConcentration(Number(e.target.value))} disabled={isRunning} className="w-full h-2 bg-blue-900/50 rounded-lg appearance-none cursor-pointer accent-blue-500" style={{'--tw-ring-color': '#3b82f6'}}/>
-                                </div>
-
-                                {/* Temperature */}
-                                <div className="mb-4">
-                                    <div className="flex justify-between mb-1">
-                                        <label className="text-xs font-bold text-red-400">Temperature</label>
-                                        <span className="text-xs font-mono font-bold bg-slate-800 text-red-300 px-2 rounded border border-slate-700">{temperature} °C</span>
-                                    </div>
-                                    <input type="range" min="20" max="60" step="5" value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} disabled={isRunning} className="w-full h-2 bg-red-900/50 rounded-lg appearance-none cursor-pointer accent-red-500" style={{'--tw-ring-color': '#ef4444'}}/>
-                                </div>
-
-                                {/* Surface Area (Gas Mode Only) */}
-                                {mode === 'gas' && (
-                                    <div className="mb-6">
-                                        <label className="text-xs font-bold text-slate-500 block mb-2">Solid Form (Surface Area)</label>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => setSurfaceArea('chips')} className={`flex-1 py-2 text-xs font-bold rounded border transition-all ${surfaceArea === 'chips' ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} disabled={isRunning}>
-                                                Chips (Low S.A.)
-                                            </button>
-                                            <button onClick={() => setSurfaceArea('powder')} className={`flex-1 py-2 text-xs font-bold rounded border transition-all ${surfaceArea === 'powder' ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`} disabled={isRunning}>
-                                                Powder (High S.A.)
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Start Button */}
-                                <button 
-                                    onClick={() => { setIsRunning(!isRunning); if (!isRunning) { if (mode === 'gas') setGasDataPoints([{x:0, y:0}]); } }}
-                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 mt-2 ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
-                                >
-                                    {isRunning ? <Icon name="Square" size={18} /> : <Icon name="Play" size={18} />}
-                                    {isRunning ? 'Stop Timer' : 'Start Experiment'}
-                                </button>
-
-                                {/* Reset Button */}
-                                <button 
-                                    onClick={reset} 
-                                    className="w-full mt-3 py-2 bg-slate-800 text-slate-400 font-bold rounded-xl hover:bg-slate-700 transition-all flex items-center justify-center gap-2 text-sm border border-slate-700"
-                                >
-                                    <Icon name="RotateCcw" size={14}/> Reset
-                                </button>
-                            </div>
-
-                            {/* Result Table (Cross Mode Only) */}
-                            {mode === 'cross' && crossResults.length > 0 && (
-                                <div className="bg-slate-900 p-4 rounded-2xl shadow-xl border border-slate-800 flex-grow">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Experiment Log (Cross Method)</h4>
-                                    <div className="overflow-y-auto max-h-40 text-xs text-slate-300">
-                                        <table className="w-full text-left">
-                                            <thead className="bg-slate-800 text-slate-500">
-                                                <tr>
-                                                    <th className="p-2">Conc. (M)</th>
-                                                    <th className="p-2">Temp. (°C)</th>
-                                                    <th className="p-2">Time (s)</th>
-                                                    <th className="p-2">Rate (1/t)</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {crossResults.map((r, i) => (
-                                                    <tr key={i} className="border-b border-slate-700 hover:bg-slate-800">
-                                                        <td className="p-2 font-mono">{r.conc}</td>
-                                                        <td className="p-2 font-mono">{r.temp}</td>
-                                                        <td className="p-2 font-mono text-emerald-400 font-bold">{r.time}</td>
-                                                        <td className="p-2 font-mono">{(1/r.time).toFixed(3)}</td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            )}
+                    <!-- Temperature -->
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-slate-300">Temperature (T)</label>
+                            <span id="val-temp" class="font-mono text-rose-400 font-bold">25 °C</span>
                         </div>
-
-                        {/* Right: Visualization */}
-                        <div className="w-full lg:w-2/3 flex flex-col gap-6">
-                            
-                            <div className="bg-slate-900 rounded-3xl border-4 border-slate-800 relative overflow-hidden min-h-[400px] flex flex-col items-center justify-center p-8 shadow-inner">
-                                
-                                {/* Timer Display */}
-                                <div className="absolute top-4 right-4 font-mono text-4xl font-black text-white bg-slate-800/90 px-4 py-2 rounded-xl shadow-lg border border-slate-700 z-10">
-                                    {time.toFixed(1)} <span className="text-base font-sans text-slate-400 font-bold">s</span>
-                                </div>
-
-                                {mode === 'cross' ? (
-                                    /* Disappearing Cross Visual */
-                                    <div className="relative flex flex-col items-center">
-                                        {/* Top View (Beaker) */}
-                                        <div className="w-64 h-64 rounded-full border-8 border-slate-600 bg-slate-950 shadow-2xl relative overflow-hidden flex items-center justify-center mb-8">
-                                            {/* The Cross */}
-                                            <div className="absolute text-slate-300 font-black text-9xl opacity-80 select-none">+</div>
-                                            {/* Solution (Cloudy Layer) */}
-                                            <div 
-                                                className="absolute inset-0 bg-yellow-900/30 cloudy-layer backdrop-blur-sm transition-opacity duration-100"
-                                                style={{ opacity: opacity }}
-                                            ></div>
-                                            {/* Bubbles (SO2) */}
-                                            {isRunning && opacity < 1 && (
-                                                <div className="absolute inset-0 pointer-events-none">
-                                                    {[...Array(6)].map((_,i) => <div key={i} className="bubble" style={{left: `${20+Math.random()*60}%`, width:'8px', height:'8px', animationDelay: `${Math.random()}s`}}></div>)}
-                                                </div>
-                                            )}
-                                        </div>
-                                        
-                                        <div className="text-slate-500 text-sm mt-4 text-center font-bold">
-                                            Top View: The reaction is complete when the '+' is obscured.
-                                        </div>
-                                    </div>
-                                ) : (
-                                    /* Gas Collection Visual and Chart */
-                                    <div className="w-full h-full flex flex-col items-center justify-between">
-                                        
-                                        <div className="flex items-center justify-center gap-8 w-full mt-12">
-                                            {/* Flask and Metal*/}
-                                            <div className="relative w-28 h-40">
-                                                <div className="absolute bottom-0 w-full h-28 bg-slate-800/80 border-4 border-slate-600 rounded-b-2xl backdrop-blur-sm overflow-hidden shadow-md">
-                                                    <div className="absolute bottom-0 w-full h-1/2 bg-slate-700"></div>
-                                                    {isRunning && (
-                                                        <div className="absolute bottom-0 w-full h-full pointer-events-none">
-                                                            {[...Array(10)].map((_,i) => <div key={i} className="bubble" style={{left: `${Math.random()*80+10}%`, width:'6px', height:'6px', animationDelay: `${Math.random()}s`}}></div>)}
-                                                        </div>
-                                                    )}
-                                                    {/* Metal */}
-                                                    <div className={`absolute bottom-2 left-1/2 -translate-x-1/2 bg-gray-400 w-16 h-4 rounded-full ${surfaceArea === 'powder' ? 'h-6' : 'h-2'}`}></div>
-                                                </div>
-                                                <div className="absolute top-10 w-4 h-32 bg-transparent border-r-4 border-t-4 border-slate-600 right-[-4px] rounded-tr-xl"></div> {/* Tube */}
-                                            </div>
-
-                                            {/* Syringe */}
-                                            <div className="relative w-72 h-20 bg-slate-800/90 border-4 border-slate-600 rounded-lg flex items-center px-2 shadow-lg">
-                                                <div className="absolute bottom-0 w-full h-3 flex justify-between px-6 z-10">
-                                                    {[...Array(11)].map((_,i) => <div key={i} className="w-px h-3 bg-slate-600"></div>)}
-                                                </div>
-                                                {/* Plunger */}
-                                                <div 
-                                                    className="h-12 bg-blue-700 rounded plunger relative shadow-inner"
-                                                    style={{ width: '12px', marginLeft: `${volume}%` }}
-                                                >
-                                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full w-full bg-blue-400/50 h-full border-r-4 border-slate-500" style={{width: `${volume*2.8}px`}}></div>
-                                                </div>
-                                                <div className="absolute right-4 top-2 font-mono text-2xl font-black text-blue-400">{volume.toFixed(1)}</div>
-                                                <div className="absolute right-4 bottom-2 text-[10px] font-bold text-slate-500">cm³</div>
-                                            </div>
-                                        </div>
-
-                                        {/* Chart */}
-                                        <div className="w-full h-56 bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-md">
-                                            <canvas ref={chartRef}></canvas>
-                                        </div>
-                                    </div>
-                                )}
-
-                            </div>
-
-                        </div>
+                        <input type="range" id="slider-temp" min="20" max="60" step="1" value="25">
                     </div>
-                    
-                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
-                        Luminous Learner International | IB/A-Level Chemistry
+
+                    <!-- Surface Area -->
+                    <div>
+                        <label class="text-sm font-medium text-slate-300 mb-2 block">Metal Form (Surface Area)</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="sa-form" value="block" class="radio-custom sr-only" checked>
+                                <div class="border border-slate-700 rounded-lg p-2 flex flex-col items-center justify-center transition-colors">
+                                    <div class="w-3 h-3 rounded-full border-2 border-slate-500 mb-1 flex items-center justify-center">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-transparent transform scale-0 transition-transform radio-dot"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-300">Block</span>
+                                </div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="sa-form" value="granules" class="radio-custom sr-only">
+                                <div class="border border-slate-700 rounded-lg p-2 flex flex-col items-center justify-center transition-colors">
+                                    <div class="w-3 h-3 rounded-full border-2 border-slate-500 mb-1 flex items-center justify-center">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-transparent transform scale-0 transition-transform radio-dot"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-300">Granules</span>
+                                </div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="sa-form" value="powder" class="radio-custom sr-only">
+                                <div class="border border-slate-700 rounded-lg p-2 flex flex-col items-center justify-center transition-colors">
+                                    <div class="w-3 h-3 rounded-full border-2 border-slate-500 mb-1 flex items-center justify-center">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-transparent transform scale-0 transition-transform radio-dot"></div>
+                                    </div>
+                                    <span class="text-xs text-slate-300">Powder</span>
+                                </div>
+                            </label>
+                        </div>
                     </div>
                 </div>
-            );
+
+                <!-- Control Buttons -->
+                <div class="flex gap-3 pt-2 border-t border-slate-800">
+                    <button id="btn-start" class="flex-grow bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg active:scale-[0.98]">
+                        Start Experiment
+                    </button>
+                    <button id="btn-reset" class="px-6 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold py-3 rounded-xl transition-all active:scale-[0.98]">
+                        Reset
+                    </button>
+                </div>
+
+                <!-- Collision Theory Telemetry -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 shadow-inner flex flex-col gap-3">
+                    <h2 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-2">
+                        Kinetics Telemetry
+                    </h2>
+                    
+                    <div class="flex justify-between items-end">
+                        <span class="text-xs text-slate-400">Current Rate (dV/dt)</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tel-rate" class="font-mono text-xl text-emerald-400">0.00</span>
+                            <span class="text-[10px] text-slate-500">cm³/s</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-between items-end">
+                        <span class="text-xs text-slate-400">Total Volume (V)</span>
+                        <div class="flex items-baseline gap-1">
+                            <span id="tel-vol" class="font-mono text-xl text-sky-400">0.0</span>
+                            <span class="text-[10px] text-slate-500">cm³</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-between items-end">
+                        <span class="text-xs text-slate-400">Apparent k (k_obs)</span>
+                        <span id="tel-k" class="font-mono text-sm text-purple-400">0.000</span>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- Right Panel: Visualizer & Graph -->
+        <main class="flex-grow relative bg-slate-950 flex flex-col h-[55vh] md:h-full overflow-hidden">
+            
+            <!-- Top Half: p5.js Laboratory -->
+            <div id="p5-container" class="w-full h-1/2 border-b border-slate-800 relative bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950">
+                <!-- p5.js canvas mounts here -->
+            </div>
+
+            <!-- Bottom Half: Chart.js Graph -->
+            <div class="w-full h-1/2 p-4 relative">
+                <canvas id="reactionChart"></canvas>
+            </div>
+
+        </main>
+
+    </div>
+
+    <!-- Application Logic -->
+    <script>
+        // --- GLOBAL SIMULATION STATE ---
+        let simState = {
+            isRunning: false,
+            time: 0,
+            volume: 0,
+            maxVolume: 100, // cm^3
+            rate: 0,
+            k_obs: 0,
+            
+            // Parameters
+            conc: 1.0,
+            temp: 25,
+            form: 'block',
+            
+            // Visual Data
+            bubbles: [],
+            chartData: []
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        let myChart;
+
+        // --- DOM ELEMENTS ---
+        const ui = {
+            sliderConc: document.getElementById('slider-conc'),
+            sliderTemp: document.getElementById('slider-temp'),
+            valConc: document.getElementById('val-conc'),
+            valTemp: document.getElementById('val-temp'),
+            radiosForm: document.getElementsByName('sa-form'),
+            btnStart: document.getElementById('btn-start'),
+            btnReset: document.getElementById('btn-reset'),
+            telRate: document.getElementById('tel-rate'),
+            telVol: document.getElementById('tel-vol'),
+            telK: document.getElementById('tel-k')
+        };
+
+        // --- CHART.JS SETUP ---
+        function initChart() {
+            const ctx = document.getElementById('reactionChart').getContext('2d');
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Volume of H₂ (cm³)',
+                        data: simState.chartData,
+                        borderColor: '#0EA5E9', // Sky 500
+                        backgroundColor: 'rgba(14, 165, 233, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false, // Turn off for real-time performance
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: { display: true, text: 'Time (s)', color: '#94A3B8' },
+                            min: 0,
+                            max: 60, // Auto-scales later if needed
+                            grid: { color: '#1E293B' },
+                            ticks: { color: '#64748B' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Volume (cm³)', color: '#94A3B8' },
+                            min: 0,
+                            max: 110,
+                            grid: { color: '#1E293B' },
+                            ticks: { color: '#64748B' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    }
+                }
+            });
+        }
+
+        function updateChart() {
+            // Auto expand X axis if needed
+            if (simState.time > myChart.options.scales.x.max - 5) {
+                myChart.options.scales.x.max += 60;
+            }
+            myChart.update();
+        }
+
+        // --- KINETICS ENGINE ---
+        function calculateConstants() {
+            // Base rate constant
+            const k_base = 0.008; 
+            
+            // Surface Area multiplier
+            let sa_factor = 1;
+            if (simState.form === 'granules') sa_factor = 3.5;
+            if (simState.form === 'powder') sa_factor = 10.0;
+            
+            // Concentration multiplier (Order = 1 with respect to [HCl] for visual pacing, realistically it's complex, let's use 1.5 to show strong effect)
+            let conc_factor = Math.pow(simState.conc, 1.5);
+            
+            // Temperature multiplier (Arrhenius approximation: rate doubles every ~10 deg C)
+            // 1.0717^10 ≈ 2.0
+            let temp_factor = Math.pow(1.0717, simState.temp - 20);
+            
+            simState.k_obs = k_base * sa_factor * conc_factor * temp_factor;
+            ui.telK.innerText = simState.k_obs.toFixed(4);
+        }
+
+        function stepPhysics(deltaTimeSec) {
+            if (!simState.isRunning || simState.volume >= simState.maxVolume * 0.999) {
+                if (simState.isRunning && simState.volume >= simState.maxVolume * 0.999) {
+                    ui.btnStart.innerText = "Completed";
+                    simState.isRunning = false;
+                    simState.rate = 0;
+                    updateTelemetry();
+                }
+                return;
+            }
+
+            // Time step
+            simState.time += deltaTimeSec;
+
+            // Integration: V(t) = V_max * (1 - e^(-kt))
+            const newVol = simState.maxVolume * (1 - Math.exp(-simState.k_obs * simState.time));
+            
+            // Rate: dV/dt = V_max * k * e^(-kt)
+            simState.rate = simState.maxVolume * simState.k_obs * Math.exp(-simState.k_obs * simState.time);
+            
+            simState.volume = newVol;
+
+            // Update Chart Data array
+            simState.chartData.push({ x: simState.time, y: simState.volume });
+
+            updateTelemetry();
+        }
+
+        function updateTelemetry() {
+            ui.telVol.innerText = simState.volume.toFixed(1);
+            ui.telRate.innerText = simState.rate.toFixed(2);
+        }
+
+        // --- P5.JS VISUAL LABORATORY ---
+        const sketch = (p) => {
+            let cx, cy; // Center of canvas
+            let lastChartUpdate = 0;
+
+            p.setup = () => {
+                const container = document.getElementById('p5-container');
+                p.createCanvas(container.offsetWidth, container.offsetHeight);
+                cx = p.width / 2;
+                cy = p.height / 2;
+                p.frameRate(60);
+            };
+
+            p.draw = () => {
+                p.clear();
+
+                // 1. Step Physics Engine (using real delta time)
+                let dt = p.deltaTime / 1000.0; 
+                // Speed up simulation time slightly for better UX (1 real sec = 2 sim secs)
+                if (simState.isRunning) stepPhysics(dt * 2.0); 
+
+                // 2. Draw Apparatus
+                drawApparatus(p);
+
+                // 3. Update Chart every ~100ms
+                if (simState.isRunning && p.millis() - lastChartUpdate > 100) {
+                    updateChart();
+                    lastChartUpdate = p.millis();
+                }
+            };
+
+            p.windowResized = () => {
+                const container = document.getElementById('p5-container');
+                p.resizeCanvas(container.offsetWidth, container.offsetHeight);
+                cx = p.width / 2;
+                cy = p.height / 2;
+            };
+
+            function drawApparatus(p) {
+                p.push();
+                
+                // Layout logic
+                const flaskX = p.width * 0.3;
+                const flaskY = p.height * 0.7;
+                const syringeX = p.width * 0.55;
+                const syringeY = p.height * 0.3;
+
+                // --- 1. Draw Liquid in Flask ---
+                p.fill(14, 165, 233, 50); // rxn.acid
+                p.noStroke();
+                p.beginShape();
+                p.vertex(flaskX - 45, flaskY + 45);
+                p.vertex(flaskX + 45, flaskY + 45);
+                p.vertex(flaskX + 30, flaskY - 10);
+                p.vertex(flaskX - 30, flaskY - 10);
+                p.endShape(p.CLOSE);
+
+                // --- 2. Draw Magnesium ---
+                p.fill('#94A3B8');
+                p.stroke('#64748B');
+                p.strokeWeight(1);
+                
+                // Diminish mass as volume increases (volume represents consumed Mg)
+                const massRemaining = 1.0 - (simState.volume / simState.maxVolume);
+                
+                if (massRemaining > 0.01) {
+                    if (simState.form === 'block') {
+                        let size = 30 * Math.sqrt(massRemaining);
+                        p.rect(flaskX - size/2, flaskY + 45 - size, size, size, 4);
+                    } 
+                    else if (simState.form === 'granules') {
+                        p.randomSeed(42); // Consistent layout
+                        let num = 8;
+                        for(let i=0; i<num; i++) {
+                            let size = 12 * Math.sqrt(massRemaining);
+                            let rx = flaskX - 25 + p.random(50);
+                            let ry = flaskY + 45 - size/2 - p.random(10);
+                            p.circle(rx, ry, size);
+                        }
+                    } 
+                    else if (simState.form === 'powder') {
+                        p.randomSeed(42);
+                        let num = 40;
+                        for(let i=0; i<num; i++) {
+                            let size = 4 * Math.sqrt(massRemaining);
+                            let rx = flaskX - 35 + p.random(70);
+                            let ry = flaskY + 45 - size/2 - p.random(15);
+                            p.circle(rx, ry, size);
+                        }
+                    }
+                }
+
+                // --- 3. Draw Bubbles ---
+                // Spawn bubbles based on rate
+                if (simState.isRunning && simState.rate > 0.1) {
+                    // Number of bubbles to spawn this frame
+                    let spawnCount = Math.floor(simState.rate * 0.2); 
+                    if (p.random() < (simState.rate * 0.2) % 1) spawnCount++;
+                    
+                    for(let i=0; i<spawnCount; i++) {
+                        simState.bubbles.push({
+                            x: flaskX + p.random(-30, 30),
+                            y: flaskY + 40,
+                            r: p.random(2, 6),
+                            speed: p.random(1, 3)
+                        });
+                    }
+                }
+
+                // Update and draw bubbles
+                p.fill('rgba(255, 255, 255, 0.6)');
+                p.noStroke();
+                for (let i = simState.bubbles.length - 1; i >= 0; i--) {
+                    let b = simState.bubbles[i];
+                    b.y -= b.speed;
+                    // Wiggle
+                    b.x += p.sin(b.y * 0.1) * 0.5;
+                    p.circle(b.x, b.y, b.r);
+                    
+                    // Remove if reaches top of liquid
+                    if (b.y < flaskY - 10) {
+                        simState.bubbles.splice(i, 1);
+                    }
+                }
+
+                // --- 4. Draw Flask Outline ---
+                p.stroke('#CBD5E1'); // Slate 300
+                p.strokeWeight(3);
+                p.noFill();
+                p.beginShape();
+                // Left side
+                p.vertex(flaskX - 15, flaskY - 60); // Lip
+                p.vertex(flaskX - 15, flaskY - 30); // Neck
+                p.vertex(flaskX - 50, flaskY + 40); // Base curve
+                p.vertex(flaskX - 40, flaskY + 50); // Bottom left
+                // Bottom
+                p.vertex(flaskX + 40, flaskY + 50); // Bottom right
+                // Right side
+                p.vertex(flaskX + 50, flaskY + 40); // Base curve
+                p.vertex(flaskX + 15, flaskY - 30); // Neck
+                p.vertex(flaskX + 15, flaskY - 60); // Lip
+                p.endShape();
+
+                // Rubber bung
+                p.fill('#475569'); // Slate 600
+                p.noStroke();
+                p.rect(flaskX - 15, flaskY - 65, 30, 15, 2);
+
+                // --- 5. Draw Delivery Tube ---
+                p.stroke('#94A3B8');
+                p.strokeWeight(6);
+                p.noFill();
+                p.beginShape();
+                p.vertex(flaskX, flaskY - 60); // Through bung
+                p.vertex(flaskX, flaskY - 80); // Up
+                p.vertex(syringeX - 20, flaskY - 80); // Across
+                p.vertex(syringeX - 20, syringeY); // Down to syringe
+                p.vertex(syringeX, syringeY); // Into syringe
+                p.endShape();
+                // Inner hollow tube for visuals
+                p.stroke('#0F172A');
+                p.strokeWeight(2);
+                p.beginShape();
+                p.vertex(flaskX, flaskY - 60);
+                p.vertex(flaskX, flaskY - 80);
+                p.vertex(syringeX - 20, flaskY - 80);
+                p.vertex(syringeX - 20, syringeY);
+                p.vertex(syringeX, syringeY);
+                p.endShape();
+
+                // --- 6. Draw Gas Syringe ---
+                // Syringe Body
+                p.fill('rgba(255,255,255,0.05)');
+                p.stroke('#64748B');
+                p.strokeWeight(2);
+                p.rect(syringeX, syringeY - 15, 200, 30, 2);
+                
+                // Syringe Markings
+                p.stroke('rgba(255,255,255,0.2)');
+                p.strokeWeight(1);
+                for(let i=10; i<190; i+=10) {
+                    let h = (i % 50 === 0) ? 10 : 5;
+                    p.line(syringeX + i, syringeY + 15, syringeX + i, syringeY + 15 - h);
+                }
+
+                // Plunger
+                // Calculate plunger position based on volume (0 to 100 mapped to 0 to 180px)
+                let plungerDist = p.map(simState.volume, 0, 100, 0, 180);
+                
+                p.fill('#475569');
+                p.stroke('#334155');
+                // Plunger Head
+                p.rect(syringeX + plungerDist, syringeY - 13, 8, 26, 2);
+                // Plunger Shaft
+                p.rect(syringeX + plungerDist + 8, syringeY - 3, 50, 6);
+                // Plunger Handle
+                p.rect(syringeX + plungerDist + 58, syringeY - 10, 8, 20, 2);
+
+                p.pop();
+            }
+        };
+
+        // --- DOM EVENT LISTENERS ---
+        
+        function updateUIState() {
+            // Read inputs
+            simState.conc = parseFloat(ui.sliderConc.value);
+            simState.temp = parseInt(ui.sliderTemp.value);
+            
+            for (let radio of ui.radiosForm) {
+                if (radio.checked) simState.form = radio.value;
+            }
+
+            // Update Labels
+            ui.valConc.innerText = simState.conc.toFixed(1) + ' M';
+            ui.valTemp.innerText = simState.temp + ' °C';
+
+            calculateConstants();
+        }
+
+        ui.sliderConc.addEventListener('input', updateUIState);
+        ui.sliderTemp.addEventListener('input', updateUIState);
+        ui.radiosForm.forEach(r => r.addEventListener('change', updateUIState));
+
+        ui.btnStart.addEventListener('click', () => {
+            if (!simState.isRunning && simState.volume < simState.maxVolume) {
+                simState.isRunning = true;
+                ui.btnStart.innerText = "Pause Experiment";
+                ui.sliderConc.disabled = true;
+                ui.sliderTemp.disabled = true;
+                ui.radiosForm.forEach(r => r.disabled = true);
+            } else {
+                simState.isRunning = false;
+                ui.btnStart.innerText = simState.volume >= simState.maxVolume ? "Completed" : "Resume Experiment";
+            }
+        });
+
+        ui.btnReset.addEventListener('click', () => {
+            simState.isRunning = false;
+            simState.time = 0;
+            simState.volume = 0;
+            simState.rate = 0;
+            simState.chartData.length = 0; // Clear array while keeping reference
+            simState.bubbles = [];
+            
+            ui.btnStart.innerText = "Start Experiment";
+            ui.sliderConc.disabled = false;
+            ui.sliderTemp.disabled = false;
+            ui.radiosForm.forEach(r => r.disabled = false);
+
+            myChart.options.scales.x.max = 60; // Reset chart scale
+            myChart.update();
+            updateTelemetry();
+        });
+
+        // --- BOOTSTRAP ---
+        initChart();
+        updateUIState();
+        new p5(sketch, 'p5-container');
+
     </script>
 </body>
 </html>
