@@ -3,310 +3,494 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cell Voltage Predictor - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Standard Cell Potential Calculator | Cell Voltage Predictor</title>
+    <meta name="description" content="Calculate and verify reaction feasibility with this standard cell potential calculator. Select anode and cathode half-cells to determine overall E°cell and spontaneity.">
+    
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
 
-        /* Electron Flow Animation */
-        @keyframes flow {
-            0% { transform: translateX(0); opacity: 0; }
-            20% { opacity: 1; }
-            80% { opacity: 1; }
-            100% { transform: translateX(100px); opacity: 0; }
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* Custom Animations */
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .pulse-border { animation: pulseBorder 2s infinite; }
+        @keyframes pulseBorder {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
-        .electron-dot {
-            animation: flow 1.5s linear infinite;
+
+        /* Electrochemical Scale Visualization */
+        .scale-track {
+            background: linear-gradient(to bottom, #ef4444, #f59e0b, #10b981, #3b82f6, #a855f7);
         }
+        
+        .scale-marker {
+            transition: top 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Chemistry Subscripts */
+        sub { font-size: 0.7em; bottom: -0.25em; }
+        sup { font-size: 0.7em; top: -0.4em; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="bg-[#0F172A] text-slate-200 h-screen max-h-[1000px] overflow-hidden flex flex-col font-sans select-none">
 
-    <div id="root" class="flex-grow flex flex-col"></div>
+    <header class="bg-[#1E293B] border-b border-slate-800 p-4 shrink-0 flex justify-between items-center z-10 shadow-lg">
+        <div>
+            <h1 class="text-xl md:text-2xl font-bold text-white flex items-center gap-2 tracking-tight">
+                <span class="text-blue-400">⚡</span> Cell Voltage Predictor
+            </h1>
+            <p class="text-xs md:text-sm text-slate-400 mt-1 hidden sm:block">
+                Standard cell potential calculator verifying reaction feasibility (<i>E</i><sup>&deg;</sup> &gt; 0).
+            </p>
+        </div>
+        <div class="hidden md:flex bg-slate-900 border border-slate-700 px-4 py-1.5 rounded-lg font-mono text-xs text-slate-400 flex-col shadow-inner items-center">
+            <span class="text-[10px] text-slate-500 uppercase tracking-widest font-sans">Electromotive Force Engine</span>
+            <span class="text-blue-400 font-bold text-sm"><i>E</i><sup>&deg;</sup><sub>cell</sub> = <i>E</i><sup>&deg;</sup><sub>cathode</sub> &minus; <i>E</i><sup>&deg;</sup><sub>anode</sub></span>
+        </div>
+    </header>
 
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        // Standard Electrode Potentials (E standard)
-        // Sorted by E value (descending)
-        const HalfCells = [
-            { id: 'Ag', name: 'Silver (Ag)', reaction: 'Ag⁺(aq) + e⁻ ⇌ Ag(s)', E: 0.80, color: 'bg-slate-400' },
-            { id: 'Cu', name: 'Copper (Cu)', reaction: 'Cu²⁺(aq) + 2e⁻ ⇌ Cu(s)', E: 0.34, color: 'bg-orange-500' },
-            { id: 'H', name: 'Hydrogen (H₂)', reaction: '2H⁺(aq) + 2e⁻ ⇌ H₂(g)', E: 0.00, color: 'bg-slate-200' }, // SHE
-            { id: 'Pb', name: 'Lead (Pb)', reaction: 'Pb²⁺(aq) + 2e⁻ ⇌ Pb(s)', E: -0.13, color: 'bg-slate-600' },
-            { id: 'Fe', name: 'Iron (Fe)', reaction: 'Fe²⁺(aq) + 2e⁻ ⇌ Fe(s)', E: -0.44, color: 'bg-stone-600' },
-            { id: 'Zn', name: 'Zinc (Zn)', reaction: 'Zn²⁺(aq) + 2e⁻ ⇌ Zn(s)', E: -0.76, color: 'bg-zinc-500' },
-            { id: 'Mg', name: 'Magnesium (Mg)', reaction: 'Mg²⁺(aq) + 2e⁻ ⇌ Mg(s)', E: -2.37, color: 'bg-gray-300' }
-        ];
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
-                    }
-                }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
-
-        const App = () => {
-            const [leftElectrode, setLeftElectrode] = useState(HalfCells[5]); // Zn
-            const [rightElectrode, setRightElectrode] = useState(HalfCells[1]); // Cu
+    <main class="flex-1 flex flex-col lg:flex-row gap-6 p-4 md:p-6 overflow-hidden max-w-7xl w-full mx-auto">
+        
+        <section class="flex flex-col gap-4 w-full lg:w-[350px] shrink-0 overflow-y-auto pr-2">
             
-            const [anode, setAnode] = useState(null);
-            const [cathode, setCathode] = useState(null);
-            const [cellVoltage, setCellVoltage] = useState(0);
-            const [electronDirection, setElectronDirection] = useState('right'); // 'left' or 'right'
-
-            useEffect(() => {
-                // Determine Anode and Cathode based on E values
-                // More negative E => Anode (Oxidation)
-                // More positive E => Cathode (Reduction)
+            <div class="bg-[#1E293B] rounded-xl border border-slate-700 p-5 shadow-lg flex flex-col gap-4 relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                <h2 class="text-sm uppercase font-bold text-slate-300 tracking-wider border-b border-slate-700 pb-2">1. Assign Half-Cells</h2>
                 
-                let a, c, voltage, dir;
+                <p class="text-[10px] text-slate-400 leading-relaxed mb-1">
+                    Assign a target reduction reaction (Cathode) and oxidation reaction (Anode) to calculate the theoretical overall potential.
+                </p>
 
-                if (leftElectrode.E < rightElectrode.E) {
-                    // Left is Anode
-                    a = { ...leftElectrode, side: 'left' };
-                    c = { ...rightElectrode, side: 'right' };
-                    dir = 'right';
-                } else {
-                    // Right is Anode
-                    a = { ...rightElectrode, side: 'right' };
-                    c = { ...leftElectrode, side: 'left' };
-                    dir = 'left';
-                }
+                <div class="flex flex-col gap-1">
+                    <label class="text-[10px] uppercase font-bold text-emerald-400 tracking-wider flex items-center justify-between">
+                        <span>Cathode (Reduction)</span>
+                        <span class="text-slate-500">Gains e⁻</span>
+                    </label>
+                    <select id="cathode-select" class="w-full bg-slate-900 border border-slate-600 rounded p-2.5 text-white font-bold outline-none focus:border-emerald-500 transition-colors">
+                        </select>
+                </div>
 
-                // Calculate Voltage: E_cell = E_cathode - E_anode
-                voltage = c.E - a.E;
+                <div class="flex justify-center -my-1 relative z-10">
+                    <button id="btn-swap" class="bg-slate-700 hover:bg-slate-600 border-4 border-[#1E293B] p-1.5 rounded-full text-slate-300 transition-colors" title="Swap Cathode/Anode">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"></path></svg>
+                    </button>
+                </div>
 
-                setAnode(a);
-                setCathode(c);
-                setCellVoltage(voltage.toFixed(2));
-                setElectronDirection(dir);
+                <div class="flex flex-col gap-1">
+                    <label class="text-[10px] uppercase font-bold text-rose-400 tracking-wider flex items-center justify-between">
+                        <span>Anode (Oxidation)</span>
+                        <span class="text-slate-500">Loses e⁻</span>
+                    </label>
+                    <select id="anode-select" class="w-full bg-slate-900 border border-slate-600 rounded p-2.5 text-white font-bold outline-none focus:border-rose-500 transition-colors">
+                        </select>
+                </div>
 
-            }, [leftElectrode, rightElectrode]);
+                <button id="btn-predict" class="mt-4 w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition transform hover:-translate-y-0.5 active:translate-y-0 flex justify-center items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                    Calculate <i>E</i><sup>&deg;</sup><sub>cell</sub>
+                </button>
+            </div>
 
-            // Helper to reverse equation for oxidation
-            const getOxidationEq = (reductionEq) => {
-                // Simply swap sides visually for demo purposes
-                const parts = reductionEq.split('⇌');
-                if (parts.length === 2) {
-                    return `${parts[1].trim()} → ${parts[0].trim()}`;
-                }
-                return reductionEq;
-            };
-
-            // Helper to format reduction eq
-            const getReductionEq = (eq) => {
-                return eq.replace('⇌', '→');
-            };
-
-            const getVoltageColor = (v) => {
-                if (v > 2.0) return 'text-red-400 border-red-500/50 bg-red-900/20';
-                if (v > 1.0) return 'text-orange-400 border-orange-500/50 bg-orange-900/20';
-                if (v > 0.5) return 'text-yellow-400 border-yellow-500/50 bg-yellow-900/20';
-                return 'text-slate-400 border-slate-700 bg-slate-800';
-            };
-
-            return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-5xl">
+            <div id="feasibility-panel" class="rounded-xl border p-5 shadow-lg flex-1 flex flex-col relative overflow-hidden transition-colors duration-500 bg-[#1E293B] border-slate-700">
+                <h2 class="text-sm uppercase font-bold tracking-wider border-b border-inherit pb-2 mb-4 opacity-80" id="feasibility-title">Feasibility</h2>
+                
+                <div class="flex-1 flex flex-col justify-center items-center text-center gap-2">
+                    <span class="text-[10px] uppercase font-bold tracking-widest opacity-60">Standard Cell Potential</span>
+                    <div id="output-ecell" class="text-5xl font-black font-mono tracking-tighter">0.00 V</div>
                     
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-amber-500 flex items-center gap-2">
-                                <Icon name="BatteryCharging" /> Cell Voltage Predictor
-                            </h1>
-                            <p className="text-slate-500 text-sm">Electrochemical Series & E° Values</p>
+                    <div id="output-badge" class="mt-4 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-current shadow-sm hidden">
+                        </div>
+
+                    <p id="output-desc" class="text-xs mt-4 leading-relaxed opacity-80 max-w-[250px]">
+                        Select two half-cells and click calculate to evaluate thermodynamic spontaneity.
+                    </p>
+                </div>
+            </div>
+
+        </section>
+
+        <section class="flex-1 flex flex-col gap-4 min-w-0">
+            <div class="bg-[#1E293B] rounded-xl border border-slate-700 p-6 shadow-lg h-full flex flex-col relative overflow-hidden">
+                <h2 class="text-xs uppercase font-bold text-slate-500 tracking-widest absolute top-4 left-6">2. Reaction Matrix</h2>
+
+                <div class="flex-1 flex flex-col justify-center gap-6 mt-6">
+                    
+                    <div class="bg-slate-900 border border-emerald-900/50 rounded-xl p-4 shadow-inner relative flex flex-col">
+                        <div class="flex justify-between items-start border-b border-slate-800 pb-2 mb-3">
+                            <div class="flex flex-col gap-1">
+                                <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Cathode Half-Reaction (Reduction)</span>
+                                <div id="cathode-badges"></div>
+                            </div>
+                            <span id="eq-cat-pot" class="font-mono text-emerald-300 text-sm font-bold mt-1">E&deg; = --</span>
+                        </div>
+                        <div id="eq-cat" class="text-center font-mono text-lg font-bold text-white py-2">
+                            --
                         </div>
                     </div>
 
-                    <div className="flex flex-col gap-6 flex-grow">
+                    <div class="bg-slate-900 border border-rose-900/50 rounded-xl p-4 shadow-inner relative flex flex-col">
+                        <div class="flex justify-between items-start border-b border-slate-800 pb-2 mb-3">
+                            <div class="flex flex-col gap-1">
+                                <span class="text-xs font-bold text-rose-400 uppercase tracking-wider">Anode Half-Reaction (Oxidation)</span>
+                                <div id="anode-badges"></div>
+                            </div>
+                            <span id="eq-ano-pot" class="font-mono text-rose-300 text-sm font-bold mt-1">E&deg; = --</span>
+                        </div>
+                        <div id="eq-ano" class="text-center font-mono text-lg font-bold text-white py-2">
+                            --
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-800/50 border-2 border-blue-500/30 rounded-xl p-5 shadow-lg relative flex flex-col mt-4">
+                        <h3 class="text-[10px] absolute -top-2.5 left-4 bg-[#1E293B] px-2 text-blue-400 font-bold uppercase tracking-widest border border-blue-500/30 rounded">Overall Balanced Equation</h3>
                         
-                        {/* Row 1: Visualization (Full Width) */}
-                        <div className="w-full">
-                            <div className="bg-slate-900 rounded-2xl shadow-xl border border-slate-800 p-8 relative overflow-hidden min-h-[320px] flex flex-col justify-end">
-                                
-                                {/* Voltmeter */}
-                                <div className="absolute top-6 left-1/2 -translate-x-1/2 w-32 h-24 bg-slate-950 rounded-lg border-4 border-slate-700 flex flex-col items-center justify-center shadow-lg z-20">
-                                    <div className="text-green-400 font-mono text-2xl font-bold">{cellVoltage} V</div>
-                                    <div className="text-slate-500 text-[10px] uppercase mt-1">Voltmeter</div>
-                                    
-                                    {/* Wires */}
-                                    <div className="absolute bottom-0 left-4 w-1 h-16 bg-slate-800 translate-y-full"></div>
-                                    <div className="absolute bottom-0 right-4 w-1 h-16 bg-red-900 translate-y-full"></div>
-                                </div>
-
-                                {/* Electron Flow */}
-                                <div className="absolute top-16 left-0 w-full flex justify-center pointer-events-none">
-                                    <div className={`w-64 h-2 bg-transparent relative overflow-hidden ${electronDirection === 'left' ? 'rotate-180' : ''}`}>
-                                        {[...Array(5)].map((_, i) => (
-                                            <div key={i} className="electron-dot absolute top-0 w-2 h-2 bg-yellow-400 rounded-full shadow-[0_0_5px_yellow]" 
-                                                 style={{ animationDelay: `${i * 0.3}s` }}></div>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div className={`absolute top-12 ${electronDirection === 'right' ? 'left-1/4' : 'right-1/4'} text-xs font-bold text-yellow-500 animate-pulse`}>
-                                    e⁻ Flow &rarr;
-                                </div>
-
-                                {/* Beakers Container */}
-                                <div className="flex justify-around items-end w-full mt-12 relative z-10">
-                                    
-                                    {/* Left Beaker */}
-                                    <div className="flex flex-col items-center">
-                                        <div className="w-32 h-40 border-4 border-slate-600 border-t-0 rounded-b-xl relative bg-white/5 overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute bottom-0 w-full h-3/4 bg-blue-500/20"></div>
-                                            {/* Electrode */}
-                                            <div className={`absolute top-[-20px] left-1/2 -translate-x-1/2 w-8 h-48 ${leftElectrode.color} border-2 border-slate-600 rounded-sm shadow-inner`}></div>
-                                        </div>
-                                        <div className="mt-2 font-bold text-slate-400">{leftElectrode.name.split(' ')[0]}</div>
-                                    </div>
-
-                                    {/* Salt Bridge */}
-                                    <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-40 h-16 border-t-8 border-x-8 border-slate-700 rounded-t-2xl pointer-events-none opacity-50"></div>
-                                    <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-slate-800 px-2 py-1 text-xs text-slate-500 font-bold border border-slate-700 rounded">Salt Bridge</div>
-
-                                    {/* Right Beaker */}
-                                    <div className="flex flex-col items-center">
-                                        <div className="w-32 h-40 border-4 border-slate-600 border-t-0 rounded-b-xl relative bg-white/5 overflow-hidden backdrop-blur-sm">
-                                            <div className="absolute bottom-0 w-full h-3/4 bg-blue-500/20"></div>
-                                            {/* Electrode */}
-                                            <div className={`absolute top-[-20px] left-1/2 -translate-x-1/2 w-8 h-48 ${rightElectrode.color} border-2 border-slate-600 rounded-sm shadow-inner`}></div>
-                                        </div>
-                                        <div className="mt-2 font-bold text-slate-400">{rightElectrode.name.split(' ')[0]}</div>
-                                    </div>
-                                </div>
-                            </div>
+                        <div id="eq-overall" class="text-center font-mono text-xl md:text-2xl font-black text-blue-300 py-4 break-words">
+                            --
+                        </div>
+                        
+                        <div id="electron-transfer" class="text-center text-[10px] text-slate-500 font-mono border-t border-slate-700/50 pt-2 pb-2">
+                            Electron Transfer: --
                         </div>
 
-                        {/* Row 2: Configuration (Split) */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
-                            
-                            {/* Left Electrode Selector */}
-                            <div className="bg-slate-900 p-5 rounded-2xl shadow-md border border-slate-800">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="font-bold text-slate-300">Left Electrode</h3>
-                                    <span className={`text-xs font-bold px-2 py-1 rounded ${anode?.side === 'left' ? 'bg-red-900/30 text-red-400 border border-red-500/30' : 'bg-blue-900/30 text-blue-400 border border-blue-500/30'}`}>
-                                        {anode?.side === 'left' ? 'Anode (Oxidation) -' : 'Cathode (Reduction) +'}
-                                    </span>
-                                </div>
-                                <select 
-                                    value={leftElectrode.id} 
-                                    onChange={(e) => setLeftElectrode(HalfCells.find(c => c.id === e.target.value))}
-                                    className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-slate-200 outline-none focus:ring-2 focus:ring-amber-500"
-                                >
-                                    {HalfCells.map(c => (
-                                        <option key={c.id} value={c.id} disabled={c.id === rightElectrode.id}>
-                                            {c.name} (E° = {c.E > 0 ? '+' : ''}{c.E.toFixed(2)} V)
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="mt-3 p-3 bg-slate-800/50 rounded-lg text-xs text-slate-500 font-mono border border-slate-700">
-                                    {leftElectrode.reaction}
-                                </div>
-                            </div>
-
-                            {/* VS Badge */}
-                            <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
-                                <div className="bg-slate-800 text-amber-500 font-black rounded-full w-12 h-12 flex items-center justify-center border-4 border-slate-900 shadow-xl text-lg">VS</div>
-                            </div>
-
-                            {/* Right Electrode Selector */}
-                            <div className="bg-slate-900 p-5 rounded-2xl shadow-md border border-slate-800">
-                                <div className="flex justify-between items-center mb-3">
-                                    <h3 className="font-bold text-slate-300">Right Electrode</h3>
-                                    <span className={`text-xs font-bold px-2 py-1 rounded ${anode?.side === 'right' ? 'bg-red-900/30 text-red-400 border border-red-500/30' : 'bg-blue-900/30 text-blue-400 border border-blue-500/30'}`}>
-                                        {anode?.side === 'right' ? 'Anode (Oxidation) -' : 'Cathode (Reduction) +'}
-                                    </span>
-                                </div>
-                                <select 
-                                    value={rightElectrode.id} 
-                                    onChange={(e) => setRightElectrode(HalfCells.find(c => c.id === e.target.value))}
-                                    className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-slate-200 outline-none focus:ring-2 focus:ring-amber-500"
-                                >
-                                    {HalfCells.map(c => (
-                                        <option key={c.id} value={c.id} disabled={c.id === leftElectrode.id}>
-                                            {c.name} (E° = {c.E > 0 ? '+' : ''}{c.E.toFixed(2)} V)
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="mt-3 p-3 bg-slate-800/50 rounded-lg text-xs text-slate-500 font-mono border border-slate-700">
-                                    {rightElectrode.reaction}
-                                </div>
-                            </div>
-
+                        <div class="mt-2 bg-indigo-900/20 border border-indigo-500/30 rounded-lg p-3 flex flex-col items-center">
+                            <span class="text-[9px] text-indigo-400 uppercase font-bold tracking-widest mb-1">IUPAC Cell Notation</span>
+                            <div id="eq-notation" class="font-mono text-indigo-200 font-bold text-sm tracking-wide text-center break-words w-full">--</div>
                         </div>
-
-                        {/* Row 3: Results & Breakdown */}
-                        {anode && cathode && (
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-md border border-slate-800 w-full">
-                                <h3 className="text-lg font-bold mb-4 text-slate-300 flex items-center gap-2">
-                                    <Icon name="Sigma" /> Calculations & Half-Equations
-                                </h3>
-                                
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {/* Anode (Oxidation) */}
-                                    <div className="p-4 bg-red-900/10 rounded-lg border-l-4 border-red-500">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="font-bold text-red-400 text-sm uppercase">Anode (Oxidation)</span>
-                                            <span className="font-mono font-bold text-red-500 text-sm">E° = {anode.E.toFixed(2)} V</span>
-                                        </div>
-                                        <div className="font-mono text-sm text-slate-300 break-words">
-                                            {getOxidationEq(anode.reaction)}
-                                        </div>
-                                    </div>
-
-                                    {/* Cathode (Reduction) */}
-                                    <div className="p-4 bg-blue-900/10 rounded-lg border-l-4 border-blue-500">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="font-bold text-blue-400 text-sm uppercase">Cathode (Reduction)</span>
-                                            <span className="font-mono font-bold text-blue-500 text-sm">E° = {cathode.E.toFixed(2)} V</span>
-                                        </div>
-                                        <div className="font-mono text-sm text-slate-300 break-words">
-                                            {getReductionEq(cathode.reaction)}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Total E_cell */}
-                                <div className="mt-4 p-4 bg-slate-950 rounded-lg border border-amber-500/30 text-center">
-                                    <div className="text-xs text-amber-500 font-bold uppercase mb-2">Standard Cell Potential (E°cell)</div>
-                                    <div className="font-mono text-lg text-slate-400 mb-1">
-                                        E°cell = E°(Cathode) - E°(Anode)
-                                    </div>
-                                    <div className="font-mono text-2xl font-bold text-white">
-                                        = {cathode.E.toFixed(2)} - ({anode.E.toFixed(2)}) = <span className="text-amber-400">{cellVoltage} V</span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
                     </div>
-                    
-                    <div className="text-center text-slate-600 text-xs mt-8 mb-4">
-                        Luminous Learner International | IB/A-Level Chemistry
+
+                </div>
+            </div>
+        </section>
+
+        <section class="w-24 lg:w-48 shrink-0 bg-[#0B1120] rounded-xl border border-slate-700 shadow-[inset_0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col items-center py-8">
+            <h3 class="text-[10px] uppercase font-bold text-slate-500 tracking-widest absolute top-2 text-center w-full">E&deg; Series</h3>
+            
+            <div class="relative flex-1 w-full flex justify-center my-4">
+                
+                <div class="absolute w-2 h-full rounded-full scale-track opacity-50"></div>
+                
+                <div class="absolute w-full h-full pointer-events-none">
+                    <div class="absolute top-[0%] w-full flex justify-between px-4"><span class="text-[8px] text-slate-500 font-mono">+3.0V</span></div>
+                    <div class="absolute top-[25%] w-full flex justify-between px-4 border-t border-slate-700"><span class="text-[8px] text-slate-500 font-mono">+1.5V</span></div>
+                    <div class="absolute top-[50%] w-full flex justify-between px-4 border-t border-slate-500"><span class="text-[8px] text-slate-300 font-mono font-bold">0.00V</span></div>
+                    <div class="absolute top-[75%] w-full flex justify-between px-4 border-t border-slate-700"><span class="text-[8px] text-slate-500 font-mono">-1.5V</span></div>
+                    <div class="absolute top-[100%] w-full flex justify-between px-4 border-t border-slate-700"><span class="text-[8px] text-slate-500 font-mono">-3.0V</span></div>
+                </div>
+
+                <div id="marker-cat" class="absolute w-full flex items-center justify-center scale-marker opacity-0 z-10" style="top: 50%;">
+                    <div class="w-full flex items-center">
+                        <div class="flex-1 border-t-2 border-emerald-400 border-dashed"></div>
+                        <div class="bg-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded ml-1 shadow-md shadow-emerald-500/50">CATHODE</div>
                     </div>
                 </div>
-            );
+
+                <div id="marker-ano" class="absolute w-full flex items-center justify-center scale-marker opacity-0 z-10" style="top: 50%;">
+                    <div class="w-full flex items-center">
+                        <div class="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded mr-1 shadow-md shadow-rose-500/50">ANODE</div>
+                        <div class="flex-1 border-t-2 border-rose-400 border-dashed"></div>
+                    </div>
+                </div>
+
+                <div id="marker-span" class="absolute w-1 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa] scale-marker opacity-0" style="top: 50%; height: 0%;"></div>
+
+            </div>
+            
+        </section>
+
+    </main>
+
+    <script>
+        // --- 1. ELECTROCHEMICAL DATABASE ---
+        // ox: oxidized species array [ {c: coeff, t: text}, ... ]
+        // red: reduced species array [ {c: coeff, t: text}, ... ]
+        // e: number of electrons transferred
+        // v: standard reduction potential E (Volts)
+        const DATABASE = [
+            { id: 'f2', name: 'Fluorine', ox: [{c:1, t:'F₂<sub>(g)</sub>'}], red: [{c:2, t:'F⁻<sub>(aq)</sub>'}], e: 2, v: 2.87 },
+            { id: 'mno4', name: 'Permanganate / Mn²⁺', ox: [{c:1, t:'MnO₄⁻<sub>(aq)</sub>'}, {c:8, t:'H⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Mn²⁺<sub>(aq)</sub>'}, {c:4, t:'H₂O<sub>(l)</sub>'}], e: 5, v: 1.51 },
+            { id: 'cl2', name: 'Chlorine', ox: [{c:1, t:'Cl₂<sub>(g)</sub>'}], red: [{c:2, t:'Cl⁻<sub>(aq)</sub>'}], e: 2, v: 1.36 },
+            { id: 'cr2o7', name: 'Dichromate / Cr³⁺', ox: [{c:1, t:'Cr₂O₇²⁻<sub>(aq)</sub>'}, {c:14, t:'H⁺<sub>(aq)</sub>'}], red: [{c:2, t:'Cr³⁺<sub>(aq)</sub>'}, {c:7, t:'H₂O<sub>(l)</sub>'}], e: 6, v: 1.33 },
+            { id: 'o2', name: 'Oxygen (Acidic)', ox: [{c:1, t:'O₂<sub>(g)</sub>'}, {c:4, t:'H⁺<sub>(aq)</sub>'}], red: [{c:2, t:'H₂O<sub>(l)</sub>'}], e: 4, v: 1.23 },
+            { id: 'br2', name: 'Bromine', ox: [{c:1, t:'Br₂<sub>(l)</sub>'}], red: [{c:2, t:'Br⁻<sub>(aq)</sub>'}], e: 2, v: 1.07 },
+            { id: 'ag', name: 'Silver', ox: [{c:1, t:'Ag⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Ag<sub>(s)</sub>'}], e: 1, v: 0.80 },
+            { id: 'fe3', name: 'Iron(III) / Iron(II)', ox: [{c:1, t:'Fe³⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Fe²⁺<sub>(aq)</sub>'}], e: 1, v: 0.77 },
+            { id: 'i2', name: 'Iodine', ox: [{c:1, t:'I₂<sub>(s)</sub>'}], red: [{c:2, t:'I⁻<sub>(aq)</sub>'}], e: 2, v: 0.54 },
+            { id: 'o2_basic', name: 'Oxygen / OH⁻ (Basic)', ox: [{c:1, t:'O₂<sub>(g)</sub>'}, {c:2, t:'H₂O<sub>(l)</sub>'}], red: [{c:4, t:'OH⁻<sub>(aq)</sub>'}], e: 4, v: 0.40 },
+            { id: 'cu', name: 'Copper', ox: [{c:1, t:'Cu²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Cu<sub>(s)</sub>'}], e: 2, v: 0.34 },
+            { id: 'h2', name: 'Hydrogen (SHE)', ox: [{c:2, t:'H⁺<sub>(aq)</sub>'}], red: [{c:1, t:'H₂<sub>(g)</sub>'}], e: 2, v: 0.00 },
+            { id: 'pb', name: 'Lead', ox: [{c:1, t:'Pb²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Pb<sub>(s)</sub>'}], e: 2, v: -0.13 },
+            { id: 'sn', name: 'Tin', ox: [{c:1, t:'Sn²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Sn<sub>(s)</sub>'}], e: 2, v: -0.14 },
+            { id: 'ni', name: 'Nickel', ox: [{c:1, t:'Ni²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Ni<sub>(s)</sub>'}], e: 2, v: -0.25 },
+            { id: 'fe', name: 'Iron', ox: [{c:1, t:'Fe²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Fe<sub>(s)</sub>'}], e: 2, v: -0.44 },
+            { id: 'zn', name: 'Zinc', ox: [{c:1, t:'Zn²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Zn<sub>(s)</sub>'}], e: 2, v: -0.76 },
+            { id: 'h2o', name: 'Water (Reduction)', ox: [{c:2, t:'H₂O<sub>(l)</sub>'}], red: [{c:1, t:'H₂<sub>(g)</sub>'}, {c:2, t:'OH⁻<sub>(aq)</sub>'}], e: 2, v: -0.83 },
+            { id: 'al', name: 'Aluminum', ox: [{c:1, t:'Al³⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Al<sub>(s)</sub>'}], e: 3, v: -1.66 },
+            { id: 'mg', name: 'Magnesium', ox: [{c:1, t:'Mg²⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Mg<sub>(s)</sub>'}], e: 2, v: -2.37 },
+            { id: 'na', name: 'Sodium', ox: [{c:1, t:'Na⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Na<sub>(s)</sub>'}], e: 1, v: -2.71 },
+            { id: 'li', name: 'Lithium', ox: [{c:1, t:'Li⁺<sub>(aq)</sub>'}], red: [{c:1, t:'Li<sub>(s)</sub>'}], e: 1, v: -3.04 }
+        ];
+
+        // --- 2. DOM ELEMENTS ---
+        const ui = {
+            catSelect: document.getElementById('cathode-select'),
+            anoSelect: document.getElementById('anode-select'),
+            btnSwap: document.getElementById('btn-swap'),
+            btnPredict: document.getElementById('btn-predict'),
+            
+            feasPanel: document.getElementById('feasibility-panel'),
+            feasTitle: document.getElementById('feasibility-title'),
+            outEcell: document.getElementById('output-ecell'),
+            outBadge: document.getElementById('output-badge'),
+            outDesc: document.getElementById('output-desc'),
+            
+            eqCatPot: document.getElementById('eq-cat-pot'),
+            eqAnoPot: document.getElementById('eq-ano-pot'),
+            eqCat: document.getElementById('eq-cat'),
+            eqAno: document.getElementById('eq-ano'),
+            eqOverall: document.getElementById('eq-overall'),
+            eTransfer: document.getElementById('electron-transfer'),
+            
+            catBadges: document.getElementById('cathode-badges'),
+            anoBadges: document.getElementById('anode-badges'),
+            eqNotation: document.getElementById('eq-notation'),
+
+            markerCat: document.getElementById('marker-cat'),
+            markerAno: document.getElementById('marker-ano'),
+            markerSpan: document.getElementById('marker-span')
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // --- 3. INIT LOGIC ---
+        function populateDropdowns() {
+            let optionsHTML = '';
+            DATABASE.forEach(c => {
+                optionsHTML += `<option value="${c.id}">${c.name} (${c.v > 0 ? '+' : ''}${c.v.toFixed(2)} V)</option>`;
+            });
+            ui.catSelect.innerHTML = optionsHTML;
+            ui.anoSelect.innerHTML = optionsHTML;
+
+            // Set sensible defaults
+            ui.catSelect.value = 'cu';
+            ui.anoSelect.value = 'zn';
+        }
+
+        // Math Helpers
+        const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+
+        function formatSide(parts, multiplier) {
+            return parts.map(p => {
+                const totalC = p.c * multiplier;
+                return `${totalC === 1 ? '' : totalC}${p.t}`;
+            }).join(' + ');
+        }
+
+        // --- 4. ENGINE: PREDICT REACTION ---
+        function predictCell() {
+            const catId = ui.catSelect.value;
+            const anoId = ui.anoSelect.value;
+
+            if (catId === anoId) {
+                ui.outEcell.textContent = "0.00 V";
+                ui.outBadge.className = "mt-4 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-slate-500 text-slate-500 shadow-sm";
+                ui.outBadge.textContent = "NO REACTION";
+                ui.outDesc.textContent = "Identical half-cells produce no potential difference.";
+                resetEquations();
+                return;
+            }
+
+            const catCell = DATABASE.find(c => c.id === catId);
+            const anoCell = DATABASE.find(c => c.id === anoId);
+
+            // Calculate E_cell
+            const eCell = catCell.v - anoCell.v;
+            const isSpontaneous = eCell > 0;
+
+            // --- Update Feasibility Panel ---
+            ui.outEcell.textContent = `${eCell > 0 ? '+' : ''}${eCell.toFixed(2)} V`;
+            
+            if (isSpontaneous) {
+                ui.feasPanel.className = "rounded-xl border p-5 shadow-lg flex-1 flex flex-col relative overflow-hidden transition-colors duration-500 bg-emerald-900/10 border-emerald-500/30";
+                ui.feasTitle.className = "text-sm uppercase font-bold tracking-wider border-b border-inherit pb-2 mb-4 text-emerald-500";
+                ui.outEcell.className = "text-5xl font-black font-mono tracking-tighter text-emerald-400";
+                
+                ui.outBadge.className = "mt-4 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500 text-emerald-400 bg-emerald-900/30 shadow-sm pulse-border fade-in";
+                ui.outBadge.textContent = "Spontaneous (Galvanic Cell)";
+                
+                ui.outDesc.innerHTML = `<span class="text-emerald-300">Reaction proceeds naturally.</span> Electrons flow spontaneously from the anode (lower E&deg;) to the cathode (higher E&deg;).`;
+            } else {
+                ui.feasPanel.className = "rounded-xl border p-5 shadow-lg flex-1 flex flex-col relative overflow-hidden transition-colors duration-500 bg-rose-900/10 border-rose-500/30";
+                ui.feasTitle.className = "text-sm uppercase font-bold tracking-wider border-b border-inherit pb-2 mb-4 text-rose-500";
+                ui.outEcell.className = "text-5xl font-black font-mono tracking-tighter text-rose-400";
+                
+                ui.outBadge.className = "mt-4 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border border-rose-500 text-rose-400 bg-rose-900/30 shadow-sm fade-in";
+                ui.outBadge.textContent = "Non-Spontaneous (Electrolytic Cell)";
+                
+                ui.outDesc.innerHTML = `<span class="text-rose-300">Reaction requires external power.</span> The assigned anode has a higher reduction potential than the cathode, resisting oxidation.`;
+            }
+
+            // --- Equation Balancing & Simplification ---
+            const eCat = catCell.e;
+            const eAno = anoCell.e;
+            const sharedElectrons = (eCat * eAno) / gcd(eCat, eAno);
+            
+            const multCat = sharedElectrons / eCat;
+            const multAno = sharedElectrons / eAno;
+
+            // Inert Electrode Check
+            const hasSolid = (arr) => arr.some(x => x.t.includes('<sub>(s)</sub>'));
+            const catNeedsInert = !hasSolid(catCell.ox) && !hasSolid(catCell.red);
+            const anoNeedsInert = !hasSolid(anoCell.ox) && !hasSolid(anoCell.red);
+
+            ui.catBadges.innerHTML = catNeedsInert ? '<span class="bg-slate-800 text-slate-300 text-[9px] px-2 py-0.5 rounded border border-slate-600 mt-1 inline-block w-max">Requires Inert Pt(s) Electrode</span>' : '';
+            ui.anoBadges.innerHTML = anoNeedsInert ? '<span class="bg-slate-800 text-slate-300 text-[9px] px-2 py-0.5 rounded border border-slate-600 mt-1 inline-block w-max">Requires Inert Pt(s) Electrode</span>' : '';
+
+            // Format Strings
+            ui.eqCatPot.innerHTML = `E&deg; = ${catCell.v > 0 ? '+' : ''}${catCell.v.toFixed(2)} V`;
+            ui.eqAnoPot.innerHTML = `E&deg; = ${anoCell.v > 0 ? '+' : ''}${anoCell.v.toFixed(2)} V`;
+
+            ui.eqCat.innerHTML = `${formatSide(catCell.ox, 1)} + ${eCat}e⁻ &rarr; ${formatSide(catCell.red, 1)}`;
+            ui.eqAno.innerHTML = `${formatSide(anoCell.red, 1)} &rarr; ${formatSide(anoCell.ox, 1)} + ${eAno}e⁻`;
+
+            // Combine and Simplify Overall Equation
+            let rawReactants = [];
+            let rawProducts = [];
+
+            anoCell.red.forEach(x => rawReactants.push({c: x.c * multAno, t: x.t}));
+            catCell.ox.forEach(x => rawReactants.push({c: x.c * multCat, t: x.t}));
+
+            anoCell.ox.forEach(x => rawProducts.push({c: x.c * multAno, t: x.t}));
+            catCell.red.forEach(x => rawProducts.push({c: x.c * multCat, t: x.t}));
+
+            let rMap = {};
+            let pMap = {};
+
+            rawReactants.forEach(item => { rMap[item.t] = (rMap[item.t] || 0) + item.c; });
+            rawProducts.forEach(item => { pMap[item.t] = (pMap[item.t] || 0) + item.c; });
+
+            for (let t in rMap) {
+                if (pMap[t]) {
+                    let min = Math.min(rMap[t], pMap[t]);
+                    rMap[t] -= min;
+                    pMap[t] -= min;
+                }
+            }
+
+            const formatMap = (map) => {
+                const items = Object.entries(map).filter(([t, c]) => c > 0);
+                if (items.length === 0) return '';
+                return items.map(([t, c]) => `${c === 1 ? '' : c}${t}`).join(' + ');
+            };
+
+            const finalReactants = formatMap(rMap);
+            const finalProducts = formatMap(pMap);
+
+            ui.eqOverall.innerHTML = `${finalReactants} &rarr; ${finalProducts}`;
+            ui.eTransfer.innerHTML = `Total Electron Transfer (n): ${sharedElectrons}e⁻`;
+
+            // IUPAC Cell Notation
+            function getNotationHalf(cell, isAnode, needsInert) {
+                const isSolid = x => x.t.includes('<sub>(s)</sub>');
+                if (needsInert) {
+                    const oxSpecies = cell.ox.map(x=>x.t).join(', ');
+                    const redSpecies = cell.red.map(x=>x.t).join(', ');
+                    if (isAnode) return `Pt<sub>(s)</sub> | ${redSpecies}, ${oxSpecies}`;
+                    else return `${oxSpecies}, ${redSpecies} | Pt<sub>(s)</sub>`;
+                } else {
+                    let s = cell.ox.filter(isSolid).concat(cell.red.filter(isSolid)).map(x=>x.t)[0];
+                    let aq = cell.ox.filter(x => !isSolid(x)).concat(cell.red.filter(x => !isSolid(x))).map(x=>x.t).join(', ');
+                    if (isAnode) return `${s} | ${aq}`;
+                    else return `${aq} | ${s}`;
+                }
+            }
+
+            const anoNotation = getNotationHalf(anoCell, true, anoNeedsInert);
+            const catNotation = getNotationHalf(catCell, false, catNeedsInert);
+            ui.eqNotation.innerHTML = `${anoNotation} || ${catNotation}`;
+
+            // Apply fade-in animation to equations to show they updated
+            resetAnimations();
+
+            // --- Update Visual Scale ---
+            updateScale(catCell.v, anoCell.v, isSpontaneous);
+        }
+
+        function resetEquations() {
+            ui.eqCat.textContent = "--";
+            ui.eqAno.textContent = "--";
+            ui.eqOverall.textContent = "--";
+            ui.eTransfer.textContent = "Electron Transfer: --";
+            ui.eqNotation.textContent = "--";
+            ui.catBadges.innerHTML = "";
+            ui.anoBadges.innerHTML = "";
+            ui.markerCat.style.opacity = '0';
+            ui.markerAno.style.opacity = '0';
+            ui.markerSpan.style.opacity = '0';
+        }
+
+        function resetAnimations() {
+            [ui.eqCat, ui.eqAno, ui.eqOverall, ui.outEcell, ui.eqNotation].forEach(el => {
+                el.classList.remove('fade-in');
+                void el.offsetWidth; // trigger reflow
+                el.classList.add('fade-in');
+            });
+        }
+
+        // --- 5. VISUAL SCALE MAPPING ---
+        function updateScale(vCat, vAno, isSpontaneous) {
+            // Scale total range: +3.0V to -3.0V (span of 6.0V)
+            // 0% top = +3.0V, 100% bottom = -3.0V
+            const mapVToPct = (v) => {
+                let clamped = Math.max(-3.0, Math.min(3.0, v));
+                return ((3.0 - clamped) / 6.0) * 100;
+            };
+
+            const catPct = mapVToPct(vCat);
+            const anoPct = mapVToPct(vAno);
+
+            ui.markerCat.style.top = `${catPct}%`;
+            ui.markerCat.style.opacity = '1';
+
+            ui.markerAno.style.top = `${anoPct}%`;
+            ui.markerAno.style.opacity = '1';
+
+            // Draw span
+            const topPct = Math.min(catPct, anoPct);
+            const heightPct = Math.abs(catPct - anoPct);
+
+            ui.markerSpan.style.top = `${topPct}%`;
+            ui.markerSpan.style.height = `${heightPct}%`;
+            ui.markerSpan.style.opacity = '1';
+            
+            // Color span based on spontaneity
+            if (isSpontaneous) {
+                ui.markerSpan.style.backgroundColor = '#10b981'; // Emerald
+                ui.markerSpan.style.boxShadow = '0 0 10px #10b981';
+            } else {
+                ui.markerSpan.style.backgroundColor = '#ef4444'; // Rose
+                ui.markerSpan.style.boxShadow = '0 0 10px #ef4444';
+            }
+        }
+
+        // --- 6. EVENT LISTENERS & BOOT ---
+        ui.btnPredict.addEventListener('click', predictCell);
+
+        ui.btnSwap.addEventListener('click', () => {
+            const temp = ui.catSelect.value;
+            ui.catSelect.value = ui.anoSelect.value;
+            ui.anoSelect.value = temp;
+            predictCell();
+        });
+
+        // Initialize
+        populateDropdowns();
+        predictCell(); // Run initial calculation
+
     </script>
 </body>
 </html>
