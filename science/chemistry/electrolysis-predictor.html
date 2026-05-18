@@ -3,361 +3,473 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Electrolysis Predictor - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Electrolysis of Aqueous Solutions Simulator | Electrochemistry Predictor</title>
+    <meta name="description" content="Electrolysis of aqueous solutions simulator. Predict preferential discharge of ions using standard electrode potentials, concentrations, and active electrodes.">
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-
-        /* Ion Movement Animation */
-        @keyframes move-to-cathode {
-            0% { transform: translate(0, 0); opacity: 0; }
-            10% { opacity: 1; }
-            90% { transform: translate(-80px, 0); opacity: 1; }
-            100% { transform: translate(-80px, 0); opacity: 0; }
-        }
-        @keyframes move-to-anode {
-            0% { transform: translate(0, 0); opacity: 0; }
-            10% { opacity: 1; }
-            90% { transform: translate(80px, 0); opacity: 1; }
-            100% { transform: translate(80px, 0); opacity: 0; }
-        }
-
-        .cation-anim { animation: move-to-cathode 2s infinite ease-in-out; }
-        .anion-anim { animation: move-to-anode 2s infinite ease-in-out; }
-
-        /* Bubbles */
-        @keyframes bubble-rise {
-            0% { bottom: 0; opacity: 0; }
-            50% { opacity: 1; }
-            100% { bottom: 100%; opacity: 0; }
-        }
-        .bubble {
-            position: absolute;
-            background: rgba(255,255,255,0.6);
-            border-radius: 50%;
-            animation: bubble-rise 1.5s infinite linear;
-        }
-
-        /* Electrode Erosion */
-        .eroding {
-            border-style: dashed !important;
-            opacity: 0.7;
-        }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col">
-
-    <div id="root" class="flex-grow flex flex-col"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        // --- Chemistry Logic ---
-
-        // Reactivity Series (Discharge ease: Bottom > Top for Cations)
-        // K, Na, Ca, Mg, Al, Zn, Fe, Pb, H, Cu, Ag
-        const CationEase = ['K', 'Na', 'Ca', 'Mg', 'Al', 'Zn', 'Fe', 'Pb', 'H', 'Cu', 'Ag'];
-
-        // Anion Discharge Ease (OH- > I- > Br- > Cl- > SO4/NO3)
-        // Note: For concentration effect, Halides > OH-
-        const AnionEase = ['NO3', 'SO4', 'F', 'Cl', 'Br', 'I', 'OH'];
-
-        const Electrolytes = [
-            { id: 'molten_NaCl', name: 'Molten Sodium Chloride (l)', state: 'molten', ions: { cat: 'Na', an: 'Cl' } },
-            { id: 'dilute_NaCl', name: 'Dilute Sodium Chloride (aq)', state: 'dilute', ions: { cat: 'Na', an: 'Cl' } },
-            { id: 'conc_NaCl', name: 'Conc. Sodium Chloride (Brine)', state: 'conc', ions: { cat: 'Na', an: 'Cl' } },
-            { id: 'dilute_H2SO4', name: 'Dilute Sulfuric Acid (aq)', state: 'dilute', ions: { cat: 'H', an: 'SO4' } },
-            { id: 'CuSO4', name: 'Copper(II) Sulfate (aq)', state: 'dilute', ions: { cat: 'Cu', an: 'SO4' } },
-            { id: 'molten_PbBr2', name: 'Molten Lead(II) Bromide (l)', state: 'molten', ions: { cat: 'Pb', an: 'Br' } }
-        ];
-
-        const Electrodes = [
-            { id: 'inert', name: 'Inert (Carbon/Platinum)', active: false },
-            { id: 'copper', name: 'Copper (Active Electrode)', active: true, metal: 'Cu' }
-        ];
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
-                    }
-                }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
-
-        const App = () => {
-            const [electrolyte, setElectrolyte] = useState(Electrolytes[1]); // Dilute NaCl
-            const [electrode, setElectrode] = useState(Electrodes[0]); // Inert
-            const [isRunning, setIsRunning] = useState(false);
-            const [result, setResult] = useState(null);
-
-            // Prediction Logic
-            useEffect(() => {
-                if (!isRunning) {
-                    setResult(null);
-                    return;
-                }
-
-                const { cat, an } = electrolyte.ions;
-                const state = electrolyte.state;
-
-                // Cathode (Reduction)
-                let cathodeProduct = '';
-                let cathodeEq = '';
-                
-                if (state === 'molten') {
-                    cathodeProduct = `${cat} Metal`;
-                    cathodeEq = `${cat}⁺ + e⁻ → ${cat}`; 
-                } else {
-                    // Aqueous Solution
-                    const metalIndex = CationEase.indexOf(cat);
-                    const hIndex = CationEase.indexOf('H');
-
-                    // If metal is MORE reactive than H (lower index), H+ discharges
-                    if (metalIndex < hIndex) { 
-                        cathodeProduct = 'Hydrogen Gas (H₂)';
-                        cathodeEq = '2H⁺(aq) + 2e⁻ → H₂(g)';
-                    } else {
-                        // Less reactive metals (Cu, Ag) discharge
-                         cathodeProduct = `${cat} Metal Deposit`;
-                         cathodeEq = `${cat}²⁺(aq) + 2e⁻ → ${cat}(s)`;
-                    }
-                }
-
-                // Anode (Oxidation)
-                let anodeProduct = '';
-                let anodeEq = '';
-
-                if (electrode.active && electrode.metal) {
-                    // Active Electrode takes part
-                    anodeProduct = `${electrode.metal} Electrode Dissolves`;
-                    anodeEq = `${electrode.metal}(s) → ${electrode.metal}²⁺(aq) + 2e⁻`;
-                } else {
-                    // Inert Electrode
-                    if (state === 'molten') {
-                        anodeProduct = `${an} Gas`;
-                        anodeEq = `2${an}⁻ → ${an}₂ + 2e⁻`;
-                    } else {
-                        const anIndex = AnionEase.indexOf(an);
-                        const ohIndex = AnionEase.indexOf('OH');
-                        
-                        // Concentration Effect: Conc Cl- discharges over OH-
-                        if (state === 'conc' && an === 'Cl') {
-                            anodeProduct = 'Chlorine Gas (Cl₂)';
-                            anodeEq = '2Cl⁻(aq) → Cl₂(g) + 2e⁻';
-                        } else if (anIndex < ohIndex) {
-                            // SO4, NO3 don't discharge, OH- does
-                            anodeProduct = 'Oxygen Gas (O₂)';
-                            anodeEq = '4OH⁻(aq) → O₂(g) + 2H₂O(l) + 4e⁻';
-                        } else {
-                            // Halides discharge
-                             anodeProduct = `${an === 'Cl' ? 'Chlorine' : an === 'Br' ? 'Bromine' : 'Iodine'} Gas/Vapour`;
-                             anodeEq = `2${an}⁻(aq) → ${an}₂ + 2e⁻`;
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#151e2e', 900: '#0F172A', 950: '#020617' },
+                        electro: {
+                            anode: '#EF4444',    // Red (Positive)
+                            cathode: '#3B82F6',  // Blue (Negative)
+                            gasH2: '#F8FAFC',    // White/Clear bubbles
+                            gasO2: '#E2E8F0',    // Slightly dense clear bubbles
+                            gasCl2: '#BEF264',   // Pale Green bubbles
+                            cu: '#B45309',       // Copper
+                            ag: '#CBD5E1',       // Silver
+                            inert: '#475569'     // Graphite
                         }
                     }
                 }
+            }
+        }
+    </script>
 
-                setResult({
-                    cathode: { product: cathodeProduct, eq: cathodeEq },
-                    anode: { product: anodeProduct, eq: anodeEq }
-                });
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-            }, [isRunning, electrolyte, electrode]);
+    <style>
+        body { margin: 0; background-color: #020617; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .bg-grid {
+            background-image: radial-gradient(circle at 2px 2px, rgba(30, 41, 59, 0.4) 1px, transparent 0);
+            background-size: 30px 30px;
+        }
+
+        /* SVG Animations */
+        @keyframes bubble-rise {
+            0% { transform: translateY(0) scale(0.5); opacity: 0; }
+            20% { opacity: 1; transform: translateY(-20px) scale(1); }
+            80% { opacity: 1; }
+            100% { transform: translateY(-150px) scale(1.2); opacity: 0; }
+        }
+        
+        .bubble {
+            animation: bubble-rise 2s infinite ease-in;
+            transform-origin: center;
+        }
+
+        .svg-trans { transition: all 1s ease-in-out; }
+        .liquid-fade { transition: fill 10s ease-in-out; } /* 10 second fade for Cu2+ depletion */
+    </style>
+</head>
+<body class="text-slate-200 selection:bg-indigo-500 selection:text-white min-h-screen bg-grid flex items-center justify-center p-4 md:p-8">
+
+    <div id="root" class="w-full max-w-7xl h-[90vh] min-h-[650px] flex flex-col md:flex-row shadow-2xl rounded-3xl overflow-hidden bg-slate-950 border border-slate-800"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- DATABASE ---
+        const ELECTROLYTES = {
+            nacl_molten: { id: 'nacl_molten', name: 'Molten Sodium Chloride (l)', color: 'rgba(255,255,255,0.15)', cations: ['Na⁺'], anions: ['Cl⁻'], desc: 'Contains only Na⁺ and Cl⁻ ions. Requires high temperatures to melt.' },
+            nacl_dil: { id: 'nacl_dil', name: 'Dilute Sodium Chloride (aq)', color: 'rgba(255,255,255,0.05)', cations: ['Na⁺', 'H⁺'], anions: ['Cl⁻', 'OH⁻'], desc: 'Standard aqueous solution. Water is in massive excess.' },
+            nacl_conc: { id: 'nacl_conc', name: 'Conc. Sodium Chloride (Brine)', color: 'rgba(255,255,255,0.05)', cations: ['Na⁺', 'H⁺'], anions: ['Cl⁻', 'OH⁻'], desc: 'High concentration of Cl⁻ ions affects anodic discharge priority.' },
+            h2so4: { id: 'h2so4', name: 'Dilute Sulfuric Acid (aq)', color: 'rgba(255,255,255,0.05)', cations: ['H⁺'], anions: ['SO₄²⁻', 'OH⁻'], desc: 'Essentially the electrolysis of pure water, acid-catalyzed.' },
+            cuso4: { id: 'cuso4', name: 'Copper(II) Sulfate (aq)', color: 'rgba(56, 189, 248, 0.3)', cations: ['Cu²⁺', 'H⁺'], anions: ['SO₄²⁻', 'OH⁻'], desc: 'Contains heavy metal cations (Cu²⁺) which are easily reduced.' },
+            agno3: { id: 'agno3', name: 'Silver Nitrate (aq)', color: 'rgba(255,255,255,0.05)', cations: ['Ag⁺', 'H⁺'], anions: ['NO₃⁻', 'OH⁻'], desc: 'Contains heavy metal cations (Ag⁺). Commonly used in electroplating.' },
+            pbbr2_molten: { id: 'pbbr2_molten', name: 'Molten Lead(II) Bromide (l)', color: 'rgba(217, 119, 6, 0.4)', cations: ['Pb²⁺'], anions: ['Br⁻'], desc: 'A classic molten electrolysis example producing lead metal and bromine gas.' }
+        };
+
+        const ELECTRODES = {
+            inert: { id: 'inert', name: 'Inert (Graphite / Platinum)', color: '#475569', type: 'inert' },
+            copper: { id: 'copper', name: 'Active (Copper)', color: '#B45309', type: 'active' },
+            silver: { id: 'silver', name: 'Active (Silver)', color: '#CBD5E1', type: 'active' }
+        };
+
+        // --- ICONS ---
+        const Zap = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>;
+        const Beaker = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 3h15"/><path d="M6 3v16a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V3"/><path d="M6 14h12"/></svg>;
+        const Power = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>;
+
+        function App() {
+            // --- STATE ---
+            const [selectedElectrolyte, setSelectedElectrolyte] = useState('nacl_dil');
+            const [selectedElectrode, setSelectedElectrode] = useState('inert');
+            const [isRunning, setIsRunning] = useState(false);
+
+            // --- ELECTROCHEMICAL ALGORITHM ---
+            const result = useMemo(() => {
+                const el = ELECTROLYTES[selectedElectrolyte];
+                const electrode = ELECTRODES[selectedElectrode];
+                
+                let cathodeReaction, anodeReaction;
+                let cathodeVisual = { gas: null, plate: null };
+                let anodeVisual = { gas: null, dissolve: false };
+
+                // 1. CATHODE LOGIC (Reduction)
+                // Priority (E°): Ag⁺ > Cu²⁺ > H⁺ > Pb²⁺ > Na⁺
+                if (el.cations.includes('Ag⁺')) {
+                    cathodeReaction = {
+                        product: 'Silver Metal (Ag)',
+                        equation: 'Ag⁺(aq) + e⁻ → Ag(s)',
+                        reason: 'Ag⁺ has a highly positive standard reduction potential (+0.80V). It is preferentially reduced over H⁺ (-0.83V in neutral/basic).'
+                    };
+                    cathodeVisual.plate = 'ag';
+                } else if (el.cations.includes('Cu²⁺')) {
+                    cathodeReaction = {
+                        product: 'Copper Metal (Cu)',
+                        equation: 'Cu²⁺(aq) + 2e⁻ → Cu(s)',
+                        reason: 'Cu²⁺ (+0.34V) is a stronger oxidizing agent than H⁺/H₂O, so it is preferentially reduced.'
+                    };
+                    cathodeVisual.plate = 'cu';
+                } else if (el.cations.includes('H⁺')) {
+                    cathodeReaction = {
+                        product: 'Hydrogen Gas (H₂)',
+                        equation: '2H⁺(aq) + 2e⁻ → H₂(g)  [or 2H₂O + 2e⁻ → H₂ + 2OH⁻]',
+                        reason: 'Na⁺ is extremely stable (E° = -2.71V). Water / H⁺ is reduced instead, producing Hydrogen gas.'
+                    };
+                    cathodeVisual.gas = 'h2';
+                } else if (el.cations.includes('Pb²⁺')) {
+                    cathodeReaction = {
+                        product: 'Lead Metal (Pb)',
+                        equation: 'Pb²⁺(l) + 2e⁻ → Pb(l)',
+                        reason: 'In a molten state, there is no water. Pb²⁺ is the only cation available for reduction.'
+                    };
+                    cathodeVisual.plate = 'ag'; // Use silver-ish plating color for Lead
+                } else if (el.cations.includes('Na⁺') && !el.cations.includes('H⁺')) {
+                    cathodeReaction = {
+                        product: 'Sodium Metal (Na)',
+                        equation: 'Na⁺(l) + e⁻ → Na(l)',
+                        reason: 'In a molten state, there is no water. Na⁺ is the only cation available for reduction.'
+                    };
+                    cathodeVisual.plate = 'ag'; // Use silver-ish plating color for Sodium
+                }
+
+                // 2. ANODE LOGIC (Oxidation)
+                // Priority: Active Electrode > Halide (Conc) > OH- > Halide (Dilute) > SO4/NO3
+                if (electrode.type === 'active') {
+                    if (electrode.id === 'copper') {
+                        anodeReaction = {
+                            product: 'Copper(II) Ions (Cu²⁺)',
+                            equation: 'Cu(s) → Cu²⁺(aq) + 2e⁻',
+                            reason: 'The Copper anode is "active". It requires less energy to oxidize the solid copper electrode itself than to oxidize water or anions.'
+                        };
+                        anodeVisual.dissolve = true;
+                    } else if (electrode.id === 'silver') {
+                        anodeReaction = {
+                            product: 'Silver Ions (Ag⁺)',
+                            equation: 'Ag(s) → Ag⁺(aq) + e⁻',
+                            reason: 'The Silver anode is "active" and oxidizes preferentially over the aqueous anions.'
+                        };
+                        anodeVisual.dissolve = true;
+                    }
+                } else {
+                    // Inert Electrode Logic
+                    if (selectedElectrolyte === 'nacl_conc') {
+                        anodeReaction = {
+                            product: 'Chlorine Gas (Cl₂)',
+                            equation: '2Cl⁻(aq) → Cl₂(g) + 2e⁻',
+                            reason: 'Concentration Effect! Although water is slightly easier to oxidize thermodynamically, the high concentration of Cl⁻ shifts the kinetics to favor Chlorine gas production.'
+                        };
+                        anodeVisual.gas = 'cl2';
+                    } else if (selectedElectrolyte === 'nacl_dil') {
+                        anodeReaction = {
+                            product: 'Oxygen Gas (O₂)',
+                            equation: '2H₂O(l) → O₂(g) + 4H⁺(aq) + 4e⁻  [or 4OH⁻ → 2H₂O + O₂ + 4e⁻]',
+                            reason: 'In a dilute solution, the concentration of Cl⁻ is too low. The oxidation of Water is thermodynamically favored.'
+                        };
+                        anodeVisual.gas = 'o2';
+                    } else if (selectedElectrolyte === 'nacl_molten') {
+                        anodeReaction = {
+                            product: 'Chlorine Gas (Cl₂)',
+                            equation: '2Cl⁻(l) → Cl₂(g) + 2e⁻',
+                            reason: 'In a molten state, there is no water. Cl⁻ is the only anion available for oxidation.'
+                        };
+                        anodeVisual.gas = 'cl2';
+                    } else if (selectedElectrolyte === 'pbbr2_molten') {
+                        anodeReaction = {
+                            product: 'Bromine Gas (Br₂)',
+                            equation: '2Br⁻(l) → Br₂(g) + 2e⁻',
+                            reason: 'In a molten state, there is no water. Br⁻ is the only anion available for oxidation.'
+                        };
+                        anodeVisual.gas = 'br2';
+                    } else {
+                        // SO4 or NO3 present (hard to oxidize)
+                        anodeReaction = {
+                            product: 'Oxygen Gas (O₂)',
+                            equation: '2H₂O(l) → O₂(g) + 4H⁺(aq) + 4e⁻',
+                            reason: 'Complex oxyanions (SO₄²⁻, NO₃⁻) have central atoms in their maximum oxidation states. They will not oxidize; Water oxidizes instead.'
+                        };
+                        anodeVisual.gas = 'o2';
+                    }
+                }
+
+                return { cathodeReaction, anodeReaction, cathodeVisual, anodeVisual };
+            }, [selectedElectrolyte, selectedElectrode]);
+
+            // Reset simulation if parameters change
+            useEffect(() => {
+                setIsRunning(false);
+            }, [selectedElectrolyte, selectedElectrode]);
+
+            // --- VISUALIZATION COMPUTATIONS ---
+            const getLiquidColor = () => {
+                const baseColor = ELECTROLYTES[selectedElectrolyte].color;
+                
+                // If we are electrolyzing CuSO4 with an inert anode, the Cu2+ ions are depleted
+                // and not replaced, so the blue color fades away over time.
+                if (isRunning && selectedElectrolyte === 'cuso4' && selectedElectrode === 'inert') {
+                    return 'rgba(56, 189, 248, 0.02)'; // Fade to almost clear
+                }
+                
+                return baseColor;
+            };
+
+            // --- SVG HELPERS ---
+            const BubbleField = ({ gasType, x, y, width }) => {
+                if (!isRunning || !gasType) return null;
+                
+                let color = gasType === 'cl2' ? '#BEF264' : gasType === 'br2' ? '#D97706' : '#F8FAFC'; // Pale green for Cl2, Amber for Br2, White for H2/O2
+                let opacity = gasType === 'o2' ? 0.4 : gasType === 'br2' ? 0.7 : 0.8;
+                
+                // Generate 12 random bubbles
+                const bubbles = Array.from({length: 12}).map((_, i) => ({
+                    id: i,
+                    cx: x + (Math.random() * width),
+                    cy: y + (Math.random() * 40),
+                    r: Math.random() * 3 + 2,
+                    delay: Math.random() * 2 + 's',
+                    duration: Math.random() * 1 + 1.5 + 's'
+                }));
+
+                return (
+                    <g fill={color} opacity={opacity}>
+                        {bubbles.map(b => (
+                            <circle key={b.id} cx={b.cx} cy={b.cy} r={b.r} className="bubble" style={{ animationDelay: b.delay, animationDuration: b.duration }} />
+                        ))}
+                    </g>
+                );
+            };
 
             return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
+                <div className="w-full flex flex-col md:flex-row h-full">
                     
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
-                                <Icon name="Zap" /> Electrolysis Predictor
-                            </h1>
-                            <p className="text-slate-500 text-sm">Predict Products at Cathode & Anode</p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col lg:flex-row gap-8 flex-grow">
+                    {/* Left Panel: UI & Controls */}
+                    <aside className="w-full md:w-[420px] lg:w-[450px] bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col z-20 shrink-0">
                         
-                        {/* Left: Controls */}
-                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                        <header className="p-6 border-b border-slate-800 flex items-center gap-3">
+                            <div className="p-2 bg-indigo-500/20 rounded-xl text-indigo-400">
+                                <Zap />
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-sky-400 leading-tight">
+                                    Electrolysis Predictor
+                                </h1>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold">Electrochemical Priority Engine</p>
+                            </div>
+                        </header>
+
+                        <div className="flex flex-col flex-grow overflow-y-auto no-scrollbar p-6 space-y-6">
                             
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
-                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
-                                    <Icon name="Settings2" size={16}/> Setup Experiment
-                                </h3>
+                            {/* Controls */}
+                            <div className="space-y-4">
                                 
-                                <div className="mb-4">
-                                    <label className="text-xs font-bold text-slate-500 block mb-1">Electrolyte</label>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-2 flex items-center gap-2">
+                                        <Beaker className="w-4 h-4" /> 1. Select Electrolyte
+                                    </label>
                                     <select 
-                                        value={electrolyte.id}
-                                        onChange={(e) => { setElectrolyte(Electrolytes.find(el => el.id === e.target.value)); setIsRunning(false); }}
-                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-blue-300 outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-slate-200 outline-none focus:border-indigo-500 transition-colors shadow-inner text-sm font-medium"
+                                        value={selectedElectrolyte} onChange={(e) => setSelectedElectrolyte(e.target.value)}
+                                        disabled={isRunning}
                                     >
-                                        {Electrolytes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                                        {Object.values(ELECTROLYTES).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                                    </select>
+                                    <p className="text-[10px] text-slate-500 mt-2 ml-1 leading-relaxed">
+                                        Ions present: <strong className="text-slate-300">{ELECTROLYTES[selectedElectrolyte].cations.join(', ')}, {ELECTROLYTES[selectedElectrolyte].anions.join(', ')}</strong>
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-2 mt-4">
+                                        2. Select Electrode Material
+                                    </label>
+                                    <select 
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-slate-200 outline-none focus:border-indigo-500 transition-colors shadow-inner text-sm font-medium"
+                                        value={selectedElectrode} onChange={(e) => setSelectedElectrode(e.target.value)}
+                                        disabled={isRunning}
+                                    >
+                                        {Object.values(ELECTRODES).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                                     </select>
                                 </div>
 
-                                <div className="mb-6">
-                                    <label className="text-xs font-bold text-slate-500 block mb-1">Electrodes</label>
-                                    <select 
-                                        value={electrode.id}
-                                        onChange={(e) => { setElectrode(Electrodes.find(el => el.id === e.target.value)); setIsRunning(false); }}
-                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-bold text-slate-300 outline-none focus:ring-2 focus:ring-slate-500"
-                                    >
-                                        {Electrodes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                                    </select>
-                                </div>
+                            </div>
 
+                            {/* Simulation Button */}
+                            <div className="pt-2 border-t border-slate-800">
                                 <button 
                                     onClick={() => setIsRunning(!isRunning)}
-                                    className={`w-full py-3 rounded-xl font-bold text-white shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2
-                                        ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}
-                                    `}
+                                    className={`w-full font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${
+                                        isRunning 
+                                            ? 'bg-slate-800 text-rose-400 hover:bg-slate-700 border border-slate-700' 
+                                            : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white active:scale-[0.98]'
+                                    }`}
                                 >
-                                    {isRunning ? <Icon name="Square" size={18} /> : <Icon name="Play" size={18} />}
-                                    {isRunning ? 'Stop Electrolysis' : 'Start Electrolysis'}
+                                    {isRunning ? (
+                                        <><Power className="w-4 h-4"/> Turn Off Power Supply</>
+                                    ) : (
+                                        <><Power className="w-4 h-4"/> Apply D.C. Voltage</>
+                                    )}
                                 </button>
                             </div>
 
-                            {/* Principles Box */}
-                            <div className="bg-slate-900 p-5 rounded-2xl text-white shadow-lg border-l-4 border-yellow-500">
-                                <h3 className="text-sm font-bold text-yellow-400 uppercase mb-2 flex items-center gap-2">
-                                    <Icon name="Info" size={16}/> Discharge Rules
+                            {/* Algorithmic Output / Results */}
+                            <div className={`mt-auto space-y-3 transition-opacity duration-500 ${isRunning ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                                <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-2">
+                                    Electrochemical Analysis
                                 </h3>
-                                <div className="text-xs space-y-2 text-slate-400">
-                                    <p><strong className="text-white">Cathode (-):</strong> Least reactive cation discharges (Ag {'>'} Cu {'>'} H {'>'} Pb...).</p>
-                                    <p><strong className="text-white">Anode (+):</strong> 
-                                        <br/>1. Active electrodes dissolve.
-                                        <br/>2. Conc. Halides (Cl⁻) > OH⁻.
-                                        <br/>3. OH⁻ > SO₄²⁻/NO₃⁻ (OH⁻ forms O₂).
-                                    </p>
+                                
+                                {/* Cathode Result */}
+                                <div className="bg-slate-950/50 p-4 rounded-xl border border-blue-900/30">
+                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest block mb-1">Cathode (-) Reduction</span>
+                                    <span className="block font-bold text-slate-200 mb-1">{result.cathodeReaction.product}</span>
+                                    <span className="block font-mono text-[10px] text-blue-300 bg-blue-900/20 px-2 py-1 rounded mb-2 border border-blue-900/50 w-max">{result.cathodeReaction.equation}</span>
+                                    <p className="text-[10px] text-slate-400 leading-relaxed">{result.cathodeReaction.reason}</p>
+                                </div>
+
+                                {/* Anode Result */}
+                                <div className="bg-slate-950/50 p-4 rounded-xl border border-red-900/30">
+                                    <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest block mb-1">Anode (+) Oxidation</span>
+                                    <span className="block font-bold text-slate-200 mb-1">{result.anodeReaction.product}</span>
+                                    <span className="block font-mono text-[10px] text-red-300 bg-red-900/20 px-2 py-1 rounded mb-2 border border-red-900/50 w-max">{result.anodeReaction.equation}</span>
+                                    <p className="text-[10px] text-slate-400 leading-relaxed">{result.anodeReaction.reason}</p>
                                 </div>
                             </div>
 
                         </div>
+                    </aside>
 
-                        {/* Center: Visualization */}
-                        <div className="w-full lg:w-2/3 flex flex-col gap-6 items-center justify-center bg-slate-900/50 rounded-3xl border border-slate-800 relative overflow-hidden min-h-[500px] p-8">
-                            
-                            <div className="relative w-full max-w-lg h-96 flex justify-center items-end mt-8">
+                    {/* Right Panel: SVG Visualizer */}
+                    <main className="flex-grow relative flex justify-center items-center overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950">
+                        
+                        <div className="w-full max-w-[400px] h-[500px] relative mt-10">
+                            <svg viewBox="0 0 400 500" className="w-full h-full drop-shadow-2xl">
                                 
-                                {/* Beaker */}
-                                <div className="w-64 h-56 border-x-4 border-b-4 border-slate-600 bg-white/5 backdrop-blur-sm rounded-b-3xl relative overflow-hidden">
-                                    {/* Liquid */}
-                                    <div className={`absolute bottom-0 w-full h-5/6 ${electrolyte.id.includes('Cu') ? 'bg-blue-500/30' : 'bg-cyan-100/10'} transition-colors duration-500`}></div>
+                                {/* Battery & Wiring */}
+                                <g stroke="#94A3B8" strokeWidth="4" fill="none">
+                                    {/* Left Wire (Cathode -) */}
+                                    <path d="M 120 180 L 120 50 L 180 50" className={isRunning ? "stroke-blue-500" : ""} />
+                                    {/* Right Wire (Anode +) */}
+                                    <path d="M 280 180 L 280 50 L 220 50" className={isRunning ? "stroke-red-500" : ""} />
+                                </g>
 
-                                    {/* Moving Ions Animation */}
-                                    {isRunning && (
-                                        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                                            {/* Cations moving left to Cathode */}
-                                            <div className="absolute top-1/2 left-1/2 cation-anim text-red-400 font-bold text-xl">+</div>
-                                            <div className="absolute top-1/3 left-2/3 cation-anim text-red-400 font-bold text-lg" style={{animationDelay: '0.5s'}}>+</div>
-                                            
-                                            {/* Anions moving right to Anode */}
-                                            <div className="absolute top-1/2 left-1/2 anion-anim text-blue-400 font-bold text-xl">-</div>
-                                            <div className="absolute top-2/3 left-1/3 anion-anim text-blue-400 font-bold text-lg" style={{animationDelay: '0.8s'}}>-</div>
-                                        </div>
+                                {/* D.C. Power Source Symbol */}
+                                <g transform="translate(180, 40)">
+                                    {/* Battery box */}
+                                    <rect x="0" y="0" width="40" height="20" fill="#1E293B" stroke="#64748B" strokeWidth="2" rx="2" />
+                                    {/* Terminals */}
+                                    <line x1="0" y1="10" x2="-10" y2="10" stroke="#64748B" strokeWidth="2" />
+                                    <line x1="40" y1="10" x2="50" y2="10" stroke="#64748B" strokeWidth="2" />
+                                    {/* Indicators */}
+                                    <text x="5" y="14" fill="#3B82F6" fontSize="14" fontWeight="bold">-</text>
+                                    <text x="25" y="14" fill="#EF4444" fontSize="12" fontWeight="bold">+</text>
+                                    
+                                    {/* Power Glow */}
+                                    {isRunning && <circle cx="20" cy="10" r="30" fill="rgba(99, 102, 241, 0.2)" filter="blur(10px)" />}
+                                </g>
+
+                                {/* Labels */}
+                                <text x="120" y="120" fill="#3B82F6" fontSize="12" fontWeight="bold" textAnchor="middle">CATHODE (-)</text>
+                                <text x="280" y="120" fill="#EF4444" fontSize="12" fontWeight="bold" textAnchor="middle">ANODE (+)</text>
+
+                                {/* Beaker Background & Liquid */}
+                                <defs>
+                                    <clipPath id="beakerClip">
+                                        <path d="M 60 200 L 60 450 C 60 470, 70 480, 90 480 L 310 480 C 330 480, 340 470, 340 450 L 340 200 Z" />
+                                    </clipPath>
+                                    <linearGradient id="cuPlate" x1="0" x2="1" y1="0" y2="0">
+                                        <stop offset="0%" stopColor="#92400E" />
+                                        <stop offset="50%" stopColor="#D97706" />
+                                        <stop offset="100%" stopColor="#92400E" />
+                                    </linearGradient>
+                                    <linearGradient id="agPlate" x1="0" x2="1" y1="0" y2="0">
+                                        <stop offset="0%" stopColor="#94A3B8" />
+                                        <stop offset="50%" stopColor="#E2E8F0" />
+                                        <stop offset="100%" stopColor="#94A3B8" />
+                                    </linearGradient>
+                                </defs>
+
+                                {/* The Liquid */}
+                                <g clipPath="url(#beakerClip)">
+                                    <rect x="0" y="220" width="400" height="300" fill={getLiquidColor()} className="liquid-fade" />
+                                    {/* Liquid Meniscus */}
+                                    <ellipse cx="200" cy="220" rx="140" ry="10" fill="rgba(255,255,255,0.1)" />
+                                </g>
+
+                                {/* Cathode (-) Left */}
+                                <g>
+                                    {/* Base Electrode */}
+                                    <rect x="105" y="150" width="30" height="250" fill={ELECTRODES[selectedElectrode].color} rx="2" className="svg-trans" />
+                                    
+                                    {/* Plating Overlay (Grows if running & plating) */}
+                                    {result.cathodeVisual.plate && (
+                                        <rect 
+                                            x={isRunning ? 100 : 105} 
+                                            y="240" 
+                                            width={isRunning ? 40 : 30} 
+                                            height="160" 
+                                            fill={`url(#${result.cathodeVisual.plate}Plate)`} 
+                                            rx="4" 
+                                            className="svg-trans" 
+                                            opacity={isRunning ? 1 : 0}
+                                        />
+                                    )}
+                                    
+                                    {/* Bubbles */}
+                                    <BubbleField gasType={result.cathodeVisual.gas} x={100} y={350} width={40} />
+                                </g>
+
+                                {/* Anode (+) Right */}
+                                <g>
+                                    {/* Base Electrode (Shrinks if dissolving) */}
+                                    <rect 
+                                        x={isRunning && result.anodeVisual.dissolve ? 270 : 265} 
+                                        y="150" 
+                                        width={isRunning && result.anodeVisual.dissolve ? 20 : 30} 
+                                        height="250" 
+                                        fill={ELECTRODES[selectedElectrode].color} 
+                                        rx="2" 
+                                        className="svg-trans" 
+                                    />
+                                    
+                                    {/* Dissolving Aura (Ions entering solution) */}
+                                    {isRunning && result.anodeVisual.dissolve && (
+                                        <rect x="250" y="240" width="60" height="160" fill={selectedElectrode === 'copper' ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'} filter="blur(10px)" className="svg-trans" />
                                     )}
 
-                                    {/* Bubbles @ Anode */}
-                                    {isRunning && result?.anode.product.includes('Gas') && (
-                                        <div className="absolute right-6 bottom-0 w-8 h-full overflow-hidden">
-                                            {[...Array(5)].map((_, i) => <div key={i} className="bubble" style={{left: `${Math.random()*20}px`, width: '6px', height: '6px', animationDelay: `${i*0.3}s`}}></div>)}
-                                        </div>
-                                    )}
+                                    {/* Bubbles */}
+                                    <BubbleField gasType={result.anodeVisual.gas} x={260} y={350} width={40} />
+                                </g>
 
-                                    {/* Bubbles @ Cathode */}
-                                    {isRunning && result?.cathode.product.includes('Gas') && (
-                                        <div className="absolute left-6 bottom-0 w-8 h-full overflow-hidden">
-                                            {[...Array(5)].map((_, i) => <div key={i} className="bubble" style={{left: `${Math.random()*20}px`, width: '6px', height: '6px', animationDelay: `${i*0.3}s`}}></div>)}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Cathode (Left, -) */}
-                                <div className="absolute left-16 top-10 h-64 flex flex-col items-center z-10">
-                                    {/* Rod */}
-                                    <div className="w-8 h-56 bg-slate-600 rounded-b-md border-2 border-slate-700 shadow-xl relative">
-                                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 font-bold text-slate-400 text-2xl">-</div>
-                                        {isRunning && result?.cathode.product.includes('Metal') && (
-                                            <div className="absolute bottom-0 w-full h-1/3 bg-orange-400 opacity-80 rounded-b-md animate-pulse"></div>
-                                        )}
-                                    </div>
-                                    {/* Label Box */}
-                                    <div className="mt-2 bg-slate-800 text-slate-300 px-3 py-1 rounded shadow-md text-xs font-bold border border-slate-700">
-                                        Cathode (-)
-                                    </div>
-                                </div>
-
-                                {/* Anode (Right, +) */}
-                                <div className="absolute right-16 top-10 h-64 flex flex-col items-center z-10">
-                                    {/* Rod */}
-                                    <div className={`w-8 h-56 ${electrode.active ? 'bg-orange-700' : 'bg-slate-700'} rounded-b-md border-2 border-slate-800 shadow-xl relative ${isRunning && result?.anode.product.includes('Dissolves') ? 'eroding' : ''}`}>
-                                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 font-bold text-slate-400 text-2xl">+</div>
-                                    </div>
-                                    {/* Label Box */}
-                                    <div className="mt-2 bg-slate-800 text-slate-300 px-3 py-1 rounded shadow-md text-xs font-bold border border-slate-700">
-                                        Anode (+)
-                                    </div>
-                                </div>
-
-                                {/* Power Source */}
-                                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-32 h-16 bg-slate-900 rounded-lg border-4 border-slate-700 flex flex-col items-center justify-center shadow-lg z-20">
-                                    <div className="text-emerald-400 font-mono font-bold text-lg">DC Power</div>
-                                </div>
+                                {/* Beaker Glass Outline */}
+                                <path 
+                                    d="M 60 180 L 60 450 C 60 470, 70 480, 90 480 L 310 480 C 330 480, 340 470, 340 450 L 340 180" 
+                                    fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="6" strokeLinecap="round" 
+                                />
+                                <line x1="50" y1="180" x2="70" y2="180" stroke="rgba(255,255,255,0.6)" strokeWidth="6" strokeLinecap="round" />
+                                <line x1="330" y1="180" x2="350" y2="180" stroke="rgba(255,255,255,0.6)" strokeWidth="6" strokeLinecap="round" />
                                 
-                                {/* Wires */}
-                                <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none" style={{top: '-80px'}}>
-                                    <path d="M 200 80 V 40 H 112 V 120" fill="none" stroke="#475569" strokeWidth="4" strokeLinecap="round" />
-                                    <path d="M 312 80 V 40 H 400 V 120" fill="none" stroke="#475569" strokeWidth="4" strokeLinecap="round" />
-                                </svg>
+                                {/* Glass Glare */}
+                                <path d="M 75 220 L 75 440" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="8" strokeLinecap="round" />
 
-                            </div>
-
-                            {/* Result Panel */}
-                            {result ? (
-                                <div className="grid grid-cols-2 gap-4 w-full mt-8 animate-in slide-in-from-bottom-4">
-                                    <div className="bg-blue-900/30 p-4 rounded-xl border-l-4 border-blue-500 shadow-sm">
-                                        <h4 className="font-bold text-blue-400 text-xs uppercase mb-1">Cathode (-) Reduction</h4>
-                                        <div className="text-lg font-bold text-white mb-2">{result.cathode.product}</div>
-                                        <div className="font-mono text-xs bg-slate-900/50 p-2 rounded border border-blue-500/30 text-blue-200">{result.cathode.eq}</div>
-                                    </div>
-                                    <div className="bg-red-900/30 p-4 rounded-xl border-l-4 border-red-500 shadow-sm">
-                                        <h4 className="font-bold text-red-400 text-xs uppercase mb-1">Anode (+) Oxidation</h4>
-                                        <div className="text-lg font-bold text-white mb-2">{result.anode.product}</div>
-                                        <div className="font-mono text-xs bg-slate-900/50 p-2 rounded border border-red-500/30 text-red-200">{result.anode.eq}</div>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="text-center text-slate-500 py-8 mt-8 italic">
-                                    Select electrolyte and electrodes, then click "Start Electrolysis"...
-                                </div>
-                            )}
-
+                            </svg>
                         </div>
-                    </div>
-                    
-                    <div className="text-center text-slate-600 text-xs mt-8">
-                        Luminous Learner International | IB/A-Level Chemistry
-                    </div>
+                    </main>
+
                 </div>
             );
-        };
+        }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
