@@ -3,434 +3,471 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Equilibrium Concentration Solver - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Equilibrium Concentration Solver | ICE Table Calculator</title>
+    <meta name="description" content="Master equilibrium chemistry with this ICE table calculator chemistry simulator. Automatically generate polynomials, find valid roots, and solve for final concentrations.">
+    
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
         
-        /* ICE Table Styling for Dark Mode */
-        .ice-table th, .ice-table td {
-            border: 1px solid #334155;
-            padding: 12px;
-            text-align: center;
-        }
-        .ice-table th { background-color: #1e293b; color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        .ice-table td { font-family: 'JetBrains Mono', monospace; color: #e2e8f0; }
-        
-        .step-box {
-            transition: all 0.3s ease;
-            border-left-width: 4px;
-        }
-        .step-box:hover {
-            transform: translateX(4px);
-            background-color: rgba(30, 41, 59, 0.8);
-        }
-        
-        /* Custom inputs */
-        input[type="number"]::-webkit-inner-spin-button,
-        input[type="number"]::-webkit-outer-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Custom Input Styling */
+        input[type="number"] { -moz-appearance: textfield; }
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+        /* Math Fractions */
+        .math-frac { display: inline-block; vertical-align: middle; text-align: center; font-size: 0.9em; margin: 0 0.2rem; }
+        .math-num { border-bottom: 1px solid currentColor; padding: 0 4px; display: block; }
+        .math-den { padding: 0 4px; display: block; }
+
+        /* Chemistry Subscripts */
+        sub { font-size: 0.7em; bottom: -0.25em; }
+        sup { font-size: 0.7em; top: -0.4em; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
-
-    <div id="root" class="flex-grow flex flex-col"></div>
+<body class="bg-[#0F172A] text-slate-200 h-screen max-h-[1000px] overflow-hidden flex flex-col font-sans select-none">
+    
+    <div id="root" class="h-full w-full"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
-        // Reaction Types Logic
-        const ReactionTypes = [
-            { 
-                id: 'type1', 
-                name: 'A + B ⇌ C + D', 
-                equation: 'A + B \\rightleftharpoons C + D',
-                desc: 'Coefficients are all 1 (e.g., Esterification)',
-                coeffs: [1, 1, 1, 1],
-                solve: (Kc, init) => {
-                    // Kc = (C+x)(D+x) / (A-x)(B-x)
-                    // Let A, B, C, D be initial concentrations
-                    const [A, B, C, D] = init;
-                    // Expand: Kc(AB - Ax - Bx + x^2) = CD + Cx + Dx + x^2
-                    // Kc*AB - Kc(A+B)x + Kc*x^2 = CD + (C+D)x + x^2
-                    // (Kc - 1)x^2 - (Kc(A+B) + (C+D))x + (Kc*AB - CD) = 0
-                    
-                    const a = Kc - 1;
-                    const b = -(Kc * (A + B) + (C + D));
-                    const c_term = (Kc * A * B) - (C * D);
-                    
-                    return { a, b, c: c_term };
-                }
-            },
-            { 
-                id: 'type2', 
-                name: 'A + B ⇌ 2C', 
-                equation: 'H_2 + I_2 \\rightleftharpoons 2HI',
-                desc: 'Product coefficient is 2 (e.g., Formation of HI)',
-                coeffs: [1, 1, 2],
-                solve: (Kc, init) => {
-                    // Kc = (C+2x)^2 / (A-x)(B-x)
-                    // Kc(AB - Ax - Bx + x^2) = C^2 + 4Cx + 4x^2
-                    // Kc*x^2 - Kc(A+B)x + Kc*AB = 4x^2 + 4Cx + C^2
-                    // (Kc - 4)x^2 - (Kc(A+B) + 4C)x + (Kc*AB - C^2) = 0
-                    
-                    const [A, B, C] = init;
-                    const a = Kc - 4;
-                    const b = -(Kc * (A + B) + 4 * C);
-                    const c_term = (Kc * A * B) - (C * C);
-                    
-                    return { a, b, c: c_term };
-                }
-            }
-        ];
-
-        const Presets = [
-            { name: 'Formation of HI', type: 'type2', kc: 54.3, init: [0.5, 0.5, 0], labels: ['H₂', 'I₂', 'HI'] },
-            { name: 'Esterification', type: 'type1', kc: 4.0, init: [1.0, 1.0, 0, 0], labels: ['Acid', 'Alc', 'Ester', 'Water'] },
-            { name: 'Decomposition of PCl5', type: 'type1', kc: 0.04, init: [0.2, 0, 0, 0], labels: ['PCl₅', 'Empty', 'PCl₃', 'Cl₂'] } // Hacky fit to Type 1 by ignoring 'B'
-        ];
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
-                    }
-                }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
+        // --- ICONS ---
+        const Icons = {
+            Table: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="9" x2="9" y2="21"></line><line x1="15" y1="9" x2="15" y2="21"></line></svg>,
+            Calculator: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="14" x2="16" y2="18"></line><path d="M16 10h.01"></path><path d="M12 10h.01"></path><path d="M8 10h.01"></path><path d="M12 14h.01"></path><path d="M8 14h.01"></path><path d="M12 18h.01"></path><path d="M8 18h.01"></path></svg>,
+            FunctionSquare: () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><path d="M9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3"></path><path d="M9 11.2h5.7"></path></svg>,
+            Check: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><polyline points="20 6 9 17 4 12"></polyline></svg>,
+            X: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         };
 
-        const App = () => {
-            const [selectedType, setSelectedType] = useState(ReactionTypes[1]); // Default HI type
-            const [kc, setKc] = useState(54.3);
-            const [initials, setInitials] = useState([0.5, 0.5, 0]); // Array of concentrations
-            const [labels, setLabels] = useState(['H₂', 'I₂', 'HI']);
-            
-            const [result, setResult] = useState(null);
-            const [steps, setSteps] = useState(null);
+        // --- REACTION DATABASE & ALGEBRA LOGIC ---
+        const REACTIONS = {
+            'AB2C': {
+                id: 'AB2C',
+                label: 'H₂(g) + I₂(g) ⇌ 2HI(g)',
+                eqHtml: 'H<sub>2(g)</sub> + I<sub>2(g)</sub> &rightleftharpoons; 2HI<sub>(g)</sub>',
+                species: [
+                    { id: 'A', name: 'H₂', coeff: -1, display: 'H₂' },
+                    { id: 'B', name: 'I₂', coeff: -1, display: 'I₂' },
+                    { id: 'C', name: 'HI', coeff: 2, display: 'HI' }
+                ],
+                defaultKc: "54.3",
+                defaultInit: { A: "1.0", B: "1.0", C: "0.0" },
+                getPolynomial: (I, Kc) => {
+                    return {
+                        a: Kc - 4,
+                        b: -(Kc * (I.A + I.B) + 4 * I.C),
+                        c: (Kc * I.A * I.B) - (I.C * I.C)
+                    };
+                },
+                getKxpression: () => (
+                    <span className="flex items-center">
+                        K<sub>c</sub> = <span className="math-frac"><span className="math-num">[HI]<sup>2</sup></span><span className="math-den">[H<sub>2</sub>][I<sub>2</sub>]</span></span>
+                    </span>
+                )
+            },
+            'A2B': {
+                id: 'A2B',
+                label: 'N₂O₄(g) ⇌ 2NO₂(g)',
+                eqHtml: 'N<sub>2</sub>O<sub>4(g)</sub> &rightleftharpoons; 2NO<sub>2(g)</sub>',
+                species: [
+                    { id: 'A', name: 'N₂O₄', coeff: -1, display: 'N₂O₄' },
+                    { id: 'B', name: 'NO₂', coeff: 2, display: 'NO₂' }
+                ],
+                defaultKc: "0.00461",
+                defaultInit: { A: "0.5", B: "0.0" },
+                getPolynomial: (I, Kc) => {
+                    return {
+                        a: 4,
+                        b: 4 * I.B + Kc,
+                        c: (I.B * I.B) - (Kc * I.A)
+                    };
+                },
+                getKxpression: () => (
+                    <span className="flex items-center">
+                        K<sub>c</sub> = <span className="math-frac"><span className="math-num">[NO<sub>2</sub>]<sup>2</sup></span><span className="math-den">[N<sub>2</sub>O<sub>4</sub>]</span></span>
+                    </span>
+                )
+            },
+            'ABC': {
+                id: 'ABC',
+                label: 'PCl₅(g) ⇌ PCl₃(g) + Cl₂(g)',
+                eqHtml: 'PCl<sub>5(g)</sub> &rightleftharpoons; PCl<sub>3(g)</sub> + Cl<sub>2(g)</sub>',
+                species: [
+                    { id: 'A', name: 'PCl₅', coeff: -1, display: 'PCl₅' },
+                    { id: 'B', name: 'PCl₃', coeff: 1, display: 'PCl₃' },
+                    { id: 'C', name: 'Cl₂', coeff: 1, display: 'Cl₂' }
+                ],
+                defaultKc: "0.042",
+                defaultInit: { A: "1.5", B: "0.0", C: "0.0" },
+                getPolynomial: (I, Kc) => {
+                    return {
+                        a: 1,
+                        b: I.B + I.C + Kc,
+                        c: (I.B * I.C) - (Kc * I.A)
+                    };
+                },
+                getKxpression: () => (
+                    <span className="flex items-center">
+                        K<sub>c</sub> = <span className="math-frac"><span className="math-num">[PCl<sub>3</sub>][Cl<sub>2</sub>]</span><span className="math-den">[PCl<sub>5</sub>]</span></span>
+                    </span>
+                )
+            },
+            'ABCD': {
+                id: 'ABCD',
+                label: 'CH₃COOH(aq) + C₂H₅OH(aq) ⇌ CH₃COOC₂H₅(aq) + H₂O(l)',
+                eqHtml: 'CH<sub>3</sub>COOH<sub>(aq)</sub> + C<sub>2</sub>H<sub>5</sub>OH<sub>(aq)</sub> &rightleftharpoons; CH<sub>3</sub>COOC<sub>2</sub>H<sub>5(aq)</sub> + H<sub>2</sub>O<sub>(l)</sub>',
+                species: [
+                    { id: 'A', name: 'CH₃COOH', coeff: -1, display: 'Acid' },
+                    { id: 'B', name: 'C₂H₅OH', coeff: -1, display: 'Alcohol' },
+                    { id: 'C', name: 'CH₃COOC₂H₅', coeff: 1, display: 'Ester' },
+                    { id: 'D', name: 'H₂O', coeff: 1, display: 'Water' }
+                ],
+                defaultKc: "4.0",
+                defaultInit: { A: "1.0", B: "1.0", C: "0.0", D: "0.0" },
+                getPolynomial: (I, Kc) => {
+                    return {
+                        a: Kc - 1,
+                        b: -(Kc * (I.A + I.B) + I.C + I.D),
+                        c: (Kc * I.A * I.B) - (I.C * I.D)
+                    };
+                },
+                getKxpression: () => (
+                    <span className="flex items-center">
+                        K<sub>c</sub> = <span className="math-frac"><span className="math-num">[Ester][Water]</span><span className="math-den">[Acid][Alcohol]</span></span>
+                    </span>
+                )
+            }
+        };
 
-            // MathJax Render
+        function App() {
+            // --- STATE ---
+            const [selectedReactionId, setSelectedReactionId] = useState('AB2C');
+            const [initials, setInitials] = useState({ ...REACTIONS['AB2C'].defaultInit });
+            const [kc, setKc] = useState(REACTIONS['AB2C'].defaultKc);
+            const [solvedData, setSolvedData] = useState(null);
+
+            const activeReaction = REACTIONS[selectedReactionId];
+
+            // Reset when reaction changes
             useEffect(() => {
-                if (window.MathJax) {
-                    window.MathJax.typesetPromise && window.MathJax.typesetPromise();
-                }
-            }, [result, selectedType]);
+                setInitials({ ...activeReaction.defaultInit });
+                setKc(activeReaction.defaultKc);
+                setSolvedData(null);
+            }, [selectedReactionId]);
 
-            const handlePreset = (p) => {
-                const type = ReactionTypes.find(t => t.id === p.type);
-                setSelectedType(type);
-                setKc(p.kc);
-                setInitials(p.init);
-                setLabels(p.labels);
-                setResult(null);
-            };
-
-            const handleTypeChange = (typeId) => {
-                const type = ReactionTypes.find(t => t.id === typeId);
-                setSelectedType(type);
-                setResult(null);
-                // Reset inputs based on new type
-                if (typeId === 'type1') {
-                    setInitials([1, 1, 0, 0]);
-                    setLabels(['A', 'B', 'C', 'D']);
+            // Fix: Store raw string input to prevent decimals from dropping out of the UI
+            const handleInputChange = (field, value) => {
+                setSolvedData(null);
+                if (field === 'kc') {
+                    setKc(value);
                 } else {
-                    setInitials([0.5, 0.5, 0]);
-                    setLabels(['A', 'B', 'C']);
+                    setInitials(prev => ({ ...prev, [field]: value }));
                 }
             };
 
-            const calculate = () => {
-                // 1. Get Coefficients for ax^2 + bx + c = 0
-                const { a, b, c } = selectedType.solve(kc, initials);
-                
-                // 2. Solve Quadratic Formula
-                const discriminant = b * b - 4 * a * c;
-                
-                if (discriminant < 0) {
-                    setResult({ error: "No real roots (Discriminant < 0). Please check your input values." });
-                    return;
-                }
+            // --- SOLVER ENGINE ---
+            const solveICE = () => {
+                // Parse strings safely at computation time
+                const parsedKc = parseFloat(kc) || 0;
+                const parsedInitials = {};
+                activeReaction.species.forEach(sp => {
+                    parsedInitials[sp.id] = parseFloat(initials[sp.id]) || 0;
+                });
 
-                const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
-                const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+                const { a, b, c } = activeReaction.getPolynomial(parsedInitials, parsedKc);
 
-                // 3. Determine Valid Root
-                // x represents "change". 
-                // Equilibrium conc cannot be negative.
-                // For reactant A: eq = A - x >= 0  => x <= A
-                // For product C: eq = C + x >= 0 => x >= -C (usually C=0 so x>0)
-                
-                const isValid = (x) => {
-                    // Check all species
-                    if (selectedType.id === 'type1') {
-                        return (initials[0]-x >= 0) && (initials[1]-x >= 0) && (initials[2]+x >= 0) && (initials[3]+x >= 0);
-                    } else {
-                        return (initials[0]-x >= 0) && (initials[1]-x >= 0) && (initials[2]+2*x >= 0);
+                let x1, x2, validX = null;
+                let roots = [];
+
+                if (Math.abs(a) < 1e-9) {
+                    // Linear: bx + c = 0
+                    if (Math.abs(b) > 1e-9) {
+                        roots = [-c / b];
                     }
-                };
-
-                let validX = null;
-                let reason = "";
-
-                if (isValid(x1) && !isValid(x2)) {
-                    validX = x1;
-                    reason = `x = ${x2.toFixed(4)} rejected because it results in negative concentration.`;
-                } else if (!isValid(x1) && isValid(x2)) {
-                    validX = x2;
-                    reason = `x = ${x1.toFixed(4)} rejected because it results in negative concentration.`;
-                } else if (isValid(x1) && isValid(x2)) {
-                      // Both valid mathematically? Pick the one that makes sense physically (usually smaller magnitude or closer to 0?)
-                      // For A+B<->C+D starting 0 prod, x must be positive.
-                      // Usually only one is positive.
-                      if(x1 > 0 && x2 < 0) validX = x1;
-                      else if(x2 > 0 && x1 < 0) validX = x2;
-                      else validX = Math.abs(x1) < Math.abs(x2) ? x1 : x2; // Heuristic fallback
-                      reason = "Both roots mathematically valid. Selected the physically meaningful one.";
                 } else {
-                    setResult({ error: "No valid x found (All roots result in negative concentrations)." });
-                    return;
+                    // Quadratic
+                    const discriminant = b * b - 4 * a * c;
+                    if (discriminant >= 0) {
+                        x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+                        x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+                        roots = [x1, x2];
+                    }
                 }
 
-                // 4. Calculate Final Concentrations
-                let finals = [];
-                if (selectedType.id === 'type1') {
-                    finals = [initials[0]-validX, initials[1]-validX, initials[2]+validX, initials[3]+validX];
-                } else {
-                    finals = [initials[0]-validX, initials[1]-validX, initials[2]+2*validX];
-                }
+                // Validation logic: Equilibrium concentrations must be >= 0
+                let bestX = null;
+                const evaluatedRoots = roots.map(x => {
+                    let isValid = true;
+                    const finalConcs = {};
+                    activeReaction.species.forEach(sp => {
+                        const rawFinalVal = parsedInitials[sp.id] + sp.coeff * x;
+                        
+                        // Floating-point clamp: Fixes the bug where 0.0 calculates as -1e-15
+                        const finalVal = Math.abs(rawFinalVal) < 1e-7 ? 0 : rawFinalVal;
+                        
+                        finalConcs[sp.id] = finalVal;
+                        if (finalVal < 0) isValid = false;
+                    });
+                    return { x, isValid, finalConcs };
+                });
 
-                setResult({ x: validX, finals, reason, quad: { a, b, c, x1, x2 } });
+                const validRoots = evaluatedRoots.filter(r => r.isValid);
                 
-                // Prepare steps for display
-                setSteps({
-                    eqStr: `${a.toFixed(2)}x^2 + (${b.toFixed(2)})x + (${c.toFixed(2)}) = 0`
+                // If multiple valid roots exist, assume the smallest absolute x
+                if (validRoots.length > 0) {
+                    bestX = validRoots.sort((A,B) => Math.abs(A.x) - Math.abs(B.x))[0];
+                }
+
+                setSolvedData({
+                    polynomial: { a, b, c },
+                    evaluatedRoots,
+                    bestX
                 });
             };
 
+            // --- RENDER HELPERS ---
+            const formatNum = (num, decimals = 4) => {
+                if (num === null || num === undefined) return '--';
+                if (Math.abs(num) < 1e-7) return "0.0000"; // Handled clamped zeros cleanly
+                if (Math.abs(num) < 0.0001 && num !== 0) return num.toExponential(2);
+                return num.toFixed(decimals);
+            };
+
+            const formatChange = (coeff, val) => {
+                if (val === undefined || val === null) {
+                    return `${coeff > 0 ? '+' : '-'}${Math.abs(coeff) === 1 ? '' : Math.abs(coeff)}x`;
+                }
+                const change = coeff * val;
+                return `${change > 0 ? '+' : ''}${formatNum(change)}`;
+            };
+
             return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
-                    
+                <div className="flex flex-col h-full w-full">
                     {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                    <header className="bg-[#1E293B] border-b border-slate-800 p-4 shrink-0 flex justify-between items-center z-10 shadow-lg">
                         <div>
-                            <h1 className="text-2xl font-bold text-indigo-400 flex items-center gap-2">
-                                <Icon name="FunctionSquare" /> Equilibrium Concentration Solver
+                            <h1 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2 tracking-tight">
+                                <Icons.Table /> Equilibrium Concentration Solver
                             </h1>
-                            <p className="text-slate-500 text-sm">ICE Table & Quadratic Equation Calculator</p>
+                            <p className="text-xs md:text-sm text-slate-400 mt-1 hidden sm:block">
+                                Algorithmic solver implementing standard ICE table matrices and quadratic extraction.
+                            </p>
                         </div>
-                        
-                        {/* Presets */}
-                        <div className="flex gap-2">
-                            {Presets.map((p, i) => (
-                                <button 
-                                    key={i} onClick={() => handlePreset(p)}
-                                    className="px-3 py-1 bg-slate-800 hover:bg-indigo-900/30 text-slate-400 hover:text-indigo-400 rounded text-xs font-bold transition-all border border-slate-700"
-                                >
-                                    {p.name}
-                                </button>
-                            ))}
+                        <div className="hidden md:flex bg-slate-900 border border-slate-700 px-4 py-1.5 rounded-lg font-mono text-xs text-slate-400 flex-col shadow-inner">
+                            {activeReaction.getKxpression()}
                         </div>
-                    </div>
+                    </header>
 
-                    <div className="flex flex-col lg:flex-row gap-8 flex-grow items-start">
+                    {/* Main Workspace */}
+                    <main className="flex-1 flex flex-col lg:flex-row gap-6 p-4 md:p-6 overflow-hidden max-w-7xl w-full mx-auto">
                         
-                        {/* Left: Inputs */}
-                        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                        {/* LEFT COLUMN: Setup & ICE Table */}
+                        <section className="flex flex-col gap-4 w-full lg:w-3/5 shrink-0 overflow-y-auto pr-2">
                             
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800">
-                                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
-                                    <Icon name="Settings2" size={16}/> Problem Setup
-                                </h3>
-
-                                {/* Reaction Type */}
-                                <div className="mb-4">
-                                    <label className="text-xs font-bold text-indigo-400 block mb-2">Reaction Type</label>
-                                    <div className="flex gap-2">
-                                        {ReactionTypes.map(t => (
-                                            <button 
-                                                key={t.id} 
-                                                onClick={() => handleTypeChange(t.id)}
-                                                className={`flex-1 py-2 rounded border text-xs font-bold transition-all ${selectedType.id === t.id ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700'}`}
-                                            >
-                                                {t.name}
-                                            </button>
-                                        ))}
+                            {/* Reaction Configuration */}
+                            <div className="bg-[#1E293B] rounded-xl border border-slate-700 p-5 shadow-lg flex flex-col gap-4">
+                                <h2 className="text-sm uppercase font-bold text-slate-400 border-b border-slate-700 pb-2">1. System Configuration</h2>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Reaction Type</label>
+                                        <select 
+                                            value={selectedReactionId} 
+                                            onChange={(e) => setSelectedReactionId(e.target.value)}
+                                            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-bold outline-none focus:border-emerald-500 transition-colors"
+                                        >
+                                            {Object.values(REACTIONS).map(r => (
+                                                <option key={r.id} value={r.id}>{r.label}</option>
+                                            ))}
+                                        </select>
                                     </div>
-                                    <p className="text-[10px] text-slate-500 mt-1 text-center">{selectedType.desc}</p>
-                                </div>
-
-                                {/* Kc Input */}
-                                <div className="mb-6">
-                                    <label className="text-xs font-bold text-indigo-400 block mb-1">Equilibrium Constant (Kc)</label>
-                                    <input 
-                                        type="number" value={kc} onChange={(e) => setKc(Number(e.target.value))}
-                                        className="w-full p-3 bg-slate-800 border border-slate-700 rounded-xl font-mono font-bold text-lg text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
-                                </div>
-
-                                {/* Initial Concentrations */}
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500 block mb-2">Initial Concentration (M)</label>
-                                    <div className="space-y-2">
-                                        {initials.map((val, idx) => (
-                                            <div key={idx} className="flex items-center gap-2">
-                                                <div className="w-20 bg-slate-800 p-2 rounded text-center text-xs font-bold text-slate-400 border border-slate-700">
-                                                    <input 
-                                                        type="text" value={labels[idx]} 
-                                                        onChange={(e) => {
-                                                            const newL = [...labels]; newL[idx] = e.target.value; setLabels(newL);
-                                                        }}
-                                                        className="w-full bg-transparent text-center outline-none"
-                                                    />
-                                                </div>
-                                                <input 
-                                                    type="number" value={val} 
-                                                    onChange={(e) => {
-                                                        const newInit = [...initials]; newInit[idx] = Number(e.target.value); setInitials(newInit);
-                                                    }}
-                                                    className="flex-grow p-2 bg-slate-800 border border-slate-700 rounded font-mono text-sm text-white outline-none focus:border-indigo-500"
-                                                />
-                                            </div>
-                                        ))}
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Equilibrium Constant (K<sub>c</sub>)</label>
+                                        <input 
+                                            type="number" step="any"
+                                            value={kc}
+                                            onChange={(e) => handleInputChange('kc', e.target.value)}
+                                            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono outline-none focus:border-blue-500 transition-colors"
+                                        />
                                     </div>
                                 </div>
 
-                                <button 
-                                    onClick={calculate}
-                                    className="mt-6 w-full py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-500 transition-all active:scale-95 flex items-center justify-center gap-2"
-                                >
-                                    <Icon name="Calculator" size={18}/> Calculate (Solve x)
-                                </button>
+                                <div className="mt-2 bg-slate-900/50 border border-slate-800 p-3 rounded-lg flex items-center justify-center">
+                                    <span dangerouslySetInnerHTML={{ __html: activeReaction.eqHtml }} className="text-xl font-bold font-mono text-emerald-400"></span>
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Right: ICE Table & Solution */}
-                        <div className="w-full lg:w-2/3 flex flex-col gap-6">
-                            
-                            {/* ICE Table Visualization */}
-                            <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 overflow-hidden">
-                                <h3 className="text-lg font-bold text-slate-300 mb-4">ICE Table</h3>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full ice-table text-sm">
+                            {/* ICE Table Grid */}
+                            <div className="bg-[#1E293B] rounded-xl border border-slate-700 shadow-lg flex flex-col flex-1 relative overflow-hidden">
+                                <div className="p-5 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
+                                    <h2 className="text-sm uppercase font-bold text-slate-300 tracking-wider">2. I.C.E. Matrix</h2>
+                                    {solvedData ? (
+                                        <span className="text-xs font-bold text-emerald-400 flex items-center gap-1"><Icons.Check /> Solved</span>
+                                    ) : (
+                                        <span className="text-xs font-bold text-slate-500 italic">Awaiting inputs...</span>
+                                    )}
+                                </div>
+
+                                <div className="p-5 flex-1 overflow-x-auto">
+                                    <table className="w-full text-center border-collapse">
                                         <thead>
                                             <tr>
-                                                <th className="w-24 bg-slate-800 border-slate-700">Equation</th>
-                                                {labels.map((l, i) => (
-                                                    <th key={i} className="min-w-[100px] text-base text-indigo-400 font-black border-slate-700">
-                                                        {selectedType.id === 'type2' && i === 2 ? '2' : ''}{l}
+                                                <th className="border-b-2 border-slate-600 p-3 text-slate-500 font-bold uppercase text-xs">Step</th>
+                                                {activeReaction.species.map(sp => (
+                                                    <th key={sp.id} className="border-b-2 border-slate-600 p-3 text-white font-mono text-sm">
+                                                        [{sp.display}]
                                                     </th>
                                                 ))}
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr>
-                                                <td className="font-bold text-slate-500 border-slate-700">Initial (I)</td>
-                                                {initials.map((val, i) => <td key={i} className="border-slate-700">{val}</td>)}
+                                            {/* INITIAL */}
+                                            <tr className="hover:bg-slate-800/30 transition-colors">
+                                                <td className="p-4 border-b border-slate-700 text-slate-400 font-bold text-sm text-left">Initial (I)</td>
+                                                {activeReaction.species.map(sp => (
+                                                    <td key={sp.id} className="p-2 border-b border-slate-700 relative group">
+                                                        <input 
+                                                            type="number" step="any" min="0"
+                                                            value={initials[sp.id]}
+                                                            onChange={(e) => handleInputChange(sp.id, e.target.value)}
+                                                            className="w-full bg-slate-900 border border-slate-600 focus:border-emerald-500 rounded p-2 text-center text-white font-mono outline-none"
+                                                        />
+                                                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none group-focus-within:hidden">M</span>
+                                                    </td>
+                                                ))}
                                             </tr>
-                                            <tr className="bg-slate-800/50">
-                                                <td className="font-bold text-slate-500 border-slate-700">Change (C)</td>
-                                                {initials.map((_, i) => {
-                                                    // Determine sign and coeff based on type
-                                                    // Type 1: -x, -x, +x, +x
-                                                    // Type 2: -x, -x, +2x
-                                                    let sign = i < 2 ? '-' : '+';
-                                                    let coeff = (selectedType.id === 'type2' && i === 2) ? '2' : '';
-                                                    return <td key={i} className="text-blue-400 font-bold border-slate-700">{sign}{coeff}x</td>;
-                                                })}
+
+                                            {/* CHANGE */}
+                                            <tr className="hover:bg-slate-800/30 transition-colors bg-slate-900/20">
+                                                <td className="p-4 border-b border-slate-700 text-slate-400 font-bold text-sm text-left">Change (C)</td>
+                                                {activeReaction.species.map(sp => (
+                                                    <td key={sp.id} className="p-4 border-b border-slate-700 font-mono text-blue-300 font-bold">
+                                                        {formatChange(sp.coeff, solvedData?.bestX?.x)}
+                                                    </td>
+                                                ))}
                                             </tr>
-                                            <tr>
-                                                <td className="font-bold text-slate-500 border-slate-700">Eqm (E)</td>
-                                                {initials.map((val, i) => {
-                                                    let sign = i < 2 ? '-' : '+';
-                                                    let coeff = (selectedType.id === 'type2' && i === 2) ? '2' : '';
-                                                    return <td key={i} className="font-bold border-slate-700">{val} {sign} {coeff}x</td>;
-                                                })}
+
+                                            {/* EQUILIBRIUM */}
+                                            <tr className="hover:bg-slate-800/30 transition-colors">
+                                                <td className="p-4 text-slate-400 font-bold text-sm text-left">Equilibrium (E)</td>
+                                                {activeReaction.species.map(sp => (
+                                                    <td key={sp.id} className="p-4 font-mono font-black text-lg">
+                                                        {solvedData && solvedData.bestX ? (
+                                                            <span className="text-emerald-400 bg-emerald-900/20 px-3 py-1 rounded border border-emerald-800 shadow-inner">
+                                                                {formatNum(solvedData.bestX.finalConcs[sp.id])} M
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-slate-500">
+                                                                {parseFloat(initials[sp.id]) || "0"} {sp.coeff > 0 ? '+' : '-'} {Math.abs(sp.coeff) === 1 ? '' : Math.abs(sp.coeff)}x
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                ))}
                                             </tr>
-                                            {/* Final Values Row (if calculated) */}
-                                            {result && !result.error && (
-                                                <tr className="bg-emerald-900/20 border-t-2 border-emerald-500/30">
-                                                    <td className="font-bold text-emerald-400 border-slate-700">Final (M)</td>
-                                                    {result.finals.map((val, i) => (
-                                                        <td key={i} className="font-mono font-bold text-emerald-400 border-slate-700">{val.toFixed(4)}</td>
-                                                    ))}
-                                                </tr>
-                                            )}
                                         </tbody>
                                     </table>
                                 </div>
+
+                                <div className="p-5 border-t border-slate-700 bg-slate-800/50">
+                                    <button 
+                                        onClick={solveICE}
+                                        disabled={solvedData !== null}
+                                        className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition transform hover:-translate-y-0.5 active:translate-y-0 disabled:transform-none flex justify-center items-center gap-2">
+                                        <Icons.Calculator />
+                                        Solve for x
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        {/* RIGHT COLUMN: Algebra Engine */}
+                        <section className="flex-1 flex flex-col gap-4 min-w-0">
+                            
+                            <div className="bg-[#1E293B] rounded-xl border border-slate-700 p-6 shadow-lg h-full flex flex-col relative overflow-hidden transition-all duration-500">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                                <h3 className="text-xs uppercase font-bold text-slate-400 tracking-widest mb-6 flex items-center gap-2">
+                                    <Icons.FunctionSquare /> Algebra Engine
+                                </h3>
+
+                                {!solvedData ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center opacity-40 text-center gap-3">
+                                        <svg className="w-16 h-16 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                                        <span className="font-bold uppercase tracking-wider text-sm">Engine Standby</span>
+                                        <span className="text-xs max-w-[200px]">Fill the ICE table and execute the solver to view polynomial extraction.</span>
+                                    </div>
+                                ) : (
+                                    <div className="flex-1 flex flex-col gap-6 fade-in">
+                                        
+                                        {/* Polynomial Assembly */}
+                                        <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 shadow-inner">
+                                            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-2">1. Polynomial Assembly (ax² + bx + c = 0)</span>
+                                            <div className="font-mono text-center text-lg text-blue-300 break-words">
+                                                {formatNum(solvedData.polynomial.a)}x² 
+                                                {solvedData.polynomial.b >= 0 ? ' + ' : ' - '}{formatNum(Math.abs(solvedData.polynomial.b))}x 
+                                                {solvedData.polynomial.c >= 0 ? ' + ' : ' - '}{formatNum(Math.abs(solvedData.polynomial.c))} 
+                                                = 0
+                                            </div>
+                                        </div>
+
+                                        {/* Root Extraction */}
+                                        <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 shadow-inner flex-1">
+                                            <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-4">2. Root Extraction & Validation</span>
+                                            
+                                            {solvedData.evaluatedRoots.length === 0 ? (
+                                                <div className="text-center text-red-400 font-bold text-sm mt-4">
+                                                    No real roots exist. Please check your K<sub>c</sub> or initial concentrations.
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col gap-4">
+                                                    {solvedData.evaluatedRoots.map((rootObj, i) => (
+                                                        <div key={i} className={`flex items-center justify-between p-3 rounded border ${rootObj.isValid ? 'bg-emerald-900/20 border-emerald-800/50' : 'bg-red-900/10 border-red-900/30 opacity-50'}`}>
+                                                            <div className="font-mono text-lg">
+                                                                x<sub>{i+1}</sub> = <span className="font-bold text-white">{formatNum(rootObj.x)}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                {rootObj.isValid ? (
+                                                                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 bg-emerald-900/40 px-2 py-1 rounded"><Icons.Check /> Chemically Valid</span>
+                                                                ) : (
+                                                                    <span className="text-xs font-bold text-red-400 flex items-center gap-1 bg-red-900/40 px-2 py-1 rounded"><Icons.X /> Invalid (Produces neg. conc.)</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            {solvedData.bestX && (
+                                                <div className="mt-6 pt-4 border-t border-slate-700 text-xs text-slate-400 leading-relaxed">
+                                                    The system rejects roots that result in negative molarities, as concentration cannot physically drop below absolute zero.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                    </div>
+                                )}
                             </div>
 
-                            {/* Calculation Steps */}
-                            {result && !result.error && (
-                                <div className="bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 animate-in slide-in-from-bottom-4 fade-in">
-                                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
-                                        <Icon name="FunctionSquare" size={16}/> Step-by-Step Solution
-                                    </h3>
-                                    
-                                    <div className="space-y-4">
-                                        <div className="step-box border-l-indigo-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
-                                            <p className="text-xs font-bold text-indigo-400 uppercase mb-1">Step 1: Set up Kc Expression</p>
-                                            <p className="font-mono text-sm text-slate-300 bg-slate-950 p-2 rounded border border-slate-700">
-                                                {`\\[ K_c = ${selectedType.id === 'type2' ? '\\frac{[C]^2}{[A][B]}' : '\\frac{[C][D]}{[A][B]}'} = ${kc} \\]`}
-                                            </p>
-                                        </div>
+                        </section>
 
-                                        <div className="step-box border-l-purple-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
-                                            <p className="text-xs font-bold text-purple-400 uppercase mb-1">Step 2: Rearrange to Quadratic ($ax^2 + bx + c = 0$)</p>
-                                            <p className="font-mono text-lg text-slate-200 font-bold">
-                                                {`\\[ ${steps.eqStr} \\]`}
-                                            </p>
-                                            <p className="text-xs text-slate-500 mt-1">
-                                                (a = {result.quad.a.toFixed(2)}, b = {result.quad.b.toFixed(2)}, c = {result.quad.c.toFixed(2)})
-                                            </p>
-                                        </div>
-
-                                        <div className="step-box border-l-emerald-500 pl-4 py-1 bg-slate-800/50 rounded-r-lg">
-                                            <p className="text-xs font-bold text-emerald-400 uppercase mb-1">Step 3: Solve for x</p>
-                                            <div className="flex gap-4 text-sm font-mono text-slate-400 mb-2">
-                                                <span>x₁ = {result.quad.x1.toFixed(4)}</span>
-                                                <span>x₂ = {result.quad.x2.toFixed(4)}</span>
-                                            </div>
-                                            <p className="text-sm text-emerald-300 bg-emerald-900/30 p-2 rounded font-bold border border-emerald-500/30">
-                                                ✅ Select x = {result.x.toFixed(4)}
-                                            </p>
-                                            <p className="text-xs text-slate-500 mt-1 italic">{result.reason}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {result && result.error && (
-                                <div className="bg-red-900/20 p-6 rounded-2xl border border-red-500/50 text-center text-red-400 font-bold">
-                                    {result.error}
-                                </div>
-                            )}
-
-                        </div>
-                    </div>
-                    
-                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
-                        Luminous Learner International | IB/A-Level Chemistry
-                    </div>
+                    </main>
                 </div>
             );
-        };
+        }
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
