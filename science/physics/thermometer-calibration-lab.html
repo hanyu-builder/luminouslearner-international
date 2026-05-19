@@ -3,464 +3,600 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thermometer Calibration Lab | Luminous Learner</title>
+    <meta name="description" content="Interactive Specific heat capacity calculator and thermal energy transfer simulator.">
+    <title>Specific Heat Capacity Calculator</title>
     
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Chart.js for real-time graphing -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
-
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#151e2e',
+                            900: '#0F172A',
+                        },
+                        primary: '#38bdf8',
+                        accent: '#f59e0b',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .beaker-glass {
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-top: none;
-            backdrop-filter: blur(2px);
+        /* Custom Range Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
         }
-        .liquid-water {
-            background: rgba(56, 189, 248, 0.4);
-        }
-        .liquid-unknown {
-            background: rgba(168, 85, 247, 0.4);
-        }
-        .bubble {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.4);
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px;
+            width: 20px;
             border-radius: 50%;
-            animation: rise 2s infinite ease-in;
+            background: #38bdf8;
+            cursor: pointer;
+            margin-top: -8px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
         }
-        @keyframes rise {
-            0% { bottom: 0; transform: scale(0.5); opacity: 0; }
-            50% { opacity: 1; }
-            100% { bottom: 100%; transform: scale(1.2); opacity: 0; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 2px;
         }
-        .steam {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.2);
-            filter: blur(8px);
-            border-radius: 50%;
-            animation: steam 3s infinite ease-out;
+        input[type=range]:focus {
+            outline: none;
         }
-        @keyframes steam {
-            0% { bottom: 80%; transform: translateX(0) scale(1); opacity: 0.5; }
-            100% { bottom: 150%; transform: translateX(20px) scale(2); opacity: 0; }
+        
+        /* Heater Glow Animation */
+        @keyframes glow {
+            0% { box-shadow: 0 0 10px #ef4444, 0 0 20px #ef4444; }
+            50% { box-shadow: 0 0 20px #ef4444, 0 0 40px #f97316; }
+            100% { box-shadow: 0 0 10px #ef4444, 0 0 20px #ef4444; }
+        }
+        .heater-active {
+            background-color: #ef4444 !important;
+            animation: glow 1.5s infinite alternate;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
         }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-200 h-screen w-screen overflow-hidden flex justify-center items-center font-sans">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo } = React;
-    const { motion, AnimatePresence } = window.Motion;
-
-    // --- Constants ---
-    // Mapping Temperature (0-100) to Pixel Height (0-300 in the thermometer tube)
-    // Let's say tube is 300px tall. 
-    // 0C = 50px from bottom, 100C = 250px from bottom.
-    // L = 2T + 50
-    const calcHeightFromTemp = (t) => t * 2 + 50; 
-    
-    // Reverse: T = (L - 50) / 2
-    const calcTempFromHeight = (h) => (h - 50) / 2;
-
-    const App = () => {
-        // --- State ---
-        const [environment, setEnvironment] = useState('ROOM'); // ROOM, ICE, STEAM, UNKNOWN
-        const [thermometerTemp, setThermometerTemp] = useState(25); // Current visual temp
-        const [isStabilized, setIsStabilized] = useState(true);
+    <!-- Main Container: Constrained to 950px height for zero-scroll desktop experience -->
+    <div class="w-full max-w-7xl h-full max-h-[950px] flex flex-col bg-slate-900 shadow-2xl p-4 md:p-6 lg:p-8 gap-6">
         
-        // Calibration Marks (in pixels from bottom of tube)
-        const [markL0, setMarkL0] = useState(null);
-        const [markL100, setMarkL100] = useState(null);
-        const [markLT, setMarkLT] = useState(null);
-
-        // Unknown Liquid Settings
-        const [unknownLiquidTemp, setUnknownLiquidTemp] = useState(65); // The "Real" answer
-        const [showAnswer, setShowAnswer] = useState(false);
-
-        // --- Physics Logic ---
-        useEffect(() => {
-            let targetTemp = 25;
-            let speed = 0.5;
-
-            if (environment === 'ROOM') targetTemp = 25;
-            if (environment === 'ICE') targetTemp = 0;
-            if (environment === 'STEAM') targetTemp = 100;
-            if (environment === 'UNKNOWN') targetTemp = unknownLiquidTemp;
-
-            if (Math.abs(thermometerTemp - targetTemp) < 0.5) {
-                setThermometerTemp(targetTemp);
-                setIsStabilized(true);
-                return;
-            }
-
-            setIsStabilized(false);
-            const interval = setInterval(() => {
-                setThermometerTemp(prev => {
-                    const diff = targetTemp - prev;
-                    if (Math.abs(diff) < 0.5) return targetTemp;
-                    return prev + diff * 0.05; // Ease towards target
-                });
-            }, 16);
-
-            return () => clearInterval(interval);
-        }, [environment, unknownLiquidTemp, thermometerTemp]);
-
-        // --- Handlers ---
-        const handleMark = () => {
-            const currentHeight = calcHeightFromTemp(thermometerTemp);
-            if (environment === 'ICE' && isStabilized) setMarkL0(currentHeight);
-            if (environment === 'STEAM' && isStabilized) setMarkL100(currentHeight);
-            if (environment === 'UNKNOWN' && isStabilized) setMarkLT(currentHeight);
-        };
-
-        const resetLab = () => {
-            setMarkL0(null);
-            setMarkL100(null);
-            setMarkLT(null);
-            setEnvironment('ROOM');
-            setShowAnswer(false);
-            // Randomize unknown temp slightly for replayability
-            setUnknownLiquidTemp(Math.floor(Math.random() * 60) + 20);
-        };
-
-        // --- Render Components ---
-
-        // Bubbles Animation Component
-        const Bubbles = () => (
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                {[...Array(10)].map((_, i) => (
-                    <div key={i} className="bubble w-2 h-2" style={{
-                        left: `${Math.random() * 80 + 10}%`,
-                        animationDelay: `${Math.random() * 2}s`
-                    }} />
-                ))}
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-slate-700 pb-4 shrink-0">
+            <div>
+                <h1 class="text-3xl font-bold text-white tracking-tight">Specific Heat Capacity Calculator</h1>
+                <p class="text-slate-400 mt-1">Visualize Thermal Energy Transfer: <span class="text-primary font-mono bg-slate-800 px-2 py-0.5 rounded">Q = mcΔT</span></p>
             </div>
-        );
-
-        // Steam Animation Component
-        const Steam = () => (
-            <div className="absolute -top-20 left-0 w-full h-20 pointer-events-none">
-                {[...Array(5)].map((_, i) => (
-                    <div key={i} className="steam w-8 h-8" style={{
-                        left: `${Math.random() * 60 + 20}%`,
-                        animationDelay: `${Math.random() * 2}s`
-                    }} />
-                ))}
+            <div class="hidden md:block text-right text-sm text-slate-400">
+                <p>Constant Power Heating Simulation</p>
+                <p class="text-accent border-b border-dashed border-accent inline-block pb-0.5">Assumes Ideal perfectly insulated system</p>
             </div>
-        );
+        </header>
 
-        // Ice Cubes
-        const IceCubes = () => (
-            <div className="absolute bottom-0 w-full h-2/3 pointer-events-none flex flex-wrap justify-center content-end p-2 opacity-80">
-                {[...Array(6)].map((_, i) => (
-                    <div key={i} className="w-10 h-10 bg-white/40 border border-white/60 m-1 rounded rotate-12 backdrop-blur-sm shadow-sm transform transition-transform" 
-                         style={{ transform: `rotate(${Math.random() * 360}deg)` }} />
-                ))}
-            </div>
-        );
-
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
-                {/* Header */}
-                <header className="mb-8 flex items-center space-x-3 border-b border-slate-700 pb-4">
-                    <div className="p-2 bg-rose-500/10 rounded-lg">
-                        <i data-lucide="thermometer" className="w-8 h-8 text-rose-400"></i>
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Thermometer Calibration Lab</h1>
-                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
-                    </div>
-                </header>
-
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <!-- Main Content Layout -->
+        <main class="flex flex-col lg:flex-row gap-6 h-full min-h-0">
+            
+            <!-- Left Column: Controls & Visualizer -->
+            <div class="flex flex-col gap-6 w-full lg:w-1/3 min-h-0">
+                
+                <!-- Controls Panel -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shrink-0">
+                    <h2 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+                        Experiment Variables
+                    </h2>
                     
-                    {/* LEFT: Controls (4 cols) */}
-                    <div className="lg:col-span-4 space-y-6">
-                        
-                        {/* Environment Selector */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 backdrop-blur-sm">
-                            <h2 className="text-rose-400 font-semibold mb-4 flex items-center">
-                                <i data-lucide="flask-conical" className="w-4 h-4 mr-2"></i> 1. Choose Environment
-                            </h2>
-                            <div className="grid grid-cols-2 gap-3">
-                                <button 
-                                    onClick={() => setEnvironment('ROOM')}
-                                    className={`p-3 rounded-lg flex flex-col items-center justify-center transition-all ${environment === 'ROOM' ? 'bg-slate-600 text-white shadow-lg ring-2 ring-slate-500' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
-                                >
-                                    <i data-lucide="wind" className="w-6 h-6 mb-2"></i>
-                                    <span className="text-xs font-bold">Room Air</span>
-                                </button>
-                                <button 
-                                    onClick={() => setEnvironment('ICE')}
-                                    className={`p-3 rounded-lg flex flex-col items-center justify-center transition-all ${environment === 'ICE' ? 'bg-cyan-600 text-white shadow-lg ring-2 ring-cyan-400' : 'bg-slate-700 hover:bg-cyan-900/30 text-slate-300'}`}
-                                >
-                                    <i data-lucide="snowflake" className="w-6 h-6 mb-2"></i>
-                                    <span className="text-xs font-bold">Melting Ice</span>
-                                </button>
-                                <button 
-                                    onClick={() => setEnvironment('STEAM')}
-                                    className={`p-3 rounded-lg flex flex-col items-center justify-center transition-all ${environment === 'STEAM' ? 'bg-orange-600 text-white shadow-lg ring-2 ring-orange-400' : 'bg-slate-700 hover:bg-orange-900/30 text-slate-300'}`}
-                                >
-                                    <i data-lucide="flame" className="w-6 h-6 mb-2"></i>
-                                    <span className="text-xs font-bold">Boiling Water</span>
-                                </button>
-                                <button 
-                                    onClick={() => setEnvironment('UNKNOWN')}
-                                    className={`p-3 rounded-lg flex flex-col items-center justify-center transition-all ${environment === 'UNKNOWN' ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-400' : 'bg-slate-700 hover:bg-purple-900/30 text-slate-300'}`}
-                                >
-                                    <i data-lucide="help-circle" className="w-6 h-6 mb-2"></i>
-                                    <span className="text-xs font-bold">Unknown Liquid</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Marking Tool */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 backdrop-blur-sm">
-                            <h2 className="text-emerald-400 font-semibold mb-4 flex items-center">
-                                <i data-lucide="pen-tool" className="w-4 h-4 mr-2"></i> 2. Calibration Tasks
-                            </h2>
-                            
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700">
-                                    <div>
-                                        <div className="text-sm font-bold text-slate-200">Lower Fixed Point</div>
-                                        <div className="text-xs text-slate-400">Place in Ice, wait to stabilize</div>
-                                    </div>
-                                    <button 
-                                        onClick={handleMark}
-                                        disabled={environment !== 'ICE'}
-                                        className={`px-3 py-1 rounded text-xs font-bold transition-colors ${markL0 ? 'bg-emerald-500 text-white' : 'bg-slate-600 text-slate-400 hover:bg-slate-500'} ${environment !== 'ICE' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
-                                        {markL0 ? 'Marked ✓' : 'Mark 0°C'}
-                                    </button>
-                                </div>
-
-                                <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700">
-                                    <div>
-                                        <div className="text-sm font-bold text-slate-200">Upper Fixed Point</div>
-                                        <div className="text-xs text-slate-400">Place in Steam, wait to stabilize</div>
-                                    </div>
-                                    <button 
-                                        onClick={handleMark}
-                                        disabled={environment !== 'STEAM'}
-                                        className={`px-3 py-1 rounded text-xs font-bold transition-colors ${markL100 ? 'bg-emerald-500 text-white' : 'bg-slate-600 text-slate-400 hover:bg-slate-500'} ${environment !== 'STEAM' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
-                                        {markL100 ? 'Marked ✓' : 'Mark 100°C'}
-                                    </button>
-                                </div>
-
-                                <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700">
-                                    <div>
-                                        <div className="text-sm font-bold text-slate-200">Measure Unknown</div>
-                                        <div className="text-xs text-slate-400">Place in Unknown Liquid</div>
-                                    </div>
-                                    <button 
-                                        onClick={handleMark}
-                                        disabled={environment !== 'UNKNOWN'}
-                                        className={`px-3 py-1 rounded text-xs font-bold transition-colors ${markLT ? 'bg-emerald-500 text-white' : 'bg-slate-600 text-slate-400 hover:bg-slate-500'} ${environment !== 'UNKNOWN' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
-                                        {markLT ? 'Measured ✓' : 'Mark T'}
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div className="mt-4 pt-4 border-t border-slate-700 text-center">
-                                <button onClick={resetLab} className="text-slate-400 text-xs hover:text-white flex items-center justify-center w-full">
-                                    <i data-lucide="rotate-ccw" className="w-3 h-3 mr-1"></i> Reset Experiment
-                                </button>
-                            </div>
-                        </div>
-
+                    <!-- Material Selector -->
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-slate-300 mb-2" for="material">Substance Material</label>
+                        <select id="material" class="w-full bg-slate-900 border border-slate-600 text-white rounded-lg p-2.5 focus:ring-2 focus:ring-primary focus:border-primary transition-colors cursor-pointer outline-none">
+                            <option value="water">Water (c = 4,186 J/kg°C)</option>
+                            <option value="aluminum">Aluminum (c = 900 J/kg°C)</option>
+                            <option value="iron">Iron (c = 450 J/kg°C)</option>
+                            <option value="copper">Copper (c = 385 J/kg°C)</option>
+                            <option value="gold">Gold (c = 129 J/kg°C)</option>
+                        </select>
                     </div>
 
-                    {/* CENTER: Lab Visual (4 cols) */}
-                    <div className="lg:col-span-4 flex flex-col items-center justify-end relative h-[600px] bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-2xl">
-                        
-                        {/* Background Environment Text */}
-                        <div className="absolute top-4 left-0 w-full text-center z-10">
-                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold border ${
-                                environment === 'ROOM' ? 'bg-slate-700/50 border-slate-500 text-slate-300' :
-                                environment === 'ICE' ? 'bg-cyan-900/50 border-cyan-500 text-cyan-300' :
-                                environment === 'STEAM' ? 'bg-orange-900/50 border-orange-500 text-orange-300' :
-                                'bg-purple-900/50 border-purple-500 text-purple-300'
-                            }`}>
-                                Environment: {environment}
-                            </span>
-                            {!isStabilized && <div className="text-amber-400 text-xs mt-1 animate-pulse">Stabilizing...</div>}
+                    <!-- Mass Slider -->
+                    <div class="mb-5">
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-medium text-slate-300" for="mass">Mass (<span class="italic font-serif">m</span>)</label>
+                            <span class="text-sm font-mono text-primary bg-slate-900 px-2 rounded" id="mass-val">1.0 kg</span>
                         </div>
-
-                        {/* Beaker Container */}
-                        <div className="relative w-64 h-80 mb-10">
-                            
-                            {/* Bunsen Burner (Only for STEAM) */}
-                            <AnimatePresence>
-                                {environment === 'STEAM' && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, y: 20 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: 20 }}
-                                        className="absolute -bottom-24 left-1/2 transform -translate-x-1/2 flex flex-col items-center"
-                                    >
-                                        <div className="w-4 h-12 bg-orange-500 blur-sm rounded-full animate-pulse"></div>
-                                        <div className="w-16 h-4 bg-slate-600 rounded-t"></div>
-                                        <div className="w-20 h-2 bg-slate-700 rounded"></div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-
-                            {/* Beaker Glass */}
-                            <div className="beaker-glass w-full h-full rounded-b-3xl relative overflow-hidden">
-                                {/* Liquid Content */}
-                                <div className={`absolute bottom-0 w-full transition-all duration-1000 ${environment === 'STEAM' ? 'h-3/4' : 'h-2/3'} ${
-                                    environment === 'ICE' ? 'liquid-water' :
-                                    environment === 'STEAM' ? 'liquid-water' :
-                                    environment === 'UNKNOWN' ? 'liquid-unknown' : 'opacity-0'
-                                }`}>
-                                    {environment === 'STEAM' && <Bubbles />}
-                                    {environment === 'STEAM' && <Steam />}
-                                </div>
-                                
-                                {/* Ice Cubes */}
-                                {environment === 'ICE' && <IceCubes />}
-                            </div>
-                        </div>
-
-                        {/* Thermometer Assembly (Draggable visual effectively fixed here for simplicity) */}
-                        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 flex flex-col items-center">
-                            
-                            {/* Glass Tube */}
-                            <div className="w-6 h-[400px] bg-slate-200/20 backdrop-blur-md rounded-full border border-slate-300/30 relative shadow-xl">
-                                
-                                {/* Inner Capillary */}
-                                <div className="absolute left-1/2 transform -translate-x-1/2 bottom-8 w-1.5 h-[350px] bg-slate-400/30 rounded-t-full">
-                                    {/* Liquid Column */}
-                                    <motion.div 
-                                        className="absolute bottom-0 w-full bg-rose-500 rounded-t-sm origin-bottom"
-                                        animate={{ height: calcHeightFromTemp(thermometerTemp) + 'px' }}
-                                        transition={{ type: "spring", stiffness: 50, damping: 20 }}
-                                    />
-                                </div>
-
-                                {/* Bulb */}
-                                <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 w-8 h-8 bg-rose-500 rounded-full shadow-inner border-2 border-slate-300/30"></div>
-
-                                {/* Marks Visuals on Thermometer */}
-                                {markL0 && (
-                                    <div className="absolute w-8 border-b-2 border-cyan-400 right-0" style={{ bottom: (markL0 + 32) + 'px' }}>
-                                        <span className="absolute left-full ml-1 text-[10px] text-cyan-300 whitespace-nowrap">0°C</span>
-                                    </div>
-                                )}
-                                {markL100 && (
-                                    <div className="absolute w-8 border-b-2 border-orange-400 right-0" style={{ bottom: (markL100 + 32) + 'px' }}>
-                                        <span className="absolute left-full ml-1 text-[10px] text-orange-300 whitespace-nowrap">100°C</span>
-                                    </div>
-                                )}
-                                {markLT && (
-                                    <div className="absolute w-8 border-b-2 border-purple-400 right-0" style={{ bottom: (markLT + 32) + 'px' }}>
-                                        <span className="absolute left-full ml-1 text-[10px] text-purple-300 whitespace-nowrap">T = ?</span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
+                        <input type="range" id="mass" min="0.1" max="5.0" step="0.1" value="1.0">
                     </div>
 
-                    {/* RIGHT: Data & Calculation (4 cols) */}
-                    <div className="lg:col-span-4 space-y-6">
-                        
-                        {/* Data Log */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
-                            <h2 className="text-blue-400 font-semibold mb-4 flex items-center">
-                                <i data-lucide="clipboard-list" className="w-4 h-4 mr-2"></i> 3. Lab Data
-                            </h2>
-                            
-                            <div className="space-y-3 font-mono text-sm">
-                                <div className="flex justify-between border-b border-slate-700 pb-2">
-                                    <span className="text-slate-400">Length at 0°C ($L_0$)</span>
-                                    <span className={markL0 ? "text-cyan-400" : "text-slate-600"}>
-                                        {markL0 ? `${markL0.toFixed(1)} mm` : "--"}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-700 pb-2">
-                                    <span className="text-slate-400">Length at 100°C ($L_{100}$)</span>
-                                    <span className={markL100 ? "text-orange-400" : "text-slate-600"}>
-                                        {markL100 ? `${markL100.toFixed(1)} mm` : "--"}
-                                    </span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-700 pb-2">
-                                    <span className="text-slate-400">Length at T ($L_T$)</span>
-                                    <span className={markLT ? "text-purple-400" : "text-slate-600"}>
-                                        {markLT ? `${markLT.toFixed(1)} mm` : "--"}
-                                    </span>
-                                </div>
-                            </div>
+                    <!-- Power Slider -->
+                    <div class="mb-5">
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-medium text-slate-300" for="power">Heater Power (<span class="italic font-serif">P</span>)</label>
+                            <span class="text-sm font-mono text-accent bg-slate-900 px-2 rounded" id="power-val">500 W</span>
                         </div>
+                        <input type="range" id="power" min="100" max="5000" step="50" value="500">
+                        <p class="text-xs text-slate-500 mt-1">1 Watt = 1 Joule/second</p>
+                    </div>
 
-                        {/* Calculation Pad */}
-                        <div className="bg-slate-950 border border-slate-700 rounded-xl p-5 relative overflow-hidden">
-                            <h2 className="text-emerald-400 font-semibold mb-4 flex items-center">
-                                <i data-lucide="calculator" className="w-4 h-4 mr-2"></i> 4. Calculation
-                            </h2>
-
-                            {markL0 && markL100 && markLT ? (
-                                <div className="space-y-4">
-                                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-300 font-mono">
-                                        <div className="mb-2 text-xs text-slate-500">// Formula</div>
-                                        <div>T = <span className="text-purple-400">({markLT.toFixed(1)} - {markL0.toFixed(1)})</span> / <span className="text-orange-400">({markL100.toFixed(1)} - {markL0.toFixed(1)})</span> × 100</div>
-                                    </div>
-                                    
-                                    <div className="bg-slate-900 p-3 rounded text-sm text-slate-300 font-mono">
-                                        <div className="mb-2 text-xs text-slate-500">// Step 1: Differences</div>
-                                        <div>ΔL_T = {(markLT - markL0).toFixed(1)} mm</div>
-                                        <div>ΔL_100 = {(markL100 - markL0).toFixed(1)} mm</div>
-                                    </div>
-
-                                    <div className="bg-emerald-900/30 border border-emerald-500/30 p-4 rounded text-center">
-                                        <div className="text-xs text-emerald-400 uppercase tracking-wider mb-1">Calculated Temperature</div>
-                                        <div className="text-3xl font-bold text-white">
-                                            {(((markLT - markL0) / (markL100 - markL0)) * 100).toFixed(1)}°C
-                                        </div>
-                                    </div>
-
-                                    <button 
-                                        onClick={() => setShowAnswer(true)}
-                                        className="w-full py-2 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-400 transition-colors"
-                                    >
-                                        {showAnswer ? `Actual Value: ${unknownLiquidTemp}°C` : "Show Actual Value"}
-                                    </button>
-                                </div>
-                            ) : (
-                                <div className="h-40 flex items-center justify-center text-slate-600 text-sm text-center px-4">
-                                    Complete all 3 measurements (Ice, Steam, Unknown) to see the calculation.
-                                </div>
-                            )}
-                        </div>
-
+                    <!-- Action Buttons -->
+                    <div class="flex gap-3 mt-6">
+                        <button id="btn-play" class="flex-1 bg-primary hover:bg-sky-400 text-slate-900 font-bold py-2 px-4 rounded-lg transition-colors flex justify-center items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" /></svg>
+                            Start
+                        </button>
+                        <button id="btn-pause" class="flex-1 bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-4 rounded-lg transition-colors flex justify-center items-center gap-2 hidden">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                            Pause
+                        </button>
+                        <button id="btn-reset" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors flex justify-center items-center gap-2 border border-slate-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg>
+                            Reset
+                        </button>
                     </div>
                 </div>
+
+                <!-- Visualizer Panel -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 flex-1 flex flex-col min-h-[250px] relative">
+                    <h2 class="text-sm font-semibold text-slate-400 mb-2 text-center uppercase tracking-wider z-10">Physical System</h2>
+                    
+                    <div class="flex-1 flex flex-col items-center justify-end relative pb-4">
+                        
+                        <!-- Thermometer (Abstracted) -->
+                        <div class="absolute left-4 top-4 h-3/4 w-4 bg-slate-900 border border-slate-600 rounded-full flex flex-col justify-end overflow-hidden z-20">
+                            <div id="thermometer-fill" class="w-full bg-rose-500 rounded-full transition-all duration-300" style="height: 10%;"></div>
+                        </div>
+                        <div class="absolute left-10 top-4 text-xs font-mono text-slate-400 z-20">
+                            <span id="visual-temp-readout" class="bg-slate-800 px-1 rounded">20.0 °C</span>
+                        </div>
+
+                        <!-- Insulation Boundary Visualization -->
+                        <div class="border-2 border-dashed border-slate-500 rounded-xl p-2 relative flex flex-col items-center justify-end h-48 w-44 mb-0 z-10">
+                            <span class="absolute top-2 text-[10px] text-slate-500 uppercase tracking-widest text-center w-full">Ideal Insulation<br>Boundary</span>
+                            
+                            <!-- Substance Box (Origin-bottom for natural filling effect) -->
+                            <div id="substance-box" class="w-32 h-32 rounded-t-lg border-2 border-slate-600 transition-all duration-500 flex items-center justify-center relative overflow-hidden transform origin-bottom" style="background-color: rgba(59, 130, 246, 0.4);">
+                                <span id="substance-label" class="font-bold text-white drop-shadow-md z-10">Water</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Heater -->
+                        <div class="w-44 h-6 bg-slate-700 border-2 border-slate-600 rounded-b-lg flex flex-col items-center justify-center relative z-20">
+                            <div id="heater-element" class="w-3/4 h-1 bg-slate-500 rounded-full transition-colors duration-300"></div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-        );
-    };
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+            <!-- Right Column: Graphs & Data -->
+            <div class="flex flex-col gap-6 w-full lg:w-2/3 min-h-0">
+                
+                <!-- Live Data Readouts -->
+                <div class="grid grid-cols-3 gap-4 shrink-0">
+                    <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col items-center justify-center">
+                        <span class="text-slate-400 text-sm font-medium">Time (<span class="italic">t</span>)</span>
+                        <span class="text-2xl font-mono text-white mt-1" id="readout-time">0.0 s</span>
+                    </div>
+                    <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col items-center justify-center">
+                        <span class="text-slate-400 text-sm font-medium">Energy Added (<span class="italic">Q</span>)</span>
+                        <span class="text-2xl font-mono text-accent mt-1" id="readout-energy">0 J</span>
+                    </div>
+                    <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col items-center justify-center">
+                        <span class="text-slate-400 text-sm font-medium">Temperature (<span class="italic">T</span>)</span>
+                        <span class="text-2xl font-mono text-rose-400 mt-1" id="readout-temp">20.0 °C</span>
+                    </div>
+                </div>
 
-    setTimeout(() => lucide.createIcons(), 100);
-</script>
+                <!-- Equation Breakdown -->
+                <div class="bg-slate-850 border border-slate-700 rounded-xl p-4 shrink-0 min-h-[76px] flex items-center">
+                    <div class="flex flex-col md:flex-row justify-between items-center w-full text-sm">
+                        <div class="font-mono text-center md:text-left mb-2 md:mb-0">
+                            <span class="text-accent">Q</span> = <span class="text-primary">m</span> × <span class="text-green-400">c</span> × <span class="text-rose-400">ΔT</span>
+                        </div>
+                        <div class="text-slate-400 flex items-center gap-2">
+                            <span class="text-rose-400">ΔT</span> = <span class="text-accent">Q</span> / (<span class="text-primary">m</span> × <span class="text-green-400">c</span>)
+                        </div>
+                        <div class="text-slate-400 text-xs text-center md:text-right mt-2 md:mt-0 max-w-[250px]">
+                            <span id="equation-live" class="font-mono text-slate-300 tracking-tight"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chart Container -->
+                <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 flex-1 relative min-h-0 flex flex-col">
+                    <h2 class="text-sm font-semibold text-slate-400 mb-2 absolute top-5 left-5 z-10">Temperature vs. Time</h2>
+                    <!-- Canvas wrapper needed for chart.js responsive sizing -->
+                    <div class="relative w-full h-full mt-4">
+                        <canvas id="heatChart"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Simulation Logic -->
+    <script>
+        /**
+         * PHYSICS SIMULATION ENGINE & UI CONTROLLER
+         * Core Equation: Q = mcΔT
+         * Where:
+         * Q = Thermal Energy Added (Joules)
+         * m = Mass (kg)
+         * c = Specific Heat Capacity (J/kg°C)
+         * ΔT = Change in Temperature (°C)
+         */
+
+        // --- Material Database ---
+        // Added density (kg/m^3) to demonstrate mass vs volume visual differences
+        const materials = {
+            water:    { name: 'Water',    c: 4186, density: 1000,  color: 'rgba(59, 130, 246, 0.4)',  borderColor: '#3b82f6', maxTemp: 100 },
+            aluminum: { name: 'Aluminum', c: 900,  density: 2700,  color: 'rgba(156, 163, 175, 0.4)', borderColor: '#9ca3af', maxTemp: 660 },
+            iron:     { name: 'Iron',     c: 450,  density: 7874,  color: 'rgba(100, 116, 139, 0.4)', borderColor: '#64748b', maxTemp: 1538 },
+            copper:   { name: 'Copper',   c: 385,  density: 8960,  color: 'rgba(217, 119, 6, 0.4)',   borderColor: '#d97706', maxTemp: 1085 },
+            gold:     { name: 'Gold',     c: 129,  density: 19300, color: 'rgba(250, 204, 21, 0.4)',  borderColor: '#facc15', maxTemp: 1064 }
+        };
+
+        // --- State Variables ---
+        let state = {
+            isRunning: false,
+            timeElapsed: 0,       // Simulator time in seconds
+            realTimeElapsed: 0,   // Real wall-clock time
+            energyAdded: 0,       // Joules (Q)
+            temperature: 20.0,    // Current Temp in Celsius (T)
+            startTemp: 20.0,      // Initial Temp (T_0)
+            isPhaseChanging: false,
+            
+            // Parameters
+            mass: 1.0,            // kg (m)
+            power: 500,           // Watts (J/s) (P)
+            materialId: 'water',
+            
+            // Simulation configuration
+            timeScale: 5,         // 1 real second = 5 simulation seconds
+            updateInterval: 50,   // ms between logical updates
+            dataPushInterval: 0.5 // Push to chart every X sim seconds
+        };
+
+        let lastDataPushTime = 0;
+        let animationFrameId;
+        let lastTimestamp = 0;
+        let chartInstance = null;
+
+        // --- DOM Elements ---
+        const els = {
+            material: document.getElementById('material'),
+            mass: document.getElementById('mass'),
+            massVal: document.getElementById('mass-val'),
+            power: document.getElementById('power'),
+            powerVal: document.getElementById('power-val'),
+            btnPlay: document.getElementById('btn-play'),
+            btnPause: document.getElementById('btn-pause'),
+            btnReset: document.getElementById('btn-reset'),
+            
+            readoutTime: document.getElementById('readout-time'),
+            readoutEnergy: document.getElementById('readout-energy'),
+            readoutTemp: document.getElementById('readout-temp'),
+            equationLive: document.getElementById('equation-live'),
+            
+            substanceBox: document.getElementById('substance-box'),
+            substanceLabel: document.getElementById('substance-label'),
+            heaterElement: document.getElementById('heater-element'),
+            thermometerFill: document.getElementById('thermometer-fill'),
+            visualTempReadout: document.getElementById('visual-temp-readout'),
+            
+            canvas: document.getElementById('heatChart')
+        };
+
+        // --- Initialization ---
+        function init() {
+            initChart();
+            bindEvents();
+            updateUIFromInputs();
+            updateVisualizer();
+            updateReadouts();
+        }
+
+        function initChart() {
+            const ctx = els.canvas.getContext('2d');
+            
+            Chart.defaults.color = '#94a3b8'; // slate-400
+            Chart.defaults.font.family = 'Inter, sans-serif';
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [0],
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: [20],
+                        borderColor: '#f43f5e', // rose-500
+                        backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0, 
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false, 
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `${context.parsed.y.toFixed(1)} °C`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Time (seconds)', color: '#64748b' },
+                            grid: { color: '#334155', drawBorder: false },
+                            min: 0,
+                            suggestedMax: 60 
+                        },
+                        y: {
+                            title: { display: true, text: 'Temperature (°C)', color: '#64748b' },
+                            grid: { color: '#334155', drawBorder: false },
+                            min: 10,
+                            suggestedMax: 120
+                        }
+                    }
+                }
+            });
+        }
+
+        function bindEvents() {
+            els.material.addEventListener('change', () => {
+                if (state.timeElapsed > 0) resetSimulation();
+                updateUIFromInputs();
+            });
+
+            els.mass.addEventListener('input', (e) => {
+                if (state.timeElapsed > 0) resetSimulation();
+                updateUIFromInputs();
+            });
+
+            els.power.addEventListener('input', (e) => {
+                state.power = parseFloat(e.target.value);
+                els.powerVal.textContent = `${state.power} W`;
+                updateLiveEquation();
+            });
+
+            els.btnPlay.addEventListener('click', startSimulation);
+            els.btnPause.addEventListener('click', pauseSimulation);
+            els.btnReset.addEventListener('click', resetSimulation);
+        }
+
+        function updateUIFromInputs() {
+            state.materialId = els.material.value;
+            state.mass = parseFloat(els.mass.value);
+            state.power = parseFloat(els.power.value);
+            
+            els.massVal.textContent = `${state.mass.toFixed(1)} kg`;
+            els.powerVal.textContent = `${state.power} W`;
+            
+            updateVisualizerStyle();
+            updateLiveEquation();
+            updateVisualizer(); // Re-scale thermometer
+            
+            // Adjust chart Y axis visually for the material's boiling point
+            chartInstance.options.scales.y.suggestedMax = Math.ceil(materials[state.materialId].maxTemp * 1.2);
+            chartInstance.update();
+        }
+
+        function updateVisualizerStyle() {
+            const mat = materials[state.materialId];
+            els.substanceLabel.textContent = mat.name;
+            els.substanceBox.style.backgroundColor = mat.color;
+            els.substanceBox.style.borderColor = mat.borderColor;
+
+            // FIX: Mass vs Volume Misconception
+            // We scale the visual size of the box based on calculated volume (m/density).
+            // Base reference is 1.0 kg of Water (density 1000 = 0.001 m^3).
+            const baseVol = 1.0 / 1000;
+            const currentVol = state.mass / mat.density;
+            
+            // Using Square Root to scale 2D area proportional to volume
+            let scaleFactor = Math.sqrt(currentVol / baseVol);
+            
+            // Clamp scale so it doesn't break the UI layout limits, but still shows visual difference
+            scaleFactor = Math.max(0.3, Math.min(scaleFactor, 1.8)); 
+            
+            els.substanceBox.style.transform = `scale(${scaleFactor})`;
+        }
+
+        // --- Core Simulation Loop ---
+        function startSimulation() {
+            if (state.isRunning) return;
+            state.isRunning = true;
+            
+            els.btnPlay.classList.add('hidden');
+            els.btnPause.classList.remove('hidden');
+            els.heaterElement.classList.add('heater-active');
+            
+            els.material.disabled = true;
+            els.mass.disabled = true;
+            els.material.classList.add('opacity-50');
+            els.mass.classList.add('opacity-50');
+
+            lastTimestamp = performance.now();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function pauseSimulation() {
+            if (!state.isRunning) return;
+            state.isRunning = false;
+            
+            els.btnPlay.classList.remove('hidden');
+            els.btnPause.classList.add('hidden');
+            els.heaterElement.classList.remove('heater-active');
+            
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        function resetSimulation() {
+            pauseSimulation();
+            
+            state.timeElapsed = 0;
+            state.energyAdded = 0;
+            state.temperature = state.startTemp;
+            state.isPhaseChanging = false;
+            lastDataPushTime = 0;
+            
+            els.material.disabled = false;
+            els.mass.disabled = false;
+            els.material.classList.remove('opacity-50');
+            els.mass.classList.remove('opacity-50');
+            
+            chartInstance.data.labels = [0];
+            chartInstance.data.datasets[0].data = [state.startTemp];
+            chartInstance.options.scales.x.suggestedMax = 60;
+            chartInstance.update();
+            
+            updateReadouts();
+            updateVisualizer();
+            updateLiveEquation();
+        }
+
+        function gameLoop(timestamp) {
+            if (!state.isRunning) return;
+
+            const dtReal = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+            const dtSim = dtReal * state.timeScale;
+            
+            const mat = materials[state.materialId];
+            
+            // Calculate energy added: Q = Power * dt
+            const dEnergy = state.power * dtSim;
+            state.timeElapsed += dtSim;
+            state.energyAdded += dEnergy;
+
+            // FIX: Infinite Liquid Misconception
+            // Stop temperature increase once melting/boiling point is reached.
+            if (state.temperature < mat.maxTemp) {
+                const dTemp = dEnergy / (state.mass * mat.c);
+                state.temperature += dTemp;
+                
+                if (state.temperature >= mat.maxTemp) {
+                    state.temperature = mat.maxTemp;
+                    if (!state.isPhaseChanging) {
+                        state.isPhaseChanging = true;
+                        updateLiveEquation(); // Trigger text change to Q=mL
+                    }
+                }
+            }
+
+            updateReadouts();
+            updateVisualizer();
+            
+            if (state.timeElapsed - lastDataPushTime >= state.dataPushInterval) {
+                pushChartData();
+                lastDataPushTime = state.timeElapsed;
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function pushChartData() {
+            const time = parseFloat(state.timeElapsed.toFixed(1));
+            const temp = parseFloat(state.temperature.toFixed(2));
+            
+            chartInstance.data.labels.push(time);
+            chartInstance.data.datasets[0].data.push(temp);
+            
+            if (time > chartInstance.options.scales.x.suggestedMax * 0.9) {
+                chartInstance.options.scales.x.suggestedMax += 60;
+            }
+            chartInstance.update();
+        }
+
+        function updateReadouts() {
+            els.readoutTime.textContent = `${state.timeElapsed.toFixed(1)} s`;
+            
+            if (state.energyAdded > 10000) {
+                els.readoutEnergy.textContent = `${(state.energyAdded / 1000).toFixed(1)} kJ`;
+            } else {
+                els.readoutEnergy.textContent = `${Math.round(state.energyAdded)} J`;
+            }
+            
+            els.readoutTemp.textContent = `${state.temperature.toFixed(1)} °C`;
+        }
+
+        function updateLiveEquation() {
+            const mat = materials[state.materialId];
+            
+            if (state.isPhaseChanging || state.temperature >= mat.maxTemp) {
+                // Change equation text when phase change starts
+                els.equationLive.innerHTML = `<span class="text-orange-400 font-bold tracking-normal">Phase Change! (T is constant)</span><br><span class="text-[10px] tracking-normal uppercase">Energy breaks bonds (Q=mL)</span>`;
+            } else {
+                const c = mat.c;
+                const m = state.mass;
+                const p = state.power;
+                const rate = p / (m * c);
+                els.equationLive.innerHTML = `Heating Rate: <span class="text-white">${rate.toFixed(3)} °C/s</span>`;
+            }
+        }
+
+        function updateVisualizer() {
+            const mat = materials[state.materialId];
+            
+            // FIX: Broken Thermometer Misconception
+            // Map the visual 100% height to exactly 110% of the material's specific max temperature
+            const visualMaxTemp = mat.maxTemp * 1.1; 
+            
+            let percent = 10 + ((state.temperature - 20) / (visualMaxTemp - 20)) * 90;
+            
+            // Clamp percent for UI safety
+            if (percent > 100) percent = 100;
+            if (percent < 10) percent = 10;
+            
+            els.thermometerFill.style.height = `${percent}%`;
+            els.visualTempReadout.textContent = `${state.temperature.toFixed(1)} °C`;
+            
+            // Visual indicator of extreme heat / phase changing
+            if (state.temperature >= mat.maxTemp) {
+                els.thermometerFill.classList.replace('bg-rose-500', 'bg-red-500');
+                els.thermometerFill.classList.add('animate-pulse');
+                els.visualTempReadout.classList.add('text-orange-400');
+            } else {
+                els.thermometerFill.classList.replace('bg-red-500', 'bg-rose-500');
+                els.thermometerFill.classList.remove('animate-pulse');
+                els.visualTempReadout.classList.remove('text-orange-400');
+            }
+        }
+
+        window.onload = init;
+
+    </script>
 </body>
 </html>
