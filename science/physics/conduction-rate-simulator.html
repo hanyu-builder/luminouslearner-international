@@ -3,406 +3,624 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Conduction Rate Sim | Luminous Learner</title>
+    <meta name="description" content="Thermal conduction physics simulator. Interactive visualization of Fourier's law of thermal conduction, lattice vibration, and free electrons.">
+    <title>Thermal Conduction Rate Simulator</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Prop-types (Required for Recharts UMD) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <!-- p5.js for simulations -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 
-    <!-- Recharts (Pinned version) -->
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#151e2e', 900: '#0F172A' },
+                        primary: '#38bdf8',
+                        accent: '#f59e0b',
+                        hot: '#ef4444',
+                        cold: '#3b82f6'
+                    },
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; background: #10b981; cursor: pointer;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        body { font-family: 'Inter', sans-serif; }
+        .math-font { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #38bdf8; cursor: pointer; margin-top: -7px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+            transition: transform 0.1s;
         }
-        canvas {
-            image-rendering: pixelated; /* Makes the heat map look sharper */
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.1); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
         }
+        input[type=range]:focus { outline: none; }
+        
+        /* Themed sliders */
+        input[type=range].slider-hot::-webkit-slider-thumb { background: #ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.6); }
+        input[type=range].slider-cold::-webkit-slider-thumb { background: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.6); }
+        input[type=range].slider-area::-webkit-slider-thumb { background: #10b981; box-shadow: 0 0 10px rgba(16, 185, 129, 0.6); }
+
+        .heater-active { box-shadow: inset 0 0 20px rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.5) !important; }
+        .cooler-active { box-shadow: inset 0 0 20px rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.5) !important; }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-200 h-screen w-screen overflow-hidden flex justify-center items-center">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo, useCallback } = React;
-    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } = window.Recharts;
-
-    // --- Physics Constants ---
-    const ROD_LENGTH = 50; // Number of segments
-    const DT = 0.1; // Time step
-    const DX = 1; // Space step
-    const HOT_TEMP = 100;
-    const ROOM_TEMP = 20;
-    const WAX_MELT_TEMP = 45; // Temp at which wax drops
-
-    // Material Database (Approx Thermal Diffusivity alpha * scaling factor)
-    // alpha = k / (rho * c)
-    const MATERIALS = {
-        "Copper": { name: "Copper", alpha: 1.1, color: "#d97706" }, // High alpha
-        "Aluminum": { name: "Aluminum", alpha: 0.84, color: "#94a3b8" },
-        "Iron": { name: "Iron", alpha: 0.23, color: "#475569" },
-        "Steel": { name: "Steel", alpha: 0.13, color: "#334155" },
-        "Glass": { name: "Glass (Insulator)", alpha: 0.0034, color: "#38bdf8" } // Very slow
-    };
-
-    const App = () => {
-        // --- State ---
-        const [materialA, setMaterialA] = useState("Copper");
-        const [materialB, setMaterialB] = useState("Iron");
-        const [isRunning, setIsRunning] = useState(false);
-        const [time, setTime] = useState(0);
+    <!-- Main Container -->
+    <div class="w-full max-w-7xl h-full max-h-[950px] flex flex-col bg-slate-900 shadow-2xl p-4 md:p-6 lg:p-8 gap-6 relative">
         
-        // Simulation Data (Arrays of temperature)
-        const tempARef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
-        const tempBRef = useRef(new Array(ROD_LENGTH).fill(ROOM_TEMP));
-        const frameCountRef = useRef(0);
-        
-        // Graph Data
-        const [graphData, setGraphData] = useState([]);
-        
-        // Wax Beads State [boolean, boolean, boolean] for positions 25%, 50%, 75%
-        const [waxA, setWaxA] = useState([true, true, true]);
-        const [waxB, setWaxB] = useState([true, true, true]);
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-slate-700 pb-3 shrink-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">Thermal Conduction Rate</h1>
+                <p class="text-slate-400 mt-1 text-sm md:text-base">
+                    Fourier's Law of Heat Conduction: <span class="text-accent math-font bg-slate-800 px-2 py-0.5 rounded border border-slate-700">Q/t = kA(T<sub>h</sub> - T<sub>c</sub>) / d</span>
+                </p>
+            </div>
+            <div class="hidden md:block text-right text-xs md:text-sm text-slate-400 bg-slate-800/50 p-2 rounded-lg border border-slate-700">
+                <p><i class="fa-solid fa-arrow-right-arrow-left text-primary mr-1"></i> Macro gradient & Micro lattice</p>
+            </div>
+        </header>
 
-        const requestRef = useRef();
-
-        // --- Helper: Heat Equation Solver ---
-        // Explicit Finite Difference Method: T_new[i] = T[i] + r * (T[i+1] - 2T[i] + T[i-1])
-        // r = alpha * dt / dx^2
-        const solveHeatStep = (tempArray, alpha) => {
-            const r = alpha * DT / (DX * DX);
-            const newTemps = [...tempArray];
+        <!-- Main Workspace -->
+        <main class="flex flex-col lg:flex-row gap-6 h-full min-h-0">
             
-            // Boundary Condition: Left end is HOT
-            newTemps[0] = HOT_TEMP; 
+            <!-- Left Panel: Controls & Equations -->
+            <div class="flex flex-col gap-4 w-full lg:w-4/12 min-h-0 shrink-0 overflow-y-auto pr-2">
+                
+                <!-- Controls Box -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 flex flex-col gap-5 shadow-lg">
+                    
+                    <!-- Material (k) -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-2">Material Conductivity (<span class="math-font italic text-accent">k</span>)</label>
+                        <select id="sel-material" class="w-full bg-slate-900 border border-slate-600 text-white rounded-lg p-2 focus:ring-2 focus:ring-primary outline-none shadow-inner">
+                            <option value="copper">Copper (k = 400 W/m·K) - Metal</option>
+                            <option value="iron">Iron (k = 80 W/m·K) - Metal</option>
+                            <option value="glass">Glass (k = 1.0 W/m·K) - Insulator</option>
+                            <option value="wood">Wood (k = 0.1 W/m·K) - Insulator</option>
+                        </select>
+                        <p class="text-[11px] text-slate-400 mt-1.5 leading-tight"><i class="fa-solid fa-circle-info text-slate-500 mr-1"></i>Metals feature a "sea of free electrons" aiding rapid heat transfer alongside lattice vibrations.</p>
+                    </div>
 
-            // Internal nodes
-            for (let i = 1; i < ROD_LENGTH - 1; i++) {
-                newTemps[i] = tempArray[i] + r * (tempArray[i+1] - 2*tempArray[i] + tempArray[i-1]);
-            }
+                    <!-- Area (A) -->
+                    <div class="group">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-slate-300 group-hover:text-emerald-400 transition-colors">Cross-Sectional Area (<span class="math-font italic text-emerald-400">A</span>)</label>
+                            <span class="text-sm math-font text-emerald-400 bg-emerald-950/30 px-2 py-0.5 rounded border border-slate-700" id="val-a">0.05 m²</span>
+                        </div>
+                        <input type="range" id="slider-a" class="slider-area" min="0.01" max="0.10" step="0.01" value="0.05">
+                    </div>
 
-            // Boundary Condition: Right end is Insulated (dT/dx = 0) -> T[last] = T[last-1]
-            // Or Open to air (simplified as insulated for this 1D demo to allow heat buildup)
-            newTemps[ROD_LENGTH - 1] = newTemps[ROD_LENGTH - 2]; 
+                    <!-- Thickness (d) -->
+                    <div class="group">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-slate-300 group-hover:text-primary transition-colors">Rod Length/Thickness (<span class="math-font italic text-primary">d</span>)</label>
+                            <span class="text-sm math-font text-primary bg-sky-950/30 px-2 py-0.5 rounded border border-slate-700" id="val-d">0.50 m</span>
+                        </div>
+                        <input type="range" id="slider-d" min="0.1" max="1.0" step="0.05" value="0.5">
+                    </div>
 
-            return newTemps;
+                    <!-- Hot Temp (Th) -->
+                    <div class="p-3 bg-slate-850 border border-slate-700 rounded-lg heater-active shadow-inner" id="box-hot">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-hot">Heater Temp (<span class="math-font italic">T<sub>h</sub></span>)</label>
+                            <span class="text-sm math-font text-hot bg-red-950/30 px-2 py-0.5 rounded border border-slate-700" id="val-th">100 °C</span>
+                        </div>
+                        <input type="range" id="slider-th" class="slider-hot" min="20" max="200" step="1" value="100">
+                    </div>
+
+                    <!-- Cold Temp (Tc) -->
+                    <div class="p-3 bg-slate-850 border border-slate-700 rounded-lg cooler-active shadow-inner" id="box-cold">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sm font-medium text-cold">Cooler Temp (<span class="math-font italic">T<sub>c</sub></span>)</label>
+                            <span class="text-sm math-font text-cold bg-blue-950/30 px-2 py-0.5 rounded border border-slate-700" id="val-tc">20 °C</span>
+                        </div>
+                        <input type="range" id="slider-tc" class="slider-cold" min="0" max="100" step="1" value="20">
+                    </div>
+
+                    <button id="btn-reset" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-lg transition-colors border border-slate-600 shadow flex justify-center items-center gap-2 mt-1">
+                        <i class="fa-solid fa-rotate-right"></i> Reset Thermal Gradient
+                    </button>
+                </div>
+
+                <!-- Live Data & Equation Box (Moved to Left Panel) -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 flex flex-col justify-center shrink-0 shadow-md">
+                    <h3 class="text-xs text-slate-400 uppercase tracking-widest font-bold mb-4 text-center">Steady-State Heat Transfer Rate</h3>
+                    
+                    <div class="flex flex-col items-center justify-center gap-4">
+                        <!-- Big Value -->
+                        <div class="text-center">
+                            <div class="text-4xl math-font font-bold text-white tracking-tight" id="val-rate">0.0</div>
+                            <div class="text-[10px] text-accent mt-1 uppercase tracking-wider font-bold">Joules / second (Watts)</div>
+                        </div>
+
+                        <!-- Equation Visualizer -->
+                        <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 math-font text-sm shadow-inner w-full">
+                            <div class="border-b border-slate-700 pb-2 mb-2 text-center text-slate-300 font-bold text-xs">
+                                Rate = <span class="text-accent">k</span> × <span class="text-emerald-400">A</span> × (<span class="text-rose-400">ΔT</span>) / <span class="text-primary">d</span>
+                            </div>
+                            <div class="text-center text-slate-300 mt-2 flex justify-center items-center flex-wrap gap-1 text-xs">
+                                <span>Rate =</span> 
+                                <span>(</span><span id="eq-k" class="text-accent font-bold">400</span> 
+                                <span>×</span> <span id="eq-a" class="text-emerald-400 font-bold">0.05</span> 
+                                <span>×</span> <span id="eq-dt" class="text-rose-400 font-bold">80</span><span>)</span> 
+                                <span>/</span> <span id="eq-d" class="text-primary font-bold">0.5</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Educational Notes -->
+                <div class="bg-indigo-900/20 border border-indigo-700/50 rounded-xl p-4 flex-shrink-0 shadow-inner">
+                    <p class="text-xs text-indigo-300 mb-2">
+                        <strong><i class="fa-solid fa-graduation-cap mr-1"></i> Core Physics Concepts:</strong>
+                    </p>
+                    <ul class="text-[11px] text-indigo-200 list-disc pl-4 space-y-1.5 leading-relaxed">
+                        <li><strong>Transient vs. Steady-State:</strong> The calculation below shows the maximum <em>Steady-State</em> rate. The visual gradient actively shows the <em>Transient-State</em> warming up as heat physically flows from Hot to Cold.</li>
+                        <li><strong>1D Assumption:</strong> Assumes the rod's sides are perfectly insulated; heat only flows horizontally.</li>
+                    </ul>
+                </div>
+
+            </div>
+
+            <!-- Right Panel: Visualizations -->
+            <div class="flex flex-col w-full lg:w-8/12 min-h-0 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-inner flex-1">
+                
+                <!-- Header/Legend for Simulation -->
+                <div class="bg-slate-900/80 px-4 py-3 border-b border-slate-700 flex flex-wrap justify-between items-center z-10 shrink-0">
+                    <h2 class="text-xs font-bold text-slate-300 uppercase tracking-widest">Macro / Micro Simulation</h2>
+                    <div class="flex flex-wrap gap-4 text-xs font-medium">
+                        <span class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-slate-400 block"></span> Atom (Lattice)</span>
+                        <span class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-yellow-400 block shadow-[0_0_5px_#facc15]"></span> Free Electron</span>
+                    </div>
+                </div>
+                
+                <!-- p5.js Container -->
+                <div id="sim-container" class="w-full flex-1 relative"></div>
+                
+            </div>
+        </main>
+    </div>
+
+    <!-- Physics and Simulation Logic -->
+    <script>
+        // Material Database
+        // alpha_sim dictates the speed of the 1D transient simulation visually
+        const MATERIALS = {
+            copper: { k: 400, alpha_sim: 0.8,    hasElectrons: true,  name: "Copper" },
+            iron:   { k: 80,  alpha_sim: 0.25,   hasElectrons: true,  name: "Iron" },
+            glass:  { k: 1.0, alpha_sim: 0.02,   hasElectrons: false, name: "Glass" },
+            wood:   { k: 0.1, alpha_sim: 0.005,  hasElectrons: false, name: "Wood" }
         };
 
-        // --- Physics Loop ---
-        const animate = () => {
-            if (!isRunning) return;
+        // UI State
+        const state = {
+            material: 'copper',
+            d: 0.5,      // Thickness/Length (m)
+            A: 0.05,     // Area (m²)
+            th: 100,     // Hot Temp (°C)
+            tc: 20,      // Cold Temp (°C)
+            rate: 0      // Calculated Rate (W)
+        };
 
-            // Update Rod A
-            tempARef.current = solveHeatStep(tempARef.current, MATERIALS[materialA].alpha);
+        // 1D Heat Equation State
+        const NODES = 40; 
+        let temps = new Array(NODES).fill(20);
+        
+        // DOM Elements
+        const ui = {
+            selMaterial: document.getElementById('sel-material'),
+            sliderD: document.getElementById('slider-d'),
+            sliderA: document.getElementById('slider-a'),
+            sliderTh: document.getElementById('slider-th'),
+            sliderTc: document.getElementById('slider-tc'),
+            btnReset: document.getElementById('btn-reset'),
             
-            // Update Rod B
-            tempBRef.current = solveHeatStep(tempBRef.current, MATERIALS[materialB].alpha);
+            valD: document.getElementById('val-d'),
+            valA: document.getElementById('val-a'),
+            valTh: document.getElementById('val-th'),
+            valTc: document.getElementById('val-tc'),
+            valRate: document.getElementById('val-rate'),
+            
+            eqK: document.getElementById('eq-k'),
+            eqA: document.getElementById('eq-a'),
+            eqDt: document.getElementById('eq-dt'),
+            eqD: document.getElementById('eq-d')
+        };
 
-            // Update Wax Drops
-            checkWax(tempARef.current, setWaxA);
-            checkWax(tempBRef.current, setWaxB);
+        // --- Event Listeners ---
+        ui.selMaterial.addEventListener('change', (e) => { 
+            state.material = e.target.value; 
+            resetThermalState(); // Material change invalidates current gradient speed
+            updateCalculations(); 
+        });
+        
+        ui.sliderD.addEventListener('input', (e) => { 
+            state.d = parseFloat(e.target.value); 
+            ui.valD.textContent = `${state.d.toFixed(2)} m`;
+            updateCalculations();
+        });
 
-            // Update Time State (This triggers re-render, creating the animation loop effect)
-            setTime(t => {
-                const newTime = t + DT;
-                frameCountRef.current++;
+        ui.sliderA.addEventListener('input', (e) => { 
+            state.A = parseFloat(e.target.value); 
+            ui.valA.textContent = `${state.A.toFixed(2)} m²`;
+            updateCalculations();
+        });
+        
+        // Allowed to cross over (Heater can be colder than Cooler to show reverse flow)
+        ui.sliderTh.addEventListener('input', (e) => { 
+            state.th = parseFloat(e.target.value); 
+            ui.valTh.textContent = `${state.th} °C`;
+            updateCalculations();
+        });
+        
+        ui.sliderTc.addEventListener('input', (e) => { 
+            state.tc = parseFloat(e.target.value); 
+            ui.valTc.textContent = `${state.tc} °C`;
+            updateCalculations();
+        });
 
-                // Update Graph Data every 5 frames (approx 0.5s sim time) to avoid React overload
-                if (frameCountRef.current % 5 === 0) {
-                    setGraphData(prev => {
-                        const probeIndex = ROD_LENGTH - 5; // Measure near end
-                        const newData = {
-                            time: newTime.toFixed(1),
-                            "Rod A": tempARef.current[probeIndex].toFixed(1),
-                            "Rod B": tempBRef.current[probeIndex].toFixed(1)
-                        };
-                        
-                        // Limit graph history to last ~50 points to keep chart performant
-                        if (prev.length > 50) {
-                             return [...prev.slice(1), newData];
-                        }
-                        return [...prev, newData];
+        ui.btnReset.addEventListener('click', resetThermalState);
+
+        function resetThermalState() {
+            // Fill rod with the cold temperature baseline
+            temps = new Array(NODES).fill(state.tc);
+            temps[0] = state.th; // Keep heater hot
+        }
+
+        function updateCalculations() {
+            const mat = MATERIALS[state.material];
+            // Delta T (Hot - Cold)
+            const Math_dT = state.th - state.tc; 
+            
+            // Fourier's Law: Q/t = k * A * dT / d
+            state.rate = (mat.k * state.A * Math_dT) / state.d;
+            
+            ui.eqK.textContent = mat.k;
+            ui.eqA.textContent = state.A.toFixed(2);
+            ui.eqDt.textContent = Math.abs(Math_dT); // Show magnitude in formula
+            ui.eqD.textContent = state.d.toFixed(2);
+            
+            // Format large numbers cleanly
+            let displayRate = Math.abs(state.rate); // Use absolute for display, direction handles sign
+            ui.valRate.textContent = displayRate > 9999 ? displayRate.toExponential(2) : displayRate.toFixed(1);
+        }
+
+        // Initialize equations
+        resetThermalState();
+        updateCalculations();
+
+        // --- p5.js Simulation ---
+        const sketch = (p) => {
+            let w, h;
+            let atoms = []; // 1D array representing 2D grid
+            let electrons = [];
+            
+            let prevD = -1;
+            let prevA = -1;
+            let arrowOffset = 0;
+            
+            let cols = 0;
+            let rows = 0;
+
+            p.setup = () => {
+                let container = document.getElementById('sim-container');
+                w = container.offsetWidth;
+                h = container.offsetHeight;
+                p.createCanvas(w, h);
+                p.noStroke();
+            };
+
+            p.windowResized = () => {
+                let container = document.getElementById('sim-container');
+                w = container.offsetWidth;
+                h = container.offsetHeight;
+                p.resizeCanvas(w, h);
+                prevD = -1; // force re-init
+            };
+
+            function initMicroscopic() {
+                atoms = [];
+                electrons = [];
+                
+                // Map the physical slider dimensions to visual canvas dimensions
+                // d = 0.1m to 1.0m maps to 20% to 80% canvas width
+                let rodW = p.map(state.d, 0.1, 1.0, w * 0.2, w * 0.8);
+                // A = 0.01 to 0.10 maps to 50px to 150px visual height
+                let rodH = p.map(state.A, 0.01, 0.10, 60, 180); 
+
+                let startX = (w - rodW) / 2;
+                let startY = h * 0.60; 
+                
+                // Density remains constant. Grid scales with geometry.
+                cols = p.floor(p.map(state.d, 0.1, 1.0, 6, 26));
+                rows = p.floor(p.map(state.A, 0.01, 0.10, 3, 9));
+                
+                let spacingX = rodW / (cols > 1 ? cols - 1 : 1);
+                let spacingY = rodH / (rows > 1 ? rows - 1 : 1);
+
+                for (let i = 0; i < cols; i++) {
+                    for (let j = 0; j < rows; j++) {
+                        atoms.push({
+                            col: i,
+                            row: j,
+                            baseX: startX + i * spacingX,
+                            baseY: startY + j * spacingY,
+                            x: startX + i * spacingX,
+                            y: startY + j * spacingY
+                        });
+                    }
+                }
+
+                // Spawn free electrons (only for metals)
+                let numElectrons = p.floor(cols * rows * 1.2);
+                for (let i = 0; i < numElectrons; i++) {
+                    electrons.push({
+                        x: p.random(startX, startX + rodW),
+                        y: p.random(startY, startY + rodH),
+                        vx: p.random(-1, 1),
+                        vy: p.random(-1, 1)
                     });
                 }
-                return newTime;
-            });
-
-            // Recursive Call for Next Frame
-            requestRef.current = requestAnimationFrame(animate);
-        };
-
-        // Main Animation Loop Effect
-        useEffect(() => {
-            if (isRunning) {
-                requestRef.current = requestAnimationFrame(animate);
             }
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [isRunning, materialA, materialB]); // Restart if material changes
 
-        const checkWax = (temps, setWax) => {
-            const posIndices = [Math.floor(ROD_LENGTH * 0.25), Math.floor(ROD_LENGTH * 0.5), Math.floor(ROD_LENGTH * 0.75)];
-            
-            setWax(prev => {
-                // Only update state if something changed to avoid unnecessary renders
-                let changed = false;
-                const next = prev.map((isAttached, i) => {
-                    if (isAttached && temps[posIndices[i]] >= WAX_MELT_TEMP) {
-                        changed = true;
-                        return false;
-                    }
-                    return isAttached;
-                });
-                return changed ? next : prev;
-            });
-        };
+            p.draw = () => {
+                p.clear();
 
-        const handleReset = () => {
-            setIsRunning(false);
-            setTime(0);
-            tempARef.current = new Array(ROD_LENGTH).fill(ROOM_TEMP);
-            tempBRef.current = new Array(ROD_LENGTH).fill(ROOM_TEMP);
-            setGraphData([]);
-            setWaxA([true, true, true]);
-            setWaxB([true, true, true]);
-            frameCountRef.current = 0;
-        };
+                // If dimensions changed, rebuild the atomic lattice
+                if (state.d !== prevD || state.A !== prevA) {
+                    initMicroscopic();
+                    prevD = state.d;
+                    prevA = state.A;
+                }
 
-        // --- Visualizer Components ---
-        
-        // Heat Map Canvas
-        const RodVisual = ({ temps, waxState, materialName }) => {
-            const canvasRef = useRef(null);
+                updateHeat1D();
+                drawMacroRod();
+                drawHeatFlowArrow();
+                drawMicroView();
+            };
 
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                const w = canvas.width;
-                const h = canvas.height;
-                const segW = w / ROD_LENGTH;
+            function updateHeat1D() {
+                const mat = MATERIALS[state.material];
+                
+                temps[0] = state.th; // Boundary condition Left
+                temps[NODES - 1] = state.tc; // Boundary condition Right
 
-                // Draw Rod
-                for (let i = 0; i < ROD_LENGTH; i++) {
-                    const temp = temps[i];
-                    // Map Temp to Color (Blue 20C -> Red 100C)
-                    // 20 -> 240 (blue hue), 100 -> 0 (red hue)
-                    const ratio = Math.min(1, Math.max(0, (temp - ROOM_TEMP) / (HOT_TEMP - ROOM_TEMP)));
-                    // Simple Heat Gradient: Blue -> Red -> White
-                    // Using HSL: 240 -> 0
-                    const hue = 240 - (ratio * 240);
-                    const lightness = 50 + (ratio * 10); // get brighter
-                    
-                    ctx.fillStyle = `hsl(${hue}, 80%, ${lightness}%)`;
-                    ctx.fillRect(i * segW, 10, segW + 1, h - 20); // +1 to remove gaps
+                let newTemps = [...temps];
+                
+                // 1D Heat Equation (Finite Difference)
+                // simFactor represents alpha * dt / dx^2. 
+                // Adjusted to keep simulation visually pleasing and numerically stable.
+                let simFactor = mat.alpha_sim * (1 / Math.pow(state.d, 2)) * 0.05; 
+                
+                // CFL Stability Clamp: Prevents mathematical explosion if d is tiny
+                if (simFactor > 0.45) simFactor = 0.45; 
+
+                for (let i = 1; i < NODES - 1; i++) {
+                    newTemps[i] = temps[i] + simFactor * (temps[i+1] - 2*temps[i] + temps[i-1]);
+                }
+                temps = newTemps;
+            }
+
+            // Maps physical Temp (0-200) to visual color gradient (Blue -> Red -> White)
+            function getGradientColor(temp) {
+                let t = p.constrain(p.map(temp, 0, 100, 0, 1), 0, 2); // 0=0C, 1=100C, 2=200C
+                let r, g, b;
+                if (t <= 1) {
+                    r = p.lerp(59, 239, t);
+                    g = p.lerp(130, 68, t);
+                    b = p.lerp(246, 68, t);
+                } else {
+                    let t2 = t - 1;
+                    r = p.lerp(239, 255, t2);
+                    g = p.lerp(68, 255, t2);
+                    b = p.lerp(68, 255, t2);
+                }
+                return p.color(r, g, b);
+            }
+
+            function drawMacroRod() {
+                let rodW = p.map(state.d, 0.1, 1.0, w * 0.2, w * 0.8);
+                let rodH = p.map(state.A, 0.01, 0.10, 20, 80); // Macro visual height
+                let rodX = (w - rodW) / 2;
+                let rodY = h * 0.25 - rodH / 2;
+                
+                // Heater Block
+                p.fill(getGradientColor(state.th));
+                p.rect(rodX - 20, rodY - 10, 20, rodH + 20, 4);
+                
+                // Cooler Block
+                p.fill(getGradientColor(state.tc));
+                p.rect(rodX + rodW, rodY - 10, 20, rodH + 20, 4);
+
+                // Rod gradient mapping
+                let segW = rodW / NODES;
+                for (let i = 0; i < NODES; i++) {
+                    p.fill(getGradientColor(temps[i]));
+                    p.rect(rodX + i * segW, rodY, segW + 1, rodH);
                 }
                 
-                // Draw Material Label
-                ctx.fillStyle = "white";
-                ctx.font = "12px monospace";
-                ctx.fillText(materialName, 10, h - 5);
+                // Rod outline
+                p.noFill();
+                p.strokeWeight(2);
+                p.stroke(100);
+                p.rect(rodX, rodY, rodW, rodH);
+                p.noStroke();
 
-            }, [temps, materialName]); // Re-draw when temps change
+                // Labels
+                p.fill(200);
+                p.textSize(12);
+                p.textFont('Inter');
+                p.textAlign(p.CENTER, p.BOTTOM);
+                p.text("T_h", rodX - 10, rodY - 15);
+                p.text("T_c", rodX + rodW + 10, rodY - 15);
+                
+                // Dimensional markers for Length (d)
+                p.stroke(100);
+                p.line(rodX, rodY + rodH + 10, rodX, rodY + rodH + 20);
+                p.line(rodX + rodW, rodY + rodH + 10, rodX + rodW, rodY + rodH + 20);
+                p.line(rodX, rodY + rodH + 15, rodX + rodW, rodY + rodH + 15);
+                p.noStroke();
+                p.fill(148, 163, 184);
+                p.text(`Length (d) = ${state.d.toFixed(2)} m`, w / 2, rodY + rodH + 35);
+            }
 
-            return (
-                <div className="relative w-full h-24 bg-slate-900 border border-slate-700 rounded-lg mb-4 overflow-hidden">
-                    <canvas ref={canvasRef} width={600} height={96} className="w-full h-full" />
+            function drawHeatFlowArrow() {
+                if(Math.abs(state.rate) < 0.1) return; // Equilibrium, no flow
+                
+                let rodW = p.map(state.d, 0.1, 1.0, w * 0.2, w * 0.8);
+                let rodX = (w - rodW) / 2;
+                let arrowY = h * 0.12;
+                
+                // Max theoretical app rate for visualization scaling
+                let maxRate = 400 * 0.1 * 200 / 0.1; 
+                let flowSpeed = p.map(Math.abs(state.rate), 0, maxRate, 1, 15);
+                let arrowOpacity = p.map(Math.abs(state.rate), 0, maxRate, 80, 255);
+                
+                arrowOffset = (arrowOffset + flowSpeed) % (rodW * 0.3);
+                
+                p.fill(245, 158, 11, arrowOpacity); // accent color
+                p.noStroke();
+                
+                // Draw moving arrows to represent continuous heat flux direction
+                let direction = state.rate > 0 ? 1 : -1;
+                
+                for(let i=0; i<3; i++) {
+                    let baseX = rodX + arrowOffset + i * (rodW * 0.3);
+                    if (direction === -1) {
+                        // Reverse flow (T_c > T_h)
+                        baseX = rodX + rodW - (arrowOffset + i * (rodW * 0.3));
+                        if(baseX > rodX + 20) {
+                            p.triangle(baseX, arrowY - 5, baseX, arrowY + 5, baseX - 15, arrowY);
+                            p.rect(baseX + 15, arrowY - 2, -15, 4);
+                        }
+                    } else {
+                        // Forward flow
+                        if(baseX < rodX + rodW - 20) {
+                            p.triangle(baseX, arrowY - 5, baseX, arrowY + 5, baseX + 15, arrowY);
+                            p.rect(baseX - 15, arrowY - 2, 15, 4);
+                        }
+                    }
+                }
+                
+                p.fill(245, 158, 11, arrowOpacity);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.text("Heat Flux (Q/t)", w/2, arrowY - 15);
+            }
+
+            function drawMicroView() {
+                const mat = MATERIALS[state.material];
+                let rodW = p.map(state.d, 0.1, 1.0, w * 0.2, w * 0.8);
+                let rodH = p.map(state.A, 0.01, 0.10, 60, 180);
+                let startX = (w - rodW) / 2;
+                let startY = h * 0.60; 
+                let endX = startX + rodW;
+                let endY = startY + rodH;
+
+                // Micro bounding box (The Crystal Lattice Boundary)
+                p.stroke(51, 65, 85);
+                p.strokeWeight(2);
+                p.noFill();
+                p.rect(startX - 15, startY - 15, rodW + 30, rodH + 30, 8);
+                p.noStroke();
+
+                // 1. Draw Lattice Bonds (Phonon transfer visualization)
+                p.stroke(255, 255, 255, 20); // Faint white lines
+                p.strokeWeight(1.5);
+                for (let i = 0; i < cols; i++) {
+                    for (let j = 0; j < rows; j++) {
+                        let idx = i * rows + j;
+                        let a1 = atoms[idx];
+                        // Bond to right
+                        if (i < cols - 1) {
+                            let a2 = atoms[(i + 1) * rows + j];
+                            p.line(a1.x, a1.y, a2.x, a2.y);
+                        }
+                        // Bond to bottom
+                        if (j < rows - 1) {
+                            let a3 = atoms[i * rows + (j + 1)];
+                            p.line(a1.x, a1.y, a3.x, a3.y);
+                        }
+                    }
+                }
+                p.noStroke();
+
+                // 2. Draw Atoms (Lattice Vibrations)
+                let atomRadius = 5.5; 
+                
+                atoms.forEach(atom => {
+                    let relX = (atom.baseX - startX) / rodW;
+                    let nodeIdx = p.floor(relX * NODES);
+                    nodeIdx = p.constrain(nodeIdx, 0, NODES - 1);
                     
-                    {/* Wax Beads Overlay */}
-                    <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-                        {[0.25, 0.5, 0.75].map((pos, i) => (
-                            <div 
-                                key={i}
-                                className={`absolute top-1/2 w-4 h-4 rounded-full border-2 border-slate-800 shadow-md transform -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ${waxState[i] ? 'bg-yellow-400 opacity-100' : 'bg-transparent opacity-0 translate-y-10'}`}
-                                style={{ left: `${pos * 100}%` }}
-                            >
-                                {waxState[i] && <div className="w-1 h-1 bg-white absolute top-1 left-1 rounded-full opacity-50"></div>}
-                            </div>
-                        ))}
-                    </div>
+                    let localTemp = temps[nodeIdx];
                     
-                    {/* Heat Source Overlay */}
-                    <div className="absolute left-0 top-0 h-full w-2 bg-red-500 blur-sm animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.8)]"></div>
-                </div>
-            );
+                    // Vibration amplitude based on local temperature
+                    let maxVibration = 4.5;
+                    let vib = p.map(localTemp, 0, 200, 0, maxVibration);
+                    
+                    atom.x = atom.baseX + p.random(-vib, vib);
+                    atom.y = atom.baseY + p.random(-vib, vib);
+
+                    p.fill(getGradientColor(localTemp));
+                    p.circle(atom.x, atom.y, atomRadius * 2);
+                });
+
+                // 3. Draw Free Electrons (Metals only)
+                if (mat.hasElectrons) {
+                    electrons.forEach(el => {
+                        let relX = (el.x - startX) / rodW;
+                        let nodeIdx = p.floor(relX * NODES);
+                        nodeIdx = p.constrain(nodeIdx, 0, NODES - 1);
+                        let localTemp = temps[nodeIdx];
+                        
+                        // Electrons move much faster in hot regions
+                        let speedMultiplier = p.map(localTemp, 0, 200, 1.5, 8.0);
+                        
+                        el.x += el.vx * speedMultiplier;
+                        el.y += el.vy * speedMultiplier;
+
+                        // Bounce within the lattice framework
+                        if (el.x <= startX - 5 || el.x >= endX + 5) el.vx *= -1;
+                        if (el.y <= startY - 5 || el.y >= endY + 5) el.vy *= -1;
+                        
+                        el.x = p.constrain(el.x, startX - 5, endX + 5);
+                        el.y = p.constrain(el.y, startY - 5, endY + 5);
+
+                        p.fill(250, 204, 21, 200); // Yellow electrons
+                        p.circle(el.x, el.y, 3);
+                    });
+                }
+            }
         };
 
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
-                {/* Header */}
-                <header className="mb-8 flex items-center space-x-3 border-b border-slate-700 pb-4">
-                    <div className="p-2 bg-rose-500/10 rounded-lg">
-                        <i data-lucide="flame" className="w-8 h-8 text-rose-400"></i>
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Conduction Rate Simulator</h1>
-                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
-                    </div>
-                </header>
+        // Initialize p5 with slight delay to ensure DOM sizing
+        setTimeout(() => {
+            new p5(sketch);
+        }, 100);
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    
-                    {/* Controls */}
-                    <div className="space-y-6">
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
-                            <h2 className="text-emerald-400 font-semibold mb-6 flex items-center">
-                                <i data-lucide="sliders" className="w-4 h-4 mr-2"></i> Settings
-                            </h2>
-
-                            {/* Material A Selector */}
-                            <div className="mb-4">
-                                <label className="text-xs text-slate-400 block mb-1">Top Rod (Rod A)</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {Object.keys(MATERIALS).filter(m => m !== 'Glass').map(m => (
-                                        <button
-                                            key={m}
-                                            onClick={() => { handleReset(); setMaterialA(m); }}
-                                            className={`py-2 px-3 rounded text-xs font-bold transition-all border ${
-                                                materialA === m 
-                                                ? 'bg-slate-600 border-emerald-500 text-white' 
-                                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
-                                            }`}
-                                        >
-                                            {m}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Material B Selector */}
-                            <div className="mb-6">
-                                <label className="text-xs text-slate-400 block mb-1">Bottom Rod (Rod B)</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {Object.keys(MATERIALS).filter(m => m !== 'Glass').map(m => (
-                                        <button
-                                            key={m}
-                                            onClick={() => { handleReset(); setMaterialB(m); }}
-                                            className={`py-2 px-3 rounded text-xs font-bold transition-all border ${
-                                                materialB === m 
-                                                ? 'bg-slate-600 border-emerald-500 text-white' 
-                                                : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
-                                            }`}
-                                        >
-                                            {m}
-                                        </button>
-                                    ))}
-                                    {/* Glass Special Button */}
-                                    <button
-                                        onClick={() => { handleReset(); setMaterialB('Glass'); }}
-                                        className={`col-span-2 py-2 px-3 rounded text-xs font-bold transition-all border ${
-                                            materialB === 'Glass' 
-                                            ? 'bg-slate-600 border-emerald-500 text-white' 
-                                            : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
-                                        }`}
-                                    >
-                                        Glass (Insulator)
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Action Buttons */}
-                            <div className="flex space-x-3">
-                                <button 
-                                    onClick={() => setIsRunning(!isRunning)}
-                                    className={`flex-1 py-3 rounded-lg font-bold flex items-center justify-center transition-colors ${isRunning ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-emerald-500 text-white hover:bg-emerald-400'}`}
-                                >
-                                    {isRunning ? <><i data-lucide="pause" className="w-4 h-4 mr-2"></i> Pause</> : <><i data-lucide="play" className="w-4 h-4 mr-2"></i> Start Heating</>}
-                                </button>
-                                <button 
-                                    onClick={handleReset}
-                                    className="px-4 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600"
-                                >
-                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Legend */}
-                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-xs text-slate-400 space-y-2">
-                            <div className="flex items-center">
-                                <div className="w-3 h-3 bg-red-500 mr-2 rounded-full shadow-[0_0_5px_red]"></div>
-                                <span>Heat Source (100°C)</span>
-                            </div>
-                            <div className="flex items-center">
-                                <div className="w-3 h-3 bg-yellow-400 mr-2 rounded-full border border-slate-600"></div>
-                                <span>Wax Bead (Melts at {WAX_MELT_TEMP}°C)</span>
-                            </div>
-                            <div className="flex items-center">
-                                <div className="w-20 h-3 bg-gradient-to-r from-blue-700 to-red-500 mr-2 rounded"></div>
-                                <span>Temperature Gradient</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Simulation Area */}
-                    <div className="lg:col-span-2 space-y-6">
-                        
-                        {/* Visualizer */}
-                        <div className="bg-slate-950 border border-slate-700 rounded-xl p-6 relative">
-                            <div className="absolute top-2 right-4 text-xs font-mono text-slate-500">
-                                Time: {time.toFixed(1)}s
-                            </div>
-                            
-                            <div className="mb-2 flex justify-between text-xs text-slate-400 px-1">
-                                <span>Heat Source (Left)</span>
-                                <span>Cold End (Right)</span>
-                            </div>
-
-                            <RodVisual temps={tempARef.current} waxState={waxA} materialName={materialA} />
-                            <RodVisual temps={tempBRef.current} waxState={waxB} materialName={materialB} />
-                        </div>
-
-                        {/* Graph */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 h-64">
-                            <h3 className="text-slate-300 text-sm font-semibold mb-4 flex items-center">
-                                <i data-lucide="line-chart" className="w-4 h-4 mr-2"></i> 
-                                Temperature at Far End (x={ROD_LENGTH})
-                            </h3>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={graphData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        label={{ value: 'Time (s)', position: 'insideBottom', offset: -5, fill: '#64748b' }} 
-                                        tick={{fill: '#64748b'}}
-                                    />
-                                    <YAxis 
-                                        domain={[20, 100]} 
-                                        label={{ value: 'Temp (°C)', angle: -90, position: 'insideLeft', fill: '#64748b' }} 
-                                        tick={{fill: '#64748b'}}
-                                    />
-                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155' }} />
-                                    <Legend />
-                                    <Line type="monotone" dataKey="Rod A" stroke="#f59e0b" strokeWidth={2} dot={false} isAnimationActive={false} name={`${materialA} (End)`} />
-                                    <Line type="monotone" dataKey="Rod B" stroke="#38bdf8" strokeWidth={2} dot={false} isAnimationActive={false} name={`${materialB} (End)`} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-
-    setTimeout(() => lucide.createIcons(), 100);
-</script>
+    </script>
 </body>
 </html>
