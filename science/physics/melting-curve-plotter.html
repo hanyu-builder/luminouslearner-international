@@ -3,488 +3,668 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Melting Curve Plotter | Luminous Learner</title>
+    <meta name="description" content="Latent heat cooling curve simulator and melting curve experiment. Visualize state changes and specific latent heat.">
+    <title>Melting Curve & Latent Heat Simulator</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Chart.js for macroscopic heating curve -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- p5.js for microscopic particle visualization -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; background: #f59e0b; cursor: pointer; border: 2px solid #ffffff;
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#151e2e', 900: '#0F172A' },
+                        primary: '#38bdf8',
+                        accent: '#f59e0b',
+                        ice: '#bae6fd',
+                        water: '#3b82f6'
+                    },
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] }
+                }
+            }
         }
-        canvas { touch-action: none; }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        body { font-family: 'Inter', sans-serif; }
+        .math-font { font-family: 'JetBrains Mono', monospace; }
+
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #38bdf8; cursor: pointer; margin-top: -7px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+        
+        /* Heating glow effect */
+        @keyframes heater-glow {
+            0% { border-bottom-color: #ef4444; box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.1); }
+            100% { border-bottom-color: #f97316; box-shadow: 0 10px 15px -3px rgba(249, 115, 22, 0.3); }
+        }
+        .is-heating #p5-container {
+            border-bottom-width: 4px;
+            animation: heater-glow 1s infinite alternate;
+        }
+
+        /* Hide scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-200 h-screen w-screen overflow-hidden flex justify-center items-center">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    // --- Physics Constants for "Mock Substance" (Water-like) ---
-    const MP = 0;   // Melting Point
-    const BP = 100; // Boiling Point
-    
-    // Relative specific heats (for slope)
-    const C_SOLID = 0.8;
-    const C_LIQUID = 1.0; 
-    const C_GAS = 0.5;
-
-    // Relative Latent Heats (for plateau duration)
-    const L_FUSION = 80;    // Energy to melt
-    const L_VAPOR = 300;    // Energy to boil (usually much larger)
-
-    const PARTICLE_COUNT = 100;
-    const CONTAINER_WIDTH = 300;
-    const CONTAINER_HEIGHT = 200;
-
-    const App = () => {
-        // UI State (Only for display rendering)
-        const [displayTime, setDisplayTime] = useState(0);
-        const [displayTemp, setDisplayTemp] = useState(-20);
-        const [heating, setHeating] = useState(false);
-        const [power, setPower] = useState(50); // Heater power
-        const [stateLabel, setStateLabel] = useState("Solid (Ice)");
-        const [resetFlag, setResetFlag] = useState(0);
-
-        // Simulation Refs (The Source of Truth for Physics)
-        // Fixed: Moved temp and time INTO ref to avoid stale closure issues
-        const simState = useRef({
-            currentTime: 0,      // Internal Time
-            currentTemp: -20,    // Internal Temp
-            energy: 0,           // Total added energy
-            latentBuffer: 0,     // Energy accumulator for phase changes
-            phase: 'SOLID',      // SOLID, MELTING, LIQUID, BOILING, GAS
-            history: [{t: 0, T: -20}], // Data for graph
-            particles: []        // Visual particles
-        });
+    <!-- Constrained Main Container -->
+    <div class="w-full max-w-7xl h-full max-h-[950px] flex flex-col bg-slate-900 shadow-2xl p-4 md:p-6 lg:p-8 gap-4 md:gap-6">
         
-        const requestRef = useRef();
-        const particleCanvasRef = useRef(null);
-        const graphCanvasRef = useRef(null);
-
-        // Initialize Particles
-        useEffect(() => {
-            initParticles();
-        }, [resetFlag]);
-
-        const initParticles = () => {
-            const ps = [];
-            const rows = 10;
-            const cols = 10;
-            const spacing = 20;
-            const startX = (CONTAINER_WIDTH - cols * spacing) / 2 + 10;
-            const startY = CONTAINER_HEIGHT - rows * spacing - 10;
-
-            for(let r=0; r<rows; r++) {
-                for(let c=0; c<cols; c++) {
-                    ps.push({
-                        baseX: startX + c * spacing,
-                        baseY: startY + r * spacing,
-                        x: startX + c * spacing,
-                        y: startY + r * spacing,
-                        vx: 0, 
-                        vy: 0,
-                        phaseOffset: Math.random() * Math.PI * 2
-                    });
-                }
-            }
-            // Reset Simulation State
-            simState.current = {
-                currentTime: 0,
-                currentTemp: -20,
-                energy: 0,
-                latentBuffer: 0,
-                phase: 'SOLID',
-                history: [{t: 0, T: -20}],
-                particles: ps
-            };
-            
-            // Reset UI
-            setDisplayTime(0);
-            setDisplayTemp(-20);
-            setStateLabel("Solid (Ice)");
-            setHeating(false);
-            
-            // Initial Draw
-            setTimeout(() => {
-                drawParticles();
-                drawGraph();
-            }, 50);
-        };
-
-        // --- Main Simulation Loop ---
-        const updatePhysics = () => {
-            if (!heating) return; // Guard
-
-            const state = simState.current;
-            const heatInput = power * 0.05; // Energy per frame
-            
-            // 1. Temperature & Phase Logic (Using Ref values, not State)
-            let temp = state.currentTemp;
-            let phase = state.phase;
-
-            if (phase === 'SOLID') {
-                // Q = mcΔT
-                const dT = heatInput / C_SOLID;
-                temp += dT;
-                if (temp >= MP) {
-                    temp = MP;
-                    state.phase = 'MELTING';
-                    state.latentBuffer = 0;
-                }
-            } 
-            else if (phase === 'MELTING') {
-                // Q = mLf (Temp const)
-                state.latentBuffer += heatInput;
-                if (state.latentBuffer >= L_FUSION) {
-                    state.phase = 'LIQUID';
-                }
-            } 
-            else if (phase === 'LIQUID') {
-                const dT = heatInput / C_LIQUID;
-                temp += dT;
-                if (temp >= BP) {
-                    temp = BP;
-                    state.phase = 'BOILING';
-                    state.latentBuffer = 0;
-                }
-            } 
-            else if (phase === 'BOILING') {
-                state.latentBuffer += heatInput;
-                if (state.latentBuffer >= L_VAPOR) {
-                    state.phase = 'GAS';
-                }
-            } 
-            else if (phase === 'GAS') {
-                const dT = heatInput / C_GAS;
-                temp += dT;
-                // Cap temp
-                if (temp > 140) setHeating(false);
-            }
-
-            // Update Ref State
-            state.currentTemp = temp;
-            state.currentTime += 1;
-
-            // Sync with UI State (Throttle or just set)
-            setDisplayTemp(state.currentTemp);
-            setDisplayTime(state.currentTime);
-            setStateLabel(formatPhase(state.phase));
-
-            // Update History for Graph
-            if (state.currentTime % 5 === 0) { // Record every 5th frame
-                state.history.push({ t: state.currentTime, T: state.currentTemp });
-            }
-
-            // 2. Particle Animation Logic
-            updateParticles(state.phase, state.currentTemp);
-
-            // 3. Render Graph & Particles
-            drawParticles();
-            drawGraph();
-
-            if (heating) {
-                requestRef.current = requestAnimationFrame(updatePhysics);
-            }
-        };
-
-        // Start/Stop Loop Management
-        useEffect(() => {
-            if (heating) {
-                requestRef.current = requestAnimationFrame(updatePhysics);
-            } else {
-                cancelAnimationFrame(requestRef.current);
-            }
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [heating, power]); 
-
-        const formatPhase = (p) => {
-            switch(p) {
-                case 'SOLID': return 'Solid (Heating)';
-                case 'MELTING': return 'Melting (Phase Change)';
-                case 'LIQUID': return 'Liquid (Heating)';
-                case 'BOILING': return 'Boiling (Phase Change)';
-                case 'GAS': return 'Gas (Heating)';
-                default: return p;
-            }
-        };
-
-        // --- Visual Logic ---
-        const updateParticles = (phase, T) => {
-            const ps = simState.current.particles;
-            const vibration = (T + 40) * 0.05; 
-
-            ps.forEach(p => {
-                if (phase === 'SOLID' || phase === 'MELTING') {
-                    p.x = p.baseX + (Math.random() - 0.5) * vibration;
-                    p.y = p.baseY + (Math.random() - 0.5) * vibration;
-                    
-                    if (phase === 'MELTING') {
-                        // Jitter more to show breaking bonds
-                        p.x += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
-                        p.y += (Math.random() - 0.5) * (simState.current.latentBuffer / L_FUSION) * 10;
-                    }
-                } 
-                else if (phase === 'LIQUID' || phase === 'BOILING') {
-                    p.vx += (Math.random() - 0.5);
-                    p.vy += (Math.random() - 0.5) + 0.05; // Gravity
-                    
-                    p.vx *= 0.95;
-                    p.vy *= 0.95;
-                    
-                    p.x += p.vx;
-                    p.y += p.vy;
-
-                    if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
-                    if (p.x < 5) { p.x = 5; p.vx *= -0.5; }
-                    if (p.x > CONTAINER_WIDTH - 5) { p.x = CONTAINER_WIDTH - 5; p.vx *= -0.5; }
-                    
-                    if (p.y < CONTAINER_HEIGHT - 80) { p.vy += 0.2; } 
-                } 
-                else if (phase === 'GAS') {
-                    p.vx += (Math.random() - 0.5) * 0.5;
-                    p.vy += (Math.random() - 0.5) * 0.5;
-                    p.vy -= 0.05; 
-                    
-                    p.x += p.vx;
-                    p.y += p.vy;
-
-                    if (p.y < 5) { p.y = 5; p.vy *= -1; }
-                    if (p.y > CONTAINER_HEIGHT - 5) { p.y = CONTAINER_HEIGHT - 5; p.vy *= -0.5; }
-                    if (p.x < 5) { p.x = 5; p.vx *= -1; }
-                    if (p.x > CONTAINER_WIDTH - 5) { p.x = CONTAINER_WIDTH - 5; p.vx *= -1; }
-                }
-            });
-        };
-
-        const drawParticles = () => {
-            const ctx = particleCanvasRef.current?.getContext('2d');
-            if (!ctx) return;
-            ctx.clearRect(0, 0, CONTAINER_WIDTH, CONTAINER_HEIGHT);
-
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(0, CONTAINER_HEIGHT);
-            ctx.lineTo(CONTAINER_WIDTH, CONTAINER_HEIGHT);
-            ctx.lineTo(CONTAINER_WIDTH, 0);
-            ctx.stroke();
-
-            const phase = simState.current.phase;
-
-            simState.current.particles.forEach(p => {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-                
-                if (phase === 'SOLID') ctx.fillStyle = '#60a5fa'; 
-                else if (phase === 'MELTING') ctx.fillStyle = '#818cf8';
-                else if (phase === 'LIQUID') ctx.fillStyle = '#34d399'; 
-                else if (phase === 'BOILING') ctx.fillStyle = '#facc15'; 
-                else ctx.fillStyle = '#f87171'; 
-                
-                ctx.fill();
-            });
-        };
-
-        const drawGraph = () => {
-            const ctx = graphCanvasRef.current?.getContext('2d');
-            if (!ctx) return;
-            const w = ctx.canvas.width;
-            const h = ctx.canvas.height;
-            
-            ctx.fillStyle = '#1e293b';
-            ctx.fillRect(0, 0, w, h);
-
-            const padding = 40;
-            ctx.strokeStyle = '#94a3b8';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(padding, 10);
-            ctx.lineTo(padding, h - padding); 
-            ctx.lineTo(w - 10, h - padding); 
-            ctx.stroke();
-
-            ctx.fillStyle = '#94a3b8';
-            ctx.font = '10px Inter';
-            ctx.fillText("Time →", w - 40, h - 10);
-            ctx.save();
-            ctx.translate(10, h/2);
-            ctx.rotate(-Math.PI/2);
-            ctx.fillText("Temp (°C)", 0, 0);
-            ctx.restore();
-
-            const mapY = (t) => h - padding - ((t + 20) / 160) * (h - padding - 20);
-            const drawTick = (val) => {
-                const y = mapY(val);
-                ctx.fillText(val, 10, y + 3);
-                ctx.beginPath(); ctx.moveTo(padding-5, y); ctx.lineTo(padding, y); ctx.stroke();
-            };
-            drawTick(-20);
-            drawTick(0);
-            drawTick(100);
-
-            const history = simState.current.history;
-            if (history.length < 2) return;
-
-            const maxTime = Math.max(2000, history[history.length-1].t + 500);
-            const mapX = (t) => padding + (t / maxTime) * (w - padding - 20);
-
-            ctx.beginPath();
-            ctx.strokeStyle = '#f472b6'; 
-            ctx.lineWidth = 3;
-            ctx.moveTo(mapX(history[0].t), mapY(history[0].T));
-            
-            for(let i=1; i<history.length; i++) {
-                ctx.lineTo(mapX(history[i].t), mapY(history[i].T));
-            }
-            ctx.stroke();
-
-            const last = history[history.length-1];
-            ctx.beginPath();
-            ctx.arc(mapX(last.t), mapY(last.T), 4, 0, Math.PI*2);
-            ctx.fillStyle = '#fff';
-            ctx.fill();
-        };
-
-        return (
-            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-pink-500/20 p-2 rounded-lg">
-                            <i data-lucide="activity" className="w-6 h-6 text-pink-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Melting Curve Plotter</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Thermal Physics
-                    </div>
-                </nav>
-
-                <main className="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    
-                    {/* Left: Controls & Visuals */}
-                    <div className="lg:col-span-5 space-y-6">
-                        {/* Status Card */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-lg">
-                            <div className="flex justify-between items-start mb-6">
-                                <div>
-                                    <div className="text-slate-400 text-xs uppercase tracking-wider mb-1">Current State</div>
-                                    <div className="text-2xl font-bold text-white flex items-center gap-2">
-                                        {stateLabel}
-                                    </div>
-                                </div>
-                                <div className={`text-4xl font-mono font-bold ${displayTemp > 90 ? 'text-red-400' : displayTemp > 0 ? 'text-emerald-400' : 'text-blue-400'}`}>
-                                    {Math.round(displayTemp)}°C
-                                </div>
-                            </div>
-                            
-                            <div className="space-y-4">
-                                <button 
-                                    onClick={() => setHeating(!heating)}
-                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center transition-all ${
-                                        heating 
-                                        ? 'bg-red-500/20 text-red-400 border border-red-500/50' 
-                                        : 'bg-emerald-500 hover:bg-emerald-400 text-slate-900'
-                                    }`}
-                                >
-                                    <i data-lucide={heating ? "pause" : "play"} className="w-5 h-5 mr-2"></i>
-                                    {heating ? "Pause Heating" : "Start Heating"}
-                                </button>
-                                
-                                <button 
-                                    onClick={() => setResetFlag(f => f+1)}
-                                    className="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 text-sm font-medium transition-colors"
-                                >
-                                    Reset Experiment
-                                </button>
-                            </div>
-
-                            <div className="mt-6 pt-6 border-t border-slate-700">
-                                <label className="flex justify-between text-sm mb-2 text-slate-300">
-                                    <span>Bunsen Burner Power</span>
-                                    <span className="text-orange-400">{power}%</span>
-                                </label>
-                                <input 
-                                    type="range" min="10" max="100" 
-                                    value={power} onChange={(e) => setPower(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Particle View */}
-                        <div className="bg-black rounded-2xl border border-slate-700 overflow-hidden relative shadow-2xl flex flex-col items-center p-4">
-                            <div className="text-slate-500 text-xs mb-2 font-mono w-full text-left">MICROSCOPIC VIEW</div>
-                            <canvas 
-                                ref={particleCanvasRef} 
-                                width={CONTAINER_WIDTH} 
-                                height={CONTAINER_HEIGHT}
-                                className="bg-slate-900/50 rounded-lg border border-slate-800"
-                            />
-                            {/* Burner Flame */}
-                            <div className={`mt-2 w-16 h-8 bg-orange-500 blur-md rounded-full transition-opacity duration-300 ${heating ? 'opacity-100' : 'opacity-0'}`}></div>
-                            <div className={`-mt-6 w-8 h-4 bg-yellow-300 blur-sm rounded-full transition-opacity duration-300 ${heating ? 'opacity-100' : 'opacity-0'}`}></div>
-                        </div>
-                    </div>
-
-                    {/* Right: Graph */}
-                    <div className="lg:col-span-7 bg-slate-800 rounded-2xl border border-slate-700 p-1 overflow-hidden shadow-xl flex flex-col">
-                        <div className="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-                            <h3 className="font-bold text-white flex items-center">
-                                <i data-lucide="line-chart" className="w-4 h-4 mr-2 text-pink-400"></i>
-                                Temperature vs. Time Graph
-                            </h3>
-                            <div className="flex gap-4 text-xs">
-                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-blue-400 mr-2"></div>Solid</div>
-                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-emerald-400 mr-2"></div>Liquid</div>
-                                <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-yellow-400 mr-2"></div>Gas</div>
-                            </div>
-                        </div>
-                        <div className="flex-1 relative bg-slate-900">
-                            <canvas 
-                                ref={graphCanvasRef} 
-                                width={600} 
-                                height={400}
-                                className="w-full h-full block"
-                            />
-                            {/* Overlay hints */}
-                            {stateLabel.includes("Phase Change") && (
-                                <div className="absolute top-4 right-4 bg-yellow-500/10 border border-yellow-500/50 text-yellow-200 px-3 py-2 rounded-lg text-sm animate-pulse">
-                                    Adding Latent Heat... Temp stays constant!
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                </main>
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-slate-700 pb-3 shrink-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">Melting Curve Experiment</h1>
+                <p class="text-slate-400 mt-1 text-sm md:text-base">
+                    Specific Latent Heat of Fusion: <span class="text-accent math-font bg-slate-800 px-2 py-0.5 rounded border border-slate-700">Q = ml<sub>f</sub></span>
+                </p>
             </div>
-        );
-    };
+            <div class="hidden md:block text-right text-xs md:text-sm text-slate-400 bg-slate-800/50 p-2 rounded-lg border border-slate-700">
+                <p><i class="fa-solid fa-fire text-orange-400 mr-1"></i> Heater applies constant power (<span class="math-font text-orange-300">P = Q/t</span>)</p>
+            </div>
+        </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+        <!-- Main Workspace -->
+        <main class="flex flex-col lg:flex-row gap-6 h-full min-h-0">
+            
+            <!-- Left Panel: Microscopic View & Controls -->
+            <div class="flex flex-col gap-4 w-full lg:w-5/12 min-h-0">
+                
+                <!-- Microscopic Visualization (p5.js target) -->
+                <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col flex-1 min-h-[250px] relative overflow-hidden shadow-inner">
+                    <div class="absolute top-3 left-4 z-10">
+                        <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-800/80 px-2 py-1 rounded">Microscopic View</h2>
+                    </div>
+                    <div class="absolute top-3 right-4 z-10 flex gap-2">
+                        <span id="badge-state" class="text-xs font-bold uppercase tracking-wide px-2 py-1 rounded bg-slate-700/50 text-slate-300 border border-slate-500/50 backdrop-blur-sm shadow">Ice (Solid)</span>
+                    </div>
+                    <!-- p5.js canvas goes here -->
+                    <div id="p5-container" class="w-full h-full border-b-4 border-transparent transition-colors duration-300 relative z-0"></div>
+                </div>
 
-    if (typeof lucide !== 'undefined') {
-        setTimeout(() => lucide.createIcons(), 100);
-    }
-</script>
+                <!-- Controls -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shrink-0 shadow-lg">
+                    
+                    <div class="mb-5">
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-medium text-slate-300">Heater Power (<span class="math-font italic">P</span>)</label>
+                            <span class="text-sm math-font text-orange-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700" id="val-power">10.0 kW</span>
+                        </div>
+                        <!-- Scale 1 to 50 kW -->
+                        <input type="range" id="slider-power" min="1" max="50" step="1" value="10">
+                        <div class="flex justify-between text-xs text-slate-500 mt-1">
+                            <span>1 kW (Slow)</span>
+                            <span>50 kW (Fast)</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-5">
+                        <div class="flex justify-between mb-2">
+                            <label class="text-sm font-medium text-slate-300">Mass of Ice (<span class="math-font italic">m</span>)</label>
+                            <span class="text-sm math-font text-primary bg-slate-900 px-2 py-0.5 rounded border border-slate-700" id="val-mass">1.0 kg</span>
+                        </div>
+                        <input type="range" id="slider-mass" min="0.5" max="3.0" step="0.1" value="1.0">
+                    </div>
+
+                    <div class="flex gap-3 mt-2">
+                        <button id="btn-toggle" class="flex-1 bg-primary hover:bg-sky-400 text-slate-900 font-bold py-2.5 px-4 rounded-lg transition shadow-[0_0_15px_rgba(56,189,248,0.4)] flex justify-center items-center gap-2">
+                            <i id="icon-play" class="fa-solid fa-play"></i>
+                            <span id="text-toggle">Start Heater</span>
+                        </button>
+                        <button id="btn-reset" class="px-5 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-lg transition-colors border border-slate-600 shadow flex justify-center items-center gap-2">
+                            <i class="fa-solid fa-rotate-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Panel: Graph & Data -->
+            <div class="flex flex-col gap-4 w-full lg:w-7/12 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                
+                <!-- Live Data Dashboard -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
+                    <div class="bg-slate-850 border border-slate-700 rounded-lg p-3 text-center shadow-inner">
+                        <div class="text-xs text-slate-400 mb-1 font-semibold uppercase">Time</div>
+                        <div class="text-xl math-font text-white" id="readout-time">0.0 s</div>
+                    </div>
+                    <div class="bg-slate-850 border border-slate-700 rounded-lg p-3 text-center shadow-inner">
+                        <div class="text-xs text-slate-400 mb-1 font-semibold uppercase">Energy (<span class="math-font">Q</span>)</div>
+                        <div class="text-xl math-font text-orange-400" id="readout-energy">0.0 kJ</div>
+                    </div>
+                    <div class="bg-slate-850 border border-slate-700 rounded-lg p-3 text-center shadow-inner relative">
+                        <div class="text-xs text-slate-400 mb-1 font-semibold uppercase">Temp (<span class="math-font">T</span>)</div>
+                        <div class="text-xl math-font text-rose-400" id="readout-temp">-20.0 °C</div>
+                    </div>
+                    <div class="bg-slate-850 border border-slate-700 rounded-lg p-3 text-center relative overflow-hidden shadow-inner">
+                        <div class="absolute inset-0 bg-primary/20 opacity-0 transition-opacity" id="melt-progress-bg"></div>
+                        <div class="relative z-10">
+                            <div class="text-xs text-slate-400 mb-1 font-semibold uppercase">Melt Fraction</div>
+                            <div class="text-xl math-font text-primary" id="readout-fraction">0.0 %</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Equation Breakdown -->
+                <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 shrink-0 flex items-center justify-between shadow-md">
+                    <div>
+                        <div class="text-[10px] text-slate-400 mb-1 uppercase tracking-widest font-bold">Active Physics Equation</div>
+                        <div id="active-equation" class="math-font text-sm md:text-base text-slate-200">
+                            <!-- Injected by JS based on state -->
+                            ΔT = <span class="text-orange-400">Q</span> / (<span class="text-primary">m</span> × c<sub>solid</sub>)
+                        </div>
+                    </div>
+                    <div id="heat-type-badge" class="px-3 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm">
+                        Specific Heat Capacity
+                    </div>
+                </div>
+
+                <!-- Chart Container -->
+                <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 flex-1 relative min-h-[300px] flex flex-col shadow-lg">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest absolute top-4 left-4 z-10">Macroscopic Heating Curve</h2>
+                    <div class="relative w-full h-full mt-6">
+                        <canvas id="meltingChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Educational Notes Box -->
+                <div class="bg-indigo-900/20 border border-indigo-700/50 rounded-xl p-4 flex-shrink-0 shadow-inner">
+                    <p class="text-xs text-indigo-300 mb-2">
+                        <strong><i class="fa-solid fa-graduation-cap mr-1"></i> Core Concepts to Observe:</strong>
+                    </p>
+                    <ul class="text-xs text-indigo-200 list-disc pl-4 space-y-1.5 leading-relaxed">
+                        <li><strong>Constant Temperature:</strong> During melting, <span class="math-font">T</span> stops rising. Thermal energy breaks intermolecular bonds (Latent Heat) instead of increasing kinetic energy.</li>
+                        <li><strong>Slope differences:</strong> The slope <span class="math-font">ΔT/Δt = P/mc</span>. Notice the liquid line is <em>less steep</em> than the solid line? That's because water has a higher specific heat capacity (<span class="math-font">4186 J/kg°C</span>) than ice (<span class="math-font">2100 J/kg°C</span>)!</li>
+                    </ul>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Application Logic -->
+    <script>
+        /**
+         * PHYSICS CONSTANTS (Water/Ice)
+         * m = mass (kg)
+         * c_solid = Specific heat of ice = 2100 J/kg°C
+         * L_f = Specific latent heat of fusion = 334000 J/kg
+         * c_liquid = Specific heat of water = 4186 J/kg°C
+         * * Logic:
+         * 1. Q = P * dt  (Energy from heater)
+         * 2. If T < 0: Solid phase heating. T = T_i + Q / (m * c_solid)
+         * 3. If T == 0: Phase transition. T stays 0. Melt fraction = Q_added / (m * L_f)
+         * 4. If T >= 0: Liquid heating. T = 0 + Q_added / (m * c_liquid)
+         */
+
+        const PHYSICS = {
+            c_solid: 2100,      // J/kg°C
+            l_fusion: 334000,   // J/kg
+            c_liquid: 4186,     // J/kg°C
+            melt_temp: 0,       // °C
+            start_temp: -20,    // °C
+            max_temp: 50        // °C
+        };
+
+        // --- Global State ---
+        let state = {
+            isRunning: false,
+            timeElapsed: 0,
+            energyTotal: 0, // Joules
+            
+            temperature: PHYSICS.start_temp,
+            phase: 'solid', // 'solid', 'melting', 'liquid'
+            meltFraction: 0.0, // 0.0 to 1.0
+            
+            energyAtMeltStart: 0,
+            energyAtLiquidStart: 0,
+            
+            power: 10000, // Watts (J/s)
+            mass: 1.0,    // kg
+            
+            timeScale: 2  // Sim seconds per real second
+        };
+
+        let chart = null;
+        let p5Instance = null;
+        let lastTime = 0;
+        let reqFrameId;
+        let lastChartPush = 0;
+        let segmentColors = []; // Stores colors for Chart.js line segments
+
+        // --- DOM Elements ---
+        const ui = {
+            sliderPower: document.getElementById('slider-power'),
+            sliderMass: document.getElementById('slider-mass'),
+            valPower: document.getElementById('val-power'),
+            valMass: document.getElementById('val-mass'),
+            btnToggle: document.getElementById('btn-toggle'),
+            btnReset: document.getElementById('btn-reset'),
+            textToggle: document.getElementById('text-toggle'),
+            iconPlay: document.getElementById('icon-play'),
+            
+            readoutTime: document.getElementById('readout-time'),
+            readoutEnergy: document.getElementById('readout-energy'),
+            readoutTemp: document.getElementById('readout-temp'),
+            readoutFraction: document.getElementById('readout-fraction'),
+            meltProgressBg: document.getElementById('melt-progress-bg'),
+            
+            activeEq: document.getElementById('active-equation'),
+            heatBadge: document.getElementById('heat-type-badge'),
+            badgeState: document.getElementById('badge-state'),
+            p5Container: document.getElementById('p5-container')
+        };
+
+        // --- Initialization ---
+        function init() {
+            initChart();
+            initP5();
+            bindEvents();
+            updateEquations();
+            updateUI(true);
+            segmentColors.push('#f59e0b'); // Initial color
+        }
+
+        // --- Chart.js Setup ---
+        function initChart() {
+            const ctx = document.getElementById('meltingChart').getContext('2d');
+            Chart.defaults.color = '#94a3b8';
+            Chart.defaults.font.family = 'JetBrains Mono, monospace';
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [0],
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: [PHYSICS.start_temp],
+                        borderWidth: 3,
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0.1,
+                        // Multi-color line segmenting based on state history
+                        segment: {
+                            borderColor: ctx => segmentColors[ctx.p0DataIndex] || '#f59e0b'
+                        }
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: { 
+                            callbacks: { label: (c) => ` ${c.parsed.y.toFixed(1)} °C` },
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            titleFont: { family: 'Inter', size: 12 },
+                            bodyFont: { family: 'JetBrains Mono', size: 14 }
+                        }
+                    },
+                    scales: {
+                        x: { 
+                            title: { display: true, text: 'Time (s)', color: '#64748b', font: {family: 'Inter'} },
+                            grid: { color: '#334155', drawBorder: false },
+                            min: 0, suggestedMax: 60
+                        },
+                        y: { 
+                            title: { display: true, text: 'Temperature (°C)', color: '#64748b', font: {family: 'Inter'} },
+                            grid: { 
+                                color: (ctx) => ctx.tick.value === 0 ? '#475569' : '#1e293b', 
+                                lineWidth: (ctx) => ctx.tick.value === 0 ? 2 : 1,
+                                drawBorder: false 
+                            },
+                            min: -25, max: 55
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- Input Event Binding ---
+        function bindEvents() {
+            ui.sliderPower.addEventListener('input', (e) => {
+                state.power = parseFloat(e.target.value) * 1000; // kW to W
+                ui.valPower.textContent = `${e.target.value}.0 kW`;
+            });
+
+            ui.sliderMass.addEventListener('input', (e) => {
+                state.mass = parseFloat(e.target.value);
+                ui.valMass.textContent = `${state.mass.toFixed(1)} kg`;
+                // Mass changes system total capacity, require reset if running
+                if (state.timeElapsed > 0 && state.isRunning) resetSim();
+            });
+
+            ui.btnToggle.addEventListener('click', () => {
+                if(state.temperature >= PHYSICS.max_temp) resetSim();
+                else state.isRunning ? pauseSim() : startSim();
+            });
+
+            ui.btnReset.addEventListener('click', resetSim);
+        }
+
+        // --- Simulation Loop Controls ---
+        function startSim() {
+            if (state.temperature >= PHYSICS.max_temp) return;
+            
+            state.isRunning = true;
+            document.body.classList.add('is-heating');
+            
+            ui.textToggle.textContent = 'Pause Heater';
+            ui.iconPlay.className = "fa-solid fa-pause";
+            ui.btnToggle.className = "flex-1 bg-slate-600 hover:bg-slate-500 text-white font-bold py-2.5 px-4 rounded-lg transition shadow-lg flex justify-center items-center gap-2 border border-slate-500";
+            
+            ui.sliderMass.disabled = true;
+            ui.sliderMass.classList.add('opacity-50', 'cursor-not-allowed');
+
+            lastTime = performance.now();
+            reqFrameId = requestAnimationFrame(updatePhysics);
+        }
+
+        function pauseSim() {
+            state.isRunning = false;
+            document.body.classList.remove('is-heating');
+            
+            ui.textToggle.textContent = 'Start Heater';
+            ui.iconPlay.className = "fa-solid fa-play";
+            ui.btnToggle.className = "flex-1 bg-primary hover:bg-sky-400 text-slate-900 font-bold py-2.5 px-4 rounded-lg transition shadow-[0_0_15px_rgba(56,189,248,0.4)] flex justify-center items-center gap-2";
+            
+            cancelAnimationFrame(reqFrameId);
+        }
+
+        function resetSim() {
+            pauseSim();
+            state.timeElapsed = 0;
+            state.energyTotal = 0;
+            state.temperature = PHYSICS.start_temp;
+            state.phase = 'solid';
+            state.meltFraction = 0;
+            state.energyAtMeltStart = 0;
+            state.energyAtLiquidStart = 0;
+            lastChartPush = 0;
+            segmentColors = ['#f59e0b'];
+
+            ui.sliderMass.disabled = false;
+            ui.sliderMass.classList.remove('opacity-50', 'cursor-not-allowed');
+            ui.textToggle.textContent = 'Start Heater';
+            
+            chart.data.labels = [0];
+            chart.data.datasets[0].data = [PHYSICS.start_temp];
+            chart.options.scales.x.suggestedMax = 60;
+            chart.update();
+
+            updateUI(true);
+            updateEquations();
+        }
+
+        // --- Core Physics Engine ---
+        function updatePhysics(timestamp) {
+            if (!state.isRunning) return;
+
+            let dtReal = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            
+            // Limit dt to prevent huge jumps if tab is backgrounded
+            if (dtReal > 0.1) dtReal = 0.1; 
+
+            let dtSim = dtReal * state.timeScale;
+            state.timeElapsed += dtSim;
+
+            // 1. Calculate energy added (Q = P * t)
+            let dQ = state.power * dtSim;
+            state.energyTotal += dQ;
+
+            // Calculate energy boundaries based on mass
+            const energyToMeltPoint = state.mass * PHYSICS.c_solid * (PHYSICS.melt_temp - PHYSICS.start_temp);
+            const energyToMeltCompletely = energyToMeltPoint + (state.mass * PHYSICS.l_fusion);
+
+            // 2. Determine State and Temperature based on Total Energy
+            if (state.energyTotal < energyToMeltPoint) {
+                // PHASE: SOLID HEATING
+                if (state.phase !== 'solid') {
+                    state.phase = 'solid';
+                    updateEquations();
+                }
+                state.temperature = PHYSICS.start_temp + (state.energyTotal / (state.mass * PHYSICS.c_solid));
+                state.meltFraction = 0;
+            } 
+            else if (state.energyTotal < energyToMeltCompletely) {
+                // PHASE: MELTING (Constant Temp)
+                if (state.phase !== 'melting') {
+                    state.phase = 'melting';
+                    state.energyAtMeltStart = energyToMeltPoint;
+                    updateEquations();
+                }
+                state.temperature = PHYSICS.melt_temp; // T is constant!
+                
+                let meltingEnergy = state.energyTotal - state.energyAtMeltStart;
+                state.meltFraction = meltingEnergy / (state.mass * PHYSICS.l_fusion);
+            } 
+            else {
+                // PHASE: LIQUID HEATING
+                if (state.phase !== 'liquid') {
+                    state.phase = 'liquid';
+                    state.energyAtLiquidStart = energyToMeltCompletely;
+                    state.meltFraction = 1.0;
+                    updateEquations();
+                }
+                
+                let liquidEnergy = state.energyTotal - state.energyAtLiquidStart;
+                state.temperature = PHYSICS.melt_temp + (liquidEnergy / (state.mass * PHYSICS.c_liquid));
+
+                // Auto-stop condition
+                if (state.temperature >= PHYSICS.max_temp) {
+                    state.temperature = PHYSICS.max_temp;
+                    pauseSim();
+                    ui.textToggle.textContent = 'Max Temp Reached';
+                    ui.iconPlay.className = "fa-solid fa-flag-checkered";
+                }
+            }
+
+            updateUI();
+            
+            // Throttle chart updates for performance (every 0.2s sim time)
+            if (state.timeElapsed - lastChartPush >= 0.2) {
+                pushChartData();
+                lastChartPush = state.timeElapsed;
+            }
+
+            if (state.isRunning) {
+                reqFrameId = requestAnimationFrame(updatePhysics);
+            }
+        }
+
+        function updateUI(force = false) {
+            ui.readoutTime.textContent = `${state.timeElapsed.toFixed(1)} s`;
+            ui.readoutEnergy.textContent = `${(state.energyTotal / 1000).toFixed(1)} kJ`;
+            ui.readoutTemp.textContent = `${state.temperature.toFixed(1)} °C`;
+            
+            const pct = (state.meltFraction * 100).toFixed(1);
+            ui.readoutFraction.textContent = `${pct} %`;
+            ui.meltProgressBg.style.opacity = state.meltFraction;
+
+            // Phase badges
+            if (state.phase === 'solid') {
+                ui.badgeState.textContent = 'Ice (Solid)';
+                ui.badgeState.className = 'text-xs font-bold uppercase tracking-wide px-2 py-1 rounded bg-slate-700/50 text-slate-300 border border-slate-500/50 backdrop-blur-sm shadow';
+            } else if (state.phase === 'melting') {
+                ui.badgeState.textContent = 'Melting (Phase Transition)';
+                ui.badgeState.className = 'text-xs font-bold uppercase tracking-wide px-2 py-1 rounded bg-accent/20 text-accent border border-accent/50 backdrop-blur-sm shadow';
+            } else {
+                ui.badgeState.textContent = 'Water (Liquid)';
+                ui.badgeState.className = 'text-xs font-bold uppercase tracking-wide px-2 py-1 rounded bg-primary/20 text-primary border border-primary/50 backdrop-blur-sm shadow';
+            }
+        }
+
+        function updateEquations() {
+            if (state.phase === 'solid') {
+                ui.activeEq.innerHTML = `ΔT = <span class="text-orange-400">Q</span> / (<span class="text-primary">m</span> × c<sub>solid</sub>)`;
+                ui.heatBadge.textContent = 'Specific Heat Capacity';
+                ui.heatBadge.className = 'px-3 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm';
+            } else if (state.phase === 'melting') {
+                ui.activeEq.innerHTML = `<span class="text-orange-400">Q</span> = <span class="text-primary">m</span> × <span class="text-rose-400">l<sub>f</sub></span>  <span class="text-slate-500 ml-2 text-sm">(ΔT = 0)</span>`;
+                ui.heatBadge.textContent = 'Specific Latent Heat';
+                ui.heatBadge.className = 'px-3 py-1 bg-rose-900/40 border border-rose-700 text-rose-300 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm';
+            } else {
+                ui.activeEq.innerHTML = `ΔT = <span class="text-orange-400">Q</span> / (<span class="text-primary">m</span> × c<sub>liquid</sub>)`;
+                ui.heatBadge.textContent = 'Specific Heat Capacity';
+                ui.heatBadge.className = 'px-3 py-1 bg-slate-700 border border-slate-600 text-slate-300 rounded text-[10px] font-bold uppercase tracking-wider shadow-sm';
+            }
+        }
+
+        function pushChartData() {
+            chart.data.labels.push(parseFloat(state.timeElapsed.toFixed(1)));
+            chart.data.datasets[0].data.push(parseFloat(state.temperature.toFixed(2)));
+            
+            // Adjust X scale dynamically to keep drawing
+            if (state.timeElapsed > chart.options.scales.x.suggestedMax * 0.95) {
+                chart.options.scales.x.suggestedMax += 30;
+            }
+            
+            // Record segment color for Chart.js based on phase
+            let currentColor = '#f59e0b'; // orange for solid
+            if(state.phase === 'melting') currentColor = '#38bdf8'; // blue for phase change
+            if(state.phase === 'liquid') currentColor = '#ef4444'; // red for liquid heating
+            
+            // push to array to color just this segment
+            segmentColors.push(currentColor);
+
+            chart.update();
+        }
+
+        // --- P5.js Microscopic Visualization ---
+        function initP5() {
+            const sketch = (p) => {
+                let particles = [];
+                let cols = 12;
+                let rows = 8;
+                let spacing;
+                
+                p.setup = () => {
+                    let container = document.getElementById('p5-container');
+                    p.createCanvas(container.offsetWidth, container.offsetHeight);
+                    p.noStroke();
+                    initParticles();
+                };
+
+                p.windowResized = () => {
+                    let container = document.getElementById('p5-container');
+                    p.resizeCanvas(container.offsetWidth, container.offsetHeight);
+                    initParticles(); 
+                };
+
+                function initParticles() {
+                    particles = [];
+                    spacing = p.min(p.width / cols, p.height / rows) * 0.8;
+                    // Center the lattice grid
+                    let offsetX = (p.width - (cols - 1) * spacing) / 2;
+                    let offsetY = (p.height - (rows - 1) * spacing) / 2;
+
+                    for (let i = 0; i < cols; i++) {
+                        for (let j = 0; j < rows; j++) {
+                            particles.push({
+                                index: i * rows + j,
+                                baseX: offsetX + i * spacing,
+                                baseY: offsetY + j * spacing,
+                                x: offsetX + i * spacing,
+                                y: offsetY + j * spacing,
+                                vx: p.random(-1, 1),
+                                vy: p.random(-1, 1),
+                                isFree: false 
+                            });
+                        }
+                    }
+                    // Shuffle index for random melting order appearance
+                    for (let i = particles.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        let temp = particles[i].index;
+                        particles[i].index = particles[j].index;
+                        particles[j].index = temp;
+                    }
+                }
+
+                p.draw = () => {
+                    p.background(15, 23, 42); // slate-900 background
+                    
+                    let totalParticles = particles.length;
+                    let targetFree = p.floor(state.meltFraction * totalParticles);
+                    
+                    // Temp factors for kinetic energy
+                    let solidVibration = p.map(p.constrain(state.temperature, -20, 0), -20, 0, 0.5, 3);
+                    let liquidSpeed = p.map(p.constrain(state.temperature, 0, 50), 0, 50, 1.0, 4.0);
+
+                    particles.forEach(pt => {
+                        // Update state based on melt fraction
+                        if (pt.index < targetFree) pt.isFree = true;
+                        else pt.isFree = false;
+
+                        if (!pt.isFree) {
+                            // SOLID: Vibrate around base position (Lattice)
+                            pt.x = pt.baseX + p.random(-solidVibration, solidVibration);
+                            pt.y = pt.baseY + p.random(-solidVibration, solidVibration);
+                            
+                            p.fill(186, 230, 253, 200); // ice color
+                            p.circle(pt.x, pt.y, spacing * 0.4);
+                        } else {
+                            // LIQUID: Move freely, but bound by GRAVITY to form a pool
+                            pt.vy += 0.2; // Gravity pulls them down
+                            pt.vy *= 0.92; // Friction
+                            
+                            // Brownian horizontal wandering
+                            pt.vx += p.random(-0.5, 0.5); 
+                            pt.vx *= 0.95; // Horizontal friction
+                            
+                            pt.x += pt.vx * liquidSpeed;
+                            pt.y += pt.vy * liquidSpeed;
+                            
+                            // Container constraints (Pooling at bottom)
+                            if (pt.y > p.height - spacing * 0.4) {
+                                pt.y = p.height - spacing * 0.4;
+                                pt.vy *= -0.3; // dampen bounce
+                            }
+                            if (pt.x < spacing * 0.4) { 
+                                pt.x = spacing * 0.4; 
+                                pt.vx *= -0.5; 
+                            }
+                            if (pt.x > p.width - spacing * 0.4) { 
+                                pt.x = p.width - spacing * 0.4; 
+                                pt.vx *= -0.5; 
+                            }
+                            
+                            p.fill(59, 130, 246, 200); // water color
+                            p.circle(pt.x, pt.y, spacing * 0.4); 
+                        }
+                    });
+                };
+            };
+            
+            p5Instance = new p5(sketch, 'p5-container');
+        }
+
+        window.onload = init;
+    </script>
 </body>
 </html>
