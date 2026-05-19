@@ -1,454 +1,834 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Graph Converter | Luminous Learner</title>
+    <!-- Primary SEO Keyword -->
+    <title>Physics Motion Graph Converter</title>
+    <meta name="description" content="Interactive physics motion graph converter. Explore the relationship between displacement, velocity, and acceleration graphs with real-time differentiation and integration.">
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
 
     <style>
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        canvas { touch-action: none; }
-        .graph-grid {
-            background-image: 
-                linear-gradient(to right, #334155 1px, transparent 1px),
-                linear-gradient(to bottom, #334155 1px, transparent 1px);
-            background-size: 40px 40px;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A;
+            color: #F8FAFC;
         }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .no-select {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Glassmorphism panel styling */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+
+        /* Styling the SVG interactive nodes */
+        .control-node {
+            cursor: ns-resize;
+            transition: r 0.15s, fill 0.15s, stroke-width 0.15s;
+        }
+        .control-node:hover {
+            r: 8;
+            stroke-width: 3;
+        }
+        .control-node.active {
+            r: 9;
+            stroke-width: 4;
+            fill: #34D399 !important;
+            stroke: #FFFFFF !important;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* Vector Arrow Tails */
+        .vector-arrow { position: absolute; transition: width 0.1s ease-out, transform 0.1s ease-out, left 0.1s ease-out; }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex flex-col overflow-hidden no-select">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo } = React;
-
-    const CANVAS_WIDTH = 600;
-    const GRAPH_HEIGHT = 180;
-    const TIME_TOTAL = 10; // seconds
-    const POINTS_COUNT = 6; // Control points (t=0, 2, 4, 6, 8, 10)
-
-    const App = () => {
-        // --- State ---
-        // Control points: array of {t, s}. t is fixed, s is variable.
-        const [controlPoints, setControlPoints] = useState(
-            Array.from({ length: POINTS_COUNT }, (_, i) => ({
-                t: i * (TIME_TOTAL / (POINTS_COUNT - 1)),
-                s: i === 0 ? 0 : 20 + i * 10 // Initial slope
-            }))
-        );
-        
-        const [time, setTime] = useState(0);
-        const [isPlaying, setIsPlaying] = useState(false);
-        const [draggingIdx, setDraggingIdx] = useState(null);
-
-        // Calculated Data (High resolution for smooth graphs)
-        const [graphData, setGraphData] = useState({ s: [], v: [], a: [] });
-
-        const canvasRefS = useRef(null);
-        const canvasRefV = useRef(null);
-        const canvasRefA = useRef(null);
-        const requestRef = useRef();
-
-        // --- Math Helpers (Cubic Spline / Catmull-Rom would be smoother, simple implementation here) ---
-        // For educational clarity, we'll use Monotone Cubic Interpolation to avoid overshooting
-        const calculateGraphData = () => {
-            const steps = 200;
-            const dt = TIME_TOTAL / steps;
-            
-            // 1. Interpolate S (Displacement)
-            // Using a simple monotonic interpolation or just linear for basics? 
-            // Physics graphs usually need curves. Let's implement a basic cubic spline solver.
-            
-            // Simple approach: Map points to a smooth curve array
-            const sData = [];
-            const vData = [];
-            const aData = [];
-
-            // Helper to get S at any t using basic cubic interpolation between control points
-            const getS = (t) => {
-                // Find segment
-                const segmentWidth = TIME_TOTAL / (POINTS_COUNT - 1);
-                const idx = Math.min(POINTS_COUNT - 2, Math.floor(t / segmentWidth));
-                const t0 = controlPoints[idx].t;
-                const t1 = controlPoints[idx+1].t;
-                const s0 = controlPoints[idx].s;
-                const s1 = controlPoints[idx+1].s;
-                
-                // Local t (0 to 1)
-                const localT = (t - t0) / (t1 - t0);
-                
-                // Simple Cubic Ease-in-out for smooth connections (Not perfect spline but good enough for demo)
-                // s = s0 + (s1-s0) * (3t^2 - 2t^3)
-                // This forces slope 0 at control points which is limiting.
-                // Let's use Catmull-Rom logic for tangents.
-                
-                const p0 = controlPoints[Math.max(0, idx - 1)];
-                const p1 = controlPoints[idx];
-                const p2 = controlPoints[idx + 1];
-                const p3 = controlPoints[Math.min(POINTS_COUNT - 1, idx + 2)];
-
-                // Catmull-Rom Spline
-                const t2 = localT * localT;
-                const t3 = t2 * localT;
-
-                const v0 = (p2.s - p0.s) * 0.5;
-                const v1 = (p3.s - p1.s) * 0.5;
-
-                // Hermite Basis
-                const h1 = 2*t3 - 3*t2 + 1;
-                const h2 = -2*t3 + 3*t2;
-                const h3 = t3 - 2*t2 + localT;
-                const h4 = t3 - t2;
-
-                return h1*p1.s + h2*p2.s + h3*v0 + h4*v1;
-            };
-
-            // Generate S array
-            for (let i = 0; i <= steps; i++) {
-                const t = (i / steps) * TIME_TOTAL;
-                sData.push(getS(t));
-            }
-
-            // Generate V array (Numerical Derivative dS/dt)
-            for (let i = 0; i < sData.length; i++) {
-                if (i === 0) vData.push((sData[1] - sData[0]) / dt);
-                else if (i === sData.length - 1) vData.push((sData[i] - sData[i-1]) / dt);
-                else vData.push((sData[i+1] - sData[i-1]) / (2 * dt)); // Central difference
-            }
-
-            // Generate A array (Numerical Derivative dV/dt)
-            for (let i = 0; i < vData.length; i++) {
-                if (i === 0) aData.push((vData[1] - vData[0]) / dt);
-                else if (i === vData.length - 1) aData.push((vData[i] - vData[i-1]) / dt);
-                else aData.push((vData[i+1] - vData[i-1]) / (2 * dt));
-            }
-
-            setGraphData({ s: sData, v: vData, a: aData });
-        };
-
-        useEffect(() => {
-            calculateGraphData();
-        }, [controlPoints]);
-
-        // --- Interaction ---
-        const handleMouseDown = (e) => {
-            const rect = canvasRefS.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            // Find closest control point X
-            const clickT = (x / CANVAS_WIDTH) * TIME_TOTAL;
-            const closestIdx = controlPoints.reduce((bestIdx, pt, idx) => {
-                return Math.abs(pt.t - clickT) < Math.abs(controlPoints[bestIdx].t - clickT) ? idx : bestIdx;
-            }, 0);
-
-            // Check if close enough in X (tolerance)
-            if (Math.abs(controlPoints[closestIdx].t - clickT) < 0.5) {
-                setDraggingIdx(closestIdx);
-            }
-        };
-
-        const handleMouseMove = (e) => {
-            if (draggingIdx === null) return;
-            
-            const rect = canvasRefS.current.getBoundingClientRect();
-            let y = e.clientY - rect.top;
-            
-            // Map Y to S (0 to 100 range)
-            // Canvas Y: 0 (top) -> Height (bottom)
-            // S: 100 (top) -> 0 (bottom)
-            // But let's allow negative? Let's say range -20 to 120
-            const sRange = 140;
-            const sOffset = 20; // starts at -20
-            const s = sRange - (y / GRAPH_HEIGHT) * sRange - sOffset;
-
-            setControlPoints(prev => {
-                const next = [...prev];
-                next[draggingIdx] = { ...next[draggingIdx], s: s };
-                return next;
-            });
-        };
-
-        const handleMouseUp = () => {
-            setDraggingIdx(null);
-        };
-
-        // --- Animation ---
-        useEffect(() => {
-            if (isPlaying) {
-                const startTime = Date.now() - time * 1000;
-                const loop = () => {
-                    const now = Date.now();
-                    let t = (now - startTime) / 1000;
-                    if (t > TIME_TOTAL) {
-                        t = TIME_TOTAL;
-                        setIsPlaying(false);
-                    }
-                    setTime(t);
-                    if (t < TIME_TOTAL) requestRef.current = requestAnimationFrame(loop);
-                };
-                requestRef.current = requestAnimationFrame(loop);
-            } else {
-                cancelAnimationFrame(requestRef.current);
-            }
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [isPlaying]);
-
-        // --- Drawing Helper ---
-        const drawGraph = (ctx, data, color, label, unit, minVal, maxVal, showControlPoints = false) => {
-            ctx.clearRect(0, 0, CANVAS_WIDTH, GRAPH_HEIGHT);
-            
-            // Grid
-            // ...handled by CSS mostly, but lets draw Zero line
-            const zeroY = GRAPH_HEIGHT - ((0 - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
-            ctx.strokeStyle = '#475569';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(0, zeroY);
-            ctx.lineTo(CANVAS_WIDTH, zeroY);
-            ctx.stroke();
-
-            // Label
-            ctx.fillStyle = '#94a3b8';
-            ctx.font = '12px sans-serif';
-            ctx.fillText(`${label} (${unit})`, 10, 20);
-
-            // Curve
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            
-            const stepX = CANVAS_WIDTH / (data.length - 1);
-            
-            data.forEach((val, i) => {
-                const x = i * stepX;
-                const y = GRAPH_HEIGHT - ((val - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            });
-            ctx.stroke();
-
-            // Control Points (Only for S-graph)
-            if (showControlPoints) {
-                controlPoints.forEach((p, i) => {
-                    const x = (p.t / TIME_TOTAL) * CANVAS_WIDTH;
-                    const y = GRAPH_HEIGHT - ((p.s - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
-                    
-                    ctx.fillStyle = i === draggingIdx ? '#fff' : color;
-                    ctx.beginPath();
-                    ctx.arc(x, y, 6, 0, Math.PI*2);
-                    ctx.fill();
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
-                });
-            }
-
-            // Time Indicator Line
-            const timeX = (time / TIME_TOTAL) * CANVAS_WIDTH;
-            ctx.strokeStyle = '#fbbf24'; // Amber
-            ctx.lineWidth = 1;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.moveTo(timeX, 0);
-            ctx.lineTo(timeX, GRAPH_HEIGHT);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            // Current Value Dot
-            // Interpolate current val
-            const idx = Math.floor((time / TIME_TOTAL) * (data.length - 1));
-            const currentVal = data[idx] || 0;
-            const curY = GRAPH_HEIGHT - ((currentVal - minVal) / (maxVal - minVal)) * GRAPH_HEIGHT;
-            ctx.fillStyle = '#fbbf24';
-            ctx.beginPath();
-            ctx.arc(timeX, curY, 4, 0, Math.PI*2);
-            ctx.fill();
-            
-            // Value Text
-            ctx.fillStyle = '#fbbf24';
-            ctx.fillText(currentVal.toFixed(1), timeX + 5, curY - 5);
-        };
-
-        // --- Render Loop ---
-        useEffect(() => {
-            if (!canvasRefS.current || !canvasRefV.current || !canvasRefA.current) return;
-
-            const ctxS = canvasRefS.current.getContext('2d');
-            const ctxV = canvasRefV.current.getContext('2d');
-            const ctxA = canvasRefA.current.getContext('2d');
-
-            drawGraph(ctxS, graphData.s, '#3b82f6', 'Displacement', 'm', -20, 120, true);
-            drawGraph(ctxV, graphData.v, '#10b981', 'Velocity', 'm/s', -30, 30);
-            drawGraph(ctxA, graphData.a, '#ef4444', 'Acceleration', 'm/s²', -20, 20);
-
-        }, [graphData, time, draggingIdx, controlPoints]);
-
-        // Car position calculation
-        const getCarPos = () => {
-            const idx = Math.floor((time / TIME_TOTAL) * (graphData.s.length - 1));
-            return graphData.s[idx] || 0;
-        };
-
-        return (
-            <div className="min-h-screen bg-slate-900 pb-12 font-sans text-slate-200"
-                 onMouseMove={handleMouseMove}
-                 onMouseUp={handleMouseUp}
-                 onMouseLeave={handleMouseUp}
-            >
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-20">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-indigo-500/20 p-2 rounded-lg">
-                            <i data-lucide="activity" className="w-6 h-6 text-indigo-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Motion Graph Converter</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Kinematics
-                    </div>
-                </nav>
-
-                <main className="max-w-5xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    
-                    {/* Left: Graphs */}
-                    <div className="lg:col-span-8 space-y-2">
-                        {/* S-T Graph */}
-                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative group">
-                            <div className="absolute top-2 right-2 text-xs text-blue-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
-                                Drag points to edit
-                            </div>
-                            <canvas 
-                                ref={canvasRefS} 
-                                width={CANVAS_WIDTH} 
-                                height={GRAPH_HEIGHT}
-                                onMouseDown={handleMouseDown}
-                                className="w-full h-auto cursor-ns-resize graph-grid bg-slate-950"
-                            />
-                        </div>
-
-                        {/* V-T Graph */}
-                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative">
-                            <div className="absolute top-2 right-2 text-xs text-emerald-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
-                                Slope of S-T
-                            </div>
-                            <canvas 
-                                ref={canvasRefV} 
-                                width={CANVAS_WIDTH} 
-                                height={GRAPH_HEIGHT}
-                                className="w-full h-auto graph-grid bg-slate-950"
-                            />
-                        </div>
-
-                        {/* A-T Graph */}
-                        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden relative">
-                            <div className="absolute top-2 right-2 text-xs text-red-400 font-bold bg-slate-900/80 px-2 py-1 rounded pointer-events-none">
-                                Slope of V-T
-                            </div>
-                            <canvas 
-                                ref={canvasRefA} 
-                                width={CANVAS_WIDTH} 
-                                height={GRAPH_HEIGHT}
-                                className="w-full h-auto graph-grid bg-slate-950"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Right: Visualization & Controls */}
-                    <div className="lg:col-span-4 space-y-6">
-                        
-                        {/* Simulation Visual */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h3 className="text-white font-bold mb-4 flex items-center">
-                                <i data-lucide="car" className="w-5 h-5 mr-2 text-yellow-400"></i>
-                                Motion Visualizer
-                            </h3>
-                            <div className="bg-slate-900 rounded-xl h-64 relative border border-slate-800 overflow-hidden">
-                                {/* Track lines */}
-                                <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-700 border-l border-dashed border-slate-600"></div>
-                                <div className="absolute top-1/2 left-0 right-0 h-px bg-slate-700"></div>
-                                
-                                {/* 0m Marker */}
-                                <div className="absolute left-2 bottom-4 text-xs text-slate-500">0m</div>
-                                <div className="absolute left-1/2 bottom-4 w-full border-b border-slate-700"></div>
-
-                                {/* Car */}
-                                <div 
-                                    className="absolute left-1/2 w-12 h-20 -ml-6 bg-indigo-600 rounded-lg shadow-[0_0_15px_rgba(79,70,229,0.5)] flex items-center justify-center transition-transform duration-75 ease-linear"
-                                    style={{
-                                        bottom: '20px', 
-                                        transform: `translateY(${-getCarPos() * 2}px)` // Scale: 1m = 2px
-                                    }}
-                                >
-                                    <i data-lucide="chevrons-up" className="text-white/50 w-6 h-6"></i>
-                                </div>
-                                <div className="absolute bottom-2 right-2 text-xs font-mono text-indigo-300">
-                                    Pos: {getCarPos().toFixed(1)}m
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Controls */}
-                        <div className="space-y-3">
-                            <button 
-                                onClick={() => setIsPlaying(!isPlaying)}
-                                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center transition-all ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'}`}
-                            >
-                                <i data-lucide={isPlaying ? "pause" : "play"} className="w-5 h-5 mr-2"></i>
-                                {isPlaying ? "Pause Simulation" : "Start Simulation"}
-                            </button>
-                            
-                            <button 
-                                onClick={() => {
-                                    setIsPlaying(false);
-                                    setTime(0);
-                                }}
-                                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium border border-slate-700 transition-colors flex items-center justify-center"
-                            >
-                                <i data-lucide="rotate-ccw" className="w-4 h-4 mr-2"></i>
-                                Reset Time
-                            </button>
-                        </div>
-
-                        {/* Info */}
-                        <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl text-xs text-blue-200">
-                            <p className="mb-2 font-bold"><i data-lucide="info" className="w-3 h-3 inline mr-1"></i> How to use:</p>
-                            <ul className="list-disc pl-4 space-y-1 text-slate-400">
-                                <li>Drag the <strong>dots</strong> on the top graph (s-t) to change the displacement.</li>
-                                <li>The Velocity (v) and Acceleration (a) graphs calculate automatically.</li>
-                                <li>Press Play to see the car move according to your graph!</li>
-                            </ul>
-                        </div>
-
-                    </div>
-
-                </main>
+    <!-- Header Section -->
+    <header class="bg-slate-900 border-b border-slate-800 py-3 px-6 shrink-0 shadow-lg relative z-20">
+        <div class="max-w-[1440px] mx-auto flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-500 tracking-tight">
+                    Motion Graph Converter
+                </h1>
+                <p class="text-slate-400 text-xs md:text-sm mt-0.5 font-medium">
+                    The Calculus of Kinematics: Rates of Change & Accumulated Area
+                </p>
             </div>
-        );
-    };
+            <div class="hidden md:flex gap-3">
+                <span class="bg-slate-800 text-emerald-400 text-xs px-3 py-1.5 rounded-lg border border-emerald-900/50 shadow-inner flex items-center gap-2 font-mono uppercase font-bold tracking-wider">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live Integration
+                </span>
+                <span class="bg-slate-800 text-orange-400 text-xs px-3 py-1.5 rounded-lg border border-orange-900/50 shadow-inner flex items-center gap-2 font-mono uppercase font-bold tracking-wider">
+                    <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+                    Live Differentiation
+                </span>
+            </div>
+        </div>
+        <div class="absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent"></div>
+    </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    <!-- Main Workspace -->
+    <main class="flex-grow flex items-center justify-center p-3 md:p-6 w-full h-full">
+        <!-- Main responsive grid container to prevent vertical scroll on normal displays -->
+        <div class="max-w-[1440px] w-full max-h-[920px] h-full flex flex-col lg:flex-row gap-6">
 
-    if (typeof lucide !== 'undefined') {
-        setTimeout(() => lucide.createIcons(), 100);
-    }
-</script>
+            <!-- GRAPH INTERACTION AREA (Left) -->
+            <section class="flex-[1.6] flex flex-col gap-4 bg-slate-950/40 p-4 rounded-3xl border border-slate-800 shadow-inner relative">
+                
+                <!-- Graph Labels and Hover Coordinates Display -->
+                <div class="flex justify-between items-center px-2">
+                    <span class="text-sm font-semibold text-slate-400"><i class="fa-solid fa-hand-pointer text-emerald-500 mr-1"></i> Interactive Velocity Graph (Drag nodes to alter motion)</span>
+                    <div id="readout" class="font-mono text-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-300 flex gap-4 shadow-inner">
+                        <div>t: <span id="readout-t" class="text-white font-bold">0.0</span>s</div>
+                        <div>s: <span id="readout-s" class="text-cyan-400 font-bold">0.0</span>m</div>
+                        <div>v: <span id="readout-v" class="text-emerald-400 font-bold">0.0</span>m/s</div>
+                        <div>a: <span id="readout-a" class="text-orange-400 font-bold">0.0</span>m/s²</div>
+                    </div>
+                </div>
+
+                <!-- 3 Synchronized SVGs -->
+                <div class="flex-grow flex flex-col justify-between gap-2 relative">
+                    <!-- DISPLACEMENT GRAPH -->
+                    <div class="relative bg-slate-900/60 rounded-2xl p-2 border border-slate-800 flex-1 flex flex-col min-h-[140px] shadow-inner">
+                        <span class="absolute top-2 left-14 text-xs font-bold text-cyan-400 uppercase tracking-widest pointer-events-none">
+                            Displacement-Time (s-t) &nbsp;<span class="text-[10px] text-slate-500 normal-case">(Integral of Velocity)</span>
+                        </span>
+                        <svg id="svg-s" class="w-full h-full cursor-crosshair overflow-visible" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+                    </div>
+
+                    <!-- VELOCITY GRAPH (INTERACTIVE) -->
+                    <div class="relative bg-slate-900/80 rounded-2xl p-2 border-2 border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.05)] flex-1 flex flex-col min-h-[140px]">
+                        <span class="absolute top-2 left-14 text-xs font-bold text-emerald-400 uppercase tracking-widest pointer-events-none">
+                            Velocity-Time (v-t) &nbsp;<span class="text-[10px] text-slate-400 normal-case">(Drag points to shape the motion)</span>
+                        </span>
+                        <svg id="svg-v" class="w-full h-full cursor-ns-resize overflow-visible" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+                    </div>
+
+                    <!-- ACCELERATION GRAPH -->
+                    <div class="relative bg-slate-900/60 rounded-2xl p-2 border border-slate-800 flex-1 flex flex-col min-h-[140px] shadow-inner">
+                        <span class="absolute top-2 left-14 text-xs font-bold text-orange-400 uppercase tracking-widest pointer-events-none">
+                            Acceleration-Time (a-t) &nbsp;<span class="text-[10px] text-slate-500 normal-case">(Derivative of Velocity)</span>
+                        </span>
+                        <svg id="svg-a" class="w-full h-full cursor-crosshair overflow-visible" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+                    </div>
+                </div>
+
+                <!-- PHYSICAL 1D MOTION SIMULATOR (The moving object track) -->
+                <div class="bg-slate-900 rounded-2xl p-4 border border-slate-800 flex flex-col gap-2 shrink-0 shadow-lg">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Live Particle Motion</span>
+                        <div class="flex gap-4">
+                            <span class="font-mono text-xs text-emerald-400 flex items-center gap-1"><div class="w-2 h-2 bg-emerald-400"></div> v Vector</span>
+                            <span class="font-mono text-xs text-orange-400 flex items-center gap-1"><div class="w-2 h-2 bg-orange-400"></div> a Vector</span>
+                        </div>
+                    </div>
+                    <!-- The Track -->
+                    <div class="relative w-full h-16 bg-slate-950 rounded-lg border border-slate-700 flex items-center px-12 overflow-hidden shadow-inner">
+                        <!-- Scale Marks (Dynamically Updated by JS) -->
+                        <div class="absolute inset-x-12 h-full flex justify-between items-end pb-1 pointer-events-none text-[10px] text-slate-500 font-mono font-bold">
+                            <span id="track-m-100">-15m</span>
+                            <span id="track-m-50"></span>
+                            <span id="track-0">0m</span>
+                            <span id="track-p-50"></span>
+                            <span id="track-p-100">+15m</span>
+                        </div>
+                        
+                        <!-- Center Zero Tick line -->
+                        <div class="absolute left-1/2 -translate-x-1/2 h-full w-px bg-slate-700"></div>
+                        
+                        <!-- Drag-Scrub Track Slider Indicator -->
+                        <div class="absolute left-12 right-12 h-0.5 bg-slate-800"></div>
+
+                        <!-- Velocity Vector Line -->
+                        <div id="vector-v" class="vector-arrow h-1.5 bg-emerald-400 z-10" style="top: 30%;"></div>
+                        
+                        <!-- Acceleration Vector Line -->
+                        <div id="vector-a" class="vector-arrow h-1.5 bg-orange-400 z-10" style="top: 70%;"></div>
+
+                        <!-- Animated Vehicle/Particle -->
+                        <div id="particle" class="absolute h-6 w-6 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 shadow-[0_0_15px_#22d3ee] -translate-x-1/2 -translate-y-1/2 transition-all duration-100 ease-out flex items-center justify-center border-2 border-white z-20" style="left: 50%; top: 50%;">
+                            <div class="w-1.5 h-1.5 bg-slate-950 rounded-full"></div>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- CONTROLS & EXPLANATIONS (Right) -->
+            <section class="flex-[1] flex flex-col gap-4 h-full overflow-y-auto custom-scrollbar">
+                
+                <!-- Playback Control Panel -->
+                <div class="glass-panel rounded-3xl p-5 flex-shrink-0 relative overflow-hidden border-t border-t-slate-700/50">
+                    <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-3">Simulation Control</h2>
+                    
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="flex gap-2">
+                            <button id="btn-play" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white p-2.5 rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] border border-emerald-500">
+                                <!-- Play Icon SVG -->
+                                <svg id="icon-play" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                <!-- Pause Icon SVG -->
+                                <svg id="icon-pause" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                            </button>
+                            <button id="btn-reset" class="bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 p-2.5 rounded-xl transition-all border border-slate-600 shadow">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            </button>
+                        </div>
+                        
+                        <!-- Presets selector -->
+                        <div class="flex-grow max-w-[180px]">
+                            <select id="preset-select" class="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs font-bold rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 outline-none shadow-inner">
+                                <option value="" disabled selected>Load Motion Preset...</option>
+                                <option value="const-vel">Constant Velocity</option>
+                                <option value="const-accel">Uniform Acceleration</option>
+                                <option value="stop-go">Accelerate, Cruise, Stop</option>
+                                <option value="harmonic">Simple Harmonic Path</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Constant value displays -->
+                    <div class="grid grid-cols-2 gap-3 mt-4">
+                        <div class="bg-slate-950/60 rounded-xl p-3 border border-slate-800 shadow-inner">
+                            <span class="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Displacement (∫ v dt)</span>
+                            <div class="text-lg font-mono font-bold text-cyan-400 mt-0.5"><span id="live-area">0.0</span> m</div>
+                        </div>
+                        <div class="bg-slate-950/60 rounded-xl p-3 border border-slate-800 shadow-inner">
+                            <span class="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Acceleration (dv/dt)</span>
+                            <div class="text-lg font-mono font-bold text-orange-400 mt-0.5"><span id="live-slope">0.0</span> m/s²</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Calculus Teacher Card -->
+                <div class="glass-panel rounded-3xl p-6 flex-grow flex flex-col justify-between border-t border-t-slate-700/50">
+                    <div>
+                        <h3 class="text-base font-bold text-slate-200 mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477-4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                            Calculus Connections
+                        </h3>
+
+                        <!-- Interactive Explanation steps -->
+                        <div class="space-y-4 text-xs">
+                            <div id="card-derivative" class="p-4 bg-slate-900/60 rounded-xl border border-slate-700 shadow-inner transition-all duration-300">
+                                <h4 class="font-bold text-orange-400 flex items-center gap-1 uppercase tracking-wider text-[10px] mb-1">
+                                    <span>Differentiation (Slopes)</span>
+                                </h4>
+                                <p class="text-slate-300 leading-relaxed">
+                                    Slope of the <strong class="text-cyan-400">s-t curve</strong> gives <strong class="text-emerald-400">velocity</strong>. <br>
+                                    Slope of the <strong class="text-emerald-400">v-t curve</strong> gives <strong class="text-orange-400">acceleration</strong>.
+                                </p>
+                            </div>
+
+                            <div id="card-integral" class="p-4 bg-slate-900/60 rounded-xl border border-slate-700 shadow-inner transition-all duration-300">
+                                <h4 class="font-bold text-cyan-400 flex items-center gap-1 uppercase tracking-wider text-[10px] mb-1">
+                                    <span>Integration (Signed Areas)</span>
+                                </h4>
+                                <p class="text-slate-300 leading-relaxed">
+                                    The <em>signed area</em> under the <strong class="text-emerald-400">v-t curve</strong> determines the change in <strong class="text-cyan-400">displacement</strong>. Area below the x-axis means the particle moves backward!
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mathematical Formula display -->
+                    <div class="mt-6 p-4 bg-slate-950/80 rounded-xl border border-slate-800 font-mono text-xs flex flex-col gap-3 shadow-inner">
+                        <div class="flex items-center justify-between text-slate-400">
+                            <span class="font-sans font-bold text-[10px] uppercase tracking-widest">Derivative:</span>
+                            <span class="text-orange-400 font-bold text-sm bg-orange-950/30 px-2 py-0.5 rounded">a(t) = dv/dt</span>
+                        </div>
+                        <div class="h-px w-full bg-slate-800"></div>
+                        <div class="flex items-center justify-between text-slate-400">
+                            <span class="font-sans font-bold text-[10px] uppercase tracking-widest">Integral:</span>
+                            <span class="text-cyan-400 font-bold text-sm bg-cyan-950/30 px-2 py-0.5 rounded">s(t) = ∫ v(t) dt</span>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+        </div>
+    </main>
+
+    <!-- PHYSICS ENGINE & SVG CHART DRAWING LOGIC -->
+    <script>
+        /**
+         * PHYSICS MOTION GRAPH CONVERTER - CORE LOGIC
+         * ----------------------------------------------------
+         * 1. Representation:
+         * - Time domain: t = 0 to 10 seconds.
+         * - 5 draggable control points on Velocity (v-t) graph at fixed intervals.
+         * - Interstitial velocity v(t) is linear piecewise between control points.
+         * 2. Math & Physics computations:
+         * - Differentiation: a(t) is piecewise constant (step function of slopes).
+         * - Integration: s(t) is piecewise quadratic (smooth parabolic arcs).
+         * - High resolution curves: 201 samples generated to render SVG paths.
+         */
+
+        // --- Core Simulation State ---
+        const T_MAX = 10;
+        const NUM_POINTS = 5;
+        const SEGMENT_T = T_MAX / (NUM_POINTS - 1); // 2.5s intervals
+
+        const state = {
+            // Draggable velocity control nodes (t: seconds, v: m/s)
+            controlNodes: [
+                { t: 0.0, v: 0.0 },
+                { t: 2.5, v: 3.0 },
+                { t: 5.0, v: 1.0 },
+                { t: 7.5, v: -3.0 },
+                { t: 10.0, v: 0.0 }
+            ],
+
+            samples: [], // Elements: { t, s, v, a }
+            
+            activeNodeIndex: null,
+            scrubTime: 0.0, 
+            isPlaying: false,
+            playTime: 0.0
+        };
+
+        // --- Presets Definition ---
+        const PRESETS = {
+            'const-vel': [
+                { t: 0.0, v: 3.0 }, { t: 2.5, v: 3.0 }, { t: 5.0, v: 3.0 },
+                { t: 7.5, v: 3.0 }, { t: 10.0, v: 3.0 }
+            ],
+            'const-accel': [
+                { t: 0.0, v: -4.0 }, { t: 2.5, v: -2.0 }, { t: 5.0, v: 0.0 },
+                { t: 7.5, v: 2.0 }, { t: 10.0, v: 4.0 }
+            ],
+            'stop-go': [
+                { t: 0.0, v: 0.0 }, { t: 2.5, v: 4.0 }, { t: 5.0, v: 4.0 },
+                { t: 7.5, v: 0.0 }, { t: 10.0, v: 0.0 }
+            ],
+            'harmonic': [
+                { t: 0.0, v: 0.0 }, { t: 2.5, v: 4.5 }, { t: 5.0, v: 0.0 },
+                { t: 7.5, v: -4.5 }, { t: 10.0, v: 0.0 }
+            ]
+        };
+
+        // --- SVG Viewport configuration ---
+        const SVG_W = 600;
+        const SVG_H = 140;
+        const MARGIN = { left: 55, right: 25, top: 25, bottom: 25 };
+        const PLOT_W = SVG_W - MARGIN.left - MARGIN.right;
+        const PLOT_H = SVG_H - MARGIN.top - MARGIN.bottom;
+
+        // Dynamic limits
+        const V_MAX = 5.0;  // m/s
+        const A_MAX = 5.0;  // m/s^2 
+        let sMax = 15.0;    // m (displacement auto-scales)
+
+        // --- DOM Elements ---
+        const els = {
+            svgS: document.getElementById('svg-s'),
+            svgV: document.getElementById('svg-v'),
+            svgA: document.getElementById('svg-a'),
+            
+            readoutT: document.getElementById('readout-t'),
+            readoutS: document.getElementById('readout-s'),
+            readoutV: document.getElementById('readout-v'),
+            readoutA: document.getElementById('readout-a'),
+            
+            particle: document.getElementById('particle'),
+            vectorV: document.getElementById('vector-v'),
+            vectorA: document.getElementById('vector-a'),
+            
+            trackM100: document.getElementById('track-m-100'),
+            trackP100: document.getElementById('track-p-100'),
+            
+            btnPlay: document.getElementById('btn-play'),
+            btnReset: document.getElementById('btn-reset'),
+            iconPlay: document.getElementById('icon-play'),
+            iconPause: document.getElementById('icon-pause'),
+            presetSelect: document.getElementById('preset-select'),
+            
+            liveArea: document.getElementById('live-area'),
+            liveSlope: document.getElementById('live-slope'),
+            
+            cardDerivative: document.getElementById('card-derivative'),
+            cardIntegral: document.getElementById('card-integral')
+        };
+
+        // --- Mathematical Solver ---
+
+        function solveKinematics(t) {
+            let i = Math.floor(t / SEGMENT_T);
+            if (i >= NUM_POINTS - 1) i = NUM_POINTS - 2; 
+
+            const p0 = state.controlNodes[i];
+            const p1 = state.controlNodes[i + 1];
+            
+            const dt_seg = p1.t - p0.t;
+            const t_rel = t - p0.t;
+
+            // 1. Calculate Acceleration (Slope of v-t segment)
+            const a = (p1.v - p0.v) / dt_seg;
+
+            // 2. Calculate Velocity
+            const v = p0.v + a * t_rel;
+
+            // 3. Calculate Displacement (Definite Integral area accumulation)
+            let s = 0;
+            // Accumulate areas of preceding completed segments (trapezoids)
+            for (let j = 0; j < i; j++) {
+                const node0 = state.controlNodes[j];
+                const node1 = state.controlNodes[j + 1];
+                s += 0.5 * (node0.v + node1.v) * (node1.t - node0.t);
+            }
+            // Accumulate area of current active segment up to t_rel
+            s += 0.5 * (p0.v + v) * t_rel;
+
+            return { s, v, a };
+        }
+
+        function updatePhysics() {
+            state.samples = [];
+            const steps = 200;
+            let currentSMax = 10.0; // minimum auto-scale bounds
+
+            for (let i = 0; i <= steps; i++) {
+                const t = (i / steps) * T_MAX;
+                const physics = solveKinematics(t);
+                state.samples.push({ t, ...physics });
+                
+                if (Math.abs(physics.s) > currentSMax) {
+                    currentSMax = Math.abs(physics.s);
+                }
+            }
+            
+            // Auto-scale displacement axis with safety margin
+            sMax = Math.ceil(currentSMax + 2.0);
+
+            renderCharts();
+            updateLiveIndicators();
+        }
+
+        // --- Coordinate Space Converters ---
+        function getXPixel(t) { return MARGIN.left + (t / T_MAX) * PLOT_W; }
+        function getTimeFromXPixel(x) { return ((x - MARGIN.left) / PLOT_W) * T_MAX; }
+        
+        function getYPixel(val, maxVal) {
+            const centerY = MARGIN.top + PLOT_H / 2;
+            const pixelsPerUnit = (PLOT_H / 2) / maxVal;
+            return centerY - val * pixelsPerUnit;
+        }
+
+        function getValFromYPixel(y, maxVal) {
+            const centerY = MARGIN.top + PLOT_H / 2;
+            const pixelsPerUnit = (PLOT_H / 2) / maxVal;
+            return (centerY - y) / pixelsPerUnit;
+        }
+
+        // --- SVG Graphics Generator ---
+
+        function drawAxes(svg, maxVal, unit) {
+            svg.innerHTML = ''; 
+            
+            const centerY = MARGIN.top + PLOT_H / 2;
+            const gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            gridGroup.setAttribute("stroke", "rgba(255, 255, 255, 0.05)");
+            gridGroup.setAttribute("stroke-width", "1");
+
+            // Horizontal zero line
+            const zeroLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            zeroLine.setAttribute("x1", MARGIN.left);
+            zeroLine.setAttribute("y1", centerY);
+            zeroLine.setAttribute("x2", SVG_W - MARGIN.right);
+            zeroLine.setAttribute("y2", centerY);
+            zeroLine.setAttribute("stroke", "rgba(255, 255, 255, 0.3)");
+            zeroLine.setAttribute("stroke-width", "1.5");
+            gridGroup.appendChild(zeroLine);
+
+            // Left Vertical baseline
+            const leftLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            leftLine.setAttribute("x1", MARGIN.left);
+            leftLine.setAttribute("y1", MARGIN.top);
+            leftLine.setAttribute("x2", MARGIN.left);
+            leftLine.setAttribute("y2", SVG_H - MARGIN.bottom);
+            leftLine.setAttribute("stroke", "rgba(255, 255, 255, 0.3)");
+            leftLine.setAttribute("stroke-width", "1.5");
+            gridGroup.appendChild(leftLine);
+
+            // Time markers & vertical lines
+            for (let i = 0; i <= T_MAX; i += 2) {
+                const x = getXPixel(i);
+                
+                if (i > 0) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", x);
+                    line.setAttribute("y1", MARGIN.top);
+                    line.setAttribute("x2", x);
+                    line.setAttribute("y2", SVG_H - MARGIN.bottom);
+                    gridGroup.appendChild(line);
+                }
+
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", x);
+                txt.setAttribute("y", SVG_H - 10);
+                txt.setAttribute("fill", "#64748B");
+                txt.setAttribute("font-size", "10");
+                txt.setAttribute("font-family", "JetBrains Mono");
+                txt.setAttribute("text-anchor", "middle");
+                txt.textContent = `${i}s`;
+                svg.appendChild(txt);
+            }
+
+            // Y-axis ticks
+            const ticks = [-maxVal * 0.8, -maxVal * 0.4, 0, maxVal * 0.4, maxVal * 0.8];
+            ticks.forEach(val => {
+                if (Math.abs(val) < 0.01) val = 0; 
+
+                const y = getYPixel(val, maxVal);
+                
+                if (val !== 0) {
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", MARGIN.left);
+                    line.setAttribute("y1", y);
+                    line.setAttribute("x2", SVG_W - MARGIN.right);
+                    line.setAttribute("y2", y);
+                    gridGroup.appendChild(line);
+                }
+
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", MARGIN.left - 8);
+                txt.setAttribute("y", y + 3);
+                txt.setAttribute("fill", "#64748B");
+                txt.setAttribute("font-size", "10");
+                txt.setAttribute("font-family", "JetBrains Mono");
+                txt.setAttribute("text-anchor", "end");
+                txt.textContent = `${val > 0 ? '+' : ''}${val.toFixed(1)}${unit}`;
+                svg.appendChild(txt);
+            });
+
+            svg.appendChild(gridGroup);
+        }
+
+        function renderCharts() {
+            // Draw axis baselines
+            drawAxes(els.svgS, sMax, 'm');
+            drawAxes(els.svgV, V_MAX, 'm/s');
+            drawAxes(els.svgA, A_MAX, 'm/s²');
+
+            // 1. Draw Displacement Path
+            let pathSD = `M ${getXPixel(state.samples[0].t)} ${getYPixel(state.samples[0].s, sMax)}`;
+            for (let i = 1; i < state.samples.length; i++) {
+                pathSD += ` L ${getXPixel(state.samples[i].t)} ${getYPixel(state.samples[i].s, sMax)}`;
+            }
+            createSvgPath(els.svgS, pathSD, "#22D3EE", "3", "none");
+
+            // 2. Draw Velocity Path (Highlight signed integration area)
+            drawVelocityIntegrationArea();
+            
+            let pathVD = `M ${getXPixel(state.samples[0].t)} ${getYPixel(state.samples[0].v, V_MAX)}`;
+            for (let i = 1; i < state.samples.length; i++) {
+                pathVD += ` L ${getXPixel(state.samples[i].t)} ${getYPixel(state.samples[i].v, V_MAX)}`;
+            }
+            createSvgPath(els.svgV, pathVD, "#34D399", "3", "none");
+
+            // 3. Draw Acceleration Path (Step constant segments)
+            let pathAD = "";
+            for (let i = 0; i < state.controlNodes.length - 1; i++) {
+                const node0 = state.controlNodes[i];
+                const node1 = state.controlNodes[i + 1];
+                const a = (node1.v - node0.v) / (node1.t - node0.t);
+                
+                const x0 = getXPixel(node0.t);
+                const x1 = getXPixel(node1.t);
+                const y = getYPixel(a, A_MAX);
+
+                if (i === 0) {
+                    pathAD += `M ${x0} ${y} L ${x1} ${y}`;
+                } else {
+                    // Vertical step connecting jumps (visual representation)
+                    const prevY = getYPixel((state.controlNodes[i].v - state.controlNodes[i-1].v) / (state.controlNodes[i].t - state.controlNodes[i-1].t), A_MAX);
+                    pathAD += ` L ${x0} ${prevY} L ${x0} ${y} L ${x1} ${y}`;
+                }
+            }
+            createSvgPath(els.svgA, pathAD, "#F97316", "3", "none");
+
+            // 4. Draw Draggable Control Points on Velocity graph
+            state.controlNodes.forEach((node, idx) => {
+                const cx = getXPixel(node.t);
+                const cy = getYPixel(node.v, V_MAX);
+
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute("cx", cx);
+                circle.setAttribute("cy", cy);
+                circle.setAttribute("r", "7");
+                circle.setAttribute("fill", "#10B981");
+                circle.setAttribute("stroke", "#0F172A");
+                circle.setAttribute("stroke-width", "2");
+                circle.setAttribute("class", `control-node ${state.activeNodeIndex === idx ? 'active' : ''}`);
+                
+                const onStart = (e) => {
+                    e.preventDefault();
+                    state.activeNodeIndex = idx;
+                    document.body.style.cursor = 'ns-resize';
+                    circle.classList.add('active');
+                };
+                circle.addEventListener('mousedown', onStart);
+                circle.addEventListener('touchstart', onStart, {passive: false});
+
+                els.svgV.appendChild(circle);
+            });
+
+            // 5. Draw synchronized vertical scrubber lines
+            drawScrubber(els.svgS, state.scrubTime, sMax);
+            drawScrubber(els.svgV, state.scrubTime, V_MAX);
+            drawScrubber(els.svgA, state.scrubTime, A_MAX);
+        }
+
+        function createSvgPath(svg, dAttribute, strokeColor, strokeWidth, fillColor) {
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", dAttribute);
+            path.setAttribute("stroke", strokeColor);
+            path.setAttribute("stroke-width", strokeWidth);
+            path.setAttribute("fill", fillColor);
+            path.setAttribute("stroke-linecap", "round");
+            path.setAttribute("stroke-linejoin", "round");
+            svg.appendChild(path);
+        }
+
+        function drawVelocityIntegrationArea() {
+            // Draw filled signed area representation up to current scrubber Time
+            let areaPathD = `M ${getXPixel(0)} ${getYPixel(0, V_MAX)}`;
+            
+            for (let i = 0; i < state.samples.length; i++) {
+                const pt = state.samples[i];
+                if (pt.t <= state.scrubTime) {
+                    areaPathD += ` L ${getXPixel(pt.t)} ${getYPixel(pt.v, V_MAX)}`;
+                } else {
+                    break;
+                }
+            }
+            areaPathD += ` L ${getXPixel(state.scrubTime)} ${getYPixel(0, V_MAX)} Z`;
+            createSvgPath(els.svgV, areaPathD, "none", "0", "rgba(52, 211, 153, 0.2)");
+        }
+
+        function drawScrubber(svg, time, maxVal) {
+            const x = getXPixel(time);
+            
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", x);
+            line.setAttribute("y1", MARGIN.top);
+            line.setAttribute("x2", x);
+            line.setAttribute("y2", SVG_H - MARGIN.bottom);
+            line.setAttribute("stroke", "#F1F5F9");
+            line.setAttribute("stroke-width", "1.5");
+            line.setAttribute("stroke-dasharray", "4 4");
+            svg.appendChild(line);
+
+            const kinetics = solveKinematics(time);
+            let val = kinetics.v;
+            let col = "#10B981";
+            if (svg === els.svgS) { val = kinetics.s; col = "#22D3EE"; }
+            else if (svg === els.svgA) { val = kinetics.a; col = "#F97316"; }
+
+            const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            dot.setAttribute("cx", x);
+            dot.setAttribute("cy", getYPixel(val, maxVal));
+            dot.setAttribute("r", "5");
+            dot.setAttribute("fill", col);
+            dot.setAttribute("stroke", "#FFFFFF");
+            dot.setAttribute("stroke-width", "1.5");
+            svg.appendChild(dot);
+        }
+
+        // --- UI Updates & Physics Scrubber Synchronization ---
+
+        function updateLiveIndicators() {
+            const kinematics = solveKinematics(state.scrubTime);
+            
+            // Displays update
+            els.readoutT.innerText = state.scrubTime.toFixed(2);
+            els.readoutS.innerText = (kinematics.s >= 0 ? '+' : '') + kinematics.s.toFixed(2);
+            els.readoutV.innerText = (kinematics.v >= 0 ? '+' : '') + kinematics.v.toFixed(2);
+            els.readoutA.innerText = (kinematics.a >= 0 ? '+' : '') + kinematics.a.toFixed(2);
+
+            els.liveArea.innerText = (kinematics.s >= 0 ? '+' : '') + kinematics.s.toFixed(2);
+            els.liveSlope.innerText = (kinematics.a >= 0 ? '+' : '') + kinematics.a.toFixed(2);
+
+            // Update physical car model and dynamic track labels
+            els.trackM100.innerText = `-${Math.round(sMax)}m`;
+            els.trackP100.innerText = `+${Math.round(sMax)}m`;
+
+            const percent = ((kinematics.s + sMax) / (2 * sMax)) * 100;
+            const clampedPercent = Math.max(0, Math.min(100, percent));
+            els.particle.style.left = `${clampedPercent}%`;
+
+            // Update physical vectors
+            const vScale = 12; // visual multiplier
+            els.vectorV.style.left = `${clampedPercent}%`;
+            els.vectorV.style.width = `${Math.abs(kinematics.v) * vScale}px`;
+            els.vectorV.style.transform = kinematics.v < 0 ? 'translateX(-100%)' : 'translateX(0)';
+
+            const aScale = 12;
+            els.vectorA.style.left = `${clampedPercent}%`;
+            els.vectorA.style.width = `${Math.abs(kinematics.a) * aScale}px`;
+            els.vectorA.style.transform = kinematics.a < 0 ? 'translateX(-100%)' : 'translateX(0)';
+
+            // Interactive highlight card state depending on motion phases
+            if (Math.abs(kinematics.a) > 0.1) {
+                els.cardDerivative.classList.add('bg-orange-500/10', 'border-orange-500/40');
+            } else {
+                els.cardDerivative.classList.remove('bg-orange-500/10', 'border-orange-500/40');
+            }
+
+            if (state.scrubTime > 0.2 && Math.abs(kinematics.v) > 0.1) {
+                els.cardIntegral.classList.add('bg-cyan-500/10', 'border-cyan-500/40');
+            } else {
+                els.cardIntegral.classList.remove('bg-cyan-500/10', 'border-cyan-500/40');
+            }
+        }
+
+        // --- Mouse/Touch Global Event Handlers ---
+
+        function handleDragMove(e) {
+            if (state.activeNodeIndex === null) return;
+            
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            if (clientY === undefined) return;
+
+            const rect = els.svgV.getBoundingClientRect();
+            const yRelative = (clientY - rect.top) * (SVG_H / rect.height);
+            
+            let newV = getValFromYPixel(yRelative, V_MAX);
+            
+            // Clamp value
+            newV = Math.max(-V_MAX, Math.min(V_MAX, newV));
+            
+            // Step constraints (0.1m/s alignment grid)
+            newV = Math.round(newV * 10) / 10;
+
+            state.controlNodes[state.activeNodeIndex].v = newV;
+            
+            updatePhysics();
+        }
+
+        function handleDragEnd() {
+            if (state.activeNodeIndex !== null) {
+                state.activeNodeIndex = null;
+                document.body.style.cursor = 'default';
+                renderCharts();
+            }
+        }
+
+        // --- Scrubber Hover Control ---
+
+        function handleHoverScrub(e, svg) {
+            if (state.activeNodeIndex !== null || state.isPlaying) return; 
+            
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            if (clientX === undefined) return;
+
+            const rect = svg.getBoundingClientRect();
+            const xRelative = (clientX - rect.left) * (SVG_W / rect.width);
+            
+            let time = getTimeFromXPixel(xRelative);
+            time = Math.max(0, Math.min(T_MAX, time));
+
+            state.scrubTime = time;
+            
+            renderCharts();
+            updateLiveIndicators();
+        }
+
+        // --- Simulation Game Loop Playback ---
+
+        let lastTime = 0;
+        function playLoop(timestamp) {
+            if (!state.isPlaying) return;
+
+            if (!lastTime) lastTime = timestamp;
+            const dt = (timestamp - lastTime) / 1000; 
+            lastTime = timestamp;
+
+            state.playTime += dt;
+            if (state.playTime > T_MAX) {
+                state.playTime = 0; 
+            }
+
+            state.scrubTime = state.playTime;
+            
+            renderCharts();
+            updateLiveIndicators();
+
+            requestAnimationFrame(playLoop);
+        }
+
+        function togglePlay() {
+            state.isPlaying = !state.isPlaying;
+            if (state.isPlaying) {
+                els.iconPlay.classList.add('hidden');
+                els.iconPause.classList.remove('hidden');
+                state.playTime = state.scrubTime; 
+                lastTime = 0;
+                requestAnimationFrame(playLoop);
+            } else {
+                els.iconPlay.classList.remove('hidden');
+                els.iconPause.classList.add('hidden');
+            }
+        }
+
+        // --- Event Listeners Attachment ---
+
+        function setupEventListeners() {
+            window.addEventListener('mousemove', handleDragMove);
+            window.addEventListener('touchmove', handleDragMove, {passive: false});
+            window.addEventListener('mouseup', handleDragEnd);
+            window.addEventListener('touchend', handleDragEnd);
+
+            [els.svgS, els.svgV, els.svgA].forEach(svg => {
+                svg.addEventListener('mousemove', (e) => handleHoverScrub(e, svg));
+                svg.addEventListener('touchmove', (e) => handleHoverScrub(e, svg), {passive: true});
+            });
+
+            els.btnPlay.addEventListener('click', togglePlay);
+            els.btnReset.addEventListener('click', () => {
+                state.isPlaying = false;
+                els.iconPlay.classList.remove('hidden');
+                els.iconPause.classList.add('hidden');
+                state.scrubTime = 0.0;
+                renderCharts();
+                updateLiveIndicators();
+            });
+
+            els.presetSelect.addEventListener('change', (e) => {
+                const presetKey = e.target.value;
+                if (PRESETS[presetKey]) {
+                    state.controlNodes = JSON.parse(JSON.stringify(PRESETS[presetKey]));
+                    updatePhysics();
+                }
+            });
+        }
+
+        // --- Initialization ---
+        window.onload = () => {
+            setupEventListeners();
+            updatePhysics();
+        };
+
+    </script>
 </body>
 </html>
