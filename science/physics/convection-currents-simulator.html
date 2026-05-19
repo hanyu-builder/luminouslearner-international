@@ -3,337 +3,515 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Convection Currents Simulator | Luminous Learner</title>
+    <title>Convection Currents Simulator</title>
+    <meta name="description" content="Convection current visualization simulator. Explore thermal expansion, fluid density changes, and buoyant forces using real-time fluid dynamics.">
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons (Fixed version for stability) -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; background: #10b981; cursor: pointer;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A;
+            color: #F8FAFC;
         }
-        .canvas-container {
-            cursor: crosshair;
+        .math-font { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Custom UI Styling */
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #ec4899; cursor: pointer; margin-top: -7px;
+            box-shadow: 0 0 10px rgba(236, 72, 153, 0.5); transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        ::-webkit-scrollbar { display: none; }
+        
+        #canvas-container {
+            border-radius: 0.75rem; overflow: hidden; position: relative;
+        }
+        #canvas-container canvas {
+            display: block; width: 100% !important; height: 100% !important;
         }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex items-center justify-center p-2 md:p-4 overflow-x-hidden">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useCallback } = React;
-
-    // --- Physics Constants ---
-    const CANVAS_WIDTH = 600;
-    const CANVAS_HEIGHT = 400;
-    const PARTICLE_COUNT = 600;
-    const PARTICLE_RADIUS = 3;
-    
-    const ROOM_TEMP = 20;
-    const MAX_TEMP = 100;
-    
-    const HEATER_RADIUS = 40;
-    const HEATER_POWER = 2.0; // Temp increase per frame
-    const COOLING_RATE = 0.1; // Temp loss per frame at top
-    
-    const BUOYANCY_FACTOR = 0.05; // Upward force per degree above room temp
-    const GRAVITY = 0.05; // Downward force constant
-    const DAMPING = 0.96; // Viscosity
-
-    const App = () => {
-        // --- State ---
-        const [heaterPos, setHeaterPos] = useState(50); // x% position (0-100)
-        const [heaterOn, setHeaterOn] = useState(true);
-        const [viscosity, setViscosity] = useState(50); // Affects damping
-        const [showVectors, setShowVectors] = useState(false);
-        const [particles, setParticles] = useState([]);
+    <div class="w-full max-w-7xl h-full md:h-[95vh] bg-slate-800/80 rounded-3xl shadow-2xl border border-slate-700 flex flex-col overflow-hidden backdrop-blur-md">
         
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        const particlesRef = useRef([]); // Mutable ref for performance
+        <header class="bg-slate-900/80 p-4 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center z-10 gap-4">
+            <div>
+                <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-pink-500 to-violet-500 bg-clip-text text-transparent">
+                    Convection Currents Simulator
+                </h1>
+                <p class="text-slate-400 text-xs md:text-sm mt-1">Real-time Eulerian Fluid Dynamics & Thermal Buoyancy</p>
+            </div>
+            <div class="flex flex-col md:flex-row items-center gap-3">
+                <div class="flex items-center gap-2 bg-slate-800 p-2 rounded-lg border border-slate-600">
+                    <span class="text-slate-300 text-xs uppercase tracking-wider font-semibold">Heat Source Location:</span>
+                    <select id="source-pos" class="bg-slate-700 text-white rounded p-1.5 text-sm border-none outline-none focus:ring-2 focus:ring-pink-500 transition-all">
+                        <option value="bottom">Bottom Center (Roll Cells)</option>
+                        <option value="middle">Middle (Plume)</option>
+                        <option value="top">Top (Stratification)</option>
+                        <option value="none">Heat OFF</option>
+                    </select>
+                </div>
+                <button id="btn-clear" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold py-2 px-4 rounded border border-rose-500 transition-colors shadow-lg">
+                    Clear Fluid
+                </button>
+            </div>
+        </header>
 
-        // --- Init Particles ---
-        useEffect(() => {
-            const initialParticles = [];
-            for(let i=0; i<PARTICLE_COUNT; i++) {
-                initialParticles.push({
-                    x: Math.random() * CANVAS_WIDTH,
-                    y: Math.random() * CANVAS_HEIGHT,
-                    vx: 0,
-                    vy: 0,
-                    temp: ROOM_TEMP
-                });
-            }
-            particlesRef.current = initialParticles;
+        <div class="flex-1 flex flex-col lg:flex-row min-h-0">
             
-            // Re-initialize icons when component mounts
-            if (window.lucide) {
-                window.lucide.createIcons();
-            }
-        }, []);
-
-        // --- Physics Loop ---
-        const updatePhysics = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            // Clear Canvas
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            
-            // Draw Background (Simulate Water)
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-            
-            // Draw Container
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // Draw Heater
-            const heaterX = (heaterPos / 100) * CANVAS_WIDTH;
-            const heaterY = CANVAS_HEIGHT - 10;
-            
-            if (heaterOn) {
-                // Glow effect
-                const gradient = ctx.createRadialGradient(heaterX, heaterY, 10, heaterX, heaterY, HEATER_RADIUS * 1.5);
-                gradient.addColorStop(0, 'rgba(239, 68, 68, 0.6)');
-                gradient.addColorStop(1, 'rgba(239, 68, 68, 0)');
-                ctx.fillStyle = gradient;
-                ctx.beginPath();
-                ctx.arc(heaterX, heaterY, HEATER_RADIUS * 1.5, 0, Math.PI * 2);
-                ctx.fill();
+            <div class="w-full lg:w-96 p-5 overflow-y-auto border-r border-slate-700 bg-slate-900/40 flex flex-col gap-6">
                 
-                // Heater base
-                ctx.fillStyle = '#ef4444';
-                ctx.fillRect(heaterX - 30, CANVAS_HEIGHT - 10, 60, 10);
-            } else {
-                ctx.fillStyle = '#475569';
-                ctx.fillRect(heaterX - 30, CANVAS_HEIGHT - 10, 60, 10);
-            }
-
-            // Draw Cooling Surface (Top)
-            const coolGradient = ctx.createLinearGradient(0, 0, 0, 40);
-            coolGradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
-            coolGradient.addColorStop(1, 'rgba(56, 189, 248, 0)');
-            ctx.fillStyle = coolGradient;
-            ctx.fillRect(0, 0, CANVAS_WIDTH, 40);
-
-            // Update & Draw Particles
-            const ps = particlesRef.current;
-            const damp = 0.90 + (viscosity / 1000); // 0.90 to 1.0 (approx)
-
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const p = ps[i];
-
-                // 1. Heat Transfer
-                // From Heater
-                if (heaterOn) {
-                    const dx = p.x - heaterX;
-                    const dy = p.y - heaterY;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    if (dist < HEATER_RADIUS * 1.5) {
-                        p.temp = Math.min(MAX_TEMP, p.temp + HEATER_POWER);
-                    }
-                }
-
-                // From Cooling Surface (Top)
-                if (p.y < 40) {
-                    p.temp = Math.max(ROOM_TEMP, p.temp - COOLING_RATE * 2);
-                } else {
-                    // General ambient cooling slightly
-                    p.temp = Math.max(ROOM_TEMP, p.temp - 0.05);
-                }
-
-                // 2. Forces
-                // Buoyancy: Hotter = Upward Force
-                // Gravity: Constant Downward
-                // Net Y Force = Buoyancy - Gravity
-                const buoyancyForce = (p.temp - ROOM_TEMP) * BUOYANCY_FACTOR * -0.2; // Negative is up
-                const gravityForce = GRAVITY * 0.5;
-                
-                p.vy += buoyancyForce + gravityForce;
-
-                // Random Brownian Motion (Diffusion)
-                p.vx += (Math.random() - 0.5) * 0.1;
-                p.vy += (Math.random() - 0.5) * 0.1;
-
-                // 3. Movement
-                p.vx *= damp;
-                p.vy *= damp;
-                p.x += p.vx;
-                p.y += p.vy;
-
-                // 4. Boundaries
-                if (p.x < 0) { p.x = 0; p.vx *= -0.5; }
-                if (p.x > CANVAS_WIDTH) { p.x = CANVAS_WIDTH; p.vx *= -0.5; }
-                if (p.y < 0) { p.y = 0; p.vy *= -0.5; }
-                if (p.y > CANVAS_HEIGHT) { p.y = CANVAS_HEIGHT; p.vy *= -0.5; }
-
-                // 5. Draw
-                // Map Temp to Color (Blue -> Red)
-                const ratio = (p.temp - ROOM_TEMP) / (MAX_TEMP - ROOM_TEMP);
-                const r = Math.floor(ratio * 255);
-                const b = Math.floor(255 - ratio * 200);
-                const g = Math.floor(50 + ratio * 50); // slight green for better transition
-                
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, PARTICLE_RADIUS, 0, Math.PI * 2);
-                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                ctx.fill();
-
-                // Draw Vectors?
-                if (showVectors && Math.abs(p.vy) > 0.5) {
-                    ctx.strokeStyle = `rgba(255,255,255,0.2)`;
-                    ctx.beginPath();
-                    ctx.moveTo(p.x, p.y);
-                    ctx.lineTo(p.x + p.vx * 5, p.y + p.vy * 5);
-                    ctx.stroke();
-                }
-            }
-
-            requestRef.current = requestAnimationFrame(updatePhysics);
-        };
-
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(updatePhysics);
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [heaterPos, heaterOn, viscosity, showVectors]);
-
-        // --- UI Handlers ---
-        
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 md:p-8 font-sans">
-                {/* Header */}
-                <header className="mb-8 flex items-center space-x-3 border-b border-slate-700 pb-4">
-                    <div className="p-2 bg-orange-500/10 rounded-lg">
-                        <i data-lucide="wind" className="w-8 h-8 text-orange-400"></i>
-                    </div>
+                <div class="space-y-6">
+                    <!-- Controls -->
                     <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Convection Currents Simulator</h1>
-                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-slate-300 font-medium text-sm">Heat Intensity (<span class="math-font text-pink-400">Q</span>)</label>
+                            <span class="text-lg font-bold text-pink-400 math-font" id="val-heat">High</span>
+                        </div>
+                        <input type="range" id="slider-heat" min="100" max="1000" step="50" value="800">
                     </div>
-                </header>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-slate-300 font-medium text-sm">Fluid Cooling Rate</label>
+                        </div>
+                        <input type="range" id="slider-cooling" min="0.005" max="0.05" step="0.005" value="0.015">
+                        <p class="text-xs text-slate-500 mt-1">Higher cooling dissipates heat faster, limiting the convection roll height.</p>
+                    </div>
+
+                    <div class="flex items-center gap-3 mt-4 bg-slate-800/50 p-3 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition" id="toggle-arrows-btn">
+                        <div class="w-5 h-5 rounded border border-pink-500 flex items-center justify-center bg-pink-500/20" id="checkbox-arrows">
+                            <svg class="w-3 h-3 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm font-semibold">Show Velocity Vector Arrows</span>
+                    </div>
+                </div>
+
+                <div class="h-px w-full bg-slate-700"></div>
+
+                <!-- Theory Box -->
+                <div class="flex-1 flex flex-col justify-start gap-4">
+                    <h2 class="text-slate-200 font-semibold flex items-center gap-2">
+                        <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                        The Physics of Convection
+                    </h2>
                     
-                    {/* Controls */}
-                    <div className="space-y-6">
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
-                            <h2 className="text-emerald-400 font-semibold mb-6 flex items-center">
-                                <i data-lucide="sliders" className="w-4 h-4 mr-2"></i> Parameters
-                            </h2>
-
-                            {/* Heater Position */}
-                            <div className="mb-6">
-                                <div className="flex justify-between mb-2 text-sm">
-                                    <span className="text-slate-300">Heater Position</span>
-                                    <span className="text-orange-300 font-mono">{heaterPos}%</span>
-                                </div>
-                                <input 
-                                    type="range" min="10" max="90" step="1"
-                                    value={heaterPos}
-                                    onChange={(e) => setHeaterPos(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                                    <span>Left</span>
-                                    <span>Center</span>
-                                    <span>Right</span>
-                                </div>
+                    <div class="bg-slate-950/50 p-4 rounded-xl border border-slate-800 text-sm text-slate-300 space-y-3">
+                        <p><strong>1. Thermal Expansion:</strong> When the fluid is heated, particles gain kinetic energy, push apart, and volume (<span class="math-font text-sky-300">V</span>) increases.</p>
+                        
+                        <div class="flex justify-center my-2 math-font text-lg text-white">
+                            <span>ρ = </span>
+                            <div class="flex flex-col items-center mx-2">
+                                <span class="border-b border-slate-400 pb-0.5 px-2">m</span>
+                                <span class="pt-0.5 px-2 text-sky-400">V ↑</span>
                             </div>
-
-                            {/* Fluid Viscosity */}
-                            <div className="mb-6">
-                                <div className="flex justify-between mb-2 text-sm">
-                                    <span className="text-slate-300">Fluid Viscosity</span>
-                                    <span className="text-blue-300 font-mono">{viscosity < 30 ? "Thin" : viscosity > 70 ? "Thick" : "Medium"}</span>
-                                </div>
-                                <input 
-                                    type="range" min="10" max="90" step="1"
-                                    value={viscosity}
-                                    onChange={(e) => setViscosity(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
-
-                            {/* Toggles */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <button 
-                                    onClick={() => setHeaterOn(!heaterOn)}
-                                    className={`py-3 rounded-lg font-bold flex items-center justify-center transition-colors ${heaterOn ? 'bg-red-500/20 text-red-400 border border-red-500/50' : 'bg-slate-700 text-slate-400'}`}
-                                >
-                                    <i data-lucide="power" className="w-4 h-4 mr-2"></i> Heater {heaterOn ? 'ON' : 'OFF'}
-                                </button>
-                                <button 
-                                    onClick={() => setShowVectors(!showVectors)}
-                                    className={`py-3 rounded-lg font-bold flex items-center justify-center transition-colors ${showVectors ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/50' : 'bg-slate-700 text-slate-400'}`}
-                                >
-                                    <i data-lucide="arrow-up-right" className="w-4 h-4 mr-2"></i> Vectors
-                                </button>
-                            </div>
+                            <span>=> ρ ↓</span>
                         </div>
 
-                        {/* Legend */}
-                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 text-xs text-slate-400 space-y-2">
-                            <div className="flex items-center">
-                                <div className="w-3 h-3 bg-red-500 mr-2 rounded-full"></div>
-                                <span className="ml-2">Hot Fluid (Low Density, Rises)</span>
-                            </div>
-                            <div className="flex items-center">
-                                <div className="w-3 h-3 bg-blue-500 mr-2 rounded-full"></div>
-                                <span className="ml-2">Cold Fluid (High Density, Sinks)</span>
-                            </div>
-                            <div className="flex items-center mt-2 pt-2 border-t border-slate-700">
-                                <i data-lucide="arrow-up" className="w-3 h-3 mr-1"></i>
-                                <span>Try moving the heater to see how convection cells shift!</span>
-                            </div>
-                        </div>
+                        <p><strong>2. Buoyant Force:</strong> Following Archimedes' principle, the lower density (<span class="math-font">ρ</span>) heated fluid experiences an upward buoyant force from the cooler, denser fluid sinking around it.</p>
+                        <p><strong>3. Mass Conservation:</strong> As hot fluid rises, cooler fluid must flow in from the sides to replace it. This creates a continuous circulatory loop known as a <strong>Convection Cell</strong>.</p>
+                        <p class="text-xs text-slate-500 italic border-t border-slate-700 pt-2">Note: This simulator uses the Boussinesq approximation, where density differences are ignored except where they multiply gravity to create buoyancy forces.</p>
                     </div>
 
-                    {/* Simulation Area */}
-                    <div className="lg:col-span-2 space-y-6">
-                        <div className="bg-slate-950 border border-slate-700 rounded-xl relative overflow-hidden shadow-2xl">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT} 
-                                className="w-full h-auto block"
-                            />
-                            
-                            {/* Overlay Labels */}
-                            <div className="absolute top-2 w-full text-center text-xs text-blue-400 font-mono opacity-70">
-                                Cooling Surface (Heat Loss)
-                            </div>
-                            <div className="absolute bottom-2 left-4 text-xs text-slate-500 font-mono">
-                                Particles: {PARTICLE_COUNT}
-                            </div>
-                        </div>
+                    <div class="bg-violet-900/20 rounded-xl p-4 border border-violet-800/50 mt-auto">
+                        <h3 class="text-violet-300 font-semibold mb-1 text-sm">Teacher's Challenge:</h3>
+                        <p class="text-xs text-slate-300">
+                            Clear the fluid, then set the heat source to "Top". Notice how the hot fluid stays at the top? This is called <strong>thermal stratification</strong> and is why heating a room from the ceiling is inefficient!
+                        </p>
                     </div>
                 </div>
             </div>
-        );
-    };
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+            <div class="flex-1 p-4 md:p-6 bg-[#050B14] flex flex-col relative">
+                
+                <!-- Overlay Legend -->
+                <div class="absolute top-8 left-8 z-20 bg-slate-900/80 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl pointer-events-none">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Temperature Map</h3>
+                    <div class="flex items-center gap-2 text-xs font-medium">
+                        <span class="text-blue-400">Cold</span>
+                        <div class="w-24 h-3 bg-gradient-to-r from-blue-600 via-indigo-900 to-rose-600 rounded"></div>
+                        <span class="text-rose-400">Hot</span>
+                    </div>
+                </div>
 
-    // Initialize icons safely
-    if (typeof lucide !== 'undefined') {
-        setTimeout(() => lucide.createIcons(), 100);
-    }
-</script>
+                <!-- Three.js Canvas Container -->
+                <div class="w-full h-full relative rounded-xl border-2 border-slate-800 shadow-[0_0_50px_rgba(0,0,0,0.5)] bg-black" id="canvas-container">
+                    <!-- WebGL injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * PHYSICS ENGINE: STABLE FLUIDS (Eulerian Grid)
+         * Based on Jos Stam's "Real-Time Fluid Dynamics for Games".
+         * Solves the incompressible Navier-Stokes equations on a CPU grid.
+         */
+        const N = 50; // Grid resolution (N x N)
+        const iter = 10; // Solver iterations (higher = more accurate but slower)
+        const size = (N + 2) * (N + 2); // 1D Array size including boundary cells
+
+        // Helper to map 2D coordinates (x,y) to 1D array index
+        const IX = (x, y) => x + (N + 2) * y;
+
+        class FluidCube {
+            constructor(dt, diffusion, viscosity) {
+                this.dt = dt;
+                this.diff = diffusion;
+                this.visc = viscosity;
+
+                this.s = new Float32Array(size); // General source array
+                this.density = new Float32Array(size); // Represents Temperature/Heat
+                this.density_prev = new Float32Array(size);
+
+                this.Vx = new Float32Array(size); // Velocity X
+                this.Vy = new Float32Array(size); // Velocity Y
+                this.Vx_prev = new Float32Array(size);
+                this.Vy_prev = new Float32Array(size);
+            }
+
+            addSource(x, s, dt) {
+                for (let i = 0; i < size; i++) x[i] += dt * s[i];
+            }
+
+            setBnd(b, x) {
+                // Bounce velocities at walls, keep scalar values (temp) contained
+                for (let i = 1; i <= N; i++) {
+                    x[IX(0, i)] = b === 1 ? -x[IX(1, i)] : x[IX(1, i)];
+                    x[IX(N + 1, i)] = b === 1 ? -x[IX(N, i)] : x[IX(N, i)];
+                    x[IX(i, 0)] = b === 2 ? -x[IX(i, 1)] : x[IX(i, 1)];
+                    x[IX(i, N + 1)] = b === 2 ? -x[IX(i, N)] : x[IX(i, N)];
+                }
+                x[IX(0, 0)] = 0.5 * (x[IX(1, 0)] + x[IX(0, 1)]);
+                x[IX(0, N + 1)] = 0.5 * (x[IX(1, N + 1)] + x[IX(0, N)]);
+                x[IX(N + 1, 0)] = 0.5 * (x[IX(N, 0)] + x[IX(N + 1, 1)]);
+                x[IX(N + 1, N + 1)] = 0.5 * (x[IX(N, N + 1)] + x[IX(N + 1, N)]);
+            }
+
+            linSolve(b, x, x0, a, c) {
+                const invC = 1.0 / c;
+                for (let k = 0; k < iter; k++) {
+                    for (let j = 1; j <= N; j++) {
+                        for (let i = 1; i <= N; i++) {
+                            x[IX(i, j)] = (x0[IX(i, j)] + a * (x[IX(i - 1, j)] + x[IX(i + 1, j)] + x[IX(i, j - 1)] + x[IX(i, j + 1)])) * invC;
+                        }
+                    }
+                    this.setBnd(b, x);
+                }
+            }
+
+            diffuse(b, x, x0, diff, dt) {
+                const a = dt * diff * N * N;
+                this.linSolve(b, x, x0, a, 1 + 4 * a);
+            }
+
+            advect(b, d, d0, u, v, dt) {
+                let i0, j0, i1, j1;
+                let x, y, s0, t0, s1, t1;
+                const dt0 = dt * N;
+
+                for (let j = 1; j <= N; j++) {
+                    for (let i = 1; i <= N; i++) {
+                        x = i - dt0 * u[IX(i, j)];
+                        y = j - dt0 * v[IX(i, j)];
+
+                        if (x < 0.5) x = 0.5;
+                        if (x > N + 0.5) x = N + 0.5;
+                        i0 = Math.floor(x);
+                        i1 = i0 + 1;
+                        
+                        if (y < 0.5) y = 0.5;
+                        if (y > N + 0.5) y = N + 0.5;
+                        j0 = Math.floor(y);
+                        j1 = j0 + 1;
+
+                        s1 = x - i0;
+                        s0 = 1.0 - s1;
+                        t1 = y - j0;
+                        t0 = 1.0 - t1;
+
+                        d[IX(i, j)] = s0 * (t0 * d0[IX(i0, j0)] + t1 * d0[IX(i0, j1)]) +
+                                      s1 * (t0 * d0[IX(i1, j0)] + t1 * d0[IX(i1, j1)]);
+                    }
+                }
+                this.setBnd(b, d);
+            }
+
+            project(u, v, p, div) {
+                const h = 1.0 / N;
+                for (let j = 1; j <= N; j++) {
+                    for (let i = 1; i <= N; i++) {
+                        div[IX(i, j)] = -0.5 * h * (u[IX(i + 1, j)] - u[IX(i - 1, j)] + v[IX(i, j + 1)] - v[IX(i, j - 1)]);
+                        p[IX(i, j)] = 0;
+                    }
+                }
+                this.setBnd(0, div);
+                this.setBnd(0, p);
+                this.linSolve(0, p, div, 1, 4);
+
+                for (let j = 1; j <= N; j++) {
+                    for (let i = 1; i <= N; i++) {
+                        u[IX(i, j)] -= 0.5 * (p[IX(i + 1, j)] - p[IX(i - 1, j)]) / h;
+                        v[IX(i, j)] -= 0.5 * (p[IX(i, j + 1)] - p[IX(i, j - 1)]) / h;
+                    }
+                }
+                this.setBnd(1, u);
+                this.setBnd(2, v);
+            }
+
+            step() {
+                // 1. Velocity Step
+                // Diffuse velocities based on viscosity
+                this.diffuse(1, this.Vx_prev, this.Vx, this.visc, this.dt);
+                this.diffuse(2, this.Vy_prev, this.Vy, this.visc, this.dt);
+                // Force Mass Conservation (Incompressibility)
+                this.project(this.Vx_prev, this.Vy_prev, this.Vx, this.Vy);
+                // Self-advection of velocity field
+                this.advect(1, this.Vx, this.Vx_prev, this.Vx_prev, this.Vy_prev, this.dt);
+                this.advect(2, this.Vy, this.Vy_prev, this.Vx_prev, this.Vy_prev, this.dt);
+                // Final Mass Conservation
+                this.project(this.Vx, this.Vy, this.Vx_prev, this.Vy_prev);
+
+                // 2. Temperature/Density Step
+                // Diffuse heat
+                this.diffuse(0, this.density_prev, this.density, this.diff, this.dt);
+                // Advect heat along velocity field
+                this.advect(0, this.density, this.density_prev, this.Vx, this.Vy, this.dt);
+            }
+
+            applyBuoyancy(buoyancyFactor) {
+                // Core Physics: V_y increases proportionally to local Temperature
+                for (let i = 0; i < size; i++) {
+                    this.Vy[i] += this.density[i] * buoyancyFactor * this.dt;
+                }
+            }
+
+            applyCooling(rate) {
+                // Ambient cooling so fluid doesn't become infinitely hot
+                for (let i = 0; i < size; i++) {
+                    this.density[i] *= (1.0 - rate);
+                }
+            }
+
+            clear() {
+                for (let i = 0; i < size; i++) {
+                    this.density[i] = 0;
+                    this.density_prev[i] = 0;
+                    this.Vx[i] = 0;
+                    this.Vy[i] = 0;
+                    this.Vx_prev[i] = 0;
+                    this.Vy_prev[i] = 0;
+                }
+            }
+        }
+
+        // Three.js Setup
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        // Orthographic camera maps 1:1 with our grid conceptually
+        const camera = new THREE.OrthographicCamera(0, N + 2, N + 2, 0, 0.1, 100);
+        camera.position.z = 10;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
+
+        // Fluid Grid Setup
+        const fluid = new FluidCube(0.1, 0.000, 0.000); // Low visc/diff to keep it chaotic/fluid
+
+        // WebGL Texture to hold fluid data (RGBA format, using R for Temperature)
+        const texData = new Uint8Array(size * 4);
+        const dataTexture = new THREE.DataTexture(texData, N + 2, N + 2, THREE.RGBAFormat);
+        dataTexture.magFilter = THREE.LinearFilter; // Smooth interpolation!
+        dataTexture.minFilter = THREE.LinearFilter;
+        dataTexture.needsUpdate = true;
+
+        // Custom Shader to map Temperature (Red Channel) to a beautiful heat gradient
+        const fluidMaterial = new THREE.ShaderMaterial({
+            uniforms: { tFluid: { value: dataTexture } },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tFluid;
+                varying vec2 vUv;
+                void main() {
+                    // Sample data from JS grid
+                    vec4 data = texture2D(tFluid, vUv);
+                    float temp = data.r; // Temperature is in Red channel
+                    
+                    // Color mapping: Dark Blue -> Indigo -> Crimson -> Bright Yellow/White
+                    vec3 coldColor = vec3(0.02, 0.05, 0.2); // deep slate blue
+                    vec3 warmColor = vec3(0.5, 0.1, 0.3);   // purple/red
+                    vec3 hotColor = vec3(1.0, 0.2, 0.1);    // bright red
+                    vec3 maxColor = vec3(1.0, 0.8, 0.2);    // yellow
+                    
+                    vec3 finalColor;
+                    if(temp < 0.33) {
+                        finalColor = mix(coldColor, warmColor, temp * 3.0);
+                    } else if(temp < 0.66) {
+                        finalColor = mix(warmColor, hotColor, (temp - 0.33) * 3.0);
+                    } else {
+                        finalColor = mix(hotColor, maxColor, (temp - 0.66) * 3.0);
+                    }
+                    
+                    gl_FragColor = vec4(finalColor, 1.0);
+                }
+            `,
+            depthWrite: false
+        });
+
+        const planeGeo = new THREE.PlaneGeometry(N + 2, N + 2);
+        // Shift geometry so origin matches grid (0,0) bottom-left
+        planeGeo.translate((N+2)/2, (N+2)/2, 0); 
+        const fluidPlane = new THREE.Mesh(planeGeo, fluidMaterial);
+        scene.add(fluidPlane);
+
+        // Vector Arrows (InstancedMesh for performance)
+        const arrowSpacing = 3; 
+        const numArrows = (N + 2) * (N + 2); // Max potential capacity
+        
+        // Simple triangle geometry for the arrow
+        // Note: Default ConeGeometry points along +Y. 
+        const arrowGeo = new THREE.ConeGeometry(0.3, 1.2, 3);
+        const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
+        
+        const arrowMesh = new THREE.InstancedMesh(arrowGeo, arrowMat, numArrows);
+        const dummy = new THREE.Object3D();
+        scene.add(arrowMesh);
+
+        // State & Inputs
+        let showArrows = true;
+        const DOM = {
+            srcPos: document.getElementById('source-pos'),
+            heat: document.getElementById('slider-heat'),
+            cooling: document.getElementById('slider-cooling'),
+            btnArrows: document.getElementById('toggle-arrows-btn'),
+            chkArrows: document.getElementById('checkbox-arrows'),
+            valHeat: document.getElementById('val-heat'),
+            btnClear: document.getElementById('btn-clear')
+        };
+
+        DOM.btnArrows.addEventListener('click', () => {
+            showArrows = !showArrows;
+            arrowMesh.visible = showArrows;
+            if(showArrows) {
+                DOM.chkArrows.innerHTML = '<svg class="w-3 h-3 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>';
+            } else {
+                DOM.chkArrows.innerHTML = '';
+            }
+        });
+
+        DOM.heat.addEventListener('input', (e) => {
+            const val = e.target.value;
+            DOM.valHeat.innerText = val > 800 ? "High" : val > 400 ? "Medium" : "Low";
+        });
+
+        DOM.btnClear.addEventListener('click', () => {
+            fluid.clear();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. Inject Heat Source based on UI
+            const posType = DOM.srcPos.value;
+            const heatPower = parseFloat(DOM.heat.value) * 0.05;
+            
+            if (posType !== 'none') {
+                let cx = Math.floor(N / 2);
+                let cy;
+                if (posType === 'bottom') cy = 4;
+                else if (posType === 'middle') cy = Math.floor(N / 2);
+                else if (posType === 'top') cy = N - 4;
+
+                // Inject heat in a small radius
+                for(let i = -3; i <= 3; i++) {
+                    for(let j = -3; j <= 3; j++) {
+                        if(i*i + j*j <= 9) { // Circular radius
+                            const idx = IX(cx + i, cy + j);
+                            fluid.density[idx] += heatPower * fluid.dt;
+                            // Add a tiny bit of upward velocity jitter to kickstart instability
+                            fluid.Vy[idx] += (Math.random() * 0.5) * fluid.dt;
+                        }
+                    }
+                }
+            }
+
+            // 2. Physics Execution
+            fluid.applyBuoyancy(0.5); // Density creates upward velocity
+            fluid.step();             // Solve Navier-Stokes
+            fluid.applyCooling(parseFloat(DOM.cooling.value)); // Ambient dissipation
+
+            // 3. Map Data to Three.js Texture & Arrows
+            let arrowIdx = 0;
+            
+            // Loop safely over the grid to update texture array and instance matrices
+            for (let j = 0; j < N + 2; j++) {
+                for (let i = 0; i < N + 2; i++) {
+                    const idx = IX(i, j);
+                    const t = fluid.density[idx];
+                    
+                    // Map temperature to Red channel (0-255). Cap at 255.
+                    texData[idx * 4] = Math.min(255, Math.max(0, t * 25));
+                    // Alpha must be 255 to render
+                    texData[idx * 4 + 3] = 255; 
+
+                    // Update Vector Arrows
+                    if (showArrows && i % arrowSpacing === 0 && j % arrowSpacing === 0) {
+                        const vx = fluid.Vx[idx];
+                        const vy = fluid.Vy[idx];
+                        const speed = Math.sqrt(vx*vx + vy*vy);
+                        
+                        if (speed > 0.1) {
+                            dummy.position.set(i, j, 1);
+                            // Point arrow in flow direction. Cone default points +Y, so offset by -90deg (-PI/2)
+                            dummy.rotation.z = Math.atan2(vy, vx) - (Math.PI / 2);
+                            // Scale arrow length by speed (capped)
+                            const scale = Math.min(2.0, speed * 0.3);
+                            dummy.scale.set(1, scale, 1);
+                            dummy.updateMatrix();
+                            arrowMesh.setMatrixAt(arrowIdx, dummy.matrix);
+                            arrowIdx++;
+                        }
+                    }
+                }
+            }
+
+            // Dynamically set the count to prevent rendering leftover or unused arrows
+            arrowMesh.count = showArrows ? arrowIdx : 0;
+
+            dataTexture.needsUpdate = true;
+            if (showArrows) arrowMesh.instanceMatrix.needsUpdate = true;
+
+            // 4. Render
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+    </script>
 </body>
 </html>
