@@ -3,380 +3,586 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Halide Detective: Silver Nitrate Lab - LuminousLearner International</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>Halide Detective | Halide Ion Test Simulator</title>
+    <meta name="description" content="Halide ion test simulator. Evaluate precipitation solubility constants (Ksp) by testing unknown halides with Silver Nitrate and Ammonia.">
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* Test Tube Liquid & Precipitate Animation */
-        .liquid { transition: height 0.5s ease, background-color 0.5s ease; }
-        
-        /* Precipitate Texture */
-        .precipitate {
-            background-image: url("data:image/svg+xml,%3Csvg width='4' height='4' viewBox='0 0 4 4' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 3h1v1H1V3zm2-2h1v1H3V1z' fill='%23ffffff' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E");
-            backdrop-filter: blur(2px);
-        }
-
-        /* Formation Animation (Cloudy) */
-        @keyframes form-ppt {
-            0% { opacity: 0; transform: translateY(10px) scale(0.9); }
-            100% { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .ppt-anim { animation: form-ppt 1s ease-out forwards; }
-
-        /* Dissolve Animation */
-        @keyframes dissolve {
-            0% { opacity: 1; }
-            100% { opacity: 0; }
-        }
-        .dissolve-anim { animation: dissolve 1s ease-out forwards; }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col">
-
-    <div id="root" class="flex-grow flex flex-col"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        // Sample Definitions (Hidden from user initially)
-        const Samples = [
-            { id: 'A', ion: 'Cl⁻', name: 'Chloride Ion', pptColor: 'bg-white', pptName: 'White Precipitate (AgCl)', solubility: 'dilute' },
-            { id: 'B', ion: 'I⁻', name: 'Iodide Ion', pptColor: 'bg-yellow-200', pptName: 'Yellow Precipitate (AgI)', solubility: 'none' },
-            { id: 'C', ion: 'F⁻', name: 'Fluoride Ion', pptColor: null, pptName: 'No Precipitate (AgF is soluble)', solubility: 'n/a' },
-            { id: 'D', ion: 'Br⁻', name: 'Bromide Ion', pptColor: 'bg-amber-100', pptName: 'Cream Precipitate (AgBr)', solubility: 'conc' }
-        ];
-
-        const Icon = ({ name, size = 20, className = "" }) => {
-            const [svg, setSvg] = useState('');
-            useEffect(() => {
-                if (window.lucide) {
-                    const iconNode = window.lucide.icons[name];
-                    if (iconNode) {
-                        const iconSvg = window.lucide.createElement(iconNode);
-                        iconSvg.setAttribute('width', size);
-                        iconSvg.setAttribute('height', size);
-                        iconSvg.setAttribute('class', className);
-                        setSvg(iconSvg.outerHTML);
+    
+    <!-- p5.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    
+    <!-- Custom Tailwind Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            850: '#151f32',
+                            900: '#0F172A',
+                        },
                     }
                 }
-            }, [name, size, className]);
-            return <span dangerouslySetInnerHTML={{ __html: svg }} className="flex items-center" />;
-        };
+            }
+        }
+    </script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0F172A;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #f1f5f9;
+        }
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+        }
 
-        const App = () => {
-            // State
-            const [currentSample, setCurrentSample] = useState(null);
-            const [tubeState, setTubeState] = useState({
-                acidified: false,
-                hasSilver: false,
-                ammoniaLevel: 0, // 0: none, 1: dilute, 2: conc
-                pptVisible: false,
-                volume: 10 // Initial volume %
-            });
-            const [history, setHistory] = useState([]);
-            const [guess, setGuess] = useState(null); // User's guess
-            const [result, setResult] = useState(null); // Feedback
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
 
-            // Reset for new sample
-            const selectSample = (sample) => {
-                setCurrentSample(sample);
-                setTubeState({
-                    acidified: false,
-                    hasSilver: false,
-                    ammoniaLevel: 0,
-                    pptVisible: false,
-                    volume: 10
-                });
-                setGuess(null);
-                setResult(null);
-                setHistory([{ text: `Selected Unknown Sample ${sample.id}`, type: 'info' }]);
-            };
+        #p5-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+        
+        canvas {
+            display: block;
+        }
 
-            // Actions
-            const addAcid = () => {
-                if (!currentSample) return;
-                setTubeState(prev => ({ ...prev, acidified: true, volume: Math.min(90, prev.volume + 10) }));
-                setHistory(prev => [...prev, { text: 'Added Dilute Nitric Acid (HNO₃) - Acidified', type: 'action' }]);
-            };
+        /* Test tube selector active state */
+        .tube-btn.active {
+            border-color: #22d3ee;
+            background-color: rgba(34, 211, 238, 0.2);
+            transform: scale(1.05);
+        }
+        
+        /* Typography */
+        sub { font-size: 0.7em; bottom: -0.25em; }
+        sup { font-size: 0.7em; top: -0.4em; }
+    </style>
+</head>
+<body class="flex items-center justify-center p-2 md:p-4 select-none">
 
-            const addSilver = () => {
-                if (!currentSample) return;
-                // Logic: Only form ppt if correct ion AND not already dissolved
-                const formsPPT = currentSample.ion !== 'F⁻'; 
+    <div class="w-full max-w-7xl h-screen max-h-[950px] flex flex-col gap-4">
+        
+        <!-- Header -->
+        <header class="flex-shrink-0 text-center space-y-1">
+            <h1 class="text-3xl md:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-500">
+                Halide Detective
+            </h1>
+            <p class="text-slate-400 text-sm md:text-base">Precipitation & Differential Solubility Constants (K<sub>sp</sub>)</p>
+        </header>
+
+        <!-- Dynamic Info Panel -->
+        <div class="flex-shrink-0 glass-panel rounded-xl p-4 flex flex-col md:flex-row items-center gap-4 shadow-lg min-h-[120px]">
+            <div class="w-full md:w-1/3 text-center md:text-left border-b md:border-b-0 md:border-r border-slate-700 pb-3 md:pb-0 md:pr-4">
+                <h2 id="hud-title" class="text-xl font-bold text-cyan-400 uppercase tracking-wider">Awaiting Selection</h2>
+                <div id="hud-equation" class="text-sm font-mono text-emerald-300 mt-1">X<sup>-</sup>(aq) + Ag<sup>+</sup>(aq) &rarr; ?</div>
+            </div>
+            <div class="w-full md:w-2/3">
+                <p id="hud-description" class="text-slate-300 leading-relaxed text-sm md:text-base">
+                    Select a Mystery Halide solution (Cl<sup>-</sup>, Br<sup>-</sup>, or I<sup>-</sup>). First, add acidified Silver Nitrate (AgNO<sub>3</sub>) to form a precipitate. Then, test its solubility profile using dilute and concentrated Ammonia (NH<sub>3</sub>) to confirm its identity based on complex ion formation.
+                </p>
+            </div>
+        </div>
+
+        <!-- Workspace Grid -->
+        <div class="flex-grow grid grid-cols-1 md:grid-cols-12 gap-4 min-h-0">
+            
+            <!-- LEFT: Controls & Rack (Cols 1-4) -->
+            <div class="md:col-span-4 flex flex-col gap-4">
                 
-                setTubeState(prev => ({ 
-                    ...prev, 
-                    hasSilver: true, 
-                    pptVisible: formsPPT,
-                    volume: Math.min(90, prev.volume + 10) 
-                }));
-                
-                if (currentSample.ion === 'F⁻') {
-                    setHistory(prev => [...prev, { text: 'Added Silver Nitrate (AgNO₃) -> No visible change', type: 'obs' }]);
-                } else {
-                    setHistory(prev => [...prev, { text: `Added Silver Nitrate (AgNO₃) -> Precipitate formed`, type: 'obs' }]);
-                }
-            };
-
-            const addAmmonia = (type) => {
-                if (!currentSample || !tubeState.hasSilver) return;
-                
-                let newLevel = type === 'dilute' ? 1 : 2;
-                let dissolves = false;
-
-                // Solubility Logic
-                if (currentSample.solubility === 'dilute' && newLevel >= 1) dissolves = true;
-                if (currentSample.solubility === 'conc' && newLevel >= 2) dissolves = true;
-                
-                // Special case: If already dissolved, it stays dissolved
-                if (!tubeState.pptVisible) dissolves = true; 
-                // Re-check for F- (never had ppt)
-                if (currentSample.ion === 'F⁻') dissolves = true; 
-
-                setTubeState(prev => ({ 
-                    ...prev, 
-                    ammoniaaLevel: newLevel, 
-                    pptVisible: !dissolves && prev.pptVisible, // If it dissolves, pptVisible becomes false
-                    volume: Math.min(90, prev.volume + 15) 
-                }));
-
-                const reagentName = type === 'dilute' ? 'Dilute Ammonia (NH₃)' : 'Conc. Ammonia (NH₃)';
-                const obsText = (dissolves && tubeState.pptVisible) ? 'Precipitate dissolves (Soluble)' : 'Precipitate remains (Insoluble)';
-                
-                if (currentSample.ion !== 'F⁻') {
-                    setHistory(prev => [...prev, { text: `Added ${reagentName} -> ${obsText}`, type: 'obs' }]);
-                } else {
-                    setHistory(prev => [...prev, { text: `Added ${reagentName} -> No change`, type: 'obs' }]);
-                }
-            };
-
-            const checkAnswer = (selectedIon) => {
-                if (selectedIon === currentSample.ion) {
-                    setResult({ correct: true, msg: `Correct! Sample ${currentSample.id} contains ${currentSample.name}.` });
-                } else {
-                    setResult({ correct: false, msg: `Incorrect. Look closely at the precipitate color and solubility.` });
-                }
-                setGuess(selectedIon);
-            };
-
-            // Get current visual color
-            const getVisuals = () => {
-                if (!currentSample) return { liquid: 'bg-transparent', ppt: null };
-                
-                // Base liquid is clear
-                let liquidClass = 'bg-blue-50/10'; 
-                let pptClass = null;
-
-                if (tubeState.pptVisible) {
-                    pptClass = currentSample.pptColor;
-                    // If yellow ppt, liquid looks slightly yellow too
-                    if (currentSample.ion === 'I⁻') liquidClass = 'bg-yellow-50/20';
-                }
-
-                return { liquid: liquidClass, ppt: pptClass };
-            };
-
-            const visuals = getVisuals();
-
-            return (
-                <div className="flex flex-col h-full container mx-auto px-4 py-6 max-w-6xl">
-                    
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-blue-400 flex items-center gap-2">
-                                <Icon name="Search" /> Halide Detective: Silver Nitrate Lab
-                            </h1>
-                            <p className="text-slate-400 text-sm">Qualitative Analysis of Halides</p>
-                        </div>
-                        <div className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded border border-slate-700">
-                            Topic 15/26
-                        </div>
-                    </div>
-
-                    {!currentSample ? (
-                        /* Sample Selection Screen */
-                        <div className="flex-grow flex flex-col justify-center items-center animate-in zoom-in duration-300">
-                            <h2 className="text-xl font-bold text-slate-200 mb-8">Select an Unknown Sample to Analyze:</h2>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                                {Samples.map(s => (
-                                    <button 
-                                        key={s.id}
-                                        onClick={() => selectSample(s)}
-                                        className="w-32 h-40 bg-slate-800 border-2 border-slate-700 hover:border-blue-500 hover:bg-slate-700 rounded-xl flex flex-col items-center justify-center gap-4 transition-all shadow-lg group"
-                                    >
-                                        <div className="text-4xl font-bold text-slate-600 group-hover:text-white">?</div>
-                                        <div className="font-bold text-blue-400">Sample {s.id}</div>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        /* Main Lab Interface */
-                        <div className="flex flex-col lg:flex-row gap-8 flex-grow animate-in fade-in">
-                            
-                            {/* Left: Visual & Controls */}
-                            <div className="w-full lg:w-1/2 flex flex-col gap-6">
-                                
-                                {/* Test Tube Visual */}
-                                <div className="bg-slate-800 rounded-2xl border border-slate-700 p-8 flex justify-center items-end relative min-h-[400px] shadow-2xl overflow-hidden">
-                                    
-                                    {/* Background Glow */}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-blue-900/20 to-transparent pointer-events-none"></div>
-
-                                    {/* The Test Tube */}
-                                    <div className="w-24 h-80 border-x-4 border-b-4 border-slate-400/50 rounded-b-full relative bg-white/5 backdrop-blur-sm overflow-hidden z-10">
-                                        
-                                        {/* Liquid Content */}
-                                        <div 
-                                            className={`absolute bottom-0 w-full liquid ${visuals.liquid}`} 
-                                            style={{ height: `${tubeState.volume}%` }}
-                                        >
-                                            {/* Precipitate Layer */}
-                                            {tubeState.pptVisible && (
-                                                <div className={`absolute bottom-0 w-full h-full ppt-anim ${visuals.ppt} precipitate opacity-90`}>
-                                                    {/* Particles effect */}
-                                                    <div className="w-full h-full opacity-50 bg-noise"></div>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* Highlight/Reflection */}
-                                        <div className="absolute top-0 left-2 w-2 h-full bg-white/10 rounded-full"></div>
-                                    </div>
-
-                                    {/* Labels */}
-                                    <div className="absolute top-4 left-4 bg-slate-900/80 px-3 py-1 rounded text-sm border border-slate-600 text-blue-300">
-                                        Sample {currentSample.id}
-                                    </div>
-                                </div>
-
-                                {/* Reagent Controls */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button 
-                                        onClick={addAcid} 
-                                        disabled={tubeState.acidified || result?.correct}
-                                        className="p-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg border border-slate-600 text-left transition-colors"
-                                    >
-                                        <div className="text-xs text-slate-400 mb-1">Step 1: Acidify</div>
-                                        <div className="font-bold text-white flex items-center gap-2">
-                                            <Icon name="FlaskConical" size={16} /> Add Dilute HNO₃
-                                        </div>
-                                    </button>
-
-                                    <button 
-                                        onClick={addSilver} 
-                                        disabled={!tubeState.acidified || tubeState.hasSilver || result?.correct}
-                                        className="p-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-left transition-colors shadow-lg shadow-blue-900/20"
-                                    >
-                                        <div className="text-xs text-blue-200 mb-1">Step 2: Test</div>
-                                        <div className="font-bold text-white flex items-center gap-2">
-                                            <Icon name="PlusCircle" size={16} /> Add AgNO₃
-                                        </div>
-                                    </button>
-
-                                    <button 
-                                        onClick={() => addAmmonia('dilute')} 
-                                        disabled={!tubeState.hasSilver || tubeState.ammoniaLevel >= 1 || result?.correct}
-                                        className="p-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-left transition-colors"
-                                    >
-                                        <div className="text-xs text-purple-200 mb-1">Step 3a: Distinguish</div>
-                                        <div className="font-bold text-white">Add Dilute NH₃</div>
-                                    </button>
-
-                                    <button 
-                                        onClick={() => addAmmonia('conc')} 
-                                        disabled={!tubeState.hasSilver || tubeState.ammoniaLevel >= 2 || result?.correct}
-                                        className="p-3 bg-purple-800 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-left transition-colors"
-                                    >
-                                        <div className="text-xs text-purple-300 mb-1">Step 3b: Force Dissolve</div>
-                                        <div className="font-bold text-white">Add Conc. NH₃</div>
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Right: Observation Log & Guessing */}
-                            <div className="w-full lg:w-1/2 flex flex-col gap-4">
-                                
-                                {/* Notebook / Log */}
-                                <div className="bg-white rounded-xl p-5 text-slate-800 shadow-lg flex-grow flex flex-col min-h-[300px]">
-                                    <h3 className="font-bold border-b pb-2 mb-3 flex items-center gap-2 text-slate-700">
-                                        <Icon name="ClipboardList" /> Lab Notebook
-                                    </h3>
-                                    <div className="space-y-2 font-mono text-sm flex-grow overflow-y-auto max-h-[250px]">
-                                        {history.map((h, idx) => (
-                                            <div key={idx} className={`p-2 rounded ${
-                                                h.type === 'action' ? 'bg-slate-100 text-slate-600' :
-                                                h.type === 'obs' ? 'bg-yellow-50 text-slate-800 border-l-4 border-yellow-400' :
-                                                'text-slate-400 italic'
-                                            }`}>
-                                                {h.text}
-                                            </div>
-                                        ))}
-                                        {history.length === 0 && <p className="text-slate-400 text-center mt-10">Waiting to start...</p>}
-                                    </div>
-                                </div>
-
-                                {/* Deduction Area */}
-                                <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
-                                    <h3 className="font-bold text-blue-400 mb-4 flex items-center gap-2">
-                                        <Icon name="BrainCircuit" /> Conclusion: What is Sample {currentSample.id}?
-                                    </h3>
-                                    
-                                    {!result?.correct ? (
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {['Cl⁻', 'Br⁻', 'I⁻', 'F⁻'].map(ion => (
-                                                <button
-                                                    key={ion}
-                                                    onClick={() => checkAnswer(ion)}
-                                                    className="bg-slate-700 hover:bg-slate-600 p-3 rounded-lg text-white font-bold transition-all border border-slate-600 hover:border-blue-400"
-                                                >
-                                                    {ion}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="bg-green-600/20 border border-green-500 text-green-400 p-4 rounded-lg animate-in zoom-in">
-                                            <div className="font-bold text-lg flex items-center gap-2 mb-1">
-                                                <Icon name="CheckCircle" /> Correct!
-                                            </div>
-                                            <p>{result.msg}</p>
-                                            <button 
-                                                onClick={() => setCurrentSample(null)}
-                                                className="mt-4 w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-500 font-bold transition-colors"
-                                            >
-                                                Next Sample
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    {result && !result.correct && (
-                                        <div className="mt-3 text-red-400 text-sm bg-red-900/20 p-2 rounded border border-red-800 flex items-center gap-2">
-                                            <Icon name="XCircle" size={16} /> {result.msg}
-                                        </div>
-                                    )}
-                                </div>
-
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="text-center text-slate-600 text-xs mt-8 border-t border-slate-800 pt-4">
-                        Designed for HKDSE Chemistry | Luminous Learner Science Tools
+                <!-- Unknown Selector Rack -->
+                <div class="glass-panel rounded-xl p-4 flex flex-col gap-3">
+                    <h3 class="text-sm font-bold uppercase tracking-widest text-slate-400 border-b border-slate-700 pb-2 text-center">Mystery Halides</h3>
+                    <div class="flex justify-around py-2">
+                        <button id="tube-A" class="tube-btn w-16 h-20 rounded-lg border-2 border-slate-600 bg-slate-800/50 hover:bg-slate-700 transition flex flex-col items-center justify-center gap-1 shadow-md" onclick="selectUnknown('A')">
+                            <div class="w-4 h-8 border-2 border-white/40 rounded-b-full bg-blue-400/20"></div>
+                            <span class="font-bold text-slate-300">Tube A</span>
+                        </button>
+                        <button id="tube-B" class="tube-btn w-16 h-20 rounded-lg border-2 border-slate-600 bg-slate-800/50 hover:bg-slate-700 transition flex flex-col items-center justify-center gap-1 shadow-md" onclick="selectUnknown('B')">
+                            <div class="w-4 h-8 border-2 border-white/40 rounded-b-full bg-blue-400/20"></div>
+                            <span class="font-bold text-slate-300">Tube B</span>
+                        </button>
+                        <button id="tube-C" class="tube-btn w-16 h-20 rounded-lg border-2 border-slate-600 bg-slate-800/50 hover:bg-slate-700 transition flex flex-col items-center justify-center gap-1 shadow-md" onclick="selectUnknown('C')">
+                            <div class="w-4 h-8 border-2 border-white/40 rounded-b-full bg-blue-400/20"></div>
+                            <span class="font-bold text-slate-300">Tube C</span>
+                        </button>
                     </div>
                 </div>
-            );
+
+                <!-- Reagent Actions -->
+                <div class="glass-panel rounded-xl p-4 flex flex-col gap-3 flex-grow">
+                    <h3 class="text-sm font-bold uppercase tracking-widest text-slate-400 border-b border-slate-700 pb-2 text-center">Reagents</h3>
+                    
+                    <button id="btn-agno3" class="px-4 py-3 bg-indigo-600 hover:bg-indigo-500 font-bold rounded-lg shadow transition text-sm flex items-center justify-between" onclick="addAgNO3()" disabled>
+                        <span>1. Add HNO<sub>3</sub> & AgNO<sub>3</sub></span>
+                        <span class="text-xl">💧</span>
+                    </button>
+                    
+                    <button id="btn-dil-nh3" class="px-4 py-3 bg-cyan-600 hover:bg-cyan-500 font-bold rounded-lg shadow transition text-sm flex items-center justify-between" onclick="addNH3('dilute')" disabled>
+                        <span>2. Add Dilute NH<sub>3</sub></span>
+                        <span class="text-xl">🧪</span>
+                    </button>
+                    
+                    <button id="btn-conc-nh3" class="px-4 py-3 bg-purple-600 hover:bg-purple-500 font-bold rounded-lg shadow transition text-sm flex items-center justify-between" onclick="addNH3('concentrated')" disabled>
+                        <span>3. Add Conc. NH<sub>3</sub></span>
+                        <span class="text-xl">⚠️</span>
+                    </button>
+
+                    <button class="mt-auto px-4 py-3 bg-slate-700 hover:bg-slate-600 font-bold rounded-lg shadow transition text-sm" onclick="resetSim()">
+                        🔄 Wash Test Tube
+                    </button>
+                </div>
+
+            </div>
+
+            <!-- RIGHT: p5.js Viewport (Cols 5-12) -->
+            <div class="md:col-span-8 glass-panel rounded-xl border border-slate-700 bg-slate-900/60 p-2 relative">
+                
+                <div id="p5-container"></div>
+                
+                <!-- Result Stamp Overlay -->
+                <div id="result-stamp" class="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 transition-opacity duration-700">
+                    <div id="result-text" class="border-4 border-emerald-500 text-emerald-400 font-bold text-4xl md:text-5xl p-6 rounded-xl transform rotate-[-10deg] shadow-[0_0_30px_rgba(16,185,129,0.4)] backdrop-blur-sm">
+                        CONFIRMED: CHLORIDE
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- P5.JS ENGINE & LOGIC -->
+    <script>
+        // Data Mapping for Mysteries
+        const HALIDES = {
+            'A': { id: 'Chloride', formula: 'Cl', pptColor: [255, 255, 255], pptName: 'White (AgCl)', dilSoluble: true, concSoluble: true },
+            'B': { id: 'Bromide',  formula: 'Br', pptColor: [253, 246, 210], pptName: 'Cream (AgBr)', dilSoluble: false, concSoluble: true },
+            'C': { id: 'Iodide',   formula: 'I',  pptColor: [250, 219, 94],  pptName: 'Yellow (AgI)', dilSoluble: false, concSoluble: false }
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        const sketch = (p) => {
+            // State
+            let w, h;
+            let unknown = null; // 'A', 'B', 'C'
+            let phase = 0; // 0:Empty, 1:AgNO3 added, 2:Dil NH3 added, 3:Conc NH3 added
+            
+            // Physics variables
+            let liquidLevel;
+            let targetLiquidLevel;
+            let particles = [];
+            let droplets = [];
+            let dropper = { y: -100, active: false, type: '', timer: 0 };
+            
+            // Visual Variables
+            let turbidity = 0;
+            let targetTurbidity = 0;
+            let currentPptColor = [255, 255, 255];
+            
+            // Constants
+            const TUBE_W = 100;
+            const TUBE_H = 300;
+            
+            p.setup = () => {
+                const container = document.getElementById('p5-container');
+                w = container.offsetWidth;
+                h = container.offsetHeight;
+                p.createCanvas(w, h).parent('p5-container');
+                
+                liquidLevel = h - 50; // Near bottom initially
+                targetLiquidLevel = liquidLevel;
+            };
+
+            p.draw = () => {
+                p.clear();
+                
+                // Draw Background gradient glow
+                p.noStroke();
+                let c1 = p.color(15, 23, 42, 0);
+                let c2 = p.color(30, 41, 59, 150);
+                for(let i=0; i<h; i+=5) {
+                    let inter = p.map(i, 0, h, 0, 1);
+                    p.fill(p.lerpColor(c1, c2, inter));
+                    p.rect(0, i, w, 5);
+                }
+
+                const cx = w/2;
+                const tubeTop = h/2 - TUBE_H/2;
+                const tubeBottom = h/2 + TUBE_H/2;
+
+                // Animate Dropper
+                if (dropper.active) {
+                    dropper.y = p.lerp(dropper.y, tubeTop - 40, 0.1);
+                    dropper.timer++;
+                    
+                    // Generate droplets
+                    if (dropper.timer > 30 && dropper.timer < 90 && p.frameCount % 5 === 0) {
+                        droplets.push(new Droplet(cx + p.random(-5, 5), dropper.y + 30, dropper.type));
+                    }
+                    
+                    // Retract
+                    if (dropper.timer > 120) {
+                        dropper.y = p.lerp(dropper.y, -100, 0.1);
+                        if (dropper.y < -90) dropper.active = false;
+                    }
+
+                    // Draw Dropper
+                    p.push();
+                    p.translate(cx, dropper.y);
+                    p.fill(200); p.stroke(100); p.strokeWeight(2);
+                    p.rect(-10, -50, 20, 60, 5); // bulb
+                    p.fill(50);
+                    p.rect(-15, -70, 30, 30, 10); // rubber top
+                    p.fill(180, 220, 255, 150);
+                    p.triangle(-10, 10, 10, 10, 0, 30); // tip
+                    p.pop();
+                }
+
+                // Update & Draw Droplets
+                for (let i = droplets.length - 1; i >= 0; i--) {
+                    let d = droplets[i];
+                    d.update();
+                    d.draw();
+                    
+                    // Hit liquid surface
+                    if (d.y > liquidLevel) {
+                        targetLiquidLevel -= 2; // Liquid rises slightly
+                        triggerReaction(d.type);
+                        droplets.splice(i, 1);
+                    }
+                }
+
+                // Smooth liquid level and turbidity
+                liquidLevel = p.lerp(liquidLevel, targetLiquidLevel, 0.05);
+                turbidity = p.lerp(turbidity, targetTurbidity, 0.05);
+
+                // Draw Back of Test Tube
+                p.noStroke();
+                p.fill(255, 255, 255, 10);
+                p.rect(cx - TUBE_W/2, tubeTop, TUBE_W, TUBE_H, 0, 0, TUBE_W/2, TUBE_W/2);
+
+                // Draw Liquid
+                if (unknown !== null) {
+                    // Base clear liquid
+                    p.fill(100, 200, 255, 40); 
+                    p.rect(cx - TUBE_W/2 + 2, liquidLevel, TUBE_W - 4, tubeBottom - liquidLevel - TUBE_W/2);
+                    p.arc(cx, tubeBottom - TUBE_W/2, TUBE_W - 4, TUBE_W - 4, 0, p.PI);
+                    
+                    // Surface ellipse
+                    p.fill(150, 220, 255, 50);
+                    p.ellipse(cx, liquidLevel, TUBE_W - 4, 10);
+
+                    // Turbidity (Cloudiness of precipitate in suspension)
+                    if (turbidity > 0.5) {
+                        p.fill(currentPptColor[0], currentPptColor[1], currentPptColor[2], turbidity);
+                        p.rect(cx - TUBE_W/2 + 2, liquidLevel, TUBE_W - 4, tubeBottom - liquidLevel - TUBE_W/2);
+                        p.arc(cx, tubeBottom - TUBE_W/2, TUBE_W - 4, TUBE_W - 4, 0, p.PI);
+                        p.fill(currentPptColor[0], currentPptColor[1], currentPptColor[2], turbidity + 20);
+                        p.ellipse(cx, liquidLevel, TUBE_W - 4, 10);
+                    }
+                }
+
+                // Update & Draw Particles (Settled Precipitate)
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    let pt = particles[i];
+                    pt.update(tubeBottom - TUBE_W/2, cx, TUBE_W);
+                    pt.draw();
+                    if (pt.isDead) particles.splice(i, 1);
+                }
+
+                // Draw Front of Test Tube (Glass glare)
+                p.stroke(255, 255, 255, 100);
+                p.strokeWeight(3);
+                p.noFill();
+                p.rect(cx - TUBE_W/2, tubeTop, TUBE_W, TUBE_H, 0, 0, TUBE_W/2, TUBE_W/2);
+                
+                // Highlight glare
+                p.stroke(255, 255, 255, 200);
+                p.strokeWeight(4);
+                p.line(cx - TUBE_W/2 + 10, tubeTop + 20, cx - TUBE_W/2 + 10, tubeBottom - 30);
+            };
+
+            p.windowResized = () => {
+                const container = document.getElementById('p5-container');
+                w = container.offsetWidth;
+                h = container.offsetHeight;
+                p.resizeCanvas(w, h);
+            };
+
+            // --- CLASSES ---
+            class Droplet {
+                constructor(x, y, type) {
+                    this.x = x;
+                    this.y = y;
+                    this.vy = 0;
+                    this.type = type;
+                }
+                update() {
+                    this.vy += 0.5; // Gravity
+                    this.y += this.vy;
+                }
+                draw() {
+                    p.noStroke();
+                    p.fill(200, 230, 255, 200);
+                    p.ellipse(this.x, this.y, 6, 10);
+                }
+            }
+
+            class Precipitate {
+                constructor(x, y, color) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = p.random(-1, 1);
+                    this.vy = p.random(0.5, 2);
+                    this.color = color; // [r, g, b]
+                    this.size = p.random(3, 6);
+                    this.alpha = 255;
+                    this.dissolving = false;
+                    this.isDead = false;
+                    this.targetYOffset = p.random(0, TUBE_W/2 - 5); // Settle pile offset
+                }
+                
+                update(bottomBase, cx, tubeW) {
+                    if (this.dissolving) {
+                        this.size -= 0.05;
+                        this.alpha -= 5;
+                        if (this.size <= 0 || this.alpha <= 0) this.isDead = true;
+                    } else {
+                        // Sinking physics
+                        const maxDrop = bottomBase + Math.sqrt(Math.pow(tubeW/2 - 2, 2) - Math.pow(this.x - cx, 2)) - this.targetYOffset - 5;
+                        
+                        if (this.y < maxDrop) {
+                            this.y += this.vy;
+                            this.x += this.vx;
+                            // Bounce off walls
+                            if (this.x < cx - tubeW/2 + 5 || this.x > cx + tubeW/2 - 5) this.vx *= -1;
+                        } else {
+                            this.y = maxDrop;
+                        }
+                    }
+                }
+                
+                draw() {
+                    p.noStroke();
+                    p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+                    p.ellipse(this.x, this.y, this.size);
+                }
+            }
+
+            // --- API METHODS ---
+            p.setUnknown = (val) => {
+                unknown = val;
+                phase = 0;
+                particles = [];
+                turbidity = 0;
+                targetTurbidity = 0;
+                targetLiquidLevel = h/2 + 50; // Reset liquid height
+                liquidLevel = targetLiquidLevel;
+            };
+
+            p.runDropper = (type) => {
+                dropper.y = -100;
+                dropper.active = true;
+                dropper.type = type;
+                dropper.timer = 0;
+            };
+
+            // Called when a droplet hits the liquid
+            function triggerReaction(type) {
+                if (unknown === null) return;
+                const data = HALIDES[unknown];
+
+                if (type === 'AgNO3' && phase === 0) {
+                    targetTurbidity = 200;
+                    currentPptColor = data.pptColor;
+                    // Spawn solid precipitate chunks settling at the bottom
+                    for(let i=0; i<3; i++) {
+                        particles.push(new Precipitate(w/2 + p.random(-20, 20), liquidLevel, data.pptColor));
+                    }
+                } else if (type === 'dilNH3') {
+                    if (data.dilSoluble) {
+                        targetTurbidity = 0;
+                        particles.forEach(pt => pt.dissolving = true);
+                    }
+                } else if (type === 'concNH3') {
+                    if (data.concSoluble) {
+                        targetTurbidity = 0;
+                        particles.forEach(pt => pt.dissolving = true);
+                    }
+                }
+            }
+
+            p.triggerPhaseSync = (newPhase) => {
+                phase = newPhase;
+            };
+
+            window.p5sketch = p;
+        };
+        new p5(sketch);
+
+        // --- DOM / WORKFLOW CONTROLLERS ---
+
+        let currentUnknown = null;
+        let step = 0;
+
+        function updateUI(title, eq, desc) {
+            const titleEl = document.getElementById('hud-title');
+            const eqEl = document.getElementById('hud-equation');
+            const descEl = document.getElementById('hud-description');
+            
+            titleEl.style.opacity = 0; eqEl.style.opacity = 0; descEl.style.opacity = 0;
+            
+            setTimeout(() => {
+                titleEl.innerHTML = title; eqEl.innerHTML = eq; descEl.innerHTML = desc;
+                titleEl.style.transition = "opacity 0.2s"; eqEl.style.transition = "opacity 0.2s"; descEl.style.transition = "opacity 0.2s";
+                titleEl.style.opacity = 1; eqEl.style.opacity = 1; descEl.style.opacity = 1;
+            }, 150);
+        }
+
+        function selectUnknown(tube) {
+            currentUnknown = tube;
+            step = 1;
+            
+            // Visual toggle
+            document.querySelectorAll('.tube-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`tube-${tube}`).classList.add('active');
+
+            // Button states
+            document.getElementById('btn-agno3').disabled = false;
+            document.getElementById('btn-dil-nh3').disabled = true;
+            document.getElementById('btn-conc-nh3').disabled = true;
+            
+            // Clear stamps
+            document.getElementById('result-stamp').style.opacity = 0;
+
+            window.p5sketch.setUnknown(tube);
+            
+            updateUI(
+                `Mystery Tube ${tube} Selected`, 
+                `X<sup>-</sup>(aq) + Ag<sup>+</sup>(aq) &rarr; ?`, 
+                `You have selected an unknown halide solution. Proceed to Step 1: Add acidified Silver Nitrate (AgNO<sub>3</sub>). The acid removes carbonate/sulfite impurities, while Ag<sup>+</sup> bonds with halides to form insoluble precipitates.`
+            );
+        }
+
+        function addAgNO3() {
+            if (step !== 1) return;
+            step = 2;
+            
+            document.getElementById('btn-agno3').disabled = true;
+            document.getElementById('btn-dil-nh3').disabled = false;
+            
+            window.p5sketch.runDropper('AgNO3');
+            
+            const data = HALIDES[currentUnknown];
+            updateUI(
+                `Observation: ${data.pptName}`, 
+                `${data.formula}<sup>-</sup>(aq) + Ag<sup>+</sup>(aq) &rarr; Ag${data.formula}(s)`, 
+                `A <b>${data.pptName.split(' ')[0]}</b> precipitate formed and clouded the solution. To test its K<sub>sp</sub> (solubility product) and confirm its identity, proceed to Step 2: Add Dilute Ammonia (NH<sub>3</sub>). Ammonia forms a complex ion [Ag(NH<sub>3</sub>)<sub>2</sub>]<sup>+</sup> which can dissolve some silver halides.`
+            );
+        }
+
+        function addNH3(concentration) {
+            window.p5sketch.runDropper(concentration === 'dilute' ? 'dilNH3' : 'concNH3');
+            const data = HALIDES[currentUnknown];
+            
+            if (concentration === 'dilute') {
+                step = 3;
+                document.getElementById('btn-dil-nh3').disabled = true;
+                
+                if (data.dilSoluble) {
+                    // It's Chloride
+                    document.getElementById('btn-conc-nh3').disabled = true;
+                    updateUI(
+                        `Dissolves in Dilute NH<sub>3</sub>`, 
+                        `AgCl(s) + 2NH<sub>3</sub>(aq) &rarr; [Ag(NH<sub>3</sub>)<sub>2</sub>]<sup>+</sup>(aq) + Cl<sup>-</sup>(aq)`, 
+                        `The precipitate dissolved! AgCl has the highest K<sub>sp</sub>, so the formation of the diammine silver(I) complex lowers the free Ag<sup>+</sup> concentration enough to completely shift the equilibrium, dissolving the solid.`
+                    );
+                    showStamp('CHLORIDE');
+                } else {
+                    // Bromide or Iodide
+                    document.getElementById('btn-conc-nh3').disabled = false;
+                    updateUI(
+                        `Insoluble in Dilute NH<sub>3</sub>`, 
+                        `Ag${data.formula}(s) + Dilute NH<sub>3</sub> &rarr; No Reaction`, 
+                        `The precipitate did NOT dissolve. Its K<sub>sp</sub> is too low for dilute ammonia to shift the equilibrium. Proceed to Step 3: Add Concentrated Ammonia to attempt to force dissolution.`
+                    );
+                }
+                window.p5sketch.triggerPhaseSync(2);
+                
+            } else if (concentration === 'concentrated') {
+                step = 4;
+                document.getElementById('btn-conc-nh3').disabled = true;
+                
+                if (data.concSoluble) {
+                    // It's Bromide
+                    updateUI(
+                        `Dissolves in Concentrated NH<sub>3</sub>`, 
+                        `AgBr(s) + 2NH<sub>3</sub>(conc) &rarr; [Ag(NH<sub>3</sub>)<sub>2</sub>]<sup>+</sup>(aq) + Br<sup>-</sup>(aq)`, 
+                        `The precipitate dissolved! AgBr has a lower K<sub>sp</sub> than AgCl, requiring the higher ligand concentration of concentrated NH<sub>3</sub> to form enough complex ions to dissolve the solid.`
+                    );
+                    showStamp('BROMIDE');
+                } else {
+                    // It's Iodide
+                    updateUI(
+                        `Insoluble in Concentrated NH<sub>3</sub>`, 
+                        `AgI(s) + Conc NH<sub>3</sub> &rarr; No Reaction`, 
+                        `The precipitate remains completely insoluble. AgI has an extremely low K<sub>sp</sub>. Even concentrated ammonia cannot reduce the free Ag<sup>+</sup> concentration enough to dissolve it.`
+                    );
+                    showStamp('IODIDE');
+                }
+                window.p5sketch.triggerPhaseSync(3);
+            }
+        }
+
+        function showStamp(chemical) {
+            const stamp = document.getElementById('result-stamp');
+            const text = document.getElementById('result-text');
+            
+            text.innerHTML = `CONFIRMED: ${chemical}`;
+            
+            // Wait for reaction animation to settle before stamping
+            setTimeout(() => {
+                stamp.style.opacity = 1;
+            }, 1500);
+        }
+
+        function resetSim() {
+            currentUnknown = null;
+            step = 0;
+            
+            document.querySelectorAll('.tube-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('btn-agno3').disabled = true;
+            document.getElementById('btn-dil-nh3').disabled = true;
+            document.getElementById('btn-conc-nh3').disabled = true;
+            document.getElementById('result-stamp').style.opacity = 0;
+            
+            window.p5sketch.setUnknown(null);
+            
+            updateUI(
+                "Awaiting Selection", 
+                "X<sup>-</sup>(aq) + Ag<sup>+</sup>(aq) &rarr; ?", 
+                "Select a Mystery Halide solution (Cl<sup>-</sup>, Br<sup>-</sup>, or I<sup>-</sup>). First, add acidified Silver Nitrate (AgNO<sub>3</sub>) to form a precipitate. Then, test its solubility profile using dilute and concentrated Ammonia (NH<sub>3</sub>) to confirm its identity based on complex ion formation."
+            );
+        }
+
     </script>
 </body>
 </html>
