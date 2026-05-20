@@ -3,458 +3,532 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Projectile Motion Launcher | Luminous Learner</title>
+    <title>Projectile Motion Physics Simulator</title>
+    <meta name="description" content="Interactive projectile motion physics simulator. Visualize parabolic trajectories, independence of horizontal and vertical motion, and air resistance.">
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
     
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .canvas-container { cursor: crosshair; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; background: #ffffff; cursor: pointer; border: 2px solid #3b82f6;
+        body { background-color: #0F172A; } /* Deep Slate */
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+        }
+
+        /* Math equation block */
+        .math-box {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* P5 canvas wrapper */
+        #p5-container canvas {
+            display: block;
+            border-radius: 0.5rem;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+        }
+
+        /* Custom Toggle Switch for Air Resistance */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #ef4444; /* red-500 */
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #ef4444; /* red-500 */
         }
     </style>
 </head>
-<body>
+<body class="text-slate-200 h-screen w-screen overflow-hidden flex items-center justify-center p-4 font-sans">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 500;
-    const GROUND_Y = 450;
-    const LAUNCH_X = 50;
-    const LAUNCH_Y = GROUND_Y - 20; // Pivot point
-    const SCALE = 10; // 10 pixels = 1 meter
-    const G = 9.81;
-
-    const App = () => {
-        // --- State ---
-        const [angle, setAngle] = useState(45); // Degrees
-        const [velocity, setVelocity] = useState(25); // m/s
-        const [showVectors, setShowVectors] = useState(true);
-        const [showGrid, setShowGrid] = useState(true);
-        const [simState, setSimState] = useState('idle'); // idle, running, finished
+    <main class="w-full max-w-[1400px] h-full max-h-[900px] flex flex-col glass-panel rounded-2xl shadow-2xl p-6 relative">
         
-        // Real-time Data
-        const [time, setTime] = useState(0);
-        const [currentPos, setCurrentPos] = useState({ x: 0, y: 0 });
-        const [maxHeight, setMaxHeight] = useState(0);
-        const [range, setRange] = useState(0);
-
-        // Physics State Refs
-        const physicsRef = useRef({
-            x: 0, y: 0,
-            vx: 0, vy: 0,
-            t: 0,
-            path: []
-        });
-        const requestRef = useRef();
-        const canvasRef = useRef(null);
-
-        // --- Logic ---
-        const fire = () => {
-            if (simState === 'running') return;
-
-            const rad = angle * (Math.PI / 180);
-            physicsRef.current = {
-                x: 0,
-                y: 0, // Relative to launch point
-                vx: velocity * Math.cos(rad),
-                vy: velocity * Math.sin(rad),
-                t: 0,
-                path: [{x: 0, y: 0}]
-            };
-            
-            setMaxHeight(0);
-            setRange(0);
-            setTime(0);
-            setCurrentPos({x: 0, y: 0});
-            setSimState('running');
-            
-            loop();
-        };
-
-        const reset = () => {
-            cancelAnimationFrame(requestRef.current);
-            setSimState('idle');
-            physicsRef.current = { x: 0, y: 0, vx: 0, vy: 0, t: 0, path: [] };
-            setTime(0);
-            setCurrentPos({x: 0, y: 0});
-            draw(); // Draw static cannon
-        };
-
-        const loop = () => {
-            const dt = 0.03; // Time step (s)
-            const state = physicsRef.current;
-
-            // Physics Update
-            state.t += dt;
-            state.x += state.vx * dt;
-            state.vy -= G * dt; // Gravity acts down
-            state.y += state.vy * dt;
-
-            // Record Path (throttle slightly for performance if needed, but dt is coarse enough)
-            state.path.push({ x: state.x, y: state.y });
-
-            // Stats Update
-            if (state.y > maxHeight) setMaxHeight(state.y);
-            
-            // Sync UI
-            setTime(state.t);
-            setCurrentPos({ x: state.x, y: state.y });
-
-            // Collision Check (Ground)
-            if (state.y < 0) {
-                // Interpolate exact landing for precision
-                // y = y_old + vy_old * dt_partial = 0
-                // Simple clamp for visual
-                state.y = 0;
-                setRange(state.x);
-                setSimState('finished');
-                draw(); // Final frame
-                return;
-            }
-
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        // --- Rendering ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            // Clear
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // 1. Draw Sky & Ground
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
-            skyGrad.addColorStop(0, '#0f172a');
-            skyGrad.addColorStop(1, '#1e293b');
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, CANVAS_WIDTH, GROUND_Y);
-
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
-
-            // 2. Grid
-            if (showGrid) {
-                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                // Vertical lines every 10m (100px)
-                for(let x=LAUNCH_X; x<CANVAS_WIDTH; x+=10*SCALE) {
-                    ctx.moveTo(x, 0); ctx.lineTo(x, GROUND_Y);
-                    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                    ctx.font = '10px monospace';
-                    ctx.fillText(`${(x-LAUNCH_X)/SCALE}m`, x+2, GROUND_Y-5);
-                }
-                // Horizontal lines every 10m
-                for(let y=LAUNCH_Y; y>0; y-=10*SCALE) {
-                    ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y);
-                }
-                ctx.stroke();
-            }
-
-            // 3. Trajectory Path
-            if (physicsRef.current.path.length > 1) {
-                ctx.beginPath();
-                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([5, 5]);
-                physicsRef.current.path.forEach((p, i) => {
-                    const cx = LAUNCH_X + p.x * SCALE;
-                    const cy = LAUNCH_Y - p.y * SCALE;
-                    if (i === 0) ctx.moveTo(cx, cy);
-                    else ctx.lineTo(cx, cy);
-                });
-                ctx.stroke();
-                ctx.setLineDash([]);
-            }
-
-            // 4. Cannon
-            ctx.save();
-            ctx.translate(LAUNCH_X, LAUNCH_Y);
-            ctx.rotate(-angle * Math.PI / 180);
-            
-            // Barrel
-            ctx.fillStyle = '#475569';
-            ctx.fillRect(0, -10, 40, 20);
-            // Wheel (Static pivot)
-            ctx.restore();
-            
-            ctx.beginPath();
-            ctx.arc(LAUNCH_X, LAUNCH_Y, 15, 0, Math.PI*2);
-            ctx.fillStyle = '#64748b';
-            ctx.fill();
-            ctx.strokeStyle = '#94a3b8';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // 5. Projectile
-            const state = physicsRef.current;
-            const px = LAUNCH_X + state.x * SCALE;
-            const py = LAUNCH_Y - state.y * SCALE;
-
-            if (simState !== 'idle') {
-                ctx.beginPath();
-                ctx.arc(px, py, 8, 0, Math.PI*2);
-                ctx.fillStyle = '#facc15'; // Yellow ball
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                // 6. Vectors
-                if (showVectors && simState === 'running') {
-                    const vScale = 3; // Visual scale for vectors
-                    
-                    // Velocity (Green)
-                    drawArrow(ctx, px, py, state.vx * vScale, -state.vy * vScale, '#10b981', 'v');
-                    
-                    // Horizontal Component (Blue)
-                    drawArrow(ctx, px, py, state.vx * vScale, 0, '#3b82f6', 'vx');
-                    
-                    // Vertical Component (Red)
-                    drawArrow(ctx, px, py, 0, -state.vy * vScale, '#ef4444', 'vy');
-                }
-            } else {
-                // Show initial velocity vector when idle
-                if (showVectors) {
-                    const rad = angle * Math.PI/180;
-                    const vx = velocity * Math.cos(rad);
-                    const vy = velocity * Math.sin(rad);
-                    const vScale = 3;
-                    drawArrow(ctx, LAUNCH_X, LAUNCH_Y, vx*vScale, -vy*vScale, '#10b981', 'u');
-                }
-            }
-
-        };
-
-        const drawArrow = (ctx, x, y, dx, dy, color, label) => {
-            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-            const toX = x + dx;
-            const toY = y + dy;
-            const angle = Math.atan2(dy, dx);
-            const headLen = 10;
-
-            ctx.beginPath();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
-            ctx.moveTo(x, y);
-            ctx.lineTo(toX, toY);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.fillStyle = color;
-            ctx.moveTo(toX, toY);
-            ctx.lineTo(toX - headLen * Math.cos(angle - Math.PI/6), toY - headLen * Math.sin(angle - Math.PI/6));
-            ctx.lineTo(toX - headLen * Math.cos(angle + Math.PI/6), toY - headLen * Math.sin(angle + Math.PI/6));
-            ctx.fill();
-
-            // Label
-            ctx.font = 'bold 12px sans-serif';
-            ctx.fillText(label, toX + 10, toY);
-        };
-
-        // Initialize Loop
-        useEffect(() => {
-            draw();
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [angle, velocity, showVectors, showGrid]); // Redraw when settings change (if idle)
-
-        // Init icons
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
-
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-blue-500/20 p-2 rounded-lg">
-                            <i data-lucide="crosshair" className="w-6 h-6 text-blue-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Projectile Motion Launcher</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Kinematics
-                    </div>
-                </nav>
-
-                <main className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
-                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-auto bg-slate-950 rounded-xl canvas-container"
-                            />
-                            
-                            {/* Live Stats Overlay */}
-                            <div className="absolute top-4 right-4 flex flex-col gap-2 pointer-events-none">
-                                <div className="bg-slate-900/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 text-sm font-mono shadow-lg">
-                                    <div className="text-slate-400 text-xs">Time</div>
-                                    <div className="text-white font-bold">{time.toFixed(2)} s</div>
-                                </div>
-                                <div className="bg-slate-900/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 text-sm font-mono shadow-lg">
-                                    <div className="text-slate-400 text-xs">Height (y)</div>
-                                    <div className="text-emerald-400 font-bold">{currentPos.y.toFixed(1)} m</div>
-                                </div>
-                                <div className="bg-slate-900/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 text-sm font-mono shadow-lg">
-                                    <div className="text-slate-400 text-xs">Distance (x)</div>
-                                    <div className="text-blue-400 font-bold">{currentPos.x.toFixed(1)} m</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
-                            
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
-                                    <span>Launch Angle</span>
-                                    <span className="text-yellow-400">{angle}°</span>
-                                </label>
-                                <input 
-                                    type="range" min="0" max="90" step="1"
-                                    value={angle}
-                                    onChange={(e) => {
-                                        setAngle(Number(e.target.value));
-                                        reset();
-                                    }}
-                                    disabled={simState === 'running'}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
-
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-sm font-bold text-slate-300 mb-2">
-                                    <span>Initial Velocity</span>
-                                    <span className="text-emerald-400">{velocity} m/s</span>
-                                </label>
-                                <input 
-                                    type="range" min="5" max="50" step="1"
-                                    value={velocity}
-                                    onChange={(e) => {
-                                        setVelocity(Number(e.target.value));
-                                        reset();
-                                    }}
-                                    disabled={simState === 'running'}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
-
-                            <div className="flex gap-4">
-                                <button 
-                                    onClick={simState === 'idle' ? fire : reset}
-                                    className={`px-8 py-3 rounded-xl font-bold flex items-center shadow-lg transition-all ${
-                                        simState === 'running' 
-                                        ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                        : simState === 'finished'
-                                            ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                                            : 'bg-red-600 hover:bg-red-500 text-white'
-                                    }`}
-                                >
-                                    <i data-lucide={simState === 'idle' ? "rocket" : "rotate-ccw"} className="w-5 h-5 mr-2"></i>
-                                    {simState === 'idle' ? 'Fire!' : 'Reset'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Right: Settings & Results */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-4 flex items-center">
-                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                View Options
-                            </h2>
-                            <div className="space-y-3">
-                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                                    <span className="text-sm font-medium text-slate-300">Show Vectors</span>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={showVectors} 
-                                        onChange={() => setShowVectors(!showVectors)}
-                                        className="w-5 h-5 rounded border-slate-500 text-indigo-600 focus:ring-indigo-500"
-                                    />
-                                </label>
-                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                                    <span className="text-sm font-medium text-slate-300">Show Grid</span>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={showGrid} 
-                                        onChange={() => setShowGrid(!showGrid)}
-                                        className="w-5 h-5 rounded border-slate-500 text-indigo-600 focus:ring-indigo-500"
-                                    />
-                                </label>
-                            </div>
-                        </div>
-
-                        {simState === 'finished' && (
-                            <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl animate-in fade-in slide-in-from-bottom-4">
-                                <h3 className="text-indigo-300 font-bold text-sm mb-4 flex items-center">
-                                    <i data-lucide="clipboard-check" className="w-4 h-4 mr-2"></i> Run Results
-                                </h3>
-                                
-                                <div className="space-y-4">
-                                    <div>
-                                        <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Max Height</div>
-                                        <div className="text-2xl font-mono font-bold text-white">
-                                            {maxHeight.toFixed(2)} <span className="text-sm text-slate-500">m</span>
-                                        </div>
-                                    </div>
-                                    <div className="h-px bg-indigo-500/20"></div>
-                                    <div>
-                                        <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Total Range</div>
-                                        <div className="text-2xl font-mono font-bold text-white">
-                                            {range.toFixed(2)} <span className="text-sm text-slate-500">m</span>
-                                        </div>
-                                    </div>
-                                    <div className="h-px bg-indigo-500/20"></div>
-                                    <div>
-                                        <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Time of Flight</div>
-                                        <div className="text-2xl font-mono font-bold text-white">
-                                            {time.toFixed(2)} <span className="text-sm text-slate-500">s</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                    </div>
-
-                </main>
+        <header class="flex justify-between items-end border-b border-slate-600 pb-4 mb-6 shrink-0">
+            <div>
+                <h1 class="text-3xl font-bold text-white tracking-wide">Projectile Motion Simulator</h1>
+                <p class="text-slate-400 mt-1 text-sm">Observe the independence of horizontal (<i>v</i><sub>x</sub>) and vertical (<i>v</i><sub>y</sub>) motion.</p>
             </div>
-        );
-    };
+            <div class="text-right flex gap-3 hidden lg:flex">
+                <div class="math-box text-xs font-mono text-emerald-400 px-4 py-2 rounded-lg flex items-center" title="Trajectory Equation">
+                    y = x tan(&theta;) - (gx&sup2;) / (2u&sup2;cos&sup2;(&theta;))
+                </div>
+            </div>
+        </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+        <div class="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
+            
+            <div class="w-full lg:w-3/12 flex flex-col gap-4 h-full shrink-0">
+                
+                <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700 shrink-0">
+                    <h2 class="text-sm font-semibold text-sky-400 mb-4 border-b border-slate-700 pb-2">
+                        <i class="fa-solid fa-crosshairs mr-2"></i> Launch Parameters
+                    </h2>
+                    
+                    <div class="mb-5">
+                        <div class="flex justify-between text-sm font-medium text-slate-300 mb-1">
+                            <label>Launch Angle (&theta;)</label>
+                            <span id="angleValue" class="text-sky-300 font-mono">45&deg;</span>
+                        </div>
+                        <input type="range" id="angleSlider" min="0" max="90" step="1" value="45" class="w-full accent-sky-500 cursor-pointer">
+                    </div>
+
+                    <div class="mb-5">
+                        <div class="flex justify-between text-sm font-medium text-slate-300 mb-1">
+                            <label>Initial Velocity (<i>u</i>)</label>
+                            <span id="velocityValue" class="text-emerald-300 font-mono">20 m/s</span>
+                        </div>
+                        <input type="range" id="velocitySlider" min="5" max="40" step="1" value="20" class="w-full accent-emerald-500 cursor-pointer">
+                    </div>
+                    
+                    <div class="mb-5 flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-medium text-slate-300">Air Resistance</span>
+                            <span class="text-[10px] text-slate-500">Applies drag to x and y</span>
+                        </div>
+                        <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="toggle" id="dragToggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-slate-400 appearance-none cursor-pointer transition-all duration-300 z-10 top-0 left-0"/>
+                            <label for="dragToggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-400 cursor-pointer transition-colors duration-300"></label>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-3 mt-2">
+                        <button id="fireBtn" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 px-3 rounded-lg transition shadow-lg shadow-rose-900/50 flex justify-center items-center gap-2">
+                            <i class="fa-solid fa-rocket"></i> FIRE!
+                        </button>
+                        <button id="clearBtn" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-3 px-4 rounded-lg transition shadow-lg flex justify-center items-center" title="Clear Traces">
+                            <i class="fa-solid fa-eraser"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800/80 rounded-xl p-4 border border-slate-700 flex-1 flex flex-col justify-around relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-slate-700/50 text-[10px] uppercase font-bold px-2 py-1 rounded-bl-lg text-slate-400">Flight Data</div>
+                    
+                    <div class="mt-2">
+                        <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Time of Flight (<i>t</i>)</div>
+                        <div class="text-2xl font-mono text-white" id="readout-t">0.00 s</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Max Height (<i>y</i><sub>max</sub>)</div>
+                        <div class="text-2xl font-mono text-emerald-400" id="readout-h">0.00 m</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Total Range (<i>x</i><sub>max</sub>)</div>
+                        <div class="text-2xl font-mono text-sky-400" id="readout-r">0.00 m</div>
+                    </div>
+                    
+                    <div class="border-t border-slate-700 pt-3 mt-2">
+                        <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-2 font-bold text-center">Current Velocity Components</div>
+                        <div class="flex justify-between px-2">
+                            <div class="text-center">
+                                <span class="text-[10px] text-sky-300 block">Horizontal (<i>v</i><sub>x</sub>)</span>
+                                <span class="font-mono text-sm text-sky-400" id="readout-vx">0.0</span>
+                            </div>
+                            <div class="text-center">
+                                <span class="text-[10px] text-emerald-300 block">Vertical (<i>v</i><sub>y</sub>)</span>
+                                <span class="font-mono text-sm text-emerald-400" id="readout-vy">0.0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full lg:w-9/12 bg-slate-900 rounded-xl border border-slate-600 relative shadow-inner overflow-hidden flex flex-col" id="p5-container">
+                
+                <div class="absolute top-4 right-4 z-10 bg-slate-900/80 border border-slate-700 px-3 py-2 rounded-lg shadow-lg text-xs font-mono pointer-events-none flex flex-col gap-2">
+                    <div class="text-slate-300 font-bold border-b border-slate-700 pb-1 mb-1">Vector Legend</div>
+                    <div class="flex items-center gap-2 text-sky-400">
+                        <span class="w-6 h-0.5 bg-sky-400 block relative"><span class="absolute right-0 top-[-3px] border-[3px] border-transparent border-l-sky-400"></span></span> v_x (Horizontal)
+                    </div>
+                    <div class="flex items-center gap-2 text-emerald-400">
+                        <span class="w-6 h-0.5 bg-emerald-400 block relative"><span class="absolute right-0 top-[-3px] border-[3px] border-transparent border-l-emerald-400"></span></span> v_y (Vertical)
+                    </div>
+                    <div class="flex items-center gap-2 text-amber-400">
+                        <span class="w-6 h-0.5 bg-amber-400 block relative"><span class="absolute right-0 top-[-3px] border-[3px] border-transparent border-l-amber-400"></span></span> v_net (Resultant)
+                    </div>
+                </div>
+
+                </div>
+        </div>
+    </main>
+
+    <script>
+        /**
+         * PHYSICS BACKGROUND
+         * ------------------------------------------
+         * Kinematics without air resistance:
+         * a_x = 0
+         * a_y = -g
+         * v_x = u * cos(theta)
+         * v_y = u * sin(theta) - g * t
+         * * With air resistance (Quadratic drag):
+         * F_drag = 0.5 * rho * C_d * A * v^2
+         * a_drag = k * v^2 (where k = 0.5 * rho * C_d * A / m)
+         * We decompose a_drag into x and y components opposing the velocity vector.
+         */
+
+        const G = 9.81; // Gravity (m/s^2)
+        const DRAG_COEFF = 0.005; // Arbitrary simplified drag constant (k/m) for demonstration
+
+        // Application State
+        const state = {
+            angle: 45,       // degrees
+            initialVel: 20,  // m/s
+            hasDrag: false,
+            
+            projectiles: [], // Array to hold active and finished projectiles (for traces)
+            
+            pixelsPerMeter: 6 // Visual scaling factor
+        };
+
+        // DOM Elements
+        const DOM = {
+            angleSlider: document.getElementById('angleSlider'),
+            angleValue: document.getElementById('angleValue'),
+            velocitySlider: document.getElementById('velocitySlider'),
+            velocityValue: document.getElementById('velocityValue'),
+            dragToggle: document.getElementById('dragToggle'),
+            fireBtn: document.getElementById('fireBtn'),
+            clearBtn: document.getElementById('clearBtn'),
+            
+            t: document.getElementById('readout-t'),
+            h: document.getElementById('readout-h'),
+            r: document.getElementById('readout-r'),
+            vx: document.getElementById('readout-vx'),
+            vy: document.getElementById('readout-vy')
+        };
+
+        // --- Projectile Class ---
+        class Projectile {
+            constructor(u, thetaDegrees, hasDrag) {
+                this.u = u;
+                this.theta = thetaDegrees * (Math.PI / 180);
+                this.hasDrag = hasDrag;
+                
+                // State variables
+                this.x = 0;
+                this.y = 0;
+                this.vx = this.u * Math.cos(this.theta);
+                this.vy = this.u * Math.sin(this.theta);
+                
+                this.time = 0;
+                this.maxHeight = 0;
+                this.isActive = true;
+                
+                // Trail history
+                this.history = [];
+                
+                // Color based on whether it has drag
+                this.color = this.hasDrag ? '#ef4444' : '#fbbf24'; // Red if drag, Amber if ideal
+            }
+
+            update(dt) {
+                if (!this.isActive) return;
+
+                // Physics Engine (Euler Integration)
+                let ax = 0;
+                let ay = -G;
+
+                if (this.hasDrag) {
+                    // Calculate speed
+                    let speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                    
+                    // F_drag opposes motion direction
+                    let dragAcc = DRAG_COEFF * speed * speed;
+                    
+                    // Decompose drag acceleration
+                    ax = -dragAcc * (this.vx / speed);
+                    ay = -G - dragAcc * (this.vy / speed);
+                }
+
+                // Update velocity
+                this.vx += ax * dt;
+                this.vy += ay * dt;
+
+                // Update position
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+                
+                this.time += dt;
+
+                // Track max height
+                if (this.y > this.maxHeight) {
+                    this.maxHeight = this.y;
+                }
+
+                // Record history periodically for trail
+                if (Math.random() < 0.2) { // roughly every 5th frame
+                    this.history.push({ x: this.x, y: this.y });
+                }
+
+                // Hit ground condition
+                if (this.y <= 0 && this.time > 0.1) { // > 0.1 to avoid immediate collision at launch
+                    this.y = 0;
+                    this.isActive = false;
+                    this.history.push({ x: this.x, y: this.y }); // Final point
+                }
+            }
+        }
+
+        // --- p5.js Visual Engine ---
+        const sketch = (p) => {
+            let w, h;
+            let originX = 50;
+            let originY = 0; // Set dynamically in setup
+            
+            p.setup = () => {
+                const container = document.getElementById('p5-container');
+                w = container.clientWidth;
+                h = container.clientHeight;
+                const canvas = p.createCanvas(w, h);
+                canvas.parent('p5-container');
+                originY = h - 50;
+            };
+
+            p.windowResized = () => {
+                const container = document.getElementById('p5-container');
+                w = container.clientWidth;
+                h = container.clientHeight;
+                p.resizeCanvas(w, h);
+                originY = h - 50;
+            };
+
+            // Map physics coordinates (m) to screen coordinates (px)
+            const sx = (physicsX) => originX + (physicsX * state.pixelsPerMeter);
+            const sy = (physicsY) => originY - (physicsY * state.pixelsPerMeter);
+
+            p.draw = () => {
+                p.background('#020617'); // slate-950
+
+                // 1. Draw Grid
+                drawGrid();
+
+                // 2. Update and Draw Projectiles
+                let activeProjectile = null;
+                let dt = 1/60; // Assuming 60fps
+
+                // We loop backwards to draw older trails first, and the active one last
+                for (let i = 0; i < state.projectiles.length; i++) {
+                    let proj = state.projectiles[i];
+                    
+                    if (proj.isActive) {
+                        // Sub-step for more accurate Euler integration
+                        for(let step=0; step<4; step++) {
+                            proj.update(dt/4);
+                        }
+                        activeProjectile = proj;
+                    }
+                    
+                    drawTrail(proj);
+                    
+                    // Only draw the ball and vectors for the active projectile, or the final resting position of old ones
+                    if (proj.isActive) {
+                        drawProjectile(proj);
+                        drawVectors(proj);
+                    } else {
+                        // Draw resting marker
+                        p.fill(proj.color); p.noStroke();
+                        p.circle(sx(proj.x), sy(0), 6);
+                    }
+                }
+
+                // 3. Draw Cannon
+                drawCannon();
+
+                // 4. Update UI Readouts with active projectile data
+                if (activeProjectile) {
+                    DOM.t.textContent = `${activeProjectile.time.toFixed(2)} s`;
+                    DOM.h.textContent = `${activeProjectile.maxHeight.toFixed(1)} m`;
+                    DOM.r.textContent = `${activeProjectile.x.toFixed(1)} m`;
+                    DOM.vx.textContent = `${activeProjectile.vx.toFixed(1)}`;
+                    DOM.vy.textContent = `${activeProjectile.vy.toFixed(1)}`;
+                }
+            };
+
+            function drawGrid() {
+                p.strokeWeight(1);
+                
+                // Scale reference: Every 10 meters
+                let gridSpacing = 10 * state.pixelsPerMeter;
+                
+                p.stroke(255, 255, 255, 20);
+                // Vertical lines
+                for (let x = originX; x < w; x += gridSpacing) {
+                    p.line(x, 0, x, h);
+                    if (x > originX) {
+                        p.noStroke(); p.fill(255, 255, 255, 80); p.textAlign(p.CENTER, p.TOP); p.textSize(9);
+                        p.text(`${Math.round((x - originX) / state.pixelsPerMeter)}m`, x, originY + 10);
+                        p.stroke(255, 255, 255, 20);
+                    }
+                }
+                // Horizontal lines
+                for (let y = originY; y > 0; y -= gridSpacing) {
+                    p.line(0, y, w, y);
+                    if (y < originY) {
+                        p.noStroke(); p.fill(255, 255, 255, 80); p.textAlign(p.RIGHT, p.CENTER); p.textSize(9);
+                        p.text(`${Math.round((originY - y) / state.pixelsPerMeter)}m`, originX - 10, y);
+                        p.stroke(255, 255, 255, 20);
+                    }
+                }
+
+                // Main Axes
+                p.stroke('#475569'); p.strokeWeight(3);
+                p.line(originX, 0, originX, h); // Y Axis
+                p.line(0, originY, w, originY); // X Axis
+                
+                // Ground
+                p.fill('#0f172a'); p.noStroke();
+                p.rect(0, originY, w, h - originY);
+            }
+
+            function drawCannon() {
+                p.push();
+                p.translate(originX, originY);
+                
+                // Base
+                p.fill('#64748b'); p.noStroke();
+                p.arc(0, 0, 40, 40, p.PI, p.TWO_PI);
+                
+                // Barrel
+                p.rotate(-state.angle * (Math.PI / 180)); // Negative because Y is flipped in p5
+                p.fill('#94a3b8'); p.stroke('#334155'); p.strokeWeight(2);
+                p.rect(0, -10, 40, 20, 4);
+                
+                p.pop();
+            }
+
+            function drawTrail(proj) {
+                if (proj.history.length < 2) return;
+                
+                p.noFill();
+                p.strokeWeight(2);
+                p.drawingContext.setLineDash([5, 5]); // Dashed line for history
+                
+                // Fade out older trails slightly
+                if (!proj.isActive) {
+                    let c = p.color(proj.color);
+                    c.setAlpha(100);
+                    p.stroke(c);
+                } else {
+                    p.stroke(proj.color);
+                }
+
+                p.beginShape();
+                for (let pt of proj.history) {
+                    p.vertex(sx(pt.x), sy(pt.y));
+                }
+                // Connect to current position if active
+                if (proj.isActive) p.vertex(sx(proj.x), sy(proj.y));
+                p.endShape();
+                
+                p.drawingContext.setLineDash([]); // Reset
+            }
+
+            function drawProjectile(proj) {
+                p.fill(proj.color);
+                p.stroke('#ffffff');
+                p.strokeWeight(2);
+                p.circle(sx(proj.x), sy(proj.y), 16);
+            }
+
+            function drawVectors(proj) {
+                let px = sx(proj.x);
+                let py = sy(proj.y);
+                
+                // Scale velocity visually
+                let vScale = 2; 
+
+                // v_x vector (Sky blue)
+                if (Math.abs(proj.vx) > 0.1) {
+                    p.stroke('#38bdf8'); p.fill('#38bdf8');
+                    drawArrow(p, px, py, px + (proj.vx * vScale), py, 6);
+                }
+
+                // v_y vector (Emerald green) - note Y inversion for drawing
+                if (Math.abs(proj.vy) > 0.1) {
+                    p.stroke('#10b981'); p.fill('#10b981');
+                    drawArrow(p, px, py, px, py - (proj.vy * vScale), 6);
+                }
+
+                // Resultant v vector (Amber)
+                p.stroke('#fbbf24'); p.fill('#fbbf24');
+                drawArrow(p, px, py, px + (proj.vx * vScale), py - (proj.vy * vScale), 8);
+            }
+
+            // Helper to draw arrowheads
+            function drawArrow(p_inst, x1, y1, x2, y2, arrowSize) {
+                p_inst.strokeWeight(2);
+                p_inst.line(x1, y1, x2, y2);
+                let angle = p_inst.atan2(y2 - y1, x2 - x1);
+                p_inst.translate(x2, y2);
+                p_inst.rotate(angle);
+                p_inst.triangle(0, 0, -arrowSize, arrowSize/2, -arrowSize, -arrowSize/2);
+                p_inst.rotate(-angle);
+                p_inst.translate(-x2, -y2);
+            }
+        };
+
+        // Initialize p5
+        new p5(sketch);
+
+        // --- Controls & Event Listeners ---
+
+        DOM.angleSlider.addEventListener('input', (e) => {
+            state.angle = parseInt(e.target.value);
+            DOM.angleValue.innerHTML = `${state.angle}&deg;`;
+        });
+
+        DOM.velocitySlider.addEventListener('input', (e) => {
+            state.initialVel = parseInt(e.target.value);
+            DOM.velocityValue.innerHTML = `${state.initialVel} m/s`;
+        });
+
+        DOM.dragToggle.addEventListener('change', (e) => {
+            state.hasDrag = e.target.checked;
+        });
+
+        DOM.fireBtn.addEventListener('click', () => {
+            // Check if there is already an active projectile, if so, deactivate it (let it drop/freeze)
+            state.projectiles.forEach(p => p.isActive = false);
+            
+            // Create and launch new projectile
+            let newProj = new Projectile(state.initialVel, state.angle, state.hasDrag);
+            state.projectiles.push(newProj);
+            
+            // Reset readouts for new launch
+            DOM.t.textContent = `0.00 s`;
+            DOM.h.textContent = `0.00 m`;
+            DOM.r.textContent = `0.00 m`;
+            
+            // Auto-scale canvas if velocity is high (so it doesn't fly off screen)
+            // Max ideal range = u^2 / g
+            let maxExpectedRange = (state.initialVel * state.initialVel) / G;
+            let canvasWidthMeters = (document.getElementById('p5-container').clientWidth - 100) / state.pixelsPerMeter;
+            
+            // If it's going to fly off screen, zoom out
+            if (maxExpectedRange > canvasWidthMeters) {
+                state.pixelsPerMeter = (document.getElementById('p5-container').clientWidth - 100) / (maxExpectedRange * 1.1);
+            } else if (maxExpectedRange < canvasWidthMeters / 3 && state.pixelsPerMeter < 15) {
+                 // Zoom in if it's very short, but cap it so it doesn't get ridiculously large
+                 state.pixelsPerMeter = Math.min(15, (document.getElementById('p5-container').clientWidth - 100) / (maxExpectedRange * 1.5));
+            }
+        });
+
+        DOM.clearBtn.addEventListener('click', () => {
+            state.projectiles = [];
+            DOM.t.textContent = `0.00 s`;
+            DOM.h.textContent = `0.00 m`;
+            DOM.r.textContent = `0.00 m`;
+            DOM.vx.textContent = `0.0`;
+            DOM.vy.textContent = `0.0`;
+        });
+
+    </script>
 </body>
 </html>
