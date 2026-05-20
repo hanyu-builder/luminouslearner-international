@@ -3,400 +3,819 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Particle Motion Visualizer | Luminous Learner</title>
-    
+    <meta name="description" content="Particle motion kinematics visualizer. Interactive physics simulator tracking particles in transverse/longitudinal waves and kinetic theory thermodynamics.">
+    <title>Particle Motion Visualizer</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Prop-types (Required for Recharts UMD) -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-
-    <!-- Recharts (Pinned version for stability) -->
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-    
-    <!-- Babel for JSX -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #10b981;
-            cursor: pointer;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Deep slate */
+            color: #F8FAFC;
+            overflow: hidden; /* Prevent desktop scrolling */
         }
+        .math-font { font-family: 'JetBrains Mono', monospace; }
+
+        /* Custom Sliders */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            cursor: pointer; margin-top: -7px; transition: transform 0.1s;
+        }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #475569; border-radius: 2px;
+        }
+
+        /* Slider Colors (Waves) */
+        #slider-amp::-webkit-slider-thumb { background: #38BDF8; box-shadow: 0 0 10px rgba(56, 189, 248, 0.6); } 
+        #slider-freq::-webkit-slider-thumb { background: #A78BFA; box-shadow: 0 0 10px rgba(167, 139, 250, 0.6); }
+        #slider-wave::-webkit-slider-thumb { background: #F472B6; box-shadow: 0 0 10px rgba(244, 114, 182, 0.6); }
+        
+        /* Slider Colors (Thermo) */
+        #slider-temp::-webkit-slider-thumb { background: #FB923C; box-shadow: 0 0 10px rgba(251, 146, 60, 0.6); } 
+        #slider-count::-webkit-slider-thumb { background: #34D399; box-shadow: 0 0 10px rgba(52, 211, 153, 0.6); }
+
+        /* Custom Radio Buttons */
+        .radio-btn-group input[type="radio"] { display: none; }
+        .radio-btn-group label {
+            cursor: pointer; border: 1px solid #475569; background-color: #1E293B; transition: all 0.2s;
+        }
+        .radio-btn-group input[type="radio"]:checked + label {
+            background-color: #10B981; border-color: #34D399; color: white; box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+
+        /* Hide Scrollbar */
+        ::-webkit-scrollbar { display: none; }
+        .cursor-crosshair { cursor: crosshair; }
+
+        /* Tab Styles */
+        .tab-btn { transition: all 0.3s ease; }
+        .tab-btn.active { background-color: #10B981; color: #fff; border-color: #34D399; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
+        .tab-btn.inactive { background-color: #1E293B; color: #94A3B8; border-color: #334155; }
+        .tab-btn.inactive:hover { background-color: #334155; color: #fff; }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex items-center justify-center p-2 md:p-6 w-full h-full text-slate-100">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo, useCallback } = React;
-    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } = window.Recharts;
-
-    // --- Physics Constants ---
-    const CANVAS_WIDTH = 600;
-    const CANVAS_HEIGHT = 400;
-    const PARTICLE_RADIUS = 4;
-    
-    const STATE_CONFIG = {
-        SOLID: { color: '#3b82f6', bondStrength: 0.8, damping: 0.9, lattice: true },
-        LIQUID: { color: '#22c55e', bondStrength: 0.1, damping: 0.98, lattice: false, gravity: 0.1 },
-        GAS: { color: '#ef4444', bondStrength: 0, damping: 1, lattice: false, gravity: 0 }
-    };
-
-    const App = () => {
-        // --- State ---
-        const [mode, setMode] = useState('SOLID'); // SOLID, LIQUID, GAS
-        const [temperature, setTemperature] = useState(20); // 0 to 100
-        const [particleCount, setParticleCount] = useState(100);
-        const [energyData, setEnergyData] = useState([]);
+    <!-- Main Container -->
+    <div class="w-full max-w-[1600px] h-full md:h-[900px] bg-slate-800/80 rounded-3xl shadow-2xl border border-slate-700 flex flex-col overflow-hidden backdrop-blur-md">
         
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        const particlesRef = useRef([]);
-
-        // Initialize Particles based on Mode
-        const initParticles = useCallback(() => {
-            const particles = [];
-            const cols = Math.floor(Math.sqrt(particleCount * (CANVAS_WIDTH/CANVAS_HEIGHT)));
-            const rows = Math.ceil(particleCount / cols);
-            const spacingX = CANVAS_WIDTH / (cols + 1);
-            const spacingY = CANVAS_HEIGHT / (rows + 1);
-
-            for (let i = 0; i < particleCount; i++) {
-                let x, y, vx, vy, originX, originY;
-
-                if (mode === 'SOLID') {
-                    // Lattice arrangement
-                    const r = Math.floor(i / cols);
-                    const c = i % cols;
-                    originX = spacingX * (c + 1);
-                    originY = spacingY * (r + 1) + 50; // Center vertically somewhat
-                    x = originX;
-                    y = originY;
-                    vx = (Math.random() - 0.5);
-                    vy = (Math.random() - 0.5);
-                } else if (mode === 'LIQUID') {
-                    // Random bottom half
-                    x = Math.random() * (CANVAS_WIDTH - 20) + 10;
-                    y = CANVAS_HEIGHT - Math.random() * (CANVAS_HEIGHT / 2) - 10;
-                    vx = (Math.random() - 0.5) * 2;
-                    vy = (Math.random() - 0.5) * 2;
-                    originX = x; originY = y;
-                } else {
-                    // Random everywhere
-                    x = Math.random() * (CANVAS_WIDTH - 20) + 10;
-                    y = Math.random() * (CANVAS_HEIGHT - 20) + 10;
-                    vx = (Math.random() - 0.5) * 5;
-                    vy = (Math.random() - 0.5) * 5;
-                    originX = x; originY = y;
-                }
-
-                particles.push({ x, y, vx, vy, originX, originY });
-            }
-            particlesRef.current = particles;
-        }, [mode, particleCount]);
-
-        useEffect(() => {
-            initParticles();
-            setEnergyData([]); // Reset graph on mode change
-        }, [initParticles]);
-
-        // --- Physics Loop ---
-        const updatePhysics = () => {
-            const config = STATE_CONFIG[mode];
-            const speedMultiplier = (temperature / 50) + 0.1; // Temp affects KE
+        <!-- Header -->
+        <header class="bg-slate-900/90 p-4 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center z-20 shrink-0 gap-4">
+            <div class="flex items-center gap-3 w-full md:w-auto">
+                <div class="bg-emerald-500/20 p-2 rounded-lg border border-emerald-500/50 hidden md:block">
+                    <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-transparent">
+                        Particle Motion Visualizer
+                    </h1>
+                </div>
+            </div>
             
-            let totalKE = 0;
+            <!-- Central Tab Switcher -->
+            <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-700 shadow-inner w-full md:w-auto">
+                <button id="tab-waves" class="tab-btn active flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-widest border border-transparent">
+                    Wave Mechanics
+                </button>
+                <button id="tab-thermo" class="tab-btn inactive flex-1 md:flex-none px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-widest border border-transparent">
+                    Kinetic Theory (Temp)
+                </button>
+            </div>
 
-            particlesRef.current.forEach(p => {
-                // 1. Update Velocity based on State Logic
-                if (mode === 'SOLID') {
-                    // Spring force towards origin (Vibration)
-                    const dx = p.originX - p.x;
-                    const dy = p.originY - p.y;
-                    p.vx += dx * config.bondStrength * 0.1;
-                    p.vy += dy * config.bondStrength * 0.1;
-                    
-                    // Add random "Thermal Kick" based on temperature
-                    if (Math.random() < 0.1) {
-                        p.vx += (Math.random() - 0.5) * speedMultiplier;
-                        p.vy += (Math.random() - 0.5) * speedMultiplier;
-                    }
-                    
-                    p.vx *= config.damping;
-                    p.vy *= config.damping;
+            <div class="hidden md:flex gap-3 w-full md:w-auto justify-end">
+                <button id="btn-toggle-play" class="bg-rose-600 hover:bg-rose-500 px-6 py-2 rounded-lg text-sm font-semibold transition border border-rose-400 text-white shadow-[0_0_15px_rgba(225,29,72,0.4)] flex items-center gap-2 w-full md:w-auto justify-center">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Pause Time
+                </button>
+            </div>
+        </header>
 
-                } else if (mode === 'LIQUID') {
-                    // Gravity
-                    p.vy += config.gravity;
-                    
-                    // Simple container bounds
-                    if (p.x < PARTICLE_RADIUS) { p.x = PARTICLE_RADIUS; p.vx *= -0.5; }
-                    if (p.x > CANVAS_WIDTH - PARTICLE_RADIUS) { p.x = CANVAS_WIDTH - PARTICLE_RADIUS; p.vx *= -0.5; }
-                    if (p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) { p.y = CANVAS_HEIGHT - PARTICLE_RADIUS; p.vy *= -0.5; }
-                    
-                    // Thermal Movement
-                    p.vx += (Math.random() - 0.5) * speedMultiplier * 0.2;
-                    p.vy += (Math.random() - 0.5) * speedMultiplier * 0.2;
+        <!-- ========================================== -->
+        <!-- VIEW: WAVE MECHANICS                       -->
+        <!-- ========================================== -->
+        <div id="view-waves" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative">
+            
+            <!-- Left Panel: Setup & Variables -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-5 overflow-y-auto z-10">
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-2">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+                    Wave Properties
+                </h2>
 
-                    // Repulsion from neighbors (Simple collision avoidance)
-                    particlesRef.current.forEach(other => {
-                         if (p === other) return;
-                         const dx = p.x - other.x;
-                         const dy = p.y - other.y;
-                         const dist = Math.sqrt(dx*dx + dy*dy);
-                         if (dist < PARTICLE_RADIUS * 2.5 && dist > 0) {
-                             const force = (PARTICLE_RADIUS * 2.5 - dist) * 0.05;
-                             p.vx += (dx / dist) * force;
-                             p.vy += (dy / dist) * force;
-                         }
-                    });
-                    
-                    p.vx *= config.damping;
-                    p.vy *= config.damping;
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-emerald-900/50 relative overflow-hidden shadow-inner">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-emerald-500"></div>
+                    <label class="block text-slate-200 font-semibold text-xs uppercase tracking-widest mb-3 pl-1">Wave Type</label>
+                    <div class="flex flex-col gap-2 radio-btn-group pl-1">
+                        <div>
+                            <input type="radio" id="type-transverse" name="wave-type" value="transverse" checked>
+                            <label for="type-transverse" class="block w-full text-center py-2 rounded text-xs font-bold uppercase tracking-wider text-slate-300">Transverse</label>
+                        </div>
+                        <div>
+                            <input type="radio" id="type-longitudinal" name="wave-type" value="longitudinal">
+                            <label for="type-longitudinal" class="block w-full text-center py-2 rounded text-xs font-bold uppercase tracking-wider text-slate-300">Longitudinal</label>
+                        </div>
+                    </div>
+                </div>
 
-                } else { // GAS
-                    // No gravity, perfectly elastic collisions with walls
-                    if (p.x < PARTICLE_RADIUS || p.x > CANVAS_WIDTH - PARTICLE_RADIUS) p.vx *= -1;
-                    if (p.y < PARTICLE_RADIUS || p.y > CANVAS_HEIGHT - PARTICLE_RADIUS) p.vy *= -1;
-                    
-                    // Keep bounds
-                    p.x = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_WIDTH - PARTICLE_RADIUS, p.x));
-                    p.y = Math.max(PARTICLE_RADIUS, Math.min(CANVAS_HEIGHT - PARTICLE_RADIUS, p.y));
+                <div class="h-px w-full bg-slate-700 my-1"></div>
 
-                    // Normalize speed to match temperature (Thermostat)
-                    const currentSpeed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
-                    const targetSpeed = speedMultiplier * 4; 
-                    // Gently nudge towards target speed
-                    p.vx = p.vx * 0.99 + p.vx/currentSpeed * targetSpeed * 0.01; 
-                    p.vy = p.vy * 0.99 + p.vy/currentSpeed * targetSpeed * 0.01;
-                }
+                <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 shadow-inner">
+                    <div class="flex justify-between items-end mb-1">
+                        <label class="text-sky-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Amplitude (A)</label>
+                        <span class="text-sm font-bold text-sky-400 math-font"><span id="val-amp">0.3</span> <span class="text-[10px]">m</span></span>
+                    </div>
+                    <input type="range" id="slider-amp" min="0" max="1" step="0.05" value="0.3">
+                </div>
 
-                // 2. Update Position
-                p.x += p.vx;
-                p.y += p.vy;
+                <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 shadow-inner">
+                    <div class="flex justify-between items-end mb-1">
+                        <label class="text-purple-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Frequency (f)</label>
+                        <span class="text-sm font-bold text-purple-400 math-font"><span id="val-freq">0.5</span> <span class="text-[10px]">Hz</span></span>
+                    </div>
+                    <input type="range" id="slider-freq" min="0.1" max="2.0" step="0.1" value="0.5">
+                </div>
 
-                // 3. Calc Energy for Stats
-                totalKE += 0.5 * (p.vx*p.vx + p.vy*p.vy);
-            });
+                <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700 shadow-inner">
+                    <div class="flex justify-between items-end mb-1">
+                        <label class="text-pink-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Wavelength (λ)</label>
+                        <span class="text-sm font-bold text-pink-400 math-font"><span id="val-wave">4.0</span> <span class="text-[10px]">m</span></span>
+                    </div>
+                    <input type="range" id="slider-wave" min="1.0" max="10.0" step="0.5" value="4.0">
+                </div>
 
-            // Update Graph Data (every 10 frames approx)
-            if (Math.random() < 0.1) {
-                setEnergyData(prev => {
-                    const newData = [...prev, { time: prev.length, ke: (totalKE / particleCount).toFixed(2) }];
-                    if (newData.length > 50) newData.shift();
-                    return newData;
-                });
-            }
-        };
+                <div class="mt-auto bg-slate-950 p-4 rounded-xl border border-slate-800 shadow-inner text-center">
+                    <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest block mb-1">Wave Speed (v = fλ)</span>
+                    <span class="text-xl font-bold text-white math-font"><span id="val-speed">2.00</span> m/s</span>
+                </div>
+            </div>
 
-        const draw = () => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            const config = STATE_CONFIG[mode];
+            <!-- Center Panel: The Canvas Simulator -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center bg-[#020617] overflow-hidden border-r border-slate-700" id="canvas-wrapper-waves">
+                <div class="absolute top-4 left-4 pointer-events-none bg-black/60 backdrop-blur px-4 py-2 rounded-lg border border-white/10 shadow-lg z-10 flex flex-col">
+                    <span class="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-1">Time (t)</span>
+                    <span class="text-2xl font-bold text-white math-font"><span id="hud-time-waves">0.00</span>s</span>
+                </div>
 
-            // Clear Canvas
-            ctx.fillStyle = '#0f172a'; // Slate 900
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                <div class="absolute top-4 right-4 pointer-events-none bg-slate-900/80 px-5 py-2 rounded-full border border-emerald-500/50 backdrop-blur shadow-lg z-10 transition-colors duration-300" id="status-badge">
+                    <span class="text-xs font-bold text-emerald-400 uppercase tracking-widest" id="status-text">CLICK A PARTICLE TO TRACK</span>
+                </div>
 
-            // Draw Container Border
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                <canvas id="canvasWaves" class="w-full h-full absolute inset-0 cursor-crosshair"></canvas>
+            </div>
 
-            // Draw Particles
-            ctx.fillStyle = config.color;
-            particlesRef.current.forEach(p => {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, PARTICLE_RADIUS, 0, Math.PI * 2);
-                ctx.fill();
+            <!-- Right Panel: Data & Theory -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-4 gap-4 overflow-y-auto z-10">
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path></svg>
+                    Particle Kinematics
+                </h2>
                 
-                // Draw bonds for Solid
-                if (mode === 'SOLID') {
-                     ctx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
-                     ctx.lineWidth = 1;
-                     // Draw subtle line to origin
-                     ctx.beginPath();
-                     ctx.moveTo(p.x, p.y);
-                     ctx.lineTo(p.originX, p.originY);
-                     ctx.stroke();
-                }
-            });
-        };
-
-        const animate = () => {
-            updatePhysics();
-            draw();
-            requestRef.current = requestAnimationFrame(animate);
-        };
-
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(animate);
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [mode, temperature, particleCount]); // Re-bind when these change
-
-        // --- Render ---
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 p-4 font-sans">
-                {/* Header */}
-                <header className="mb-6 flex items-center space-x-3 border-b border-slate-700 pb-4">
-                    <div className="p-2 bg-blue-500/10 rounded-lg">
-                        <i data-lucide="atom" className="w-8 h-8 text-blue-400"></i>
+                <div class="bg-slate-800 p-2 rounded-xl border border-slate-700 h-40 relative overflow-hidden flex flex-col shadow-inner shrink-0">
+                    <div class="absolute top-2 left-3 text-[9px] font-bold uppercase tracking-widest text-sky-400 z-10 bg-slate-900/80 px-2 py-0.5 rounded">
+                        Vertical Disp. (y) vs Time (t)
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white tracking-tight">Particle Motion Visualizer</h1>
-                        <p className="text-slate-400 text-sm">Heat and Gases • Topic I</p>
+                    <canvas id="graphYCanvas" class="w-full flex-1 mt-6"></canvas>
+                </div>
+
+                <div class="bg-slate-800 p-2 rounded-xl border border-slate-700 h-40 relative overflow-hidden flex flex-col shadow-inner shrink-0">
+                    <div class="absolute top-2 left-3 text-[9px] font-bold uppercase tracking-widest text-rose-400 z-10 bg-slate-900/80 px-2 py-0.5 rounded">
+                        Horizontal Disp. (x) vs Time (t)
                     </div>
-                </header>
+                    <canvas id="graphXCanvas" class="w-full flex-1 mt-6"></canvas>
+                </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    
-                    {/* Left Column: Controls */}
-                    <div className="lg:col-span-1 space-y-6">
-                        
-                        {/* State Selector */}
-                        <div className="grid grid-cols-3 gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700">
-                            {['SOLID', 'LIQUID', 'GAS'].map(state => (
-                                <button
-                                    key={state}
-                                    onClick={() => setMode(state)}
-                                    className={`py-2 rounded-lg text-sm font-bold transition-all ${
-                                        mode === state 
-                                        ? `bg-${STATE_CONFIG[state].color.replace('#','hex-')} text-white shadow-lg` // Simplified active class logic
-                                        : 'text-slate-400 hover:bg-slate-700'
-                                    }`}
-                                    style={{ backgroundColor: mode === state ? STATE_CONFIG[state].color : '' }}
-                                >
-                                    {state}
-                                </button>
-                            ))}
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 shadow-inner mt-2 flex-1 flex flex-col min-h-[150px]">
+                    <h3 class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-3 border-b border-slate-800 pb-2">Tracked Particle Data</h3>
+                    <div class="space-y-3 math-font text-sm">
+                        <div class="flex justify-between items-center text-slate-300">
+                            <span>Eq. Position (x₀):</span>
+                            <span class="font-bold text-white"><span id="data-x0">0.00</span> m</span>
                         </div>
-
-                        {/* Sliders */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 backdrop-blur-sm">
-                            <h2 className="text-blue-400 font-semibold mb-4 flex items-center">
-                                <i data-lucide="thermometer" className="w-4 h-4 mr-2"></i> Conditions
-                            </h2>
-                            
-                            {/* Temperature */}
-                            <div className="mb-6">
-                                <div className="flex justify-between mb-2 text-sm">
-                                    <span className="text-slate-300">Temperature (Energy)</span>
-                                    <span className="text-blue-300 font-mono">{temperature}°C</span>
-                                </div>
-                                <input 
-                                    type="range" min="0" max="100" step="1"
-                                    value={temperature}
-                                    onChange={(e) => setTemperature(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                    style={{ background: `linear-gradient(to right, #3b82f6 0%, #ef4444 100%)` }}
-                                />
-                                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                                    <span>Cold</span>
-                                    <span>Hot</span>
-                                </div>
-                            </div>
-
-                            {/* Particle Count */}
-                            <div>
-                                <div className="flex justify-between mb-2 text-sm">
-                                    <span className="text-slate-300">Particle Count</span>
-                                    <span className="text-slate-300 font-mono">{particleCount}</span>
-                                </div>
-                                <input 
-                                    type="range" min="50" max="300" step="10"
-                                    value={particleCount}
-                                    onChange={(e) => setParticleCount(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                            </div>
+                        <div class="flex justify-between items-center text-sky-300 border-t border-slate-800 pt-2">
+                            <span>Current Δy:</span>
+                            <span class="font-bold text-sky-400"><span id="data-dy">0.00</span> m</span>
                         </div>
-
-                        {/* Live Data */}
-                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
-                             <h3 className="text-slate-400 text-xs uppercase mb-2">Observation</h3>
-                             <p className="text-sm text-slate-300">
-                                {mode === 'SOLID' && "Particles vibrate in fixed positions. They maintain a regular lattice structure. High potential energy storage in bonds."}
-                                {mode === 'LIQUID' && "Particles slide past each other but stay close. Bonds are breaking and reforming continuously."}
-                                {mode === 'GAS' && "Particles move freely at high speeds. Kinetic energy dominates. Collisions with walls create pressure."}
-                             </p>
+                        <div class="flex justify-between items-center text-rose-300">
+                            <span>Current Δx:</span>
+                            <span class="font-bold text-rose-400"><span id="data-dx">0.00</span> m</span>
                         </div>
                     </div>
-
-                    {/* Right Column: Visualization */}
-                    <div className="lg:col-span-2 space-y-6">
-                        
-                        {/* Canvas Container */}
-                        <div className="relative rounded-xl border border-slate-700 overflow-hidden shadow-2xl bg-slate-950">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-auto block"
-                            />
-                            {/* Overlay Text */}
-                            <div className="absolute top-4 right-4 bg-slate-900/80 px-3 py-1 rounded border border-slate-700 text-xs font-mono text-slate-400">
-                                State: <span style={{color: STATE_CONFIG[mode].color}}>{mode}</span>
-                            </div>
-                        </div>
-
-                        {/* Real-time Graph */}
-                        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 h-64">
-                            <h3 className="text-slate-300 text-sm font-semibold mb-4 flex items-center">
-                                <i data-lucide="activity" className="w-4 h-4 mr-2"></i> 
-                                Average Kinetic Energy vs Time
-                            </h3>
-                            <div className="w-full h-full pb-6">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={energyData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                        <YAxis 
-                                            domain={[0, 'auto']} 
-                                            stroke="#94a3b8" 
-                                            label={{ value: 'Avg KE', angle: -90, position: 'insideLeft', fill: '#64748b' }}
-                                        />
-                                        <XAxis hide={true} />
-                                        <Tooltip 
-                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
-                                            itemStyle={{ color: STATE_CONFIG[mode].color }}
-                                        />
-                                        <Line 
-                                            type="monotone" 
-                                            dataKey="ke" 
-                                            stroke={STATE_CONFIG[mode].color} 
-                                            strokeWidth={2} 
-                                            dot={false}
-                                            isAnimationActive={false} 
-                                        />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
-
+                    <div class="mt-auto pt-4">
+                        <p class="text-[10px] text-slate-400 leading-relaxed bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50" id="theory-text-waves">
+                            In a <strong>Transverse Wave</strong>, the particles oscillate perpendicularly (up/down) to the direction of wave propagation. Notice how the horizontal displacement ($\Delta x$) remains strictly zero while energy moves across the medium.
+                        </p>
                     </div>
                 </div>
             </div>
-        );
-    };
+        </div>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+        <!-- ========================================== -->
+        <!-- VIEW: THERMODYNAMICS (Kinetic Theory)      -->
+        <!-- ========================================== -->
+        <div id="view-thermo" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative hidden">
+            
+            <!-- Left Panel -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-5 overflow-y-auto z-10">
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-2">
+                    <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z"></path></svg>
+                    System Properties
+                </h2>
 
-    setTimeout(() => lucide.createIcons(), 100);
-</script>
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-orange-900/50 relative overflow-hidden shadow-inner">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-orange-500"></div>
+                    <div class="flex justify-between items-end mb-2 pl-1">
+                        <label class="text-orange-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Temperature (T)</label>
+                        <span class="text-sm font-bold text-orange-400 math-font"><span id="val-temp">300</span> <span class="text-[10px]">K</span></span>
+                    </div>
+                    <input type="range" id="slider-temp" min="0" max="1000" step="5" value="300">
+                    <div class="flex justify-between text-[9px] text-slate-500 mt-2 font-bold uppercase">
+                        <span>Absolute Zero</span>
+                        <span>Very Hot</span>
+                    </div>
+                </div>
+
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-emerald-900/50 relative overflow-hidden shadow-inner">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-emerald-500"></div>
+                    <div class="flex justify-between items-end mb-2 pl-1">
+                        <label class="text-emerald-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Number of Particles (N)</label>
+                        <span class="text-sm font-bold text-emerald-400 math-font" id="val-count">100</span>
+                    </div>
+                    <input type="range" id="slider-count" min="10" max="150" step="10" value="100">
+                </div>
+
+                <div class="h-px w-full bg-slate-700 my-1"></div>
+
+                <div class="mt-auto">
+                    <h3 class="text-xs text-slate-500 uppercase font-bold mb-2">Phase Presets</h3>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button class="preset-thermo bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-blue-300 py-2.5 rounded border border-blue-900 transition" data-t="20">Solid</button>
+                        <button class="preset-thermo bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-cyan-300 py-2.5 rounded border border-cyan-900 transition" data-t="200">Liquid</button>
+                        <button class="preset-thermo bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-rose-300 py-2.5 rounded border border-rose-900 transition" data-t="800">Gas</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center Panel -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center bg-[#020617] overflow-hidden border-r border-slate-700" id="canvas-wrapper-thermo">
+                <div class="absolute top-4 left-4 pointer-events-none bg-black/60 backdrop-blur px-4 py-2 rounded-lg border border-white/10 shadow-lg z-10 flex flex-col">
+                    <span class="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-1">Time (t)</span>
+                    <span class="text-2xl font-bold text-white math-font"><span id="hud-time-thermo">0.00</span>s</span>
+                </div>
+
+                <div class="absolute top-4 right-4 pointer-events-none bg-slate-900/80 px-6 py-2 rounded-full border border-slate-600 backdrop-blur shadow-lg z-10 transition-colors duration-300" id="phase-badge">
+                    <span class="text-xs font-bold uppercase tracking-widest" id="phase-text">LIQUID PHASE</span>
+                </div>
+
+                <canvas id="canvasThermo" class="w-full h-full absolute inset-0"></canvas>
+            </div>
+
+            <!-- Right Panel -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-4 gap-4 overflow-y-auto z-10">
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                    Statistical Mechanics
+                </h2>
+
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 shadow-inner flex-1 flex flex-col min-h-[250px]">
+                    <h3 class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-3 border-b border-slate-800 pb-2">Macro-State Readouts</h3>
+                    <div class="space-y-4 math-font text-sm">
+                        <div class="flex justify-between items-center text-slate-300">
+                            <span>Temperature (T):</span>
+                            <span class="font-bold text-orange-400 text-lg"><span id="data-t">300</span> K</span>
+                        </div>
+                        <div class="flex justify-between items-center text-slate-300 border-t border-slate-800 pt-3">
+                            <div class="flex flex-col">
+                                <span>Average KE:</span>
+                                <span class="text-[9px] text-slate-500 font-sans mt-0.5">$\frac{3}{2} k_B T$</span>
+                            </div>
+                            <span class="font-bold text-sky-400"><span id="data-ke">0.00</span> aJ</span>
+                        </div>
+                        <div class="flex justify-between items-center text-slate-300 border-t border-slate-800 pt-3">
+                            <div class="flex flex-col">
+                                <span>RMS Velocity:</span>
+                                <span class="text-[9px] text-slate-500 font-sans mt-0.5">$\sqrt{3kT/m}$</span>
+                            </div>
+                            <span class="font-bold text-emerald-400"><span id="data-vrms">0.00</span> m/s</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-auto pt-4 border-t border-slate-800">
+                        <p class="text-[10px] text-slate-400 leading-relaxed bg-slate-800/50 p-2.5 rounded-lg border border-slate-700/50" id="theory-text-thermo">
+                            <strong>Kinetic Theory:</strong> Unlike wave kinematics, particle motion due to heat is chaotic and random (Brownian). The macroscopic Temperature ($T$) is directly proportional to the average Kinetic Energy of the microscopic particles.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Physics Simulation Logic (Vanilla JS Canvas) -->
+    <script>
+        // --- Tab Switching Logic ---
+        let activeTab = 'waves'; // 'waves' or 'thermo'
+        const btnTabWaves = document.getElementById('tab-waves');
+        const btnTabThermo = document.getElementById('tab-thermo');
+        const viewWaves = document.getElementById('view-waves');
+        const viewThermo = document.getElementById('view-thermo');
+
+        btnTabWaves.addEventListener('click', () => {
+            activeTab = 'waves';
+            btnTabWaves.classList.replace('inactive', 'active');
+            btnTabThermo.classList.replace('active', 'inactive');
+            viewWaves.classList.remove('hidden');
+            viewThermo.classList.add('hidden');
+            resizeAll();
+        });
+
+        btnTabThermo.addEventListener('click', () => {
+            activeTab = 'thermo';
+            btnTabThermo.classList.replace('inactive', 'active');
+            btnTabWaves.classList.replace('active', 'inactive');
+            viewThermo.classList.remove('hidden');
+            viewWaves.classList.add('hidden');
+            resizeAll();
+        });
+
+        // --- Shared Application State ---
+        let lastTime = 0;
+        let animationId;
+        let isSimRunning = true;
+        let globalTime = 0;
+
+        const btnTogglePlay = document.getElementById('btn-toggle-play');
+        btnTogglePlay.addEventListener('click', () => {
+            isSimRunning = !isSimRunning;
+            if (isSimRunning) {
+                lastTime = 0; 
+                btnTogglePlay.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Pause Time`;
+                btnTogglePlay.classList.replace('bg-emerald-600', 'bg-rose-600');
+                btnTogglePlay.classList.replace('shadow-[0_0_15px_rgba(16,185,129,0.4)]', 'shadow-[0_0_15px_rgba(225,29,72,0.4)]');
+                btnTogglePlay.classList.replace('border-emerald-400', 'border-rose-400');
+            } else {
+                btnTogglePlay.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path></svg> Resume Time`;
+                btnTogglePlay.classList.replace('bg-rose-600', 'bg-emerald-600');
+                btnTogglePlay.classList.replace('shadow-[0_0_15px_rgba(225,29,72,0.4)]', 'shadow-[0_0_15px_rgba(16,185,129,0.4)]');
+                btnTogglePlay.classList.replace('border-rose-400', 'border-emerald-400');
+            }
+        });
+
+        // --- Helper: High DPI Canvas Resize ---
+        function resizeCanvasHD(canvasElem, wrapperElem) {
+            const rect = wrapperElem.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvasElem.width = rect.width * dpr;
+            canvasElem.height = rect.height * dpr;
+            canvasElem.style.width = `${rect.width}px`;
+            canvasElem.style.height = `${rect.height}px`;
+            const context = canvasElem.getContext('2d');
+            context.scale(dpr, dpr);
+            return { w: rect.width, h: rect.height, ctx: context };
+        }
+
+        function resizeAll() {
+            if (activeTab === 'waves') {
+                resizeWaves();
+            } else {
+                resizeThermo();
+            }
+        }
+        window.addEventListener('resize', resizeAll);
+
+        // ==========================================
+        // ENGINE: WAVE MECHANICS
+        // ==========================================
+        const cWaves = document.getElementById('canvasWaves');
+        const cwWrapper = document.getElementById('canvas-wrapper-waves');
+        let ctxW, wW, hW;
+
+        const gYCanvas = document.getElementById('graphYCanvas');
+        const gXCanvas = document.getElementById('graphXCanvas');
+        let ctxGY, ctxGX;
+
+        const sliderAmp = document.getElementById('slider-amp');
+        const sliderFreq = document.getElementById('slider-freq');
+        const sliderWave = document.getElementById('slider-wave');
+        const typeRadios = document.querySelectorAll('input[name="wave-type"]');
+        const theoryTextWaves = document.getElementById('theory-text-waves');
+
+        let waveState = {
+            type: 'transverse',
+            A: 0.3, f: 0.5, lambda: 4.0, omega: 0, k: 0, v: 0
+        };
+
+        const NUM_PARTICLES = 40; 
+        const NUM_ROWS = 3; 
+        const PIXELS_PER_METER = 100;
+        let waveParticles = [];
+        let trackedParticle = null;
+        let waveHistory = []; 
+
+        function initWaves() {
+            waveParticles = [];
+            const spacingPx = 25; 
+            const totalWidthPx = (NUM_PARTICLES - 1) * spacingPx;
+            const startX = (wW - totalWidthPx) / 2;
+            const startY = hW / 2;
+            const rowSpacing = 50;
+
+            for (let r = 0; r < NUM_ROWS; r++) {
+                for (let i = 0; i < NUM_PARTICLES; i++) {
+                    let pxX = startX + i * spacingPx;
+                    let pxY = startY + (r - Math.floor(NUM_ROWS/2)) * rowSpacing;
+                    waveParticles.push({
+                        idx: i, row: r, x0: pxX / PIXELS_PER_METER, y0: pxY / PIXELS_PER_METER,
+                        baseX: pxX, baseY: pxY, px: pxX, py: pxY
+                    });
+                }
+            }
+            trackedParticle = waveParticles.find(p => p.row === 1 && p.idx === Math.floor(NUM_PARTICLES / 2));
+            waveHistory = [];
+        }
+
+        function resizeWaves() {
+            let res = resizeCanvasHD(cWaves, cwWrapper);
+            wW = res.w; hW = res.h; ctxW = res.ctx;
+            ctxGY = resizeCanvasHD(gYCanvas, gYCanvas.parentElement).ctx;
+            ctxGX = resizeCanvasHD(gXCanvas, gXCanvas.parentElement).ctx;
+            initWaves();
+        }
+
+        function updateWaves(dt) {
+            waveState.A = parseFloat(sliderAmp.value);
+            waveState.f = parseFloat(sliderFreq.value);
+            waveState.lambda = parseFloat(sliderWave.value);
+            waveState.omega = 2 * Math.PI * waveState.f;
+            waveState.k = 2 * Math.PI / waveState.lambda;
+            waveState.v = waveState.f * waveState.lambda;
+
+            document.getElementById('val-amp').innerText = waveState.A.toFixed(2);
+            document.getElementById('val-freq').innerText = waveState.f.toFixed(1);
+            document.getElementById('val-wave').innerText = waveState.lambda.toFixed(1);
+            document.getElementById('val-speed').innerText = waveState.v.toFixed(2);
+            document.getElementById('hud-time-waves').innerText = globalTime.toFixed(2);
+
+            waveParticles.forEach(p => {
+                let phase = waveState.k * p.x0 - waveState.omega * globalTime;
+                let displacement = waveState.A * Math.sin(phase);
+
+                if (waveState.type === 'transverse') {
+                    p.px = p.baseX;
+                    p.py = p.baseY - (displacement * PIXELS_PER_METER); 
+                } else {
+                    p.px = p.baseX + (displacement * PIXELS_PER_METER);
+                    p.py = p.baseY;
+                }
+            });
+
+            if (trackedParticle) {
+                let dy = 0, dx = 0;
+                if (waveState.type === 'transverse') {
+                    dy = (trackedParticle.baseY - trackedParticle.py) / PIXELS_PER_METER; 
+                } else {
+                    dx = (trackedParticle.px - trackedParticle.baseX) / PIXELS_PER_METER;
+                }
+
+                if (dt > 0) {
+                    waveHistory.push({ t: globalTime, dy: dy, dx: dx });
+                    if (waveHistory.length > 150) waveHistory.shift();
+                }
+
+                document.getElementById('data-x0').innerText = trackedParticle.x0.toFixed(2);
+                document.getElementById('data-dy').innerText = dy.toFixed(2);
+                document.getElementById('data-dx').innerText = dx.toFixed(2);
+            }
+        }
+
+        function drawWaves() {
+            ctxW.clearRect(0, 0, wW, hW);
+
+            ctxW.strokeStyle = '#334155'; ctxW.lineWidth = 1; ctxW.setLineDash([5, 5]);
+            for (let r = 0; r < NUM_ROWS; r++) {
+                let rowP = waveParticles.find(p => p.row === r);
+                if (rowP) {
+                    ctxW.beginPath(); ctxW.moveTo(0, rowP.baseY); ctxW.lineTo(wW, rowP.baseY); ctxW.stroke();
+                }
+            }
+            ctxW.setLineDash([]);
+
+            ctxW.strokeStyle = '#475569'; ctxW.lineWidth = 2;
+            for (let r = 0; r < NUM_ROWS; r++) {
+                ctxW.beginPath();
+                let first = true;
+                for (let p of waveParticles) {
+                    if (p.row === r) {
+                        if (first) { ctxW.moveTo(p.px, p.py); first = false; }
+                        else { ctxW.lineTo(p.px, p.py); }
+                    }
+                }
+                ctxW.stroke();
+            }
+
+            for (let p of waveParticles) {
+                let isTracked = (p === trackedParticle);
+                ctxW.beginPath();
+                if (isTracked) {
+                    ctxW.shadowBlur = 15; ctxW.shadowColor = '#10B981'; ctxW.fillStyle = '#34D399';
+                    ctxW.arc(p.px, p.py, 8, 0, Math.PI*2); ctxW.fill();
+                    ctxW.shadowBlur = 0; ctxW.strokeStyle = '#fff'; ctxW.lineWidth = 2; ctxW.stroke();
+
+                    ctxW.strokeStyle = 'rgba(16, 185, 129, 0.5)'; ctxW.lineWidth = 2; ctxW.setLineDash([4, 4]);
+                    ctxW.beginPath();
+                    if (waveState.type === 'transverse') {
+                        ctxW.moveTo(p.baseX, p.baseY); ctxW.lineTo(p.baseX, p.py);
+                    } else {
+                        ctxW.moveTo(p.baseX, p.baseY); ctxW.lineTo(p.px, p.baseY);
+                    }
+                    ctxW.stroke(); ctxW.setLineDash([]);
+                } else {
+                    ctxW.fillStyle = '#94A3B8'; ctxW.arc(p.px, p.py, 4, 0, Math.PI*2); ctxW.fill();
+                }
+            }
+
+            // Draw Graphs
+            drawSingleGraph(ctxGY, gYCanvas, 'dy', '#38BDF8', 1.0, waveHistory); 
+            drawSingleGraph(ctxGX, gXCanvas, 'dx', '#FB7185', 1.0, waveHistory); 
+        }
+
+        function drawSingleGraph(gCtx, gCanvas, dataKey, color, maxAmp, hist) {
+            const w = gCanvas.parentElement.clientWidth;
+            const h = gCanvas.parentElement.clientHeight - 24; 
+            gCtx.clearRect(0, 0, w, h);
+            if (hist.length < 2) return;
+
+            const paddingX = 10, paddingY = 10;
+            const tMin = hist[0].t, tMax = hist[hist.length - 1].t;
+            const yMax = maxAmp; 
+
+            const mapX = (t) => paddingX + ((t - tMin) / Math.max(tMax - tMin, 1)) * (w - paddingX * 2);
+            const mapY = (val) => h/2 - (val / yMax) * (h/2 - paddingY);
+
+            gCtx.strokeStyle = '#475569'; gCtx.lineWidth = 1;
+            gCtx.beginPath(); gCtx.moveTo(0, h/2); gCtx.lineTo(w, h/2); gCtx.stroke();
+
+            gCtx.strokeStyle = color; gCtx.lineWidth = 2; gCtx.lineJoin = 'round';
+            gCtx.beginPath(); gCtx.moveTo(mapX(hist[0].t), mapY(hist[0][dataKey]));
+            for(let i = 1; i < hist.length; i++) {
+                gCtx.lineTo(mapX(hist[i].t), mapY(hist[i][dataKey]));
+            }
+            gCtx.stroke();
+
+            const lastPt = hist[hist.length - 1];
+            gCtx.fillStyle = color;
+            gCtx.beginPath(); gCtx.arc(mapX(lastPt.t), mapY(lastPt[dataKey]), 4, 0, Math.PI*2); gCtx.fill();
+        }
+
+        // Wave Interaction
+        cWaves.addEventListener('mousedown', (e) => {
+            if(activeTab !== 'waves') return;
+            const rect = cWaves.getBoundingClientRect();
+            const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
+            let nearest = null; let minDist = Infinity;
+            for (let p of waveParticles) {
+                let dist = Math.hypot(p.px - mx, p.py - my);
+                if (dist < minDist) { minDist = dist; nearest = p; }
+            }
+            if (minDist < 30 && nearest) {
+                trackedParticle = nearest; waveHistory = []; 
+                document.getElementById('status-text').innerText = `TRACKING PARTICLE (Row ${nearest.row+1}, Col ${nearest.idx+1})`;
+                document.getElementById('status-text').classList.replace('text-emerald-400', 'text-white');
+                document.getElementById('status-badge').classList.replace('bg-slate-900/80', 'bg-emerald-900/80');
+                document.getElementById('status-badge').classList.replace('border-emerald-500/50', 'border-emerald-400');
+            }
+        });
+
+        typeRadios.forEach(r => {
+            r.addEventListener('change', (e) => {
+                waveState.type = e.target.value; waveHistory = []; 
+                if (waveState.type === 'transverse') {
+                    theoryTextWaves.innerHTML = `In a <strong>Transverse Wave</strong>, the particles oscillate perpendicularly (up/down) to the direction of wave propagation. Notice how the horizontal displacement (Δx) remains strictly zero.`;
+                } else {
+                    theoryTextWaves.innerHTML = `In a <strong>Longitudinal Wave</strong>, the particles oscillate parallel (left/right) to the direction of wave propagation, creating compressions and rarefactions. Vertical displacement is zero.`;
+                }
+            });
+        });
+
+        // ==========================================
+        // ENGINE: THERMODYNAMICS
+        // ==========================================
+        const cThermo = document.getElementById('canvasThermo');
+        const ctWrapper = document.getElementById('canvas-wrapper-thermo');
+        let ctxT, wT, hT;
+
+        const sliderTemp = document.getElementById('slider-temp');
+        const sliderCount = document.getElementById('slider-count');
+        const phaseBadge = document.getElementById('phase-badge');
+        const phaseText = document.getElementById('phase-text');
+
+        let thermoState = {
+            T: 300, N: 100, phase: 'Liquid'
+        };
+        const PARTICLE_RADIUS = 6;
+        let thermoParticles = [];
+
+        function initThermo() {
+            thermoParticles = [];
+            const cols = Math.ceil(Math.sqrt(thermoState.N * (wT/hT)));
+            const rows = Math.ceil(thermoState.N / cols);
+            const spacingX = wT / cols;
+            const spacingY = hT / rows;
+
+            let count = 0;
+            for(let r=0; r<rows; r++){
+                for(let c=0; c<cols; c++){
+                    if(count >= thermoState.N) break;
+                    let px = (c + 0.5) * spacingX;
+                    let py = hT - (r + 0.5) * spacingY; // stack from bottom
+                    
+                    // Give random initial velocity based on T
+                    let angle = Math.random() * Math.PI * 2;
+                    let speed = Math.sqrt(thermoState.T) * 0.5 * Math.random();
+
+                    thermoParticles.push({
+                        x: px, y: py,
+                        vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
+                        x0: px, y0: py // anchor points for solid
+                    });
+                    count++;
+                }
+            }
+        }
+
+        function resizeThermo() {
+            let res = resizeCanvasHD(cThermo, ctWrapper);
+            wT = res.w; hT = res.h; ctxT = res.ctx;
+            if(thermoParticles.length !== thermoState.N) initThermo();
+        }
+
+        function updateThermo(dt) {
+            let newT = parseInt(sliderTemp.value);
+            let newN = parseInt(sliderCount.value);
+            
+            if(newN !== thermoState.N) {
+                thermoState.N = newN;
+                initThermo();
+            }
+            thermoState.T = newT;
+
+            document.getElementById('val-temp').innerText = thermoState.T;
+            document.getElementById('val-count').innerText = thermoState.N;
+            document.getElementById('hud-time-thermo').innerText = globalTime.toFixed(2);
+
+            // Phase determination
+            if (thermoState.T < 100) thermoState.phase = 'Solid';
+            else if (thermoState.T < 350) thermoState.phase = 'Liquid';
+            else thermoState.phase = 'Gas';
+
+            // Phase UI
+            if(thermoState.phase === 'Solid') {
+                phaseBadge.className = "absolute top-4 right-4 pointer-events-none px-6 py-2 rounded-full border backdrop-blur shadow-lg transition-colors duration-300 bg-blue-900/80 border-blue-500/50 text-blue-300";
+            } else if (thermoState.phase === 'Liquid') {
+                phaseBadge.className = "absolute top-4 right-4 pointer-events-none px-6 py-2 rounded-full border backdrop-blur shadow-lg transition-colors duration-300 bg-cyan-900/80 border-cyan-500/50 text-cyan-300";
+            } else {
+                phaseBadge.className = "absolute top-4 right-4 pointer-events-none px-6 py-2 rounded-full border backdrop-blur shadow-lg transition-colors duration-300 bg-rose-900/80 border-rose-500/50 text-rose-300";
+            }
+            phaseText.innerText = thermoState.phase + " PHASE";
+
+            // Physics Update (Euler with simple elastic collisions)
+            const g = (thermoState.phase === 'Gas') ? 0 : 500; // No gravity for gas
+            const damping = (thermoState.phase === 'Solid') ? 0.90 : 0.999;
+            const targetSpeed = Math.sqrt(thermoState.T) * 1.5;
+
+            let totalSqVel = 0;
+
+            for(let p of thermoParticles) {
+                // Apply Gravity
+                p.vy += g * dt;
+
+                // Solid Restoring Force (Springs holding lattice)
+                if (thermoState.phase === 'Solid') {
+                    let k = 50; 
+                    p.vx += -k * (p.x - p.x0) * dt;
+                    p.vy += -k * (p.y - p.y0) * dt;
+                }
+
+                // Brownian Thermal Kicks (Random Walk)
+                if(thermoState.T > 0) {
+                    let kick = Math.sqrt(thermoState.T) * 20;
+                    p.vx += (Math.random() - 0.5) * kick * dt;
+                    p.vy += (Math.random() - 0.5) * kick * dt;
+                }
+
+                p.vx *= damping;
+                p.vy *= damping;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+
+                // Wall Collisions
+                if(p.x < PARTICLE_RADIUS) { p.x = PARTICLE_RADIUS; p.vx *= -1; }
+                if(p.x > wT - PARTICLE_RADIUS) { p.x = wT - PARTICLE_RADIUS; p.vx *= -1; }
+                if(p.y < PARTICLE_RADIUS) { p.y = PARTICLE_RADIUS; p.vy *= -1; }
+                if(p.y > hT - PARTICLE_RADIUS) { p.y = hT - PARTICLE_RADIUS; p.vy *= -0.8; } // inelastic floor bounce for liquid pooling
+
+                totalSqVel += (p.vx*p.vx + p.vy*p.vy);
+            }
+
+            // O(N^2) Particle Collisions
+            for(let i=0; i<thermoParticles.length; i++) {
+                for(let j=i+1; j<thermoParticles.length; j++) {
+                    let p1 = thermoParticles[i]; let p2 = thermoParticles[j];
+                    let dx = p2.x - p1.x; let dy = p2.y - p1.y;
+                    let distSq = dx*dx + dy*dy;
+                    let minDist = PARTICLE_RADIUS * 2;
+                    if(distSq < minDist*minDist) {
+                        let dist = Math.sqrt(distSq) || 0.01;
+                        let nx = dx/dist; let ny = dy/dist;
+                        let dvx = p1.vx - p2.vx; let dvy = p1.vy - p2.vy;
+                        let velAlongNormal = dvx*nx + dvy*ny;
+
+                        if(velAlongNormal > 0) {
+                            let restitution = (thermoState.phase === 'Gas') ? 1.0 : 0.8;
+                            let impulse = (1 + restitution) * velAlongNormal / 2;
+                            p1.vx -= impulse * nx; p1.vy -= impulse * ny;
+                            p2.vx += impulse * nx; p2.vy += impulse * ny;
+                        }
+
+                        let overlap = minDist - dist;
+                        let correction = overlap / 2;
+                        p1.x -= nx * correction; p1.y -= ny * correction;
+                        p2.x += nx * correction; p2.y += ny * correction;
+                    }
+                }
+            }
+
+            // Stats Update
+            let avgSqVel = totalSqVel / thermoState.N;
+            let v_rms = Math.sqrt(avgSqVel) / 10; // scaled for readability
+            let ke = 1.5 * (thermoState.T / 300); // normalized fake KE for display
+
+            document.getElementById('data-t').innerText = thermoState.T;
+            document.getElementById('data-vrms').innerText = v_rms.toFixed(2);
+            document.getElementById('data-ke').innerText = ke.toFixed(2);
+        }
+
+        function drawThermo() {
+            ctxT.clearRect(0, 0, wT, hT);
+
+            for (let p of thermoParticles) {
+                // Color mapping: Speed -> Color (Cold Blue -> Hot Red)
+                let speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                let hotness = Math.min(speed / 400, 1.0); // 0 to 1
+                
+                let r = Math.floor(56 + hotness * 199);
+                let g = Math.floor(189 - hotness * 189);
+                let b = Math.floor(248 - hotness * 200);
+
+                ctxT.fillStyle = `rgb(${r},${g},${b})`;
+                ctxT.beginPath();
+                ctxT.arc(p.x, p.y, PARTICLE_RADIUS, 0, Math.PI*2);
+                ctxT.fill();
+            }
+        }
+
+        document.querySelectorAll('.preset-thermo').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                let targetT = parseInt(e.target.getAttribute('data-t'));
+                sliderTemp.value = targetT;
+                thermoState.T = targetT;
+                // Force layout reset on phase change
+                initThermo(); 
+            });
+        });
+
+        // ==========================================
+        // MASTER LOOP
+        // ==========================================
+        function loop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.05); 
+            lastTime = timestamp;
+
+            if (isSimRunning) {
+                globalTime += dt;
+            }
+
+            if (activeTab === 'waves') {
+                updateWaves(isSimRunning ? dt : 0);
+                drawWaves();
+            } else {
+                updateThermo(isSimRunning ? dt : 0);
+                drawThermo();
+            }
+
+            animationId = requestAnimationFrame(loop);
+        }
+
+        // Init
+        setTimeout(() => {
+            resizeAll();
+            animationId = requestAnimationFrame(loop);
+        }, 100);
+
+    </script>
 </body>
 </html>
