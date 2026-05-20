@@ -3,435 +3,940 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Newton's Inertia Bus | Luminous Learner</title>
-    
+    <meta name="description" content="Newton's first law inertia simulator. Interactive physics visualization of objects at rest and uniform velocity in deep space and a moving vehicle.">
+    <title>Newton's 1st Law (Inertia) Simulator</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .road-stripes {
-            background-image: linear-gradient(90deg, transparent 50%, #ffffff 50%);
-            background-size: 100px 100%;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Deep slate */
+            color: #F8FAFC;
+            overflow: hidden; /* Prevent desktop scrolling */
         }
+        .math-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Checkbox / Toggle */
+        .toggle-checkbox:checked { right: 0; border-color: #38BDF8; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #38BDF8; }
+        .toggle-checkbox:checked + .toggle-label:after { transform: translateX(100%); border-color: white; }
+
+        /* Custom Sliders */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #38BDF8; cursor: pointer; margin-top: -7px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6); transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #475569; border-radius: 2px;
+        }
+
+        /* Hide Scrollbar */
+        ::-webkit-scrollbar { display: none; }
+        
+        /* Canvas Cursors */
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+
+        /* Tab Active State */
+        .tab-btn.active { background-color: #38BDF8; color: #0F172A; border-color: #38BDF8; box-shadow: 0 0 15px rgba(56,189,248,0.4); }
+        .tab-btn.inactive { background-color: #1E293B; color: #94A3B8; border-color: #475569; }
+        .tab-btn.inactive:hover { background-color: #334155; color: #CBD5E1; }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex items-center justify-center p-2 md:p-4 lg:p-6 w-full h-full text-slate-100">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 400;
-    const GROUND_Y = 320;
-    const BUS_WIDTH = 400;
-    const BUS_HEIGHT = 180;
-    
-    const App = () => {
-        // --- State ---
-        const [simState, setSimState] = useState('idle'); // idle, moving, braking, crashed
-        const [speed, setSpeed] = useState(0); // Bus speed (pixels/frame)
-        const [showVectors, setShowVectors] = useState(true);
-        const [playbackSpeed, setPlaybackSpeed] = useState(1.0); // 1.0 or 0.2
-
-        // Physics State Refs (Mutable source of truth for animation loop)
-        const simStateRef = useRef('idle'); // Fixed: Ref for loop access
-        const playbackSpeedRef = useRef(1.0); // Fixed: Ref for loop access
+    <!-- Main Container -->
+    <div class="w-full max-w-[1400px] h-full md:h-[900px] bg-slate-800/80 rounded-3xl shadow-2xl border border-slate-700 flex flex-col overflow-hidden backdrop-blur-md">
         
-        const busRef = useRef({ x: 50, v: 0 });
-        const personARef = useRef({ x: 0, v: 0, state: 'sitting' });
-        const personBRef = useRef({ x: 0, v: 0, state: 'standing' });
-        const ballRef = useRef({ x: 0, v: 0 });
-        const roadOffsetRef = useRef(0);
-        
-        const historyRef = useRef([]); 
-        const timeRef = useRef(0);
-        const requestRef = useRef();
-
-        // --- Constants ---
-        const CRUISE_SPEED = 8;
-        const BRAKE_DECEL = 0.3;
-        const ACCEL = 0.1;
-        const BUS_START_X = 100;
-
-        // --- Sync Refs with State ---
-        useEffect(() => {
-            playbackSpeedRef.current = playbackSpeed;
-        }, [playbackSpeed]);
-
-        // --- Logic ---
-        const resetSim = () => {
-            setSimState('idle');
-            simStateRef.current = 'idle'; // Sync Ref
-            setSpeed(0);
-            busRef.current = { x: BUS_START_X, v: 0 };
-            personARef.current = { x: 50, v: 0, state: 'sitting' };
-            personBRef.current = { x: 200, v: 0, state: 'standing' };
-            ballRef.current = { x: 300, v: 0 };
-            roadOffsetRef.current = 0;
-            timeRef.current = 0;
-            historyRef.current = [];
-            cancelAnimationFrame(requestRef.current);
-            draw(); 
-        };
-
-        const startDriving = () => {
-            if (simState === 'idle') {
-                setSimState('moving');
-                simStateRef.current = 'moving'; // Sync Ref immediately
-                loop();
-            }
-        };
-
-        const applyBrakes = () => {
-            if (simState === 'moving') {
-                setSimState('braking');
-                simStateRef.current = 'braking'; // Sync Ref immediately
-            }
-        };
-
-        const loop = () => {
-            // Use Ref values inside the loop to avoid stale closures
-            const currentState = simStateRef.current;
-            const currentPlaybackSpeed = playbackSpeedRef.current;
-
-            const dt = 1 * currentPlaybackSpeed;
-            timeRef.current += dt;
-
-            // 1. Bus Physics
-            if (currentState === 'moving') {
-                if (busRef.current.v < CRUISE_SPEED) busRef.current.v += ACCEL * dt;
-            } else if (currentState === 'braking') {
-                if (busRef.current.v > 0) {
-                    busRef.current.v -= BRAKE_DECEL * dt;
-                    if (busRef.current.v < 0) busRef.current.v = 0;
-                }
-            }
-
-            // Move Road
-            roadOffsetRef.current -= busRef.current.v * dt;
-
-            // 2. Objects Physics
-            if (currentState === 'moving') {
-                personBRef.current.v_ground = busRef.current.v;
-                ballRef.current.v_ground = busRef.current.v;
-            } else if (currentState === 'braking') {
-                // Newton's 1st Law: v_ground stays constant for loose objects
-                
-                const dX_B = (personBRef.current.v_ground - busRef.current.v) * dt;
-                personBRef.current.x += dX_B;
-
-                const dX_Ball = (ballRef.current.v_ground - busRef.current.v) * dt;
-                ballRef.current.x += dX_Ball;
-
-                // Collision
-                if (personBRef.current.x > 330) {
-                    personBRef.current.x = 330;
-                    personBRef.current.v_ground = 0;
-                    personBRef.current.state = 'crashed';
-                }
-                if (ballRef.current.x > 360) {
-                    ballRef.current.x = 360;
-                    ballRef.current.v_ground = 0;
-                }
-            }
-
-            setSpeed(busRef.current.v);
-
-            if (timeRef.current % 5 < 1) {
-                historyRef.current.push({
-                    t: timeRef.current,
-                    vBus: busRef.current.v,
-                    vPerson: personBRef.current.v_ground
-                });
-            }
-
-            draw();
-
-            // Continue loop condition
-            if (busRef.current.v > 0 || currentState === 'moving' || (currentState === 'braking' && personBRef.current.state !== 'crashed' && personBRef.current.v_ground > 0)) {
-                requestRef.current = requestAnimationFrame(loop);
-            }
-        };
-
-        // --- Rendering ---
-        const draw = () => {
-            const canvas = document.getElementById('simCanvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-
-            // Use Ref value for rendering logic too
-            const currentState = simStateRef.current;
-
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // 1. Draw Background
-            ctx.fillStyle = '#87ceeb';
-            ctx.fillRect(0, 0, CANVAS_WIDTH, GROUND_Y);
-            
-            ctx.fillStyle = '#cbd5e1';
-            const bgOffset = roadOffsetRef.current * 0.5;
-            for(let i=0; i<10; i++) {
-                const x = (i * 200 + bgOffset) % (CANVAS_WIDTH + 200);
-                const h = 100 + Math.sin(i)*50;
-                ctx.fillRect(x - 200, GROUND_Y - h, 80, h);
-            }
-
-            // 2. Draw Road
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
-            ctx.fillStyle = '#ffffff';
-            const stripeOffset = roadOffsetRef.current % 100;
-            for(let i=0; i<CANVAS_WIDTH/50; i++) {
-                ctx.fillRect(i * 100 + stripeOffset, GROUND_Y + 30, 40, 10);
-            }
-
-            // 3. Draw Bus
-            const bx = busRef.current.x;
-            const by = GROUND_Y - BUS_HEIGHT - 10;
-            
-            ctx.fillStyle = '#f59e0b';
-            ctx.fillRect(bx, by, BUS_WIDTH, BUS_HEIGHT);
-            ctx.fillStyle = '#e0f2fe';
-            ctx.fillRect(bx + 20, by + 20, 80, 60);
-            ctx.fillRect(bx + 120, by + 20, 200, 60);
-            ctx.fillStyle = '#1e293b';
-            ctx.beginPath(); ctx.arc(bx + 80, GROUND_Y - 10, 25, 0, Math.PI*2); ctx.fill();
-            ctx.beginPath(); ctx.arc(bx + 320, GROUND_Y - 10, 25, 0, Math.PI*2); ctx.fill();
-
-            // 4. Draw Objects
-            drawPerson(ctx, bx + personARef.current.x, by + BUS_HEIGHT - 10, '#10b981', false, false);
-            ctx.beginPath();
-            ctx.moveTo(bx + personARef.current.x, by + BUS_HEIGHT - 90);
-            ctx.lineTo(bx + personARef.current.x + 10, by + 10);
-            ctx.strokeStyle = '#64748b';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-
-            drawPerson(ctx, bx + personBRef.current.x, by + BUS_HEIGHT - 10, '#ef4444', personBRef.current.state === 'crashed', true);
-
-            const ballX = bx + ballRef.current.x;
-            const ballY = by + BUS_HEIGHT - 10;
-            ctx.beginPath();
-            ctx.arc(ballX, ballY, 10, 0, Math.PI*2);
-            ctx.fillStyle = '#3b82f6';
-            ctx.fill();
-
-            // 5. Vectors
-            if (showVectors && currentState !== 'idle') {
-                drawVector(ctx, bx + BUS_WIDTH/2, by - 30, busRef.current.v * 10, '#f59e0b', 'v_bus');
-                
-                if (currentState === 'braking') {
-                    drawVector(ctx, bx + personBRef.current.x, by + 40, personBRef.current.v_ground * 10, '#ef4444', 'Inertia');
-                }
-            }
-        };
-
-        const drawPerson = (ctx, x, footY, color, isCrashed, isLoose) => {
-            ctx.fillStyle = color;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 4;
-            
-            if (isCrashed) {
-                ctx.beginPath();
-                ctx.moveTo(x, footY);
-                ctx.lineTo(x + 40, footY);
-                ctx.stroke();
-                ctx.beginPath(); ctx.arc(x + 50, footY - 5, 8, 0, Math.PI*2); ctx.fill();
-            } else {
-                ctx.beginPath();
-                ctx.moveTo(x, footY); 
-                ctx.lineTo(x, footY - 40);
-                ctx.lineTo(x, footY - 80);
-                ctx.stroke();
-                ctx.beginPath(); ctx.arc(x, footY - 90, 10, 0, Math.PI*2); ctx.fill();
-                
-                ctx.beginPath();
-                ctx.moveTo(x, footY - 70);
-                if (!isLoose) ctx.lineTo(x + 10, footY - 100);
-                else ctx.lineTo(x + 10, footY - 50);
-                ctx.stroke();
-            }
-        };
-
-        const drawVector = (ctx, x, y, len, color, label) => {
-            if (len < 5) return;
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x + len, y);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x + len, y);
-            ctx.lineTo(x + len - 5, y - 5);
-            ctx.lineTo(x + len - 5, y + 5);
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.fillStyle = color;
-            ctx.font = '12px sans-serif';
-            ctx.fillText(label, x + len/2, y - 8);
-        };
-
-        useEffect(() => {
-            draw();
-            if (window.lucide) window.lucide.createIcons();
-            return () => cancelAnimationFrame(requestRef.current);
-        }, []);
-
-        const Graph = () => {
-            const h = 100;
-            const w = 300;
-            const maxV = CRUISE_SPEED + 2;
-            const maxT = timeRef.current > 50 ? timeRef.current : 50;
-
-            const mapX = t => (t / maxT) * w;
-            const mapY = v => h - (v / maxV) * h;
-
-            return (
-                <div className="w-full h-full bg-slate-900 border border-slate-700 rounded relative overflow-hidden">
-                    <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-                        <polyline 
-                            points={historyRef.current.map(d => `${mapX(d.t)},${mapY(d.vBus)}`).join(' ')}
-                            fill="none" stroke="#f59e0b" strokeWidth="2"
-                        />
-                        <polyline 
-                            points={historyRef.current.map(d => `${mapX(d.t)},${mapY(d.vPerson)}`).join(' ')}
-                            fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4 2"
-                        />
-                    </svg>
-                    <div className="absolute top-1 left-1 text-[10px] text-amber-500">Bus Speed</div>
-                    <div className="absolute top-4 left-1 text-[10px] text-red-500">Passenger Speed</div>
-                </div>
-            );
-        };
-
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-amber-500/20 p-2 rounded-lg">
-                            <i data-lucide="bus" className="w-6 h-6 text-amber-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Newton's Inertia Bus</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Dynamics
-                    </div>
-                </nav>
-
-                <main className="max-w-6xl mx-auto p-4 md:p-6 space-y-6">
-                    
-                    {/* Simulation Area */}
-                    <div className="bg-slate-800 rounded-2xl border border-slate-700 p-2 shadow-2xl relative">
-                        <canvas id="simCanvas" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="w-full h-auto rounded-xl bg-slate-950"></canvas>
-                        
-                        {/* Status Overlay */}
-                        <div className="absolute top-4 left-4 bg-black/50 backdrop-blur px-4 py-2 rounded-lg border border-white/10 text-white font-mono">
-                            Speed: {(speed * 5).toFixed(0)} km/h
-                        </div>
-
-                        {/* Playback Controls */}
-                        <div className="absolute top-4 right-4 flex gap-2">
-                            <button 
-                                onClick={() => setPlaybackSpeed(playbackSpeed === 1 ? 0.2 : 1)}
-                                className={`px-3 py-1 rounded text-xs font-bold border ${playbackSpeed < 1 ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900/50 border-slate-600 text-slate-300'}`}
-                            >
-                                <i data-lucide="clock" className="w-3 h-3 inline mr-1"></i> Slow Mo
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Controls & Graph */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        
-                        {/* Control Panel */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
-                            <h2 className="text-white font-bold mb-2 flex items-center">
-                                <i data-lucide="gamepad-2" className="w-5 h-5 mr-2 text-indigo-400"></i> Driver Controls
-                            </h2>
-                            
-                            <div className="grid grid-cols-2 gap-3">
-                                <button 
-                                    onClick={startDriving}
-                                    disabled={simState !== 'idle'}
-                                    className={`py-4 rounded-xl font-bold flex flex-col items-center justify-center transition-all ${simState === 'idle' ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg' : 'bg-slate-700 text-slate-500'}`}
-                                >
-                                    <i data-lucide="play" className="w-6 h-6 mb-1"></i>
-                                    Accelerate
-                                </button>
-                                <button 
-                                    onClick={applyBrakes}
-                                    disabled={simState !== 'moving'}
-                                    className={`py-4 rounded-xl font-bold flex flex-col items-center justify-center transition-all ${simState === 'moving' ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg animate-pulse' : 'bg-slate-700 text-slate-500'}`}
-                                >
-                                    <i data-lucide="octagon" className="w-6 h-6 mb-1"></i>
-                                    BRAKE!
-                                </button>
-                            </div>
-                            
-                            <button 
-                                onClick={resetSim}
-                                className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl font-medium transition-colors flex items-center justify-center"
-                            >
-                                <i data-lucide="rotate-ccw" className="w-4 h-4 mr-2"></i> Reset Scenario
-                            </button>
-                        </div>
-
-                        {/* Legend / Key */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 text-sm">
-                            <h3 className="text-slate-400 font-bold mb-4 uppercase tracking-wider text-xs">Passengers</h3>
-                            <ul className="space-y-4">
-                                <li className="flex items-center gap-3">
-                                    <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
-                                    <div>
-                                        <div className="font-bold text-white">Smart Sam</div>
-                                        <div className="text-xs text-slate-400">Holding strap (Force applied)</div>
-                                    </div>
-                                </li>
-                                <li className="flex items-center gap-3">
-                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                                    <div>
-                                        <div className="font-bold text-white">Careless Carl</div>
-                                        <div className="text-xs text-slate-400">Not holding (Inertia dominates)</div>
-                                    </div>
-                                </li>
-                            </ul>
-                        </div>
-
-                        {/* Graph */}
-                        <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 h-48">
-                            <Graph />
-                        </div>
-
-                    </div>
-
-                </main>
+        <!-- Header -->
+        <header class="bg-slate-900/70 p-4 border-b border-slate-700 flex justify-between items-center z-20 shrink-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-sky-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent tracking-tight">
+                    Newton's 1st Law Simulator
+                </h1>
+                <p class="text-slate-400 text-xs md:text-sm mt-1 font-medium">The Law of Inertia: Objects resist changes to their state of motion.</p>
             </div>
-        );
-    };
+            
+            <!-- Tabs -->
+            <div class="flex gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-700 shadow-inner">
+                <button id="tab-abs" class="tab-btn active px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2">
+                    <i class="fa-solid fa-cube"></i> Abstract Sandbox
+                </button>
+                <button id="tab-bus" class="tab-btn inactive px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2">
+                    <i class="fa-solid fa-bus"></i> Real-Life Bus
+                </button>
+            </div>
+        </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+        <!-- ========================================================================================= -->
+        <!-- TAB 1: ABSTRACT SANDBOX (Deep Space / Friction) -->
+        <!-- ========================================================================================= -->
+        <div id="view-abstract" class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative w-full h-full">
+            
+            <!-- Left Panel: Controls -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-6 overflow-y-auto z-10 shadow-lg">
+                <!-- Environment Selector -->
+                <div>
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-3">
+                        <i class="fa-solid fa-layer-group text-sky-400"></i>
+                        Environment
+                    </h2>
+                    <div class="flex flex-col gap-3">
+                        <label class="flex items-center p-3 border border-slate-600 rounded-xl cursor-pointer hover:bg-slate-800 transition bg-slate-800/50 shadow-sm" id="env-rough">
+                            <input type="radio" name="abs-environment" value="rough" class="w-4 h-4 text-sky-500 bg-slate-900 border-slate-600">
+                            <div class="ml-3">
+                                <span class="block text-sm font-bold text-slate-200">Asphalt (High Friction)</span>
+                                <span class="block text-[10px] text-slate-400 mt-0.5 leading-tight">Unbalanced force quickly decelerates the object.</span>
+                            </div>
+                        </label>
+                        <label class="flex items-center p-3 border border-slate-600 rounded-xl cursor-pointer hover:bg-slate-800 transition bg-slate-800/50 shadow-sm" id="env-ice">
+                            <input type="radio" name="abs-environment" value="ice" class="w-4 h-4 text-sky-500 bg-slate-900 border-slate-600">
+                            <div class="ml-3">
+                                <span class="block text-sm font-bold text-slate-200">Ice Rink (Low Friction)</span>
+                                <span class="block text-[10px] text-slate-400 mt-0.5 leading-tight">Weak unbalanced force slowly decelerates object.</span>
+                            </div>
+                        </label>
+                        <label class="flex items-center p-3 border border-sky-500 rounded-xl cursor-pointer hover:bg-slate-800 transition bg-sky-900/20 shadow-[0_0_15px_rgba(14,165,233,0.15)]" id="env-space">
+                            <input type="radio" name="abs-environment" value="space" class="w-4 h-4 text-sky-500 bg-slate-900 border-slate-600" checked>
+                            <div class="ml-3">
+                                <span class="block text-sm font-bold text-sky-400">Deep Space (Ideal)</span>
+                                <span class="block text-[10px] text-slate-300 mt-0.5 leading-tight">Zero friction. Perfect inertia maintained infinitely.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
 
-    if (typeof lucide !== 'undefined') {
-        setTimeout(() => lucide.createIcons(), 100);
-    }
-</script>
+                <div class="h-px w-full bg-slate-700/50 my-1"></div>
+
+                <!-- Object Properties -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-600/50 shadow-inner">
+                    <div class="flex justify-between items-end mb-2">
+                        <label class="text-slate-300 font-bold text-xs uppercase tracking-widest">Object Mass (<span class="math-font italic">m</span>)</label>
+                        <span class="text-sm font-bold text-indigo-400 math-font bg-indigo-950/30 px-2 py-0.5 rounded border border-indigo-900/50"><span id="abs-val-mass">10.0</span> kg</span>
+                    </div>
+                    <input type="range" id="abs-slider-mass" min="1" max="50" step="1" value="10" class="mt-2">
+                    <p class="text-[10px] text-slate-400 mt-3 leading-relaxed border-l-2 border-indigo-500 pl-2">Mass is a direct measure of inertia. Higher mass objects require a larger force to achieve the same acceleration.</p>
+                </div>
+                
+                <!-- Display Options -->
+                <div class="mt-auto flex flex-col gap-3">
+                    <label class="flex items-center gap-3 cursor-pointer bg-slate-800/80 px-4 py-3 rounded-xl border border-slate-600 hover:bg-slate-700 transition shadow-sm">
+                        <input type="checkbox" id="abs-toggle-trails" class="form-checkbox h-4 w-4 text-sky-500 rounded border-slate-500 bg-slate-900" checked>
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-widest">Show Strobe Trails</span>
+                    </label>
+                    <div class="flex gap-2">
+                        <button id="abs-btn-stop" class="flex-1 bg-rose-600 hover:bg-rose-500 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition border border-rose-500 text-white shadow-lg flex items-center justify-center gap-2"><i class="fa-solid fa-hand"></i> Stop</button>
+                        <button id="abs-btn-reset" class="flex-1 bg-slate-700 hover:bg-slate-600 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition border border-slate-500 text-white shadow flex items-center justify-center gap-2"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center Panel: The Canvas Simulator -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center bg-[#020617] overflow-hidden border-r border-slate-700 shadow-[inset_0_0_50px_rgba(0,0,0,0.5)]" id="abs-canvas-wrapper">
+                <div class="absolute top-6 left-1/2 -translate-x-1/2 pointer-events-none bg-slate-900/80 px-5 py-2.5 rounded-full border border-sky-500/50 backdrop-blur shadow-lg text-xs font-bold text-sky-300 uppercase tracking-widest z-10 transition-opacity flex items-center gap-2" id="abs-interaction-hint">
+                    <i class="fa-solid fa-arrow-pointer animate-pulse"></i> Click & Drag object to apply Force
+                </div>
+                <canvas id="abs-simCanvas" class="w-full h-full absolute inset-0 cursor-grab transition-colors duration-500 ease-in-out"></canvas>
+            </div>
+
+            <!-- Right Panel: Data & Theory -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-5 gap-5 overflow-y-auto z-10 shadow-lg">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <i class="fa-solid fa-satellite-dish text-emerald-400"></i> Live Telemetry
+                </h2>
+                
+                <div class="grid grid-cols-1 gap-3">
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-600 flex justify-between items-center transition-colors duration-300 shadow-inner" id="abs-box-fnet">
+                        <div class="flex flex-col">
+                            <span class="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Net Force (<span class="math-font italic">F<sub>net</sub></span>)</span>
+                            <span class="text-xs text-slate-500 font-medium mt-0.5" id="abs-desc-fnet">Zero external forces</span>
+                        </div>
+                        <span class="text-2xl font-bold text-white math-font"><span id="abs-data-fnet">0.0</span> <span class="text-sm">N</span></span>
+                    </div>
+
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-600 flex justify-between items-center transition-colors duration-300 shadow-inner" id="abs-box-accel">
+                        <div class="flex flex-col">
+                            <span class="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Acceleration (<span class="math-font italic">a</span>)</span>
+                            <span class="text-xs text-slate-500 font-medium mt-0.5" id="abs-desc-accel">Constant state</span>
+                        </div>
+                        <span class="text-2xl font-bold text-white math-font"><span id="abs-data-accel">0.00</span> <span class="text-sm">m/s²</span></span>
+                    </div>
+
+                    <div class="bg-slate-950 p-5 rounded-2xl border border-sky-900/50 shadow-lg relative overflow-hidden transition-colors duration-300" id="abs-box-vel">
+                        <div class="absolute left-0 top-0 w-1.5 h-full bg-sky-500" id="abs-indicator-vel"></div>
+                        <div class="flex flex-col mb-1 pl-2">
+                            <span class="text-xs text-sky-400 uppercase font-bold tracking-widest" id="abs-title-vel">Velocity (<span class="math-font italic">v</span>)</span>
+                            <span class="text-[10px] text-slate-400 font-medium mt-1" id="abs-desc-vel">Object is at rest.</span>
+                        </div>
+                        <div class="pl-2 mt-2">
+                            <span class="text-4xl font-bold text-white math-font"><span id="abs-data-vel">0.00</span> <span class="text-base text-slate-400">m/s</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="h-px w-full bg-slate-700/50 my-1"></div>
+
+                <div class="flex-1 flex flex-col gap-4">
+                    <h2 class="text-xs font-bold text-slate-300 uppercase tracking-widest">Newton's First Law</h2>
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 shadow-inner text-sm leading-relaxed text-slate-300 italic border-l-4 border-l-purple-500">
+                        "An object at rest remains at rest, and an object in motion remains in motion at constant speed and in a straight line unless acted on by an unbalanced force."
+                    </div>
+                    <div class="space-y-3">
+                        <div class="bg-emerald-900/20 p-3 rounded-lg border border-emerald-800/50 shadow-inner">
+                            <h3 class="text-[11px] uppercase tracking-widest text-emerald-400 font-bold mb-1">If F<sub>net</sub> = 0 (Deep Space)</h3>
+                            <p class="text-[11px] text-emerald-200/70 leading-relaxed">No acceleration ($a = 0$). Velocity is perfectly constant. The strobe dots will be equally spaced forever.</p>
+                        </div>
+                        <div class="bg-rose-900/20 p-3 rounded-lg border border-rose-800/50 shadow-inner">
+                            <h3 class="text-[11px] uppercase tracking-widest text-rose-400 font-bold mb-1">If F<sub>net</sub> ≠ 0 (Friction)</h3>
+                            <p class="text-[11px] text-rose-200/70 leading-relaxed">Friction acts as an unbalanced force opposing motion, causing negative acceleration. The strobe dots get closer together until it stops.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================================================================= -->
+        <!-- TAB 2: REAL-LIFE BUS (Relative Motion & Inertia) -->
+        <!-- ========================================================================================= -->
+        <div id="view-bus" class="hidden flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative w-full h-full">
+            
+            <!-- Left Panel: Driver Controls -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-6 overflow-y-auto z-10 shadow-lg">
+                <div class="flex-1 flex flex-col gap-4">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-steering-wheel text-amber-400"></i> Driver Controls
+                    </h2>
+                    
+                    <button id="bus-btn-accel" class="flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-2xl font-bold text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all flex flex-col items-center justify-center p-4 border border-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed group">
+                        <i class="fa-solid fa-forward-fast text-3xl mb-2 group-hover:scale-110 transition-transform"></i>
+                        <span class="tracking-widest">ACCELERATE</span>
+                    </button>
+                    
+                    <button id="bus-btn-brake" class="flex-1 bg-slate-800 text-slate-500 rounded-2xl font-bold transition-all flex flex-col items-center justify-center p-4 border border-slate-700 disabled:opacity-50 disabled:cursor-not-allowed group" disabled>
+                        <i class="fa-solid fa-hand-paper text-3xl mb-2 group-hover:scale-110 transition-transform"></i>
+                        <span class="tracking-widest">EMERGENCY BRAKE</span>
+                    </button>
+                </div>
+
+                <div class="h-px w-full bg-slate-700/50 my-1"></div>
+
+                <div>
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">View Options</h2>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between bg-slate-800/80 p-3.5 rounded-xl border border-slate-600 shadow-inner">
+                            <span class="text-xs font-bold text-slate-300">Slow Motion</span>
+                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="bus-toggle-slowmo" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer z-10 top-0 left-0 transition-transform duration-200 ease-in-out"/>
+                                <label for="bus-toggle-slowmo" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors duration-200 ease-in-out"></label>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between bg-slate-800/80 p-3.5 rounded-xl border border-slate-600 shadow-inner">
+                            <span class="text-xs font-bold text-slate-300">Show Vectors</span>
+                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="bus-toggle-vectors" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer z-10 top-0 left-0 transition-transform duration-200 ease-in-out" checked/>
+                                <label for="bus-toggle-vectors" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors duration-200 ease-in-out"></label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button id="bus-btn-reset" class="mt-2 bg-slate-700 hover:bg-slate-600 px-4 py-3.5 rounded-xl text-xs font-bold uppercase tracking-widest transition border border-slate-500 text-white shadow"><i class="fa-solid fa-rotate-left mr-2"></i> Reset Scenario</button>
+            </div>
+
+            <!-- Center Panel: The Canvas Simulator -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center bg-[#020617] overflow-hidden border-r border-slate-700 shadow-[inset_0_0_50px_rgba(0,0,0,0.5)]" id="bus-canvas-wrapper">
+                
+                <!-- Camera Frame Label -->
+                <div class="absolute top-4 right-4 pointer-events-none bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-600 backdrop-blur shadow-lg z-10 flex items-center gap-2">
+                    <i class="fa-solid fa-video text-rose-500 animate-pulse"></i>
+                    <span class="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Camera: Non-Inertial Bus Frame</span>
+                </div>
+
+                <div class="absolute top-4 left-4 pointer-events-none bg-black/60 backdrop-blur px-5 py-3 rounded-xl border border-white/10 shadow-lg z-10 flex flex-col">
+                    <span class="text-[10px] text-amber-400 uppercase font-bold tracking-widest">Bus Speed (Ground Frame)</span>
+                    <span class="text-3xl font-bold text-white math-font mt-1"><span id="bus-hud-speed">0</span> <span class="text-sm text-slate-300">km/h</span></span>
+                </div>
+                
+                <div class="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none bg-slate-900/90 px-6 py-2.5 rounded-full border border-slate-600 backdrop-blur shadow-2xl z-10 transition-colors duration-300" id="bus-status-badge">
+                    <span class="text-xs font-bold text-slate-300 uppercase tracking-widest" id="bus-status-text">Bus is IDLE</span>
+                </div>
+                
+                <canvas id="bus-simCanvas" class="w-full h-full absolute inset-0"></canvas>
+            </div>
+
+            <!-- Right Panel: Data & Theory -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-5 gap-5 overflow-y-auto z-10 shadow-lg">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <i class="fa-solid fa-chart-area text-sky-400"></i> Kinematics
+                </h2>
+                
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shrink-0 min-h-[220px] relative overflow-hidden flex flex-col shadow-inner">
+                    <div class="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-2 text-center border-b border-slate-700 pb-2">Velocity vs. Time</div>
+                    <div class="absolute top-10 right-3 flex flex-col gap-2 text-[10px] font-bold uppercase tracking-widest text-right z-10">
+                        <span class="text-amber-500"><span class="w-3 h-0.5 bg-amber-500 inline-block align-middle mr-1"></span> Bus Vel</span>
+                        <span class="text-red-500"><span class="w-3 h-0.5 bg-red-500 inline-block align-middle mr-1 border-t border-dashed border-red-500"></span> Carl Vel</span>
+                    </div>
+                    <div class="relative flex-1 w-full mt-2">
+                        <canvas id="bus-graphCanvas" class="absolute inset-0 w-full h-full"></canvas>
+                    </div>
+                </div>
+
+                <div class="bg-slate-950 p-5 rounded-2xl border border-slate-800 shadow-lg">
+                    <h3 class="text-slate-400 font-bold mb-4 uppercase tracking-widest text-[10px] border-b border-slate-800 pb-2">Passenger Analysis</h3>
+                    <ul class="space-y-5">
+                        <li class="flex items-start gap-3">
+                            <div class="w-3 h-3 rounded-full bg-emerald-500 mt-1 shrink-0 shadow-[0_0_8px_#10b981]"></div>
+                            <div>
+                                <div class="font-bold text-slate-200 text-sm">Smart Sam</div>
+                                <div class="text-xs text-slate-400 mt-1.5 leading-relaxed">Holding the strap. The strap applies an <strong class="text-emerald-400">unbalanced external force</strong>, allowing him to decelerate safely <em>with</em> the bus.</div>
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-3 h-3 rounded-full bg-red-500 mt-1 shrink-0 shadow-[0_0_8px_#ef4444]"></div>
+                            <div>
+                                <div class="font-bold text-slate-200 text-sm">Careless Carl</div>
+                                <div class="text-xs text-slate-400 mt-1.5 leading-relaxed">Not holding on. When the bus brakes, <strong class="text-red-400">no force acts on Carl</strong>. His inertia keeps him moving forward relative to the ground until the windshield provides an unbalanced stopping force!</div>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="flex-1">
+                    <div class="bg-indigo-900/20 p-4 rounded-xl border border-indigo-700/50 text-xs text-indigo-200 leading-relaxed shadow-inner">
+                        <strong class="text-indigo-300 block mb-1 uppercase tracking-widest text-[10px]">Reference Frames</strong>
+                        When the bus brakes, a force is applied to the bus, but <strong>not</strong> to loose objects inside. Relative to the camera (moving with the bus), Carl seems to accelerate forward magically. In reality, Carl is maintaining his state of motion while the bus slows down beneath him!
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * MASTER SIMULATION CONTROLLER
+         * Manages tab switching and runs the appropriate animation loop to save CPU.
+         */
+        
+        const tabAbs = document.getElementById('tab-abs');
+        const tabBus = document.getElementById('tab-bus');
+        const viewAbs = document.getElementById('view-abstract');
+        const viewBus = document.getElementById('view-bus');
+
+        let activeTab = 'abstract'; // 'abstract' or 'bus'
+        let masterAnimationFrame;
+        let masterLastTime = performance.now();
+
+        // -------------------------------------------------------------------------
+        // SIMULATOR 1: ABSTRACT SANDBOX LOGIC
+        // -------------------------------------------------------------------------
+        const absCanvas = document.getElementById('abs-simCanvas');
+        const absCtx = absCanvas.getContext('2d');
+        const absWrapper = document.getElementById('abs-canvas-wrapper');
+        
+        const absEnvRadios = document.querySelectorAll('input[name="abs-environment"]');
+        const absSliderMass = document.getElementById('abs-slider-mass');
+        const absValMass = document.getElementById('abs-val-mass');
+        const absBtnStop = document.getElementById('abs-btn-stop');
+        const absBtnReset = document.getElementById('abs-btn-reset');
+        const absToggleTrails = document.getElementById('abs-toggle-trails');
+        const absInteractionHint = document.getElementById('abs-interaction-hint');
+
+        // Data UI
+        const absDataFnet = document.getElementById('abs-data-fnet');
+        const absDataAccel = document.getElementById('abs-data-accel');
+        const absDataVel = document.getElementById('abs-data-vel');
+        const absBoxFnet = document.getElementById('abs-box-fnet');
+        const absDescFnet = document.getElementById('abs-desc-fnet');
+        const absBoxAccel = document.getElementById('abs-box-accel');
+        const absDescAccel = document.getElementById('abs-desc-accel');
+        const absBoxVel = document.getElementById('abs-box-vel');
+        const absTitleVel = document.getElementById('abs-title-vel');
+        const absDescVel = document.getElementById('abs-desc-vel');
+        const absIndicatorVel = document.getElementById('abs-indicator-vel');
+
+        // Core State
+        const ABS_ENV_CONFIG = {
+            'space': { mu: 0, bg: '#020617' },
+            'ice':   { mu: 0.02, bg: '#0F172A' }, // Very low friction
+            'rough': { mu: 0.3, bg: '#1E293B' }
+        };
+        let absEnv = 'space';
+        let absMu = ABS_ENV_CONFIG['space'].mu;
+        const g = 9.81;
+
+        let absParticle = { x: 0, y: 0, vx: 0, vy: 0, mass: 10, radius: 25, color: '#A78BFA' };
+        let absDragging = false;
+        let absDragStart = { x: 0, y: 0 };
+        let absDragCurrent = { x: 0, y: 0 };
+        let absTrails = [];
+        let absTrailTimer = 0;
+        const ABS_TRAIL_INTERVAL = 0.2; 
+        let absStars = [];
+
+        function absGenerateStars() {
+            absStars = [];
+            for(let i=0; i<150; i++) {
+                absStars.push({ x: Math.random() * 2000, y: Math.random() * 2000, size: Math.random() * 1.5, alpha: Math.random() });
+            }
+        }
+
+        function resizeAbstract() {
+            if (!absWrapper) return;
+            const rect = absWrapper.getBoundingClientRect();
+            absCanvas.width = rect.width;
+            absCanvas.height = rect.height;
+            if (absParticle.x === 0 && absParticle.y === 0) {
+                absParticle.x = rect.width / 2;
+                absParticle.y = rect.height / 2;
+                absGenerateStars();
+            }
+        }
+
+        function absUpdateEnvStyling() {
+            absEnvRadios.forEach(radio => {
+                const parent = radio.parentElement;
+                if (radio.checked) {
+                    parent.classList.add('border-sky-500', 'bg-sky-900/20', 'shadow-[0_0_15px_rgba(14,165,233,0.15)]');
+                    parent.classList.remove('border-slate-600', 'bg-slate-800/50', 'shadow-sm');
+                    parent.querySelector('span:first-of-type').classList.add('text-sky-400');
+                    parent.querySelector('span:first-of-type').classList.remove('text-slate-200');
+                } else {
+                    parent.classList.remove('border-sky-500', 'bg-sky-900/20', 'shadow-[0_0_15px_rgba(14,165,233,0.15)]');
+                    parent.classList.add('border-slate-600', 'bg-slate-800/50', 'shadow-sm');
+                    parent.querySelector('span:first-of-type').classList.remove('text-sky-400');
+                    parent.querySelector('span:first-of-type').classList.add('text-slate-200');
+                }
+            });
+            absCanvas.style.backgroundColor = ABS_ENV_CONFIG[absEnv].bg;
+        }
+
+        absEnvRadios.forEach(r => r.addEventListener('change', (e) => {
+            absEnv = e.target.value; absMu = ABS_ENV_CONFIG[absEnv].mu; absUpdateEnvStyling();
+        }));
+        absSliderMass.addEventListener('input', (e) => {
+            absParticle.mass = parseFloat(e.target.value);
+            absValMass.innerText = absParticle.mass.toFixed(1);
+            absParticle.radius = 15 + Math.sqrt(absParticle.mass) * 3;
+        });
+
+        // Abstract Canvas Interaction
+        absCanvas.addEventListener('mousedown', (e) => {
+            if(activeTab !== 'abstract') return;
+            const rect = absCanvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            if (Math.hypot(mx - absParticle.x, my - absParticle.y) < absParticle.radius + 20) {
+                absDragging = true;
+                absDragStart = { x: mx, y: my };
+                absDragCurrent = { x: mx, y: my };
+                absCanvas.classList.add('cursor-grabbing');
+            }
+        });
+        absCanvas.addEventListener('mousemove', (e) => {
+            if(activeTab !== 'abstract') return;
+            const rect = absCanvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+            if (absDragging) { absDragCurrent = { x: mx, y: my }; } 
+            else {
+                if (Math.hypot(mx - absParticle.x, my - absParticle.y) < absParticle.radius + 20) absCanvas.classList.add('cursor-grab');
+                else absCanvas.classList.remove('cursor-grab');
+            }
+        });
+        window.addEventListener('mouseup', () => {
+            if (absDragging) {
+                absDragging = false;
+                absCanvas.classList.remove('cursor-grabbing');
+                const dx = absDragStart.x - absDragCurrent.x;
+                const dy = absDragStart.y - absDragCurrent.y;
+                const impulseFactor = 0.5; 
+                absParticle.vx += (dx * impulseFactor) / absParticle.mass;
+                absParticle.vy += (dy * impulseFactor) / absParticle.mass;
+                absTrails = [];
+            }
+        });
+
+        absBtnStop.addEventListener('click', () => { absParticle.vx = 0; absParticle.vy = 0; absTrails = []; });
+        absBtnReset.addEventListener('click', () => { absParticle.x = absCanvas.width/2; absParticle.y = absCanvas.height/2; absParticle.vx = 0; absParticle.vy = 0; absTrails = []; });
+
+        function updateAndDrawAbstract(dt) {
+            let speed = Math.sqrt(absParticle.vx*absParticle.vx + absParticle.vy*absParticle.vy);
+            let fNet = 0;
+            let accel = 0;
+
+            if (speed > 0.05) { 
+                if (absMu > 0) {
+                    fNet = absMu * absParticle.mass * g;
+                    accel = fNet / absParticle.mass; 
+                    let drop = accel * dt;
+                    let speedMult = Math.max(0, speed - drop) / speed;
+                    absParticle.vx *= speedMult;
+                    absParticle.vy *= speedMult;
+                }
+                absParticle.x += absParticle.vx * 100 * dt; 
+                absParticle.y += absParticle.vy * 100 * dt;
+
+                // Bounce walls
+                if (absParticle.x < absParticle.radius) { absParticle.x = absParticle.radius; absParticle.vx *= -1; }
+                if (absParticle.x > absCanvas.width - absParticle.radius) { absParticle.x = absCanvas.width - absParticle.radius; absParticle.vx *= -1; }
+                if (absParticle.y < absParticle.radius) { absParticle.y = absParticle.radius; absParticle.vy *= -1; }
+                if (absParticle.y > absCanvas.height - absParticle.radius) { absParticle.y = absCanvas.height - absParticle.radius; absParticle.vy *= -1; }
+            } else {
+                absParticle.vx = 0; absParticle.vy = 0; speed = 0;
+            }
+
+            // Strobe Trails exactly every X seconds
+            if (speed > 0.1 && absToggleTrails.checked) {
+                absTrailTimer += dt;
+                if (absTrailTimer >= ABS_TRAIL_INTERVAL) {
+                    absTrails.push({ x: absParticle.x, y: absParticle.y, age: 0 });
+                    absTrailTimer = 0;
+                }
+            }
+            if (!absToggleTrails.checked) absTrails = [];
+
+            // Draw Background
+            absCtx.clearRect(0, 0, absCanvas.width, absCanvas.height);
+            if (absEnv === 'space') {
+                absStars.forEach(star => {
+                    absCtx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`;
+                    absCtx.beginPath(); absCtx.arc(star.x % absCanvas.width, star.y % absCanvas.height, star.size, 0, Math.PI*2); absCtx.fill();
+                });
+            } else {
+                absCtx.strokeStyle = '#334155'; absCtx.lineWidth = 1;
+                for(let x=0; x<absCanvas.width; x+=50) { absCtx.beginPath(); absCtx.moveTo(x,0); absCtx.lineTo(x,absCanvas.height); absCtx.stroke(); }
+                for(let y=0; y<absCanvas.height; y+=50) { absCtx.beginPath(); absCtx.moveTo(0,y); absCtx.lineTo(absCanvas.width,y); absCtx.stroke(); }
+            }
+
+            // Draw Trails
+            absCtx.fillStyle = '#94A3B8';
+            for (let i = absTrails.length - 1; i >= 0; i--) {
+                let tr = absTrails[i];
+                absCtx.beginPath(); absCtx.arc(tr.x, tr.y, 4, 0, Math.PI*2); absCtx.fill();
+                tr.age += dt; if (tr.age > 5) absTrails.splice(i, 1);
+            }
+
+            // Draw Slingshot Vector
+            if (absDragging) {
+                absCtx.strokeStyle = '#FACC15'; absCtx.lineWidth = 4; absCtx.setLineDash([5, 5]);
+                absCtx.beginPath(); absCtx.moveTo(absParticle.x, absParticle.y);
+                let vecX = absParticle.x - (absDragCurrent.x - absDragStart.x);
+                let vecY = absParticle.y - (absDragCurrent.y - absDragStart.y);
+                absCtx.lineTo(vecX, vecY); absCtx.stroke(); absCtx.setLineDash([]);
+                
+                const angle = Math.atan2(vecY - absParticle.y, vecX - absParticle.x);
+                absCtx.fillStyle = '#FACC15'; absCtx.beginPath(); absCtx.moveTo(vecX, vecY);
+                absCtx.lineTo(vecX - 10 * Math.cos(angle - Math.PI/6), vecY - 10 * Math.sin(angle - Math.PI/6));
+                absCtx.lineTo(vecX - 10 * Math.cos(angle + Math.PI/6), vecY - 10 * Math.sin(angle + Math.PI/6));
+                absCtx.fill();
+            }
+
+            // Draw Particle
+            absCtx.shadowBlur = speed > 0.1 ? 25 : 5;
+            absCtx.shadowColor = absParticle.color; absCtx.fillStyle = absParticle.color;
+            absCtx.beginPath(); absCtx.arc(absParticle.x, absParticle.y, absParticle.radius, 0, Math.PI*2); absCtx.fill();
+            
+            // Draw Velocity Vector
+            if (speed > 0.1) {
+                absCtx.shadowBlur = 0; absCtx.strokeStyle = '#38BDF8'; absCtx.lineWidth = 3;
+                let vEndX = absParticle.x + absParticle.vx * 15; let vEndY = absParticle.y + absParticle.vy * 15;
+                absCtx.beginPath(); absCtx.moveTo(absParticle.x, absParticle.y); absCtx.lineTo(vEndX, vEndY); absCtx.stroke();
+                const angle = Math.atan2(absParticle.vy, absParticle.vx);
+                absCtx.fillStyle = '#38BDF8'; absCtx.beginPath(); absCtx.moveTo(vEndX, vEndY);
+                absCtx.lineTo(vEndX - 10 * Math.cos(angle - Math.PI/6), vEndY - 10 * Math.sin(angle - Math.PI/6));
+                absCtx.lineTo(vEndX - 10 * Math.cos(angle + Math.PI/6), vEndY - 10 * Math.sin(angle + Math.PI/6)); absCtx.fill();
+            }
+
+            // Telemetry UI Updates
+            absDataVel.innerText = speed.toFixed(2);
+            
+            if (absDragging) {
+                let dragDx = absDragStart.x - absDragCurrent.x; let dragDy = absDragStart.y - absDragCurrent.y;
+                let appliedForce = Math.hypot(dragDx, dragDy) * 0.5;
+                let expectedAccel = appliedForce / absParticle.mass;
+
+                absTitleVel.innerText = "Applying Force"; absTitleVel.className = "text-xs text-yellow-400 uppercase font-bold tracking-widest";
+                absDescVel.innerText = "Building impulse (J = F·dt)..."; absDescVel.className = "text-[10px] text-yellow-300 font-bold mt-1";
+                absIndicatorVel.className = "absolute left-0 top-0 w-1.5 h-full bg-yellow-500";
+                absBoxVel.className = "bg-slate-950 p-5 rounded-2xl border border-yellow-900/50 shadow-[0_0_20px_rgba(250,204,21,0.2)] relative overflow-hidden transition-colors duration-300";
+                
+                absDataFnet.innerText = appliedForce.toFixed(1); absDescFnet.innerText = "Applied Tension";
+                absBoxFnet.className = "bg-slate-800/80 p-4 rounded-xl border border-yellow-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absDataAccel.innerText = expectedAccel.toFixed(2); absDescAccel.innerText = "Expected Acceleration";
+                absBoxAccel.className = "bg-slate-800/80 p-4 rounded-xl border border-yellow-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absInteractionHint.style.opacity = '0';
+            }
+            else if (speed === 0) {
+                absTitleVel.innerText = "Velocity (v)"; absTitleVel.className = "text-xs text-slate-400 uppercase font-bold tracking-widest";
+                absDescVel.innerText = "Object is at rest."; absDescVel.className = "text-[10px] text-slate-500 font-medium mt-1";
+                absIndicatorVel.className = "absolute left-0 top-0 w-1.5 h-full bg-slate-500";
+                absBoxVel.className = "bg-slate-900 p-5 rounded-2xl border border-slate-700 shadow-inner relative overflow-hidden transition-colors duration-300";
+                
+                absDataFnet.innerText = "0.0"; absDescFnet.innerText = "Zero external forces";
+                absBoxFnet.className = "bg-slate-800/50 p-4 rounded-xl border border-slate-600 flex justify-between items-center transition-colors duration-300";
+                absDataAccel.innerText = "0.00"; absDescAccel.innerText = "Zero acceleration";
+                absBoxAccel.className = "bg-slate-800/50 p-4 rounded-xl border border-slate-600 flex justify-between items-center transition-colors duration-300";
+                absInteractionHint.style.opacity = '1';
+            } 
+            else if (fNet === 0) {
+                absTitleVel.innerText = "Velocity (v)"; absTitleVel.className = "text-xs text-sky-400 uppercase font-bold tracking-widest";
+                absDescVel.innerText = "Uniform straight-line motion."; absDescVel.className = "text-[10px] text-sky-300 font-bold mt-1";
+                absIndicatorVel.className = "absolute left-0 top-0 w-1.5 h-full bg-sky-500";
+                absBoxVel.className = "bg-slate-950 p-5 rounded-2xl border border-sky-900/50 shadow-[0_0_20px_rgba(14,165,233,0.15)] relative overflow-hidden transition-colors duration-300";
+                
+                absDataFnet.innerText = "0.0"; absDescFnet.innerText = "Zero external forces";
+                absBoxFnet.className = "bg-slate-800/80 p-4 rounded-xl border border-sky-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absDataAccel.innerText = "0.00"; absDescAccel.innerText = "Constant velocity state";
+                absBoxAccel.className = "bg-slate-800/80 p-4 rounded-xl border border-emerald-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absInteractionHint.style.opacity = '0';
+            }
+            else {
+                absTitleVel.innerText = "Velocity (v)"; absTitleVel.className = "text-xs text-amber-400 uppercase font-bold tracking-widest";
+                absDescVel.innerText = "Decelerating due to friction."; absDescVel.className = "text-[10px] text-amber-300 font-bold mt-1";
+                absIndicatorVel.className = "absolute left-0 top-0 w-1.5 h-full bg-amber-500";
+                absBoxVel.className = "bg-slate-950 p-5 rounded-2xl border border-amber-900/50 shadow-[0_0_20px_rgba(245,158,11,0.1)] relative overflow-hidden transition-colors duration-300";
+                
+                absDataFnet.innerText = fNet.toFixed(1); absDescFnet.innerText = "Friction opposing motion";
+                absBoxFnet.className = "bg-slate-800/80 p-4 rounded-xl border border-rose-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absDataAccel.innerText = "-" + accel.toFixed(2); absDescAccel.innerText = "Slowing down";
+                absBoxAccel.className = "bg-slate-800/80 p-4 rounded-xl border border-rose-900/50 flex justify-between items-center transition-colors duration-300 shadow-inner";
+                absInteractionHint.style.opacity = '0';
+            }
+        }
+
+
+        // -------------------------------------------------------------------------
+        // SIMULATOR 2: INERTIA BUS LOGIC
+        // -------------------------------------------------------------------------
+        const busCanvas = document.getElementById('bus-simCanvas');
+        const busCtx = busCanvas.getContext('2d');
+        const busGraphCanvas = document.getElementById('bus-graphCanvas');
+        const busGraphCtx = busGraphCanvas.getContext('2d');
+        const busWrapper = document.getElementById('bus-canvas-wrapper');
+        
+        const busBtnAccel = document.getElementById('bus-btn-accel');
+        const busBtnBrake = document.getElementById('bus-btn-brake');
+        const busBtnReset = document.getElementById('bus-btn-reset');
+        const busToggleSlowMo = document.getElementById('bus-toggle-slowmo');
+        const busToggleVectors = document.getElementById('bus-toggle-vectors');
+        const busHudSpeed = document.getElementById('bus-hud-speed');
+        const busStatusBadge = document.getElementById('bus-status-badge');
+        const busStatusText = document.getElementById('bus-status-text');
+
+        // Bus Constants
+        const B_GROUND_Y = 320;
+        const B_WIDTH = 400;
+        const B_HEIGHT = 180;
+        const B_START_X = 100;
+        const B_CRUISE_SPEED = 8;
+        const B_BRAKE_DECEL = 0.4;
+        const B_ACCEL = 0.12;
+
+        // Bus State
+        let busSimState = 'idle'; // idle, moving, braking, stopped
+        let busTime = 0;
+        let busHistory = [];
+        let busObj = { x: B_START_X, v: 0, timeSinceStop: 0 };
+        let sam = { x: 50, v: 0 }; 
+        let carl = { x: 200, v: 0, state: 'standing' }; 
+        let ball = { x: 300, v: 0 };
+        let busRoadOffset = 0;
+        let busCrashFlash = 0;
+
+        function resizeBus() {
+            if (!busWrapper || !busGraphCanvas) return;
+            const rect = busWrapper.getBoundingClientRect();
+            busCanvas.width = rect.width;
+            busCanvas.height = rect.height;
+            const canvasWrapper = busGraphCanvas.parentElement;
+            const grect = canvasWrapper.getBoundingClientRect();
+            busGraphCanvas.width = grect.width; 
+            busGraphCanvas.height = grect.height; 
+        }
+
+        function updateBusUI() {
+            busHudSpeed.innerText = (busObj.v * 5).toFixed(0);
+
+            if (busSimState === 'idle') {
+                busBtnAccel.disabled = false; busBtnAccel.className = "flex-1 bg-emerald-600 hover:bg-emerald-500 rounded-2xl font-bold text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all flex flex-col items-center justify-center p-4 border border-emerald-400 group";
+                busBtnBrake.disabled = true; busBtnBrake.className = "flex-1 bg-slate-800 text-slate-600 rounded-2xl font-bold transition-all flex flex-col items-center justify-center p-4 border border-slate-700 cursor-not-allowed group";
+                busStatusBadge.className = "absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none bg-slate-900/90 px-6 py-2.5 rounded-full border border-slate-600 backdrop-blur shadow-2xl z-10 transition-colors duration-300";
+                busStatusText.innerText = "Bus is IDLE"; busStatusText.className = "text-xs font-bold text-slate-400 uppercase tracking-widest";
+            } 
+            else if (busSimState === 'moving') {
+                busBtnAccel.disabled = true; busBtnAccel.className = "flex-1 bg-slate-800 text-slate-600 rounded-2xl font-bold transition-all flex flex-col items-center justify-center p-4 border border-slate-700 cursor-not-allowed group";
+                busBtnBrake.disabled = false; busBtnBrake.className = "flex-1 bg-red-600 hover:bg-red-500 rounded-2xl font-bold text-white shadow-[0_0_20px_rgba(220,38,38,0.5)] transition-all flex flex-col items-center justify-center p-4 border border-red-400 group";
+                busStatusBadge.className = "absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none bg-emerald-900/90 px-6 py-2.5 rounded-full border border-emerald-500 backdrop-blur shadow-2xl z-10 transition-colors duration-300";
+                busStatusText.innerText = "ACCELERATING / CRUISING"; busStatusText.className = "text-xs font-bold text-emerald-400 uppercase tracking-widest";
+            } 
+            else if (busSimState === 'braking') {
+                busBtnBrake.disabled = true; busBtnBrake.className = "flex-1 bg-slate-800 text-slate-600 rounded-2xl font-bold transition-all flex flex-col items-center justify-center p-4 border border-slate-700 cursor-not-allowed group";
+                busStatusBadge.className = "absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none bg-red-900/90 px-6 py-2.5 rounded-full border border-red-500 backdrop-blur shadow-2xl z-10 transition-colors duration-300";
+                busStatusText.innerText = "EMERGENCY BRAKING"; busStatusText.className = "text-xs font-bold text-red-400 uppercase tracking-widest animate-pulse";
+            }
+            else if (busSimState === 'stopped') {
+                busBtnBrake.disabled = true; busBtnBrake.className = "flex-1 bg-slate-800 text-slate-600 rounded-2xl font-bold transition-all flex flex-col items-center justify-center p-4 border border-slate-700 cursor-not-allowed group";
+                busStatusBadge.className = "absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none bg-slate-900/90 px-6 py-2.5 rounded-full border border-slate-600 backdrop-blur shadow-2xl z-10 transition-colors duration-300";
+                busStatusText.innerText = "BUS STOPPED"; busStatusText.className = "text-xs font-bold text-slate-400 uppercase tracking-widest";
+            }
+        }
+
+        busBtnAccel.addEventListener('click', () => { if (busSimState === 'idle') { busSimState = 'moving'; updateBusUI(); } });
+        busBtnBrake.addEventListener('click', () => { if (busSimState === 'moving') { busSimState = 'braking'; updateBusUI(); } });
+        busBtnReset.addEventListener('click', () => {
+            busSimState = 'idle'; busObj.v = 0; busObj.timeSinceStop = 0; carl = { x: 200, v: 0, state: 'standing' }; ball = { x: 300, v: 0 };
+            busRoadOffset = 0; busTime = 0; busHistory = []; busCrashFlash = 0; updateBusUI();
+        });
+
+        function drawBusPerson(ctx, x, footY, color, isCrashed, isLoose) {
+            ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 4;
+            if (isCrashed) {
+                // Smashed against wall
+                ctx.beginPath(); ctx.moveTo(x, footY); ctx.lineTo(x + 20, footY - 20); ctx.lineTo(x + 30, footY - 50); ctx.stroke();
+                ctx.beginPath(); ctx.arc(x + 40, footY - 60, 10, 0, Math.PI*2); ctx.fill();
+            } else {
+                ctx.beginPath(); ctx.moveTo(x, footY); ctx.lineTo(x, footY - 40); ctx.lineTo(x, footY - 80); ctx.stroke();
+                ctx.beginPath(); ctx.arc(x, footY - 90, 10, 0, Math.PI*2); ctx.fill(); 
+                ctx.beginPath(); ctx.moveTo(x, footY - 70);
+                if (!isLoose) {
+                    ctx.lineTo(x + 20, footY - 110); // Arm up holding strap
+                } else {
+                    ctx.lineTo(x + 10, footY - 50); // Arm down
+                }
+                ctx.stroke();
+            }
+        }
+
+        function drawBusVector(ctx, x, y, len, color, label) {
+            if (len < 5) return;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x + len, y); ctx.lineTo(x + len - 8, y - 6); ctx.lineTo(x + len - 8, y + 6); ctx.fillStyle = color; ctx.fill();
+            ctx.fillStyle = color; ctx.font = 'bold 12px Inter'; ctx.fillText(label, x + len/2 - 15, y - 10);
+        }
+
+        function drawGraphAxes(ctx, w, h) {
+            ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
+            // Zero line
+            ctx.beginPath(); ctx.moveTo(0, h-10); ctx.lineTo(w, h-10); ctx.stroke();
+            // Grid lines
+            ctx.setLineDash([4,4]);
+            for(let i=1; i<=4; i++) {
+                let y = (h-10) - (i/4)*(h-20);
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+
+        function updateAndDrawBus(dt) {
+            const timeScale = busToggleSlowMo.checked ? 0.2 : 1.0;
+            const scaledDt = dt * timeScale;
+            
+            // Advance time only if moving, braking, or shortly after stopping
+            if (busSimState === 'moving' || busSimState === 'braking') {
+                busTime += scaledDt;
+            } else if (busSimState === 'stopped' && busObj.timeSinceStop < 2.0) {
+                busTime += scaledDt;
+                busObj.timeSinceStop += scaledDt;
+            }
+
+            // Physics
+            if (busSimState === 'moving') {
+                if (busObj.v < B_CRUISE_SPEED) busObj.v += B_ACCEL * scaledDt;
+            } else if (busSimState === 'braking') {
+                if (busObj.v > 0) { 
+                    busObj.v -= B_BRAKE_DECEL * scaledDt; 
+                    if (busObj.v <= 0) { 
+                        busObj.v = 0; 
+                        busSimState = 'stopped';
+                        busObj.timeSinceStop = 0;
+                        updateBusUI();
+                    } 
+                }
+            }
+            busRoadOffset -= busObj.v * scaledDt;
+
+            // Internal Kinematics
+            if (busSimState === 'moving') {
+                carl.v = busObj.v; ball.v = busObj.v;
+            } else if (busSimState === 'braking' || busSimState === 'stopped') {
+                // Carl moves relative to the bus! (His ground velocity remains constant, bus slows down)
+                if (carl.state !== 'crashed') {
+                    const dX_Carl = (carl.v - busObj.v) * scaledDt; 
+                    carl.x += dX_Carl * 5; // *5 for visual emphasis
+                    
+                    // Windshield Collision
+                    if (carl.x > 330) { 
+                        carl.x = 330; 
+                        carl.state = 'crashed'; 
+                        busCrashFlash = 1.0; // Trigger flash
+                    }
+                }
+                
+                // If Carl is crashed, he MUST share the bus's velocity!
+                if (carl.state === 'crashed') {
+                    carl.v = busObj.v;
+                }
+
+                // Ball
+                const dX_Ball = (ball.v - busObj.v) * scaledDt; ball.x += dX_Ball * 5;
+                if (ball.x > 360) { ball.x = 360; ball.v = busObj.v; }
+            }
+
+            // Data recording for graph (Record exactly every 0.1 seconds to prevent overlapping)
+            if (busSimState !== 'idle') {
+                if (busHistory.length === 0 || busTime - busHistory[busHistory.length - 1].t >= 0.1) {
+                    busHistory.push({ t: busTime, vBus: busObj.v, vPerson: carl.v });
+                }
+            }
+
+            // Draw Bus View
+            const w = busCanvas.width; const h = busCanvas.height;
+            busCtx.clearRect(0, 0, w, h);
+
+            const groundLine = h - 80;
+            
+            // Sky
+            const gradSky = busCtx.createLinearGradient(0, 0, 0, groundLine);
+            gradSky.addColorStop(0, '#0F172A'); gradSky.addColorStop(1, '#1E293B');
+            busCtx.fillStyle = gradSky; busCtx.fillRect(0, 0, w, groundLine);
+            
+            // Ground
+            busCtx.fillStyle = '#020617'; busCtx.fillRect(0, groundLine, w, h - groundLine);
+            busCtx.strokeStyle = '#334155'; busCtx.lineWidth = 2; busCtx.beginPath(); busCtx.moveTo(0, groundLine); busCtx.lineTo(w, groundLine); busCtx.stroke();
+
+            // Parallax Buildings
+            busCtx.fillStyle = '#334155';
+            const bgOffset = (busRoadOffset * 0.4) % (w + 300);
+            for(let i=0; i<15; i++) {
+                const x = (i * 150 + bgOffset) % (w + 300); const bh = 80 + Math.sin(i)*60;
+                busCtx.fillRect(x - 300, groundLine - bh, 80, bh);
+            }
+
+            // Road Stripes
+            busCtx.fillStyle = '#94A3B8';
+            const stripeOffset = busRoadOffset % 120;
+            for(let i=0; i<w/60; i++) busCtx.fillRect(i * 120 + stripeOffset, groundLine + 20, 60, 6);
+
+            // Bus Body
+            const bx = busObj.x; const by = groundLine - B_HEIGHT - 15;
+            busCtx.fillStyle = '#F59E0B'; busCtx.fillRect(bx, by, B_WIDTH, B_HEIGHT);
+            busCtx.fillStyle = '#BAE6FD'; busCtx.fillRect(bx + 20, by + 20, 80, 70); busCtx.fillRect(bx + 120, by + 20, 260, 70);
+            
+            // Wheels
+            busCtx.fillStyle = '#020617'; busCtx.beginPath(); busCtx.arc(bx + 80, groundLine - 15, 28, 0, Math.PI*2); busCtx.fill();
+            busCtx.beginPath(); busCtx.arc(bx + 320, groundLine - 15, 28, 0, Math.PI*2); busCtx.fill();
+            busCtx.fillStyle = '#94A3B8'; busCtx.beginPath(); busCtx.arc(bx + 80, groundLine - 15, 12, 0, Math.PI*2); busCtx.fill();
+            busCtx.beginPath(); busCtx.arc(bx + 320, groundLine - 15, 12, 0, Math.PI*2); busCtx.fill();
+
+            // Hand Straps
+            busCtx.strokeStyle = '#64748B'; busCtx.lineWidth = 4;
+            busCtx.beginPath(); busCtx.moveTo(bx + sam.x + 20, by + 20); busCtx.lineTo(bx + sam.x + 20, by + 80); busCtx.stroke();
+            busCtx.beginPath(); busCtx.moveTo(bx + 200 + 20, by + 20); busCtx.lineTo(bx + 200 + 20, by + 80); busCtx.stroke();
+
+            // Passengers
+            drawBusPerson(busCtx, bx + sam.x, by + B_HEIGHT - 10, '#10B981', false, false); // Smart Sam
+            drawBusPerson(busCtx, bx + carl.x, by + B_HEIGHT - 10, '#EF4444', carl.state === 'crashed', true); // Careless Carl
+
+            // Rolling Ball
+            busCtx.beginPath(); busCtx.arc(bx + ball.x, by + B_HEIGHT - 10, 10, 0, Math.PI*2); busCtx.fillStyle = '#3B82F6'; busCtx.fill();
+
+            // Crash Flash
+            if (busCrashFlash > 0) {
+                busCtx.save();
+                busCtx.globalAlpha = busCrashFlash;
+                busCtx.translate(bx + 350, by + B_HEIGHT - 50);
+                busCtx.fillStyle = '#FACC15'; busCtx.beginPath(); busCtx.arc(0, 0, 40 + Math.random()*20, 0, Math.PI*2); busCtx.fill();
+                busCtx.fillStyle = '#EF4444'; busCtx.beginPath(); busCtx.arc(0, 0, 20 + Math.random()*10, 0, Math.PI*2); busCtx.fill();
+                busCtx.restore();
+                busCtx.fillStyle = `rgba(239, 68, 68, ${busCrashFlash * 0.3})`;
+                busCtx.fillRect(0,0,w,h);
+                busCrashFlash -= dt * 2;
+            }
+
+            // Vectors
+            if (busToggleVectors.checked && busSimState !== 'idle') {
+                drawBusVector(busCtx, bx + B_WIDTH/2 - 40, by - 30, busObj.v * 15, '#F59E0B', 'Bus Velocity');
+                if (busSimState === 'braking' && carl.state !== 'crashed') {
+                    drawBusVector(busCtx, bx + carl.x - 10, by + 20, carl.v * 15, '#EF4444', 'Carl Velocity');
+                }
+            }
+
+            // Draw Graph
+            busGraphCtx.clearRect(0, 0, busGraphCanvas.width, busGraphCanvas.height);
+            drawGraphAxes(busGraphCtx, busGraphCanvas.width, busGraphCanvas.height);
+
+            if (busHistory.length > 0) {
+                const gw = busGraphCanvas.width; const gh = busGraphCanvas.height - 10;
+                const maxV = B_CRUISE_SPEED + 1; const maxT = Math.max(busTime, 10);
+                const mapX = (t) => (t / maxT) * gw; const mapY = (v) => gh - (v / maxV) * (gh - 10);
+
+                // Bus Line
+                busGraphCtx.beginPath(); busGraphCtx.strokeStyle = '#F59E0B'; busGraphCtx.lineWidth = 3;
+                busGraphCtx.moveTo(mapX(busHistory[0].t), mapY(busHistory[0].vBus));
+                for(let i=1; i<busHistory.length; i++) busGraphCtx.lineTo(mapX(busHistory[i].t), mapY(busHistory[i].vBus));
+                busGraphCtx.stroke();
+
+                // Person Line
+                busGraphCtx.beginPath(); busGraphCtx.strokeStyle = '#EF4444'; busGraphCtx.lineWidth = 3; busGraphCtx.setLineDash([6, 4]);
+                busGraphCtx.moveTo(mapX(busHistory[0].t), mapY(busHistory[0].vPerson));
+                for(let i=1; i<busHistory.length; i++) busGraphCtx.lineTo(mapX(busHistory[i].t), mapY(busHistory[i].vPerson));
+                busGraphCtx.stroke(); busGraphCtx.setLineDash([]);
+            }
+
+            updateBusUI();
+        }
+
+        // -------------------------------------------------------------------------
+        // MASTER CONTROLLER
+        // -------------------------------------------------------------------------
+        function switchTab(tabId) {
+            activeTab = tabId;
+            if (tabId === 'abstract') {
+                tabAbs.className = "tab-btn active px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2";
+                tabBus.className = "tab-btn inactive px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2";
+                viewAbs.classList.remove('hidden'); viewBus.classList.add('hidden');
+                resizeAbstract();
+            } else {
+                tabBus.className = "tab-btn active px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2";
+                tabAbs.className = "tab-btn inactive px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2";
+                viewBus.classList.remove('hidden'); viewAbs.classList.add('hidden');
+                resizeBus();
+            }
+            masterLastTime = performance.now();
+        }
+
+        tabAbs.addEventListener('click', () => switchTab('abstract'));
+        tabBus.addEventListener('click', () => switchTab('bus'));
+
+        function masterLoop(timestamp) {
+            const realDt = (timestamp - masterLastTime) / (1000/60); 
+            const dtSec = Math.min((timestamp - masterLastTime) / 1000, 0.1); 
+            masterLastTime = timestamp;
+
+            if (activeTab === 'abstract') {
+                updateAndDrawAbstract(dtSec);
+            } else {
+                updateAndDrawBus(realDt);
+            }
+
+            masterAnimationFrame = requestAnimationFrame(masterLoop);
+        }
+
+        // --- Global Init ---
+        setTimeout(() => {
+            switchTab('abstract');
+            absUpdateEnvStyling();
+            updateBusUI();
+            masterAnimationFrame = requestAnimationFrame(masterLoop);
+        }, 100);
+
+    </script>
 </body>
 </html>
