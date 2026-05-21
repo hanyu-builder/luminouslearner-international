@@ -3,447 +3,784 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ripple Tank Simulator | Luminous Learner</title>
-    
+    <meta name="description" content="Ripple tank 2D wave simulator. Interactive physics lab demonstrating reflection, refraction, interference, and Doppler effect using WebGL shaders.">
+    <title>Ripple Tank 2D Wave Simulator</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Deep slate */
+            color: #F8FAFC;
+            overflow: hidden; /* Prevent desktop scrolling */
         }
-        .thumb-cyan::-webkit-slider-thumb { background: #06b6d4; }
-        canvas { touch-action: none; image-rendering: pixelated; }
+        .math-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Sliders */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            cursor: pointer; margin-top: -7px; transition: transform 0.1s;
+        }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #475569; border-radius: 2px;
+        }
+
+        #slider-freq::-webkit-slider-thumb { background: #38BDF8; box-shadow: 0 0 10px rgba(56, 189, 248, 0.6); } 
+        #slider-damp::-webkit-slider-thumb { background: #10B981; box-shadow: 0 0 10px rgba(16, 185, 129, 0.6); }
+
+        /* Custom Radio Buttons */
+        .radio-btn-group input[type="radio"] { display: none; }
+        .radio-btn-group label {
+            cursor: pointer;
+            border: 1px solid #475569;
+            background-color: #1E293B;
+            transition: all 0.2s;
+        }
+        .radio-btn-group input[type="radio"]:checked + label {
+            background-color: #38BDF8;
+            border-color: #7DD3FC;
+            color: #0F172A;
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+        }
+
+        /* Custom Checkbox / Toggle */
+        .toggle-checkbox:checked { right: 0; border-color: #38BDF8; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #38BDF8; }
+        .toggle-checkbox:checked + .toggle-label:after { transform: translateX(100%); border-color: white; }
+
+        ::-webkit-scrollbar { display: none; }
+        
+        #canvas-container {
+            position: relative;
+            background-color: #020617;
+            box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
+        }
+        
+        /* The Drawing Canvas Overlay */
+        #drawingCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none; /* Let clicks pass through, JS handles routing */
+            z-index: 10;
+            opacity: 0.8;
+        }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex items-center justify-center p-2 md:p-6 w-full h-full text-slate-100">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useCallback } = React;
-
-    // Simulation Resolution (Lower is faster)
-    const SIM_WIDTH = 200;
-    const SIM_HEIGHT = 150;
-    const CANVAS_SCALE = 3; // Display scaling
-
-    const SCENARIOS = {
-        'reflection': { label: 'Reflection', setup: 'barrier_angle' },
-        'refraction': { label: 'Refraction', setup: 'shallow_deep' },
-        'diffraction': { label: 'Diffraction (Single Slit)', setup: 'slit' },
-        'interference': { label: 'Interference (Two Sources)', setup: 'two_sources' },
-        'doppler': { label: 'Doppler Effect', setup: 'moving_source' }
-    };
-
-    const App = () => {
-        // --- State ---
-        const [scenario, setScenario] = useState('reflection');
-        const [frequency, setFrequency] = useState(15); // Wave generation speed
-        const [damping, setDamping] = useState(0.98); // Wave decay
-        const [isRunning, setIsRunning] = useState(true);
-        const [mouseInteracting, setMouseInteracting] = useState(false);
-
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
+    <!-- Main Container -->
+    <div class="w-full max-w-7xl h-full md:h-[900px] bg-slate-800/80 rounded-3xl shadow-2xl border border-slate-700 flex flex-col overflow-hidden backdrop-blur-md">
         
-        // Physics Buffers (2D Arrays flattened)
-        // buffer1: current state, buffer2: previous state
-        const buffer1Ref = useRef(new Float32Array(SIM_WIDTH * SIM_HEIGHT));
-        const buffer2Ref = useRef(new Float32Array(SIM_WIDTH * SIM_HEIGHT));
-        const obstacleRef = useRef(new Uint8Array(SIM_WIDTH * SIM_HEIGHT)); // 0: clear, 1: wall, 2: slow medium
-        const frameCountRef = useRef(0);
-        const sourcePosRef = useRef({ x: 0, y: 0 }); // For doppler
+        <!-- Header -->
+        <header class="bg-slate-900/70 p-4 border-b border-slate-700 flex justify-between items-center z-20 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="bg-sky-500/20 p-2 rounded-lg border border-sky-500/50 hidden md:block">
+                    <svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
+                        Ripple Tank Simulator
+                    </h1>
+                    <p class="text-slate-400 text-xs md:text-sm mt-1">2D Wave Equation & Huygens' Principle (<span class="math-font text-slate-300">u<sub>tt</sub> = c²∇²u</span>)</p>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button id="btn-clear-waves" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-semibold transition border border-slate-500 text-white shadow-md">
+                    Calm Water
+                </button>
+                <button id="btn-clear-walls" class="bg-rose-900/50 hover:bg-rose-900/80 px-4 py-2 rounded-lg text-sm font-semibold transition border border-rose-500/50 text-rose-300 shadow-md">
+                    Clear Environment
+                </button>
+            </div>
+        </header>
 
-        // --- Logic ---
-        
-        // Initialize Scenario Map
-        const loadScenario = (type) => {
-            const obs = obstacleRef.current;
-            const buf1 = buffer1Ref.current;
-            const buf2 = buffer2Ref.current;
+        <!-- Main Content Layout -->
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative">
             
-            // Clear all
-            obs.fill(0);
-            buf1.fill(0);
-            buf2.fill(0);
-            frameCountRef.current = 0;
-            sourcePosRef.current = { x: 20, y: SIM_HEIGHT / 2 };
-
-            // Setup Geometry
-            if (type === 'reflection') {
-                // Diagonal Wall
-                for (let x = 0; x < SIM_WIDTH; x++) {
-                    for (let y = 0; y < SIM_HEIGHT; y++) {
-                        if (x > 100 && x - 100 > y * 0.5) obs[y * SIM_WIDTH + x] = 1;
-                    }
-                }
-            } else if (type === 'refraction') {
-                // Glass Block (Shallow Water - Slow Speed)
-                for (let x = 0; x < SIM_WIDTH; x++) {
-                    for (let y = 0; y < SIM_HEIGHT; y++) {
-                        // Slanted boundary
-                        if (x > 80 + y * 0.3) obs[y * SIM_WIDTH + x] = 2; 
-                    }
-                }
-            } else if (type === 'diffraction') {
-                // Wall with Slit
-                const slitSize = 8;
-                for (let y = 0; y < SIM_HEIGHT; y++) {
-                    if (Math.abs(y - SIM_HEIGHT/2) > slitSize) {
-                        for(let x=98; x<102; x++) obs[y * SIM_WIDTH + x] = 1;
-                    }
-                }
-            }
-            // Interference is logic-based (two sources), no walls needed
-        };
-
-        useEffect(() => {
-            loadScenario(scenario);
-        }, [scenario]);
-
-        // Simulation Loop
-        const loop = () => {
-            if (!isRunning) return;
-
-            const width = SIM_WIDTH;
-            const height = SIM_HEIGHT;
-            const b1 = buffer1Ref.current;
-            const b2 = buffer2Ref.current;
-            const obs = obstacleRef.current;
-            
-            // 1. Wave Equation (Discrete)
-            // New[x,y] = (Left + Right + Up + Down) / 2 - Old[x,y]
-            // With damping
-            
-            for (let i = width; i < width * height - width; i++) {
-                // Skip walls
-                if (obs[i] === 1) continue;
-
-                // Determine medium speed factor
-                // Normal water = 1.0, Shallow water = 0.5
-                // Formula modification for speed c:
-                // u_new = 2u - u_old + c^2(neighbors - 4u)
-                // Simplified "smoothing" algo used here implicitly assumes c=1.
-                // To slow down, we just dampen result or interpolate?
-                // Standard ripple tank algo:
+            <!-- Left Panel: Setup & Tools -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-6 overflow-y-auto z-10">
                 
-                let val = (b1[i - 1] + b1[i + 1] + b1[i - width] + b1[i + width]) / 2 - b2[i];
-                
-                val = val * damping;
-
-                if (obs[i] === 2) {
-                    // Refraction hack: Slow down wave by averaging with previous state strongly
-                    // or reduce amplitude propagation
-                     val = val * 0.8; // Simulates energy loss/speed change roughly
-                }
-
-                b2[i] = val;
-            }
-
-            // 2. Apply Sources
-            frameCountRef.current++;
-            
-            // Auto Sources based on scenario
-            if (!mouseInteracting) {
-                const period = Math.max(2, 60 - frequency);
-                const amplitude = 500;
-                
-                if (scenario === 'interference') {
-                    // Two Point Sources
-                    if (frameCountRef.current % period === 0) {
-                        const s1 = (SIM_HEIGHT/2 - 30) * width + 30;
-                        const s2 = (SIM_HEIGHT/2 + 30) * width + 30;
-                        b2[s1] = amplitude;
-                        b2[s2] = amplitude;
-                    }
-                } else if (scenario === 'doppler') {
-                    // Moving Point Source
-                    if (frameCountRef.current % period === 0) {
-                        // Move source
-                        sourcePosRef.current.x += 1.5; 
-                        if (sourcePosRef.current.x > width) sourcePosRef.current.x = 0;
-                        
-                        const idx = Math.floor(sourcePosRef.current.y) * width + Math.floor(sourcePosRef.current.x);
-                        if (idx >= 0 && idx < width*height) b2[idx] = amplitude;
-                    }
-                } else {
-                    // Plane Wave Generator (Left side)
-                    // Or Point Source for reflection
-                    if (scenario === 'reflection') {
-                         // Line source at top left? Or Plane wave? Let's do Plane wave from left
-                         if (frameCountRef.current % period === 0) {
-                             for(let y=10; y<height-10; y++) {
-                                 b2[y*width + 20] = amplitude;
-                             }
-                         }
-                    } else if (scenario === 'diffraction' || scenario === 'refraction') {
-                        // Plane wave
-                        if (frameCountRef.current % period === 0) {
-                             for(let y=2; y<height-2; y++) {
-                                 b2[y*width + 10] = amplitude;
-                             }
-                        }
-                    }
-                }
-            }
-
-            // 3. Render
-            renderToCanvas();
-
-            // 4. Swap Buffers
-            // Instead of swapping arrays (which changes refs), we swap data or logic index
-            // Actually simpler to just swap array contents via a temp ref? 
-            // Swapping references is fastest.
-            const temp = buffer1Ref.current;
-            buffer1Ref.current = buffer2Ref.current;
-            buffer2Ref.current = temp;
-
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        const renderToCanvas = () => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            const imageData = ctx.getImageData(0, 0, SIM_WIDTH, SIM_HEIGHT);
-            const data = imageData.data;
-            const buf = buffer1Ref.current; // Current state
-            const obs = obstacleRef.current;
-
-            for (let i = 0; i < buf.length; i++) {
-                const val = buf[i];
-                const type = obs[i];
-                
-                let r, g, b;
-
-                if (type === 1) {
-                    // Wall (Yellow)
-                    r = 251; g = 191; b = 36; 
-                } else if (type === 2) {
-                    // Slow Medium (Glass/Shallow) - Darker Tint
-                    // Map wave height to color
-                    // Crest = White/Cyan, Trough = Dark Blue
-                    const intensity = Math.max(-255, Math.min(255, val));
-                    if (intensity > 0) {
-                        r = 30 + intensity; g = 58 + intensity; b = 138 + intensity; 
-                    } else {
-                        r = 30; g = 58; b = 138 + intensity; // Darker
-                    }
-                    // Overlay tint
-                    r += 20; g += 20; b += 20;
-                } else {
-                    // Water
-                    // Crest (Positive) -> Lighter Cyan
-                    // Trough (Negative) -> Darker Blue
-                    // Base: rgb(6, 182, 212) -> Cyan-500
+                <!-- Automated Experiments -->
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-3">
+                        <svg class="w-4 h-4 text-fuchsia-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                        Experiments
+                    </h2>
                     
-                    const clamp = Math.max(-127, Math.min(127, val));
-                    // Base color #0ea5e9 (Sky 500) : 14, 165, 233
-                    // Add clamp to RGB
-                    r = 14 + clamp;
-                    g = 165 + clamp;
-                    b = 233 + clamp;
+                    <div class="grid grid-cols-2 gap-2">
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="reflection">Reflection</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="refraction">Refraction</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="single-slit">Single Slit</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="double-slit">Double Slit</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="interference">Interference</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition" data-exp="doppler">Doppler Effect</button>
+                        <button class="exp-btn bg-slate-800 hover:bg-slate-700 text-[10px] uppercase font-bold text-slate-300 py-2 rounded border border-slate-600 transition col-span-2" data-exp="parabola">Parabolic Reflector</button>
+                    </div>
+                </div>
+
+                <div class="h-px w-full bg-slate-700"></div>
+
+                <!-- Interaction Tools -->
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-3">
+                        <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                        Manual Tools
+                    </h2>
+                    
+                    <div class="flex flex-col gap-2 radio-btn-group">
+                        <div>
+                            <input type="radio" id="tool-drop" name="tool-mode" value="drop" checked>
+                            <label for="tool-drop" class="block w-full px-3 py-2 rounded text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                                <span>💧 Water Drop</span>
+                                <span class="text-[9px] opacity-70 font-normal normal-case">Point Source</span>
+                            </label>
+                        </div>
+                        <div>
+                            <input type="radio" id="tool-wall" name="tool-mode" value="wall">
+                            <label for="tool-wall" class="block w-full px-3 py-2 rounded text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                                <span>🧱 Draw Wall</span>
+                                <span class="text-[9px] opacity-70 font-normal normal-case">Reflection</span>
+                            </label>
+                        </div>
+                        <div>
+                            <input type="radio" id="tool-shallow" name="tool-mode" value="shallow">
+                            <label for="tool-shallow" class="block w-full px-3 py-2 rounded text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                                <span>🟦 Shallow Zone</span>
+                                <span class="text-[9px] opacity-70 font-normal normal-case">Refraction</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="h-px w-full bg-slate-700"></div>
+
+                <!-- Continuous Sources -->
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-3">
+                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Properties
+                    </h2>
+                    
+                    <div class="flex items-center justify-between bg-slate-800/80 p-3 rounded-xl border border-slate-700 shadow-inner mb-3">
+                        <span class="text-xs font-semibold text-slate-200 uppercase tracking-wider">Plane Wave Source</span>
+                        <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" id="toggle-plane" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer z-10 top-0 left-0 transition-transform duration-200 ease-in-out"/>
+                            <label for="toggle-plane" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors duration-200 ease-in-out"></label>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-sky-900/50 shadow-inner mb-3">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-sky-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Wave Frequency</label>
+                            <span class="text-sm font-bold text-sky-400 math-font" id="val-freq">Medium</span>
+                        </div>
+                        <input type="range" id="slider-freq" min="0.05" max="0.5" step="0.01" value="0.25">
+                    </div>
+
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-emerald-900/50 shadow-inner">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-emerald-300 text-[10px] uppercase font-bold tracking-widest leading-tight">Wave Damping (Decay)</label>
+                            <span class="text-sm font-bold text-emerald-400 math-font" id="val-damp">0.995</span>
+                        </div>
+                        <input type="range" id="slider-damp" min="0.95" max="1.0" step="0.001" value="0.995">
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Center Panel: The WebGL Simulator -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center overflow-hidden border-r border-slate-700" id="canvas-container">
+                
+                <!-- Three.js Canvas mounts here -->
+                
+                <!-- 2D Canvas Overlay for drawing walls & zones -->
+                <canvas id="drawingCanvas"></canvas>
+
+                <!-- Status Hint -->
+                <div class="absolute bottom-6 pointer-events-none bg-slate-900/80 px-6 py-3 rounded-full border border-sky-500/50 backdrop-blur shadow-lg z-10 transition-opacity" id="interaction-hint">
+                    <span class="text-xs font-bold text-sky-300 uppercase tracking-widest" id="hint-text">Click and drag to add water drops</span>
+                </div>
+            </div>
+
+            <!-- Right Panel: Data & Theory -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-5 gap-5 overflow-y-auto z-10">
+                
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Wave Phenomena
+                </h2>
+
+                <div class="flex-1 flex flex-col gap-3">
+                    
+                    <!-- Reflection -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-rose-500"></div>
+                        <h3 class="text-xs text-rose-400 font-bold mb-2 uppercase tracking-widest">Reflection & Parabola</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Waves bounce off walls. In a <strong>Parabolic Reflector</strong>, incoming plane waves reflect and converge perfectly at a single <em>focal point</em>.
+                        </p>
+                    </div>
+
+                    <!-- Refraction -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-sky-500"></div>
+                        <h3 class="text-xs text-sky-400 font-bold mb-2 uppercase tracking-widest">Refraction</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Waves travel slower in <strong>Shallow Zones</strong>. When a wavefront hits shallow water at an angle, the side that enters first slows down, causing the entire wave to bend (Snell's Law).
+                        </p>
+                    </div>
+
+                    <!-- Diffraction -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-emerald-500"></div>
+                        <h3 class="text-xs text-emerald-400 font-bold mb-2 uppercase tracking-widest">Diffraction & Slits</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            A plane wave passing through a <strong>Single Slit</strong> spreads out spherically (Huygens' Principle). Two slits create two overlapping spherical waves.
+                        </p>
+                    </div>
+
+                    <!-- Interference -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-fuchsia-500"></div>
+                        <h3 class="text-xs text-fuchsia-400 font-bold mb-2 uppercase tracking-widest">Interference & Doppler</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            <strong>Interference:</strong> Two synchronized sources create an observable pattern of constructive (high) and destructive (flat) nodes. <br><br>
+                            <strong>Doppler:</strong> A moving source compresses waves ahead of it (shorter $\lambda$) and stretches them behind (longer $\lambda$).
+                        </p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Physics Simulation Logic (Three.js WebGL Shaders) -->
+    <script>
+        /**
+         * RIPPLE TANK SIMULATOR
+         * Uses Three.js WebGLRenderTarget ping-ponging to solve the 2D Wave Equation:
+         * u(t+1) = 2*u(t) - u(t-1) + c^2 * Laplacian(u)
+         */
+
+        // --- DOM Elements ---
+        const container = document.getElementById('canvas-container');
+        const drawCanvas = document.getElementById('drawingCanvas');
+        const drawCtx = drawCanvas.getContext('2d', { willReadFrequently: true });
+        
+        const radioTools = document.querySelectorAll('input[name="tool-mode"]');
+        const togglePlane = document.getElementById('toggle-plane');
+        const sliderFreq = document.getElementById('slider-freq');
+        const sliderDamp = document.getElementById('slider-damp');
+        const btnClearWaves = document.getElementById('btn-clear-waves');
+        const btnClearWalls = document.getElementById('btn-clear-walls');
+        const expBtns = document.querySelectorAll('.exp-btn');
+        
+        const valFreq = document.getElementById('val-freq');
+        const valDamp = document.getElementById('val-damp');
+        const hintText = document.getElementById('hint-text');
+
+        // --- Configuration ---
+        const SIM_RES = 512; 
+        let width = 0, height = 0;
+        let isDragging = false;
+        let activeTool = 'drop';
+
+        // Advanced Sources State
+        let dopplerActive = false;
+        let source1 = { x: 0, y: 0, active: false };
+        let source2 = { x: 0, y: 0, active: false };
+
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+        camera.position.z = 1;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setPixelRatio(1);
+        container.insertBefore(renderer.domElement, drawCanvas);
+
+        // --- Textures & FBOs ---
+        
+        // Drawing Texture: r = Wall, g = Shallow
+        const mapTexture = new THREE.CanvasTexture(drawCanvas);
+        mapTexture.minFilter = THREE.NearestFilter;
+        mapTexture.magFilter = THREE.NearestFilter;
+
+        const fboConfig = {
+            minFilter: THREE.NearestFilter,
+            magFilter: THREE.NearestFilter,
+            format: THREE.RGBAFormat,
+            type: THREE.FloatType, // Requires OES_texture_float
+            depthBuffer: false,
+            stencilBuffer: false
+        };
+        
+        let targetA = new THREE.WebGLRenderTarget(SIM_RES, SIM_RES, fboConfig);
+        let targetB = new THREE.WebGLRenderTarget(SIM_RES, SIM_RES, fboConfig);
+
+        // --- Shaders ---
+
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+        const simFragmentShader = `
+            uniform sampler2D u_state;
+            uniform sampler2D u_map;
+            uniform vec2 u_resolution;
+            
+            // Interaction Sources
+            uniform vec3 u_drop;       // x, y, radius (mouse)
+            uniform vec3 u_src1;       // x, y, active (continuous)
+            uniform vec3 u_src2;       // x, y, active (continuous)
+            
+            uniform float u_damping;
+            uniform float u_plane_phase;
+            uniform float u_plane_active;
+
+            varying vec2 vUv;
+
+            void main() {
+                vec2 texel = 1.0 / u_resolution;
+                vec4 map = texture2D(u_map, vUv);
+                
+                if (map.r > 0.5) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                    return;
                 }
 
-                const pixelIdx = i * 4;
-                data[pixelIdx] = r;
-                data[pixelIdx + 1] = g;
-                data[pixelIdx + 2] = b;
-                data[pixelIdx + 3] = 255; // Alpha
+                // Wave speed squared (c^2). Slower in shallow water (green channel)
+                float c2 = map.g > 0.5 ? 0.08 : 0.45;
+
+                vec4 state = texture2D(u_state, vUv);
+                float cur = state.r;
+                float prev = state.g;
+
+                float top   = texture2D(u_state, vUv + vec2(0.0, texel.y)).r;
+                float bot   = texture2D(u_state, vUv + vec2(0.0, -texel.y)).r;
+                float left  = texture2D(u_state, vUv + vec2(-texel.x, 0.0)).r;
+                float right = texture2D(u_state, vUv + vec2(texel.x, 0.0)).r;
+
+                float laplacian = top + bot + left + right - 4.0 * cur;
+                float next = (2.0 * cur) - prev + (c2 * laplacian);
+                next *= u_damping;
+
+                // Mouse Drop
+                if (u_drop.z > 0.0) {
+                    float dist = distance(gl_FragCoord.xy, u_drop.xy);
+                    if (dist < u_drop.z) next += 0.5 * (1.0 - dist/u_drop.z); 
+                }
+
+                // Plane Wave
+                if (u_plane_active > 0.5 && gl_FragCoord.x < 10.0) {
+                    next = sin(u_plane_phase) * 1.5;
+                }
+
+                // Continuous Point Source 1 (Fixed from += to = to prevent blowout)
+                if (u_src1.z > 0.5) {
+                    float dist = distance(gl_FragCoord.xy, u_src1.xy);
+                    if (dist < 4.0) next = sin(u_plane_phase) * 1.5;
+                }
+                
+                // Continuous Point Source 2
+                if (u_src2.z > 0.5) {
+                    float dist = distance(gl_FragCoord.xy, u_src2.xy);
+                    if (dist < 4.0) next = sin(u_plane_phase) * 1.5;
+                }
+
+                gl_FragColor = vec4(next, cur, 0.0, 1.0);
             }
+        `;
 
-            ctx.putImageData(imageData, 0, 0);
-        };
+        const renderFragmentShader = `
+            uniform sampler2D u_state;
+            uniform sampler2D u_map;
+            uniform vec2 u_resolution;
+            uniform vec3 u_src1;
+            uniform vec3 u_src2;
 
-        // --- Interaction ---
-        const handleMouseDown = (e) => {
-            setMouseInteracting(true);
-            disturb(e);
-        };
-        const handleMouseMove = (e) => {
-            if (mouseInteracting) disturb(e);
-        };
-        const handleMouseUp = () => setMouseInteracting(false);
-        const handleMouseLeave = () => setMouseInteracting(false);
+            varying vec2 vUv;
 
-        const disturb = (e) => {
-            const rect = canvasRef.current.getBoundingClientRect();
-            // Map display coords to sim coords
-            const x = Math.floor((e.clientX - rect.left) / CANVAS_SCALE);
-            const y = Math.floor((e.clientY - rect.top) / CANVAS_SCALE);
-            
-            if (x > 1 && x < SIM_WIDTH - 1 && y > 1 && y < SIM_HEIGHT - 1) {
-                buffer2Ref.current[y * SIM_WIDTH + x] = 1000; // Splash
+            void main() {
+                vec2 texel = 1.0 / u_resolution;
+                vec4 map = texture2D(u_map, vUv);
+                
+                if (map.r > 0.5) {
+                    // Wall color
+                    gl_FragColor = vec4(0.1, 0.15, 0.25, 1.0);
+                    return;
+                }
+
+                float cur   = texture2D(u_state, vUv).r;
+                float right = texture2D(u_state, vUv + vec2(texel.x, 0.0)).r;
+                float top   = texture2D(u_state, vUv + vec2(0.0, texel.y)).r;
+                
+                vec3 dx = vec3(1.0, 0.0, (right - cur) * 10.0);
+                vec3 dy = vec3(0.0, 1.0, (top - cur) * 10.0);
+                vec3 normal = normalize(cross(dx, dy));
+
+                vec3 lightDir = normalize(vec3(1.0, 1.0, 2.0));
+                float diffuse = max(dot(normal, lightDir), 0.0);
+                
+                vec3 viewDir = vec3(0.0, 0.0, 1.0);
+                vec3 halfDir = normalize(lightDir + viewDir);
+                float spec = pow(max(dot(normal, halfDir), 0.0), 30.0);
+
+                // Base color depends on depth
+                vec3 baseColor = map.g > 0.5 ? vec3(0.1, 0.6, 0.8) : vec3(0.05, 0.3, 0.5);
+                vec3 finalColor = baseColor * (0.5 + 0.5 * diffuse) + vec3(1.0) * spec * 0.5;
+
+                // Highlight crests/troughs
+                finalColor += vec3(cur * 0.3);
+
+                // Draw visible markers for active sources (Doppler/Interference tracking)
+                if (u_src1.z > 0.5) {
+                    float d1 = distance(gl_FragCoord.xy, u_src1.xy);
+                    if (d1 < 6.0) finalColor = mix(finalColor, vec3(0.9, 0.2, 0.6), smoothstep(6.0, 3.0, d1));
+                }
+                if (u_src2.z > 0.5) {
+                    float d2 = distance(gl_FragCoord.xy, u_src2.xy);
+                    if (d2 < 6.0) finalColor = mix(finalColor, vec3(0.9, 0.2, 0.6), smoothstep(6.0, 3.0, d2));
+                }
+
+                gl_FragColor = vec4(finalColor, 1.0);
             }
-        };
+        `;
 
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        }); // Re-bind every frame? No. Dependency empty means run once?
-        // But loop calls requestAnimationFrame.
-        // We need to ensure state values inside loop are fresh.
-        // The loop is defined inside component, so it captures closure.
-        // This is inefficient. Better to use Refs for all loop variables (done).
-        // Only `scenario` `isRunning` need handling.
+        // --- Materials & Meshes ---
         
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
+        const simMaterial = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader: simFragmentShader,
+            uniforms: {
+                u_state: { value: null },
+                u_map: { value: mapTexture },
+                u_resolution: { value: new THREE.Vector2(SIM_RES, SIM_RES) },
+                u_drop: { value: new THREE.Vector3(0, 0, 0) }, 
+                u_src1: { value: new THREE.Vector3(0, 0, 0) }, 
+                u_src2: { value: new THREE.Vector3(0, 0, 0) }, 
+                u_damping: { value: 0.995 },
+                u_plane_phase: { value: 0 },
+                u_plane_active: { value: 0 }
+            }
         });
 
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-cyan-500/20 p-2 rounded-lg">
-                            <i data-lucide="waves" className="w-6 h-6 text-cyan-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Ripple Tank Simulator</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Wave Physics
-                    </div>
-                </nav>
+        const renderMaterial = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader: renderFragmentShader,
+            uniforms: {
+                u_state: { value: null },
+                u_map: { value: mapTexture },
+                u_resolution: { value: new THREE.Vector2(SIM_RES, SIM_RES) },
+                u_src1: { value: new THREE.Vector3(0, 0, 0) },
+                u_src2: { value: new THREE.Vector3(0, 0, 0) }
+            }
+        });
 
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-8 flex flex-col gap-6">
-                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative flex justify-center bg-black">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={SIM_WIDTH} 
-                                height={SIM_HEIGHT}
-                                style={{ width: SIM_WIDTH * CANVAS_SCALE, height: SIM_HEIGHT * CANVAS_SCALE }}
-                                onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMove}
-                                onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseLeave}
-                                className="cursor-crosshair rounded-xl"
-                            />
-                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-3 py-1 rounded border border-slate-700 text-xs text-cyan-300 pointer-events-none">
-                                {SCENARIOS[scenario].label}
-                            </div>
-                        </div>
+        const planeGeometry = new THREE.PlaneGeometry(2, 2);
+        const simMesh = new THREE.Mesh(planeGeometry, simMaterial);
+        const renderMesh = new THREE.Mesh(planeGeometry, renderMaterial);
 
-                        <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center">
-                             <div className="flex gap-4">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-cyan-400 rounded-full"></div>
-                                    <span className="text-xs text-slate-400">Water</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
-                                    <span className="text-xs text-slate-400">Barrier</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-blue-800 rounded-full border border-blue-600"></div>
-                                    <span className="text-xs text-slate-400">Deep/Shallow</span>
-                                </div>
-                             </div>
-                             <div className="text-xs text-slate-500 italic">
-                                 Click & Drag to make waves manually
-                             </div>
-                        </div>
-                    </div>
+        const simScene = new THREE.Scene();
+        simScene.add(simMesh);
+        scene.add(renderMesh);
 
-                    {/* Right: Controls */}
-                    <div className="lg:col-span-4 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-6 flex items-center">
-                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                Control Panel
-                            </h2>
+        // --- Resizing ---
+        function resize() {
+            const rect = container.getBoundingClientRect();
+            width = rect.width;
+            height = rect.height;
+            
+            renderer.setSize(width, height);
+            
+            drawCanvas.width = width;
+            drawCanvas.height = height;
+            
+            mapTexture.needsUpdate = true;
+            clearDrawingCanvas();
+        }
+        window.addEventListener('resize', resize);
 
-                            <div className="space-y-6">
-                                {/* Scenario Selector */}
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Scenario</label>
-                                    <div className="grid grid-cols-1 gap-2">
-                                        {Object.keys(SCENARIOS).map(key => (
-                                            <button
-                                                key={key}
-                                                onClick={() => setScenario(key)}
-                                                className={`text-left px-4 py-3 rounded-lg text-sm font-medium transition-all border ${scenario === key ? 'bg-cyan-600 border-cyan-500 text-white shadow-lg' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}`}
-                                            >
-                                                {SCENARIOS[key].label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
+        // --- Drawing Canvas Logic (Walls & Shallow Zones) ---
+        function clearDrawingCanvas() {
+            drawCtx.clearRect(0, 0, width, height);
+            drawCtx.fillStyle = '#000000'; 
+            drawCtx.fillRect(0, 0, width, height);
+            mapTexture.needsUpdate = true;
+        }
 
-                                <div className="h-px bg-slate-700"></div>
+        function drawOnMap(x, y, isClick) {
+            drawCtx.lineCap = 'round';
+            drawCtx.lineJoin = 'round';
+            drawCtx.lineWidth = 15;
 
-                                {/* Frequency */}
-                                <div>
-                                    <label className="flex justify-between text-xs font-bold text-cyan-300 mb-2">
-                                        Frequency <span>{frequency}</span>
-                                    </label>
-                                    <input 
-                                        type="range" min="1" max="60" step="1" 
-                                        value={frequency} onChange={(e) => setFrequency(Number(e.target.value))}
-                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb thumb-cyan" 
-                                    />
-                                </div>
+            if (activeTool === 'wall') {
+                drawCtx.strokeStyle = 'rgba(255, 0, 0, 1.0)';
+                drawCtx.fillStyle = 'rgba(255, 0, 0, 1.0)';
+            } else if (activeTool === 'shallow') {
+                drawCtx.strokeStyle = 'rgba(0, 255, 0, 1.0)';
+                drawCtx.fillStyle = 'rgba(0, 255, 0, 1.0)';
+                drawCtx.lineWidth = 40; 
+            }
 
-                                {/* Damping */}
-                                <div>
-                                    <label className="flex justify-between text-xs font-bold text-slate-300 mb-2">
-                                        Wave Damping <span>{(damping * 100).toFixed(0)}%</span>
-                                    </label>
-                                    <input 
-                                        type="range" min="0.90" max="0.99" step="0.01" 
-                                        value={damping} onChange={(e) => setDamping(Number(e.target.value))}
-                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb" 
-                                    />
-                                </div>
+            if (isClick) {
+                drawCtx.beginPath();
+                drawCtx.arc(x, y, drawCtx.lineWidth/2, 0, Math.PI*2);
+                drawCtx.fill();
+            } else {
+                drawCtx.lineTo(x, y);
+                drawCtx.stroke();
+            }
+            
+            mapTexture.needsUpdate = true;
+        }
 
-                                <div className="grid grid-cols-2 gap-3 pt-2">
-                                    <button 
-                                        onClick={() => setIsRunning(!isRunning)}
-                                        className={`py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${isRunning ? 'bg-slate-700 text-slate-300' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
-                                    >
-                                        <i data-lucide={isRunning ? "pause" : "play"} className="w-4 h-4"></i>
-                                        {isRunning ? "Pause" : "Resume"}
-                                    </button>
-                                    <button 
-                                        onClick={() => loadScenario(scenario)}
-                                        className="py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
-                                    >
-                                        <i data-lucide="rotate-ccw" className="w-4 h-4"></i>
-                                        Reset
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+        // --- Experiment Presets ---
+        function runExperiment(type) {
+            clearDrawingCanvas();
+            btnClearWaves.click();
+            
+            dopplerActive = false;
+            source1.active = false;
+            source2.active = false;
+            togglePlane.checked = false;
 
-                    </div>
+            if (type === 'reflection') {
+                drawCtx.strokeStyle = 'rgba(255,0,0,1)';
+                drawCtx.lineWidth = 15;
+                drawCtx.beginPath();
+                drawCtx.moveTo(width * 0.4, height * 0.1);
+                drawCtx.lineTo(width * 0.7, height * 0.9);
+                drawCtx.stroke();
+                mapTexture.needsUpdate = true;
+                togglePlane.checked = true;
+                hintText.innerText = "Reflection: Plane waves bounce off the diagonal wall.";
+            } 
+            else if (type === 'refraction') {
+                drawCtx.fillStyle = 'rgba(0,255,0,1)'; // Shallow
+                drawCtx.beginPath();
+                drawCtx.moveTo(width * 0.4, 0);
+                drawCtx.lineTo(width, 0);
+                drawCtx.lineTo(width, height);
+                drawCtx.lineTo(width * 0.7, height);
+                drawCtx.fill();
+                mapTexture.needsUpdate = true;
+                togglePlane.checked = true;
+                hintText.innerText = "Refraction: Waves slow down and bend in the shallow zone.";
+            }
+            else if (type === 'single-slit') {
+                drawCtx.fillStyle = 'rgba(255,0,0,1)';
+                const gap = 30;
+                drawCtx.fillRect(width * 0.35, 0, 15, height/2 - gap);
+                drawCtx.fillRect(width * 0.35, height/2 + gap, 15, height/2);
+                mapTexture.needsUpdate = true;
+                togglePlane.checked = true;
+                hintText.innerText = "Single Slit: Plane wave diffuses spherically after passing the gap.";
+            }
+            else if (type === 'double-slit') {
+                drawCtx.fillStyle = 'rgba(255,0,0,1)';
+                const gap = 20;
+                const sep = 25;
+                drawCtx.fillRect(width * 0.35, 0, 15, height/2 - gap - sep);
+                drawCtx.fillRect(width * 0.35, height/2 - sep, 15, sep*2);
+                drawCtx.fillRect(width * 0.35, height/2 + gap + sep, 15, height/2);
+                mapTexture.needsUpdate = true;
+                togglePlane.checked = true;
+                hintText.innerText = "Double Slit: Overlapping spherical waves create interference nodes.";
+            }
+            else if (type === 'interference') {
+                source1.active = true;
+                source2.active = true;
+                source1.x = width * 0.5;
+                source1.y = height * 0.35;
+                source2.x = width * 0.5;
+                source2.y = height * 0.65;
+                hintText.innerText = "Interference: Constructive and destructive nodes from 2 sources.";
+            }
+            else if (type === 'doppler') {
+                source1.active = true;
+                source1.x = width * 0.8;
+                source1.y = height * 0.5;
+                dopplerActive = true;
+                hintText.innerText = "Doppler Effect: Shorter wavelength ahead of the moving source.";
+            }
+            else if (type === 'parabola') {
+                drawCtx.strokeStyle = 'rgba(255,0,0,1)';
+                drawCtx.lineWidth = 15;
+                drawCtx.beginPath();
+                for (let y = 0; y <= height; y += 5) {
+                    let dy = y - height/2;
+                    // PHYSICS FIX: Changed to a concave parabola (opening left) so waves converge
+                    let px = width * 0.8 - (dy * dy) * 0.003;
+                    if (y === 0) drawCtx.moveTo(px, y);
+                    else drawCtx.lineTo(px, y);
+                }
+                drawCtx.stroke();
+                mapTexture.needsUpdate = true;
+                togglePlane.checked = true;
+                hintText.innerText = "Parabola: Reflects plane wave to converge at a focal point.";
+            }
+            
+            // Sync checkbox visual state
+            simMaterial.uniforms.u_plane_active.value = togglePlane.checked ? 1.0 : 0.0;
+        }
 
-                </main>
-            </div>
-        );
-    };
+        expBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                runExperiment(e.target.dataset.exp);
+            });
+        });
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+        // --- Interaction ---
+        
+        container.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            const rect = container.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (activeTool === 'drop') {
+                const simX = (x / width) * SIM_RES;
+                const simY = ((height - y) / height) * SIM_RES; // WebGL Y is flipped
+                simMaterial.uniforms.u_drop.value.set(simX, simY, 10.0);
+            } else {
+                drawCtx.beginPath();
+                drawCtx.moveTo(x, y);
+                drawOnMap(x, y, true);
+            }
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const rect = container.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (activeTool === 'drop') {
+                const simX = (x / width) * SIM_RES;
+                const simY = ((height - y) / height) * SIM_RES;
+                simMaterial.uniforms.u_drop.value.set(simX, simY, 10.0);
+            } else {
+                drawOnMap(x, y, false);
+            }
+        });
+
+        const stopDrag = () => {
+            isDragging = false;
+            simMaterial.uniforms.u_drop.value.set(0,0,0);
+        };
+        window.addEventListener('mouseup', stopDrag);
+        container.addEventListener('mouseleave', stopDrag);
+
+        // UI Listeners
+        radioTools.forEach(r => {
+            r.addEventListener('change', (e) => {
+                activeTool = e.target.value;
+                if (activeTool === 'drop') hintText.innerText = "Click and drag to add water drops";
+                if (activeTool === 'wall') hintText.innerText = "Draw walls to reflect waves";
+                if (activeTool === 'shallow') hintText.innerText = "Draw shallow zones to refract (bend) waves";
+            });
+        });
+
+        sliderFreq.addEventListener('input', (e) => {
+            let v = parseFloat(e.target.value);
+            valFreq.innerText = v > 0.35 ? 'High' : v > 0.15 ? 'Medium' : 'Low';
+        });
+
+        sliderDamp.addEventListener('input', (e) => {
+            let v = parseFloat(e.target.value);
+            valDamp.innerText = v.toFixed(3);
+            simMaterial.uniforms.u_damping.value = v;
+        });
+
+        togglePlane.addEventListener('change', (e) => {
+            simMaterial.uniforms.u_plane_active.value = e.target.checked ? 1.0 : 0.0;
+        });
+
+        btnClearWaves.addEventListener('click', () => {
+            renderer.setRenderTarget(targetA); renderer.clear();
+            renderer.setRenderTarget(targetB); renderer.clear();
+            renderer.setRenderTarget(null);
+        });
+
+        btnClearWalls.addEventListener('click', () => {
+            clearDrawingCanvas();
+            dopplerActive = false;
+            source1.active = false;
+            source2.active = false;
+        });
+
+
+        // --- Main Simulation Loop ---
+        let planePhase = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const freq = parseFloat(sliderFreq.value);
+            planePhase += freq;
+            simMaterial.uniforms.u_plane_phase.value = planePhase;
+
+            // Handle Doppler movement
+            if (dopplerActive && source1.active) {
+                // Move source leftwards at a fraction of wave speed
+                source1.x -= 1.5; 
+                // Wrap around
+                if (source1.x < -20) source1.x = width + 20; 
+            }
+
+            // Sync Continuous Sources to Physics Shader
+            simMaterial.uniforms.u_src1.value.set(
+                (source1.x / width) * SIM_RES,
+                (1.0 - source1.y / height) * SIM_RES,
+                source1.active ? 1.0 : 0.0
+            );
+            
+            simMaterial.uniforms.u_src2.value.set(
+                (source2.x / width) * SIM_RES,
+                (1.0 - source2.y / height) * SIM_RES,
+                source2.active ? 1.0 : 0.0
+            );
+
+            // Sync Continuous Sources to Render Shader (For drawing the pink tracking dots)
+            renderMaterial.uniforms.u_src1.value.copy(simMaterial.uniforms.u_src1.value);
+            renderMaterial.uniforms.u_src2.value.copy(simMaterial.uniforms.u_src2.value);
+
+            // SIMULATION STEP (Ping Pong)
+            simMaterial.uniforms.u_state.value = targetA.texture;
+            renderer.setRenderTarget(targetB);
+            renderer.render(simScene, camera);
+
+            simMaterial.uniforms.u_state.value = targetB.texture;
+            renderer.setRenderTarget(targetA);
+            renderer.render(simScene, camera);
+
+            // DISPLAY STEP
+            renderMaterial.uniforms.u_state.value = targetA.texture;
+            renderer.setRenderTarget(null);
+            renderer.render(scene, camera);
+        }
+
+        // --- Init ---
+        setTimeout(() => {
+            resize();
+            btnClearWaves.click();
+            animate();
+        }, 100);
+
+    </script>
 </body>
 </html>
