@@ -3,491 +3,795 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Electrostatic Balloon Lab | Luminous Learner</title>
-    
+    <meta name="description" content="Electrostatic induction balloon simulation. Interactive physics lab demonstrating charging by friction, triboelectric effect, and polarization of insulators.">
+    <title>Electrostatic Balloon Simulator</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .canvas-container { cursor: grab; }
-        .canvas-container:active { cursor: grabbing; }
-        .noselect { user-select: none; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Deep slate */
+            color: #F8FAFC;
+            overflow: hidden; /* Prevent desktop scrolling */
+        }
+        .math-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Checkbox / Toggle */
+        .toggle-checkbox:checked { right: 0; border-color: #FBBF24; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #FBBF24; }
+        .toggle-checkbox:checked + .toggle-label:after { transform: translateX(100%); border-color: white; }
+
+        /* Hide Scrollbar */
+        ::-webkit-scrollbar { display: none; }
+        
+        .cursor-grab { cursor: grab; }
+        .cursor-grabbing { cursor: grabbing; }
+
+        .charge-transfer {
+            animation: flashTransfer 0.3s ease-out;
+        }
+        @keyframes flashTransfer {
+            0% { background-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 20px rgba(56, 189, 248, 1); }
+            100% { background-color: transparent; box-shadow: none; }
+        }
     </style>
 </head>
-<body>
+<body class="min-h-screen flex items-center justify-center p-2 md:p-6 w-full h-full text-slate-100">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 500;
-    
-    // Physics Constants
-    const BALLOON_RADIUS = 60;
-    const CHARGE_COUNT = 18; // Base charges per object
-    
-    // Objects
-    const SWEATER_X = 150;
-    const SWEATER_Y = 250;
-    const SWEATER_W = 180;
-    const SWEATER_H = 300;
-
-    const WALL_X = 750;
-    const WALL_W = 50;
-
-    const App = () => {
-        // --- State ---
-        const [showCharges, setShowCharges] = useState(true);
-        const [balloonPos, setBalloonPos] = useState({ x: 400, y: 250 });
-        const [balloonCharges, setBalloonCharges] = useState([]); // Array of {type: +/-, x, y (relative)}
-        const [sweaterCharges, setSweaterCharges] = useState([]);
-        const [wallCharges, setWallCharges] = useState([]);
+    <!-- Main Container -->
+    <div class="w-full max-w-7xl h-full md:h-[900px] bg-slate-800/80 rounded-3xl shadow-2xl border border-slate-700 flex flex-col overflow-hidden backdrop-blur-md">
         
-        const [isDragging, setIsDragging] = useState(false);
-        const [netCharge, setNetCharge] = useState(0); // Balloon net charge
+        <!-- Header -->
+        <header class="bg-slate-900/70 p-4 border-b border-slate-700 flex justify-between items-center z-20 shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="bg-amber-500/20 p-2 rounded-lg border border-amber-500/50 hidden md:block">
+                    <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold bg-gradient-to-r from-amber-400 to-rose-400 bg-clip-text text-transparent">
+                        Electrostatic Balloon Simulator
+                    </h1>
+                    <p class="text-slate-400 text-xs md:text-sm mt-1">Triboelectric Effect, Induction, and Polarization</p>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button id="btn-reset" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-semibold transition border border-slate-500 text-white shadow-md">
+                    Reset Experiment
+                </button>
+            </div>
+        </header>
 
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        const physicsRef = useRef({
-            bx: 400, by: 250, vx: 0, vy: 0,
-            dragging: false
-        });
-
-        // --- Initialization ---
-        useEffect(() => {
-            resetSim();
-        }, []);
-
-        const resetSim = () => {
-            // 1. Init Sweater Charges (Fixed Grid)
-            const sCharges = [];
-            for(let r=0; r<6; r++) {
-                for(let c=0; c<4; c++) {
-                    const cx = (c - 1.5) * 40;
-                    const cy = (r - 2.5) * 50;
-                    sCharges.push({ type: 1, x: cx, y: cy, baseX: cx, baseY: cy }); // Protons
-                    sCharges.push({ type: -1, x: cx + 5, y: cy + 5, baseX: cx+5, baseY: cy+5 }); // Electrons
-                }
-            }
-            setSweaterCharges(sCharges);
-
-            // 2. Init Balloon Charges (Random inside circle)
-            const bCharges = [];
-            for(let i=0; i<CHARGE_COUNT; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = Math.sqrt(Math.random()) * (BALLOON_RADIUS - 15);
-                const bx = Math.cos(angle) * dist;
-                const by = Math.sin(angle) * dist;
-                bCharges.push({ type: 1, x: bx, y: by });
-                bCharges.push({ type: -1, x: bx + 5, y: by + 5 });
-            }
-            setBalloonCharges(bCharges);
-
-            // 3. Init Wall Charges (Column)
-            const wCharges = [];
-            for(let i=0; i<10; i++) {
-                const wy = (i - 4.5) * 50;
-                wCharges.push({ type: 1, x: 0, y: wy });
-                wCharges.push({ type: -1, x: 0, y: wy, baseX: 0 }); // Electrons movable in x
-            }
-            setWallCharges(wCharges);
-
-            // Reset Physics
-            physicsRef.current = { bx: 400, by: 250, vx: 0, vy: 0, dragging: false };
-            setNetCharge(0);
-            setBalloonPos({ x: 400, y: 250 });
-        };
-
-        // --- Physics Loop ---
-        const loop = () => {
-            const state = physicsRef.current;
-            const dt = 0.016;
-
-            if (!state.dragging) {
-                // Apply Forces
-                let fx = 0;
-                let fy = 0;
-
-                // 1. Attraction to Sweater (if balloon is negative)
-                // Calculate net charge of sweater (which becomes positive)
-                // Actually simplified model: 
-                // Force ~ k * q1 * q2 / r^2
-                // Balloon Net Charge (Negative) attracted to Sweater Net Charge (Positive)
-                
-                // Calculate actual net charges
-                const balloonNet = balloonCharges.reduce((acc, c) => acc + c.type, 0);
-                const sweaterNet = sweaterCharges.reduce((acc, c) => acc + c.type, 0); // Should be positive if balloon is neg
-                
-                if (balloonNet !== 0) {
-                    const dx = SWEATER_X - state.bx;
-                    const dy = SWEATER_Y - state.by;
-                    const distSq = dx*dx + dy*dy;
-                    const dist = Math.sqrt(distSq);
-                    
-                    // F = k * q1 * q2 / r^2. 
-                    // Since q1 (balloon) is neg and q2 (sweater) is pos, force is attractive
-                    // Direction is towards sweater
-                    const forceMag = 5000 * Math.abs(balloonNet * sweaterNet) / (distSq + 1000);
-                    
-                    fx += (dx/dist) * forceMag;
-                    fy += (dy/dist) * forceMag;
-                }
-
-                // 2. Attraction to Wall (Induction)
-                // Wall is neutral overall, but polarized.
-                // Positive charges on wall surface attract balloon electrons.
-                // Negative charges on wall are pushed away (repel).
-                // Net force is attractive because positive charges are closer.
-                
-                // Simplified induction force:
-                // F_ind = k * q_balloon^2 / dist^3 (Dipole-like or image charge approximation)
-                // Only if near wall
-                const distToWall = WALL_X - (state.bx + BALLOON_RADIUS);
-                if (distToWall < 150) {
-                    const forceInd = 20000 * (balloonNet * balloonNet) / Math.pow(distToWall + 50, 2.5); // Heuristic
-                    fx += forceInd; // Pulls right
-                }
-
-                // 3. Update Motion
-                state.vx += fx * dt;
-                state.vy += fy * dt;
-                
-                // Damping (Air resistance)
-                state.vx *= 0.95;
-                state.vy *= 0.95;
-
-                // Move
-                state.bx += state.vx;
-                state.by += state.vy;
-
-                // Collision
-                // Wall
-                if (state.bx + BALLOON_RADIUS > WALL_X) {
-                    state.bx = WALL_X - BALLOON_RADIUS;
-                    state.vx = 0;
-                }
-                // Sweater
-                // Simple box collision
-                if (state.bx - BALLOON_RADIUS < SWEATER_X + SWEATER_W/2) {
-                    // Soft bounce or stick? Stick if charged.
-                    if (balloonNet !== 0) {
-                         state.vx = 0;
-                         state.vy = 0;
-                    } else {
-                        // Bounce
-                        if (state.bx - BALLOON_RADIUS < SWEATER_X + SWEATER_W/2) {
-                             state.bx = SWEATER_X + SWEATER_W/2 + BALLOON_RADIUS;
-                             state.vx *= -0.5;
-                        }
-                    }
-                }
-            }
-
-            // Sync State for React Render
-            setBalloonPos({ x: state.bx, y: state.by });
-            // Calculate Net Charge for UI
-            const bNet = balloonCharges.reduce((acc, c) => acc + c.type, 0);
-            setNetCharge(bNet);
-
-            // --- Wall Polarization Logic (Visual Only) ---
-            // If balloon is negative and near wall, push wall electrons right
-            setWallCharges(prev => prev.map(c => {
-                if (c.type === 1) return c; // Protons don't move
-                
-                // Electron logic
-                const balloonNet = balloonCharges.reduce((acc, q) => acc + q.type, 0); // e.g. -5
-                const distToWall = WALL_X - (state.bx + BALLOON_RADIUS);
-                
-                let targetX = c.baseX;
-                if (balloonNet < -2 && distToWall < 200) {
-                     // Push right
-                     // Strength depends on dist
-                     const push = Math.min(40, 1000 / (distToWall + 10));
-                     targetX = c.baseX + push;
-                }
-                
-                // Smooth lerp
-                return { ...c, x: c.x + (targetX - c.x) * 0.1 };
-            }));
-
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        // --- Interaction Handlers ---
-        const handleMouseDown = (e) => {
-            const rect = canvasRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+        <!-- Main Content Layout -->
+        <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 min-h-0 relative">
             
-            // Check balloon hit
-            if (Math.hypot(x - balloonPos.x, y - balloonPos.y) < BALLOON_RADIUS + 20) {
-                physicsRef.current.dragging = true;
-                setIsDragging(true);
-            }
+            <!-- Left Panel: Controls & Telemetry -->
+            <div class="lg:col-span-3 bg-slate-900/50 border-r border-slate-700 p-5 flex flex-col gap-5 overflow-y-auto z-10">
+                
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-2">
+                    <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    Display Options
+                </h2>
+
+                <div class="space-y-3">
+                    <label class="flex items-center justify-between p-3 rounded-lg hover:bg-slate-800 cursor-pointer transition border border-slate-700/50 bg-slate-800/50 shadow-inner">
+                        <span class="text-xs font-semibold text-slate-300">Show All Charges</span>
+                        <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" id="toggle-charges" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer z-10 top-0 left-0 transition-transform duration-200 ease-in-out" checked/>
+                            <label for="toggle-charges" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors duration-200 ease-in-out"></label>
+                        </div>
+                    </label>
+                    <p class="text-[10px] text-slate-400 leading-relaxed px-1">Toggle to view only the <strong>net excess</strong> charge rather than all microscopic protons and electrons.</p>
+                </div>
+
+                <div class="h-px w-full bg-slate-700 my-2"></div>
+
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest flex items-center gap-2 mb-2">
+                    <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Net Charge State
+                </h2>
+
+                <!-- Balloon Charge -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 shadow-inner flex flex-col gap-2 relative overflow-hidden" id="card-balloon">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-slate-500" id="card-balloon-edge"></div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-widest">Balloon</span>
+                        <span class="text-2xl font-bold text-white math-font" id="charge-balloon">0</span>
+                    </div>
+                    <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden relative">
+                        <!-- Zero Marker -->
+                        <div class="absolute left-1/2 top-0 w-0.5 h-full bg-slate-500 z-10 -translate-x-1/2"></div>
+                        <div id="bar-balloon" class="h-full bg-slate-500 transition-all duration-300 relative z-0" style="width: 50%;"></div>
+                    </div>
+                </div>
+
+                <!-- Sweater Charge -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 shadow-inner flex flex-col gap-2 relative overflow-hidden" id="card-sweater">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-slate-500" id="card-sweater-edge"></div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-widest">Sweater</span>
+                        <span class="text-2xl font-bold text-white math-font" id="charge-sweater">0</span>
+                    </div>
+                    <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden relative">
+                        <!-- Zero Marker -->
+                        <div class="absolute left-1/2 top-0 w-0.5 h-full bg-slate-500 z-10 -translate-x-1/2"></div>
+                        <div id="bar-sweater" class="h-full bg-slate-500 transition-all duration-300 relative z-0" style="width: 50%;"></div>
+                    </div>
+                </div>
+
+                <!-- Wall Charge -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-600 shadow-inner flex flex-col gap-2 relative overflow-hidden">
+                    <div class="absolute left-0 top-0 w-1 h-full bg-slate-500"></div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Wall (Neutral)</span>
+                        <span class="text-2xl font-bold text-slate-500 math-font">0</span>
+                    </div>
+                    <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden relative">
+                        <!-- Zero Marker -->
+                        <div class="absolute left-1/2 top-0 w-0.5 h-full bg-slate-500 z-10 -translate-x-1/2"></div>
+                        <div class="h-full bg-slate-500 transition-all duration-300 relative z-0" style="width: 50%;"></div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Center Panel: The Canvas Simulator -->
+            <div class="lg:col-span-6 relative flex flex-col justify-center items-center bg-[#0B1121] overflow-hidden border-r border-slate-700" id="canvas-wrapper">
+                
+                <!-- Instruction Overlays -->
+                <div class="absolute top-6 left-6 pointer-events-none bg-slate-900/80 px-4 py-3 rounded-xl border border-amber-500/30 backdrop-blur shadow-lg z-10 flex flex-col gap-1 max-w-[200px]">
+                    <span class="text-[10px] text-amber-400 uppercase font-bold tracking-widest border-b border-slate-700 pb-1 mb-1">Step 1: Friction</span>
+                    <span class="text-xs text-slate-300 leading-relaxed">Drag the balloon and rub it against the sweater to transfer electrons.</span>
+                </div>
+
+                <div class="absolute top-6 right-6 pointer-events-none bg-slate-900/80 px-4 py-3 rounded-xl border border-sky-500/30 backdrop-blur shadow-lg z-10 flex flex-col gap-1 max-w-[200px]">
+                    <span class="text-[10px] text-sky-400 uppercase font-bold tracking-widest border-b border-slate-700 pb-1 mb-1">Step 2: Polarization</span>
+                    <span class="text-xs text-slate-300 leading-relaxed">Drag the charged balloon near the wall to repel its electrons.</span>
+                </div>
+
+                <!-- Simulation Canvas -->
+                <canvas id="simCanvas" class="w-full h-full absolute inset-0 cursor-grab"></canvas>
+            </div>
+
+            <!-- Right Panel: Data & Theory -->
+            <div class="lg:col-span-3 bg-slate-900/50 flex flex-col p-5 gap-5 overflow-y-auto z-10">
+                
+                <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Electromagnetic Physics
+                </h2>
+                
+                <div class="flex-1 flex flex-col gap-4">
+                    
+                    <!-- Triboelectric Effect -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-amber-900/50 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-amber-500"></div>
+                        <h3 class="text-xs text-amber-400 font-bold mb-2 uppercase tracking-widest">Triboelectric Effect</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            When certain materials are rubbed together, friction forces electrons to break their bonds. The rubber balloon has a higher electron affinity than the wool sweater, meaning it "steals" electrons (<span class="text-sky-400 font-bold">-</span>) and becomes negatively charged.
+                        </p>
+                    </div>
+
+                    <!-- Induced Polarization -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-sky-900/50 relative overflow-hidden shadow-inner">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-sky-500"></div>
+                        <h3 class="text-xs text-sky-400 font-bold mb-2 uppercase tracking-widest">Dielectric Polarization</h3>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            The wall is an insulator. Its electrons cannot flow freely. However, when the negative balloon approaches, the electrons shift slightly away from the balloon within their atoms. 
+                        </p>
+                        <p class="text-[11px] text-slate-400 leading-relaxed mt-2 pt-2 border-t border-slate-800">
+                            This leaves the surface of the wall locally <strong>positive</strong>.
+                        </p>
+                    </div>
+
+                    <!-- Coulomb's Law -->
+                    <div class="bg-slate-950 p-4 rounded-xl border border-emerald-900/50 relative overflow-hidden shadow-inner mt-auto">
+                        <div class="absolute left-0 top-0 w-1 h-full bg-emerald-500"></div>
+                        <h3 class="text-xs text-emerald-400 font-bold mb-2 uppercase tracking-widest">Coulomb's Attraction</h3>
+                        
+                        <div class="math-font text-sm text-center text-slate-200 mb-3 bg-slate-900 py-2 rounded border border-slate-700 shadow-inner">
+                            F = k (q₁ q₂) / r²
+                        </div>
+                        
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Because electrostatic force follows the inverse-square law, the <strong>closer</strong> positive surface of the wall pulls the balloon stronger than the <strong>farther</strong> negative interior repels it. Result: The balloon sticks to the neutral wall!
+                        </p>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Physics Simulation Logic (Vanilla JS Canvas) -->
+    <script>
+        /**
+         * ELECTROSTATIC BALLOON SIMULATOR
+         * * Mechanics:
+         * 1. Draggable balloon.
+         * 2. Friction collision detection (Balloon bounds intersect Sweater bounds + velocity).
+         * 3. Electron transfer logic.
+         * 4. Lattice point polarization (Wall electrons push back based on inverse square of balloon dist).
+         * 5. Macro forces applied to balloon when released (attracted to sweater or wall).
+         */
+
+        // --- DOM Elements ---
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const canvasWrapper = document.getElementById('canvas-wrapper');
+        
+        const toggleCharges = document.getElementById('toggle-charges');
+        const btnReset = document.getElementById('btn-reset');
+
+        const chargeBalloonEl = document.getElementById('charge-balloon');
+        const chargeSweaterEl = document.getElementById('charge-sweater');
+        const barBalloon = document.getElementById('bar-balloon');
+        const barSweater = document.getElementById('bar-sweater');
+        
+        const cardBalloon = document.getElementById('card-balloon');
+        const cardBalloonEdge = document.getElementById('card-balloon-edge');
+        const cardSweaterEdge = document.getElementById('card-sweater-edge');
+
+        // --- State ---
+        let width = 0, height = 0;
+        let animationId;
+        
+        // Interaction
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
+        let dragVel = { x: 0, y: 0 };
+
+        // Constants
+        const MAX_TRANSFER = 60; // Max electrons transferable
+        const CHARGE_RADIUS = 6;
+
+        // --- Entities ---
+        
+        let sweater = {
+            x: 0, y: 0, w: 200, h: 400,
+            protons: [], // Fixed positions {x, y}
+            electrons: [] // Currently bound electrons {x, y, isBound}
         };
 
-        const handleMouseMove = (e) => {
-            const rect = canvasRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+        let balloon = {
+            x: 0, y: 0, w: 90, h: 110,
+            vx: 0, vy: 0,
+            protons: [], 
+            electrons: [] // Electrons the balloon carries
+        };
 
-            if (physicsRef.current.dragging) {
-                // Update Physics State
-                physicsRef.current.bx = x;
-                physicsRef.current.by = y;
-                physicsRef.current.vx = 0;
-                physicsRef.current.vy = 0;
+        let wall = {
+            x: 0, y: 0, w: 120, h: 0, 
+            lattice: [] // Array of { px, py, ex, ey, homeX, homeY } (proton pos, electron pos)
+        };
+
+        // --- High-DPI Canvas Setup ---
+        function resize() {
+            const rect = canvasWrapper.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            
+            width = rect.width;
+            height = rect.height;
+            
+            // Only completely re-init entities if it's the first load to preserve state on resize
+            if (wall.lattice.length === 0) {
+                initEntities();
+            } else {
+                // Update bounds but try to keep physics state
+                wall.x = width - wall.w;
+                wall.h = height;
+                initWallLattice();
+            }
+            
+            draw();
+        }
+        window.addEventListener('resize', resize);
+
+        function initWallLattice() {
+            wall.lattice = [];
+            const cols = 3;
+            const rows = Math.floor(height / 40);
+            const spacingX = wall.w / (cols + 1);
+            const spacingY = height / (rows + 1);
+            
+            for (let c=1; c<=cols; c++) {
+                for (let r=1; r<=rows; r++) {
+                    let px = wall.x + c * spacingX;
+                    let py = r * spacingY;
+                    wall.lattice.push({
+                        px: px, py: py, 
+                        ex: px, ey: py, 
+                        homeX: px, homeY: py
+                    });
+                }
+            }
+        }
+
+        function initEntities() {
+            // Sweater on the left
+            sweater.x = 50;
+            sweater.y = height/2 - sweater.h/2;
+            
+            // Wall on the right
+            wall.w = 120;
+            wall.h = height;
+            wall.x = width - wall.w;
+            wall.y = 0;
+
+            // Balloon in the middle
+            balloon.x = width/2;
+            balloon.y = height/2;
+            balloon.vx = 0;
+            balloon.vy = 0;
+
+            // Populate Sweater Charges (Roughly wool shape bounds)
+            sweater.protons = [];
+            sweater.electrons = [];
+            for (let i=0; i<MAX_TRANSFER; i++) {
+                // Random pos inside sweater bounds, slightly padded
+                let px = sweater.x + 20 + Math.random() * (sweater.w - 40);
+                let py = sweater.y + 20 + Math.random() * (sweater.h - 40);
+                sweater.protons.push({x: px, y: py});
+                // Electron starts exactly on top
+                sweater.electrons.push({x: px, y: py});
+            }
+
+            // Populate Balloon Initial Charges (Neutral)
+            balloon.protons = [];
+            balloon.electrons = [];
+            for (let i=0; i<15; i++) {
+                // Random within ellipse
+                let angle = Math.random() * Math.PI * 2;
+                let r = Math.random() * 0.8;
+                let px = Math.cos(angle) * (balloon.w/2) * r;
+                let py = Math.sin(angle) * (balloon.h/2) * r;
+                balloon.protons.push({x: px, y: py});
+                balloon.electrons.push({x: px, y: py});
+            }
+
+            initWallLattice();
+        }
+
+        // --- Physics Engine ---
+
+        function calculatePhysics() {
+            // 1. Friction & Charge Transfer Logic
+            // If balloon bounding box overlaps sweater bounding box, AND there is dragging velocity
+            if (isDragging) {
+                // Simple AABB collision
+                let overlapX = (balloon.x - balloon.w/2 < sweater.x + sweater.w) && (balloon.x + balloon.w/2 > sweater.x);
+                let overlapY = (balloon.y - balloon.h/2 < sweater.y + sweater.h) && (balloon.y + balloon.h/2 > sweater.y);
                 
-                // Check Friction/Rubbing
-                // If balloon overlaps sweater
-                const sweaterLeft = SWEATER_X - SWEATER_W/2;
-                const sweaterRight = SWEATER_X + SWEATER_W/2;
-                const sweaterTop = SWEATER_Y - SWEATER_H/2;
-                const sweaterBottom = SWEATER_Y + SWEATER_H/2;
-
-                // Simple AABB check overlap
-                if (x - BALLOON_RADIUS < sweaterRight && x + BALLOON_RADIUS > sweaterLeft &&
-                    y - BALLOON_RADIUS < sweaterBottom && y + BALLOON_RADIUS > sweaterTop) {
-                    
-                    // Transfer Electrons!
-                    // Take random electron from sweater, add to balloon
-                    // Find an electron on sweater
-                    const electronIdx = sweaterCharges.findIndex(c => c.type === -1);
-                    if (electronIdx !== -1) {
-                        // Chance to transfer based on movement? Or just auto
-                        if (Math.random() > 0.8) {
-                            const newElectron = sweaterCharges[electronIdx];
-                            // Remove from sweater
-                            const newSweaterCharges = [...sweaterCharges];
-                            newSweaterCharges.splice(electronIdx, 1);
-                            setSweaterCharges(newSweaterCharges);
-
-                            // Add to balloon (random pos relative to center)
-                            const angle = Math.random() * Math.PI * 2;
-                            const r = Math.sqrt(Math.random()) * (BALLOON_RADIUS - 10);
+                if (overlapX && overlapY) {
+                    let speed = Math.hypot(dragVel.x, dragVel.y);
+                    // More forgiving transfer speed requirement
+                    if (speed > 1) {
+                        // Transfer chance based on speed
+                        if (Math.random() < 0.4 && sweater.electrons.length > 0) {
+                            // Pop from sweater, push to balloon
+                            let e = sweater.electrons.pop();
                             
-                            setBalloonCharges(prev => [...prev, {
-                                type: -1,
-                                x: r * Math.cos(angle),
-                                y: r * Math.sin(angle)
-                            }]);
+                            // Give it a random offset within balloon
+                            let angle = Math.random() * Math.PI * 2;
+                            let r = Math.random() * 0.8;
+                            e.x = Math.cos(angle) * (balloon.w/2) * r;
+                            e.y = Math.sin(angle) * (balloon.h/2) * r;
+                            
+                            balloon.electrons.push(e);
+                            
+                            // Flash effect on UI
+                            cardBalloon.classList.remove('charge-transfer');
+                            void cardBalloon.offsetWidth; // trigger reflow
+                            cardBalloon.classList.add('charge-transfer');
                         }
                     }
                 }
+                // Decelerate drag tracking
+                dragVel.x *= 0.8;
+                dragVel.y *= 0.8;
+                balloon.vx = 0;
+                balloon.vy = 0;
+            } else {
+                // 2. Macroscopic Electrostatic Forces on Balloon
+                // Standard Physics Convention: Net Charge (Q) = Protons - Electrons
+                let netBalloon = balloon.protons.length - balloon.electrons.length; 
+                let netSweater = sweater.protons.length - sweater.electrons.length; 
+                
+                let fNetX = 0;
+                let fNetY = 0;
+
+                if (netBalloon !== 0) {
+                    // Attraction to sweater (Coulomb Force approximation)
+                    if (netSweater !== 0) {
+                        let sx = sweater.x + sweater.w/2;
+                        let sy = sweater.y + sweater.h/2;
+                        let dx = sx - balloon.x;
+                        let dy = sy - balloon.y;
+                        let distSq = dx*dx + dy*dy;
+                        
+                        // Soften the singularity to prevent math explosions at r=0
+                        let safeDistSq = Math.max(distSq, 3000); 
+                        let dist = Math.sqrt(distSq);
+                        
+                        // F = k * |q1*q2| / r^2.
+                        let attractMag = Math.min((Math.abs(netBalloon * netSweater) * 120) / safeDistSq, 10);
+                        
+                        // If they have opposite charges, they attract. If same, repel.
+                        // Here, balloon is negative, sweater is positive, so they attract (pull towards each other)
+                        let forceDirection = (netBalloon * netSweater < 0) ? 1 : -1;
+                        
+                        fNetX += attractMag * (dx/dist) * forceDirection;
+                        fNetY += attractMag * (dy/dist) * forceDirection;
+                    }
+
+                    // Attraction to Wall (Induced dipole attraction)
+                    // The closer the balloon, the stronger the polarization, the stronger the attraction
+                    let wx = wall.x;
+                    let dwx = wx - balloon.x;
+                    let wDist = Math.abs(dwx);
+                    
+                    if (wDist < 400) { // Interaction range
+                        // Cap minimum distance to avoid r^3 singularity
+                        let safeWDist = Math.max(wDist, balloon.w/2);
+                        
+                        // Force proportional to square of balloon charge (since it induces an equal dipole)
+                        let attractWallMag = Math.min((netBalloon * netBalloon * 15000) / Math.pow(safeWDist, 3), 12);
+                        fNetX += attractWallMag; // Always pulls towards wall (+x direction)
+                    }
+                }
+
+                // Apply forces to velocity (F = ma)
+                balloon.vx += fNetX * 0.1;
+                balloon.vy += fNetY * 0.1;
+                
+                // Damping (Air resistance / terminal velocity)
+                balloon.vx *= 0.95;
+                balloon.vy *= 0.95;
+
+                // Move balloon
+                balloon.x += balloon.vx;
+                balloon.y += balloon.vy;
+
+                // Collision with wall (right side)
+                if (balloon.x + balloon.w/2 >= wall.x) {
+                    balloon.x = wall.x - balloon.w/2;
+                    // If being actively pulled into the wall, kill velocity to stick gracefully
+                    if (fNetX > 0) balloon.vx = 0;
+                    else balloon.vx *= -0.5;
+                }
+                
+                // Collision with sweater (left side)
+                if (balloon.x - balloon.w/2 <= sweater.x + sweater.w && balloon.x > sweater.x) {
+                    // Check Y overlap
+                    if (balloon.y > sweater.y && balloon.y < sweater.y + sweater.h) {
+                        balloon.x = sweater.x + sweater.w + balloon.w/2;
+                        if (fNetX < 0) balloon.vx = 0; // Stick to sweater
+                        else balloon.vx *= -0.5;
+                    }
+                }
             }
-        };
 
-        const handleMouseUp = () => {
-            physicsRef.current.dragging = false;
-            setIsDragging(false);
-        };
+            // 3. Wall Polarization Visuals
+            // Net Charge (Q) = Protons - Electrons. Negative means excess electrons.
+            let netB = balloon.protons.length - balloon.electrons.length;
+            
+            wall.lattice.forEach(lat => {
+                let targetEx = lat.homeX;
+                let targetEy = lat.homeY;
 
-        // --- Rendering ---
-        useEffect(() => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
+                if (netB < 0) { // Balloon is negatively charged
+                    let dx = lat.px - balloon.x; // Vector pointing from balloon to wall proton
+                    let dy = lat.py - balloon.y;
+                    let distSq = dx*dx + dy*dy;
+                    let dist = Math.sqrt(distSq);
 
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                    if (dist < 400) {
+                        // Push wall electrons away from balloon. Max push bounded by atomic radius (e.g., 15px)
+                        let pushMag = Math.min((Math.abs(netB) * 2000) / Math.max(distSq, 1000), 16);
+                        targetEx = lat.homeX + (dx/dist) * pushMag; // Moves right (away from balloon)
+                        targetEy = lat.homeY + (dy/dist) * pushMag;
+                    }
+                } else if (netB > 0) { // If balloon is positively charged (optional capability)
+                    let dx = balloon.x - lat.px;
+                    let dy = balloon.y - lat.py;
+                    let distSq = dx*dx + dy*dy;
+                    let dist = Math.sqrt(distSq);
 
-            // 1. Draw Sweater
-            ctx.fillStyle = '#facc15'; // Yellow
-            ctx.fillRect(SWEATER_X - SWEATER_W/2, SWEATER_Y - SWEATER_H/2, SWEATER_W, SWEATER_H);
-            // Texture
-            ctx.strokeStyle = '#eab308';
-            ctx.lineWidth = 2;
-            for(let i=0; i<10; i++) {
+                    if (dist < 400) {
+                        let pullMag = Math.min((Math.abs(netB) * 2000) / Math.max(distSq, 1000), 16);
+                        targetEx = lat.homeX + (dx/dist) * pullMag;
+                        targetEy = lat.homeY + (dy/dist) * pullMag;
+                    }
+                }
+
+                // Smooth transition to target
+                lat.ex += (targetEx - lat.ex) * 0.2;
+                lat.ey += (targetEy - lat.ey) * 0.2;
+            });
+
+            // Update UI
+            let netSweater = sweater.protons.length - sweater.electrons.length;
+            updateUI(netB, netSweater);
+        }
+
+        function updateUI(netBalloon, netSweater) {
+            let numExcessB = Math.abs(netBalloon);
+            let numExcessS = Math.abs(netSweater);
+            
+            // Add '+' sign if positive, '-' if negative
+            chargeBalloonEl.innerText = netBalloon < 0 ? `-${numExcessB}` : (netBalloon > 0 ? `+${numExcessB}` : '0');
+            chargeSweaterEl.innerText = netSweater < 0 ? `-${numExcessS}` : (netSweater > 0 ? `+${numExcessS}` : '0');
+
+            // Bar mappings (Neutral is 50%. Range: -MAX to +MAX)
+            let bPct = 50 + (netBalloon / MAX_TRANSFER) * 50;
+            barBalloon.style.width = `${bPct}%`;
+            
+            if (netBalloon < 0) {
+                barBalloon.style.backgroundColor = '#38BDF8'; // Sky (Negative)
+                cardBalloonEdge.style.backgroundColor = '#38BDF8';
+            } else if (netBalloon > 0) {
+                barBalloon.style.backgroundColor = '#F43F5E'; // Rose (Positive)
+                cardBalloonEdge.style.backgroundColor = '#F43F5E';
+            } else {
+                barBalloon.style.backgroundColor = '#64748B'; // Slate (Neutral)
+                cardBalloonEdge.style.backgroundColor = '#64748B';
+            }
+
+            let sPct = 50 + (netSweater / MAX_TRANSFER) * 50; 
+            barSweater.style.width = `${sPct}%`;
+            
+            if (netSweater < 0) {
+                barSweater.style.backgroundColor = '#38BDF8';
+                cardSweaterEdge.style.backgroundColor = '#38BDF8';
+            } else if (netSweater > 0) {
+                barSweater.style.backgroundColor = '#F43F5E';
+                cardSweaterEdge.style.backgroundColor = '#F43F5E';
+            } else {
+                barSweater.style.backgroundColor = '#64748B';
+                cardSweaterEdge.style.backgroundColor = '#64748B';
+            }
+        }
+
+        // --- Render Engine ---
+
+        function drawCharge(x, y, type) {
+            ctx.beginPath();
+            ctx.arc(x, y, CHARGE_RADIUS, 0, Math.PI*2);
+            
+            if (type === 'pos') {
+                ctx.fillStyle = '#EF4444'; // Red
+                ctx.fill();
+                // Draw plus
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.moveTo(SWEATER_X - SWEATER_W/2, SWEATER_Y - SWEATER_H/2 + i*30);
-                ctx.lineTo(SWEATER_X + SWEATER_W/2, SWEATER_Y - SWEATER_H/2 + i*30 + 20);
+                ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
+                ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3);
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = '#38BDF8'; // Blue
+                ctx.fill();
+                // Draw minus
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y);
                 ctx.stroke();
             }
-            
-            // Draw Sweater Charges
-            if (showCharges) {
-                sweaterCharges.forEach(c => {
-                    drawCharge(ctx, SWEATER_X + c.x, SWEATER_Y + c.y, c.type);
-                });
-            }
+        }
 
-            // 2. Draw Wall
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(WALL_X, 0, WALL_W, CANVAS_HEIGHT);
-            
-            // Draw Wall Charges
-            if (showCharges) {
-                wallCharges.forEach(c => {
-                    drawCharge(ctx, WALL_X + 15 + c.x, 50 + c.y, c.type); // Centered in wall width somewhat
-                });
-            }
-
-            // 3. Draw Balloon
-            const bx = balloonPos.x;
-            const by = balloonPos.y;
-
-            // String
+        function drawSweater() {
+            // Abstract wool shape
+            ctx.fillStyle = '#F59E0B'; // Amber
             ctx.beginPath();
-            ctx.moveTo(bx, by + BALLOON_RADIUS);
-            ctx.quadraticCurveTo(bx + 10, by + BALLOON_RADIUS + 50, bx + 5, by + BALLOON_RADIUS + 100);
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
+            ctx.roundRect(sweater.x, sweater.y, sweater.w, sweater.h, 40);
+            ctx.fill();
+            
+            // Texture lines
+            ctx.strokeStyle = '#D97706';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(sweater.x + 40, sweater.y + 50); ctx.lineTo(sweater.x + 160, sweater.y + 100);
+            ctx.moveTo(sweater.x + 30, sweater.y + 150); ctx.lineTo(sweater.x + 170, sweater.y + 200);
+            ctx.moveTo(sweater.x + 50, sweater.y + 250); ctx.lineTo(sweater.x + 150, sweater.y + 350);
             ctx.stroke();
 
-            // Balloon Body
-            ctx.fillStyle = '#eab308'; // Yellowish default
-            if (netCharge < -5) ctx.fillStyle = '#fde047'; // Bright yellow if charged
-            
-            ctx.beginPath();
-            ctx.ellipse(bx, by, BALLOON_RADIUS, BALLOON_RADIUS * 1.1, 0, 0, Math.PI*2);
-            ctx.fill();
-            
-            // Glow if charged
-            if (Math.abs(netCharge) > 0) {
-                ctx.shadowColor = '#3b82f6';
-                ctx.shadowBlur = Math.abs(netCharge) * 2;
-                ctx.strokeStyle = '#60a5fa';
-                ctx.lineWidth = 3;
-                ctx.stroke();
-                ctx.shadowBlur = 0;
+            // Charges
+            if (toggleCharges.checked) {
+                // Show all
+                sweater.protons.forEach(p => drawCharge(p.x, p.y, 'pos'));
+                sweater.electrons.forEach(e => drawCharge(e.x, e.y, 'neg'));
+            } else {
+                // Show only net (excess protons or electrons)
+                let netCount = sweater.protons.length - sweater.electrons.length;
+                if (netCount > 0) { // Excess protons
+                    for(let i=0; i<netCount; i++) {
+                        drawCharge(sweater.protons[i].x, sweater.protons[i].y, 'pos');
+                    }
+                } else if (netCount < 0) { // Excess electrons
+                    for(let i=0; i<Math.abs(netCount); i++) {
+                        drawCharge(sweater.electrons[i].x, sweater.electrons[i].y, 'neg');
+                    }
+                }
+            }
+        }
+
+        function drawWall() {
+            ctx.fillStyle = '#64748B'; // Slate
+            ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 2;
+            for(let y=0; y<height; y+=30) {
+                ctx.beginPath(); ctx.moveTo(wall.x, y); ctx.lineTo(wall.x + wall.w, y); ctx.stroke();
+                // Brick offset
+                let off = (y % 60 === 0) ? 0 : 40;
+                for(let x=wall.x+off; x<width; x+=80) {
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y+30); ctx.stroke();
+                }
             }
 
-            // Balloon Charges
-            if (showCharges) {
-                balloonCharges.forEach(c => {
-                    drawCharge(ctx, bx + c.x, by + c.y, c.type);
-                });
+            // Draw Lattice Charges
+            // Always show all to demonstrate polarization clearly
+            wall.lattice.forEach(lat => {
+                // Faint bond line
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(lat.px, lat.py); ctx.lineTo(lat.ex, lat.ey); ctx.stroke();
+
+                // Draw proton first so that if unpolarized, the electron covers it
+                drawCharge(lat.px, lat.py, 'pos');
+                drawCharge(lat.ex, lat.ey, 'neg');
+            });
+        }
+
+        function drawBalloon() {
+            // String (Now dynamically trails from the balloon based on velocity)
+            ctx.strokeStyle = '#CBD5E1';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(balloon.x, balloon.y + balloon.h/2);
+            
+            // The string lags behind the movement for physics realism
+            let lagX = -balloon.vx * 3;
+            ctx.quadraticCurveTo(balloon.x + lagX/2, balloon.y + balloon.h/2 + 30, balloon.x + lagX, balloon.y + balloon.h/2 + 60);
+            ctx.quadraticCurveTo(balloon.x + lagX/2, balloon.y + balloon.h/2 + 90, balloon.x, balloon.y + balloon.h/2 + 120);
+            ctx.stroke();
+
+            // Tie knot
+            ctx.fillStyle = '#E11D48';
+            ctx.beginPath();
+            ctx.moveTo(balloon.x, balloon.y + balloon.h/2);
+            ctx.lineTo(balloon.x - 10, balloon.y + balloon.h/2 + 15);
+            ctx.lineTo(balloon.x + 10, balloon.y + balloon.h/2 + 15);
+            ctx.fill();
+
+            // Balloon Body (Ellipse)
+            ctx.fillStyle = '#F43F5E'; // Rose
+            // Highlight glow if highly charged
+            let net = balloon.protons.length - balloon.electrons.length;
+            if (net < -5 || net > 5) {
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = net < 0 ? 'rgba(56, 189, 248, 0.6)' : 'rgba(244, 63, 94, 0.6)'; 
+            }
+            
+            ctx.beginPath();
+            ctx.ellipse(balloon.x, balloon.y, balloon.w/2, balloon.h/2, 0, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // reset
+
+            // Highlight reflection
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.beginPath();
+            ctx.ellipse(balloon.x - 15, balloon.y - 20, 10, 20, Math.PI/6, 0, Math.PI*2);
+            ctx.fill();
+
+            // Charges inside balloon
+            ctx.save();
+            ctx.translate(balloon.x, balloon.y);
+
+            if (toggleCharges.checked) {
+                balloon.protons.forEach(p => drawCharge(p.x, p.y, 'pos'));
+                balloon.electrons.forEach(e => drawCharge(e.x, e.y, 'neg'));
+            } else {
+                let netCount = balloon.protons.length - balloon.electrons.length;
+                if (netCount < 0) { // Excess electrons
+                    for(let i=0; i<Math.abs(netCount); i++) {
+                        // Pull from the end of the array (the transferred ones)
+                        let e = balloon.electrons[balloon.electrons.length - 1 - i];
+                        drawCharge(e.x, e.y, 'neg');
+                    }
+                } else if (netCount > 0) { // Excess protons
+                    for(let i=0; i<netCount; i++) {
+                        let p = balloon.protons[balloon.protons.length - 1 - i];
+                        drawCharge(p.x, p.y, 'pos');
+                    }
+                }
             }
 
-        }, [balloonPos, sweaterCharges, wallCharges, balloonCharges, showCharges, netCharge]);
+            ctx.restore();
+        }
 
-        const drawCharge = (ctx, x, y, type) => {
-            ctx.beginPath();
-            ctx.arc(x, y, 6, 0, Math.PI*2);
-            ctx.fillStyle = type > 0 ? '#ef4444' : '#3b82f6';
-            ctx.fill();
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
             
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(type > 0 ? '+' : '-', x, y + 1);
-        };
+            drawSweater();
+            drawWall();
+            drawBalloon();
+        }
 
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        }); // Loop dependency empty? No, rely on refs.
+        // --- Logic Loop ---
+        function loop() {
+            calculatePhysics();
+            draw();
+            animationId = requestAnimationFrame(loop);
+        }
 
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
+        // --- Interaction ---
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            // Don't multiply by dpr here; standard mouse events give CSS pixels
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+
+            // Check if clicking balloon (rough ellipse bound)
+            let dx = mx - balloon.x;
+            let dy = my - balloon.y;
+            if ((dx*dx)/(balloon.w*balloon.w/4) + (dy*dy)/(balloon.h*balloon.h/4) <= 1.5) {
+                isDragging = true;
+                lastMouse = { x: mx, y: my };
+                canvas.classList.add('cursor-grabbing');
+            }
         });
 
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12 noselect">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-yellow-500/20 p-2 rounded-lg">
-                            <i data-lucide="zap" className="w-6 h-6 text-yellow-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Electrostatic Balloon Lab</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Static Electricity
-                    </div>
-                </nav>
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            // Don't multiply by dpr here; standard mouse events give CSS pixels
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
 
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
-                        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMove}
-                                onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseUp}
-                                className="w-full h-auto bg-slate-950 rounded-xl canvas-container"
-                            />
-                            
-                            <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300 pointer-events-none">
-                                Drag the <strong>Balloon</strong>. Rub it on the <strong>Sweater</strong>. Move it near the <strong>Wall</strong>.
-                            </div>
-                        </div>
+            if (isDragging) {
+                dragVel = { x: mx - lastMouse.x, y: my - lastMouse.y };
+                balloon.x = mx;
+                balloon.y = my;
+                lastMouse = { x: mx, y: my };
+            } else {
+                let dx = mx - balloon.x;
+                let dy = my - balloon.y;
+                if ((dx*dx)/(balloon.w*balloon.w/4) + (dy*dy)/(balloon.h*balloon.h/4) <= 1.5) {
+                    canvas.classList.add('cursor-grab');
+                } else {
+                    canvas.classList.remove('cursor-grab');
+                }
+            }
+        });
 
-                        {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex justify-between items-center">
-                            <div className="flex items-center gap-4">
-                                <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition-colors">
-                                    <input type="checkbox" checked={showCharges} onChange={() => setShowCharges(!showCharges)} className="w-5 h-5 rounded text-yellow-500 focus:ring-0" />
-                                    <span className="text-sm font-bold text-slate-300">Show Charges</span>
-                                </label>
-                            </div>
-                            <button onClick={resetSim} className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors flex items-center gap-2">
-                                <i data-lucide="rotate-ccw" className="w-4 h-4"></i> Reset Balloon
-                            </button>
-                        </div>
-                    </div>
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvas.classList.remove('cursor-grabbing');
+        });
+        canvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+            canvas.classList.remove('cursor-grabbing');
+        });
 
-                    {/* Right: Data Analysis */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-4 flex items-center">
-                                <i data-lucide="battery-charging" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                Charge Status
-                            </h2>
-                            <div className="space-y-4">
-                                <div className="p-4 rounded-xl bg-slate-900 border border-slate-700 text-center">
-                                    <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">Balloon Net Charge</div>
-                                    <div className={`text-3xl font-mono font-bold ${netCharge < 0 ? 'text-blue-400' : 'text-slate-400'}`}>
-                                        {netCharge === 0 ? "Neutral" : `${netCharge} e⁻`}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+        btnReset.addEventListener('click', () => {
+            initEntities();
+        });
 
-                        <div className="bg-indigo-900/10 border border-indigo-500/20 p-5 rounded-2xl">
-                            <h3 className="text-indigo-300 font-bold text-sm mb-2 flex items-center">
-                                <i data-lucide="lightbulb" className="w-4 h-4 mr-2"></i> Observation
-                            </h3>
-                            <ul className="text-xs text-slate-300 leading-relaxed space-y-2 list-disc pl-4">
-                                <li>
-                                    <strong>Triboelectric Effect:</strong> Rubbing the balloon steals electrons (blue) from the sweater. The balloon becomes negatively charged.
-                                </li>
-                                <li>
-                                    <strong>Induction:</strong> When the negative balloon goes near the neutral wall, it repels the wall's electrons deeper inside, leaving positive charges on the surface. This attracts the balloon!
-                                </li>
-                            </ul>
-                        </div>
+        toggleCharges.addEventListener('change', () => {});
 
-                    </div>
+        // --- Init ---
+        setTimeout(() => {
+            resize();
+            animationId = requestAnimationFrame(loop);
+        }, 100);
 
-                </main>
-            </div>
-        );
-    };
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+    </script>
 </body>
 </html>
