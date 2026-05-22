@@ -3,475 +3,736 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AC Generator Lab | Luminous Learner</title>
+    <meta name="description" content="AC generator physics simulation. Interactive 3D visualization of Faraday's Law, magnetic flux, induced EMF, and continuous slip rings.">
+    <title>AC Generator Simulator</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Three.js for 3D physics rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- OrbitControls for camera interaction -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Chart.js for real-time oscilloscope graphing -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#151e2e', 900: '#0F172A' },
+                        flux: '#10b981',    // Emerald (Magnetic Flux)
+                        emf: '#38bdf8',     // Sky Blue (Induced EMF/Voltage)
+                        bfield: '#8b5cf6',  // Purple (B-Field)
+                        normal: '#f59e0b',  // Amber (Area Vector)
+                        magnetN: '#ef4444', // Red (North)
+                        magnetS: '#3b82f6'  // Blue (South)
+                    },
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['Fira Code', 'monospace'] }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        body { margin: 0; overflow: hidden; background-color: #0F172A; color: #e2e8f0; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            cursor: pointer; margin-top: -6px;
+            transition: transform 0.1s;
         }
-        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
-        .thumb-rose::-webkit-slider-thumb { background: #f43f5e; }
-        .grid-bg {
-            background-image: linear-gradient(to right, #1e293b 1px, transparent 1px),
-                              linear-gradient(to bottom, #1e293b 1px, transparent 1px);
-            background-size: 20px 20px;
+        input[type=range]::-webkit-slider-thumb:active { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
         }
+        input[type=range]:focus { outline: none; }
+        
+        /* Specific slider colors */
+        #slider-omega::-webkit-slider-thumb { background: #38bdf8; box-shadow: 0 0 8px rgba(56, 189, 248, 0.6); }
+        #slider-b::-webkit-slider-thumb { background: #8b5cf6; box-shadow: 0 0 8px rgba(139, 92, 246, 0.6); }
+        #slider-area::-webkit-slider-thumb { background: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.6); }
+        
+        /* Custom Toggle Switch */
+        .toggle-checkbox:checked { right: 0; border-color: #38bdf8; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #38bdf8; }
+        .toggle-checkbox { right: 50%; }
+        .toggle-label { background-color: #64748b; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body>
+<body class="h-screen w-screen flex justify-center items-center font-sans">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 450;
-    const CENTER_X = CANVAS_WIDTH / 2;
-    const CENTER_Y = CANVAS_HEIGHT / 2;
-
-    const App = () => {
-        // --- State ---
-        const [speed, setSpeed] = useState(1.0); // Angular velocity factor
-        const [fieldStrength, setFieldStrength] = useState(1.0); // B
-        const [area, setArea] = useState(1.0); // Coil Area
+    <!-- Main Container -->
+    <div class="w-full max-w-[1500px] h-full max-h-[950px] flex flex-col bg-slate-900 shadow-2xl p-4 md:p-6 lg:p-8 gap-4 relative">
         
-        const [isRunning, setIsRunning] = useState(false);
-        const [showField, setShowField] = useState(true);
-        
-        // Real-time Data
-        const [voltage, setVoltage] = useState(0);
-        const [angleDeg, setAngleDeg] = useState(0);
-
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        const lastTimeRef = useRef(0);
-        
-        // Physics Refs
-        const physicsRef = useRef({
-            angle: 0,
-            history: [] // Array of {t, v}
-        });
-        
-        const paramsRef = useRef({ speed, fieldStrength, area });
-
-        // Sync params
-        useEffect(() => {
-            paramsRef.current = { speed, fieldStrength, area };
-        }, [speed, fieldStrength, area]);
-
-        // --- Logic ---
-        const startSim = () => {
-            if (isRunning) return;
-            setIsRunning(true);
-            lastTimeRef.current = performance.now();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        const stopSim = () => {
-            setIsRunning(false);
-            cancelAnimationFrame(requestRef.current);
-        };
-
-        const resetSim = () => {
-            stopSim();
-            physicsRef.current = { angle: 0, history: [] };
-            setVoltage(0);
-            setAngleDeg(0);
-            // Force redraw
-            setTimeout(() => draw(), 50);
-        };
-
-        const loop = (timestamp) => {
-            const dt = (timestamp - lastTimeRef.current) / 1000;
-            lastTimeRef.current = timestamp;
-            
-            const state = physicsRef.current;
-            const p = paramsRef.current;
-
-            // Physics: E = NBAw sin(wt)
-            // Ideally w is rad/s. Let's say speed slider is w.
-            // Voltage = B * A * w * sin(angle)
-            
-            // Update Angle
-            state.angle += p.speed * 2.0 * dt; // Scale speed for visual
-            
-            // Calculate Voltage (Instantaneous EMF)
-            // Flux Phi = B A cos(theta).
-            // EMF = -dPhi/dt = B A w sin(theta).
-            // Let's assume theta=0 is vertical (max flux).
-            // At vertical, velocity is parallel to field -> V=0. Correct.
-            // At horizontal, velocity is perp to field -> V=Max. Correct.
-            
-            const currentV = p.fieldStrength * p.area * p.speed * Math.sin(state.angle);
-            
-            // Record History
-            state.history.push(currentV);
-            if (state.history.length > 200) state.history.shift(); // Keep last 200 frames
-
-            // Sync UI
-            setVoltage(currentV);
-            setAngleDeg((state.angle * 180 / Math.PI) % 360);
-            
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        // --- 3D Projection Helper ---
-        const project = (x, y, z) => {
-            const scale = 300 / (300 + z);
-            return {
-                x: 200 + x * scale, // Shift center to Left side (200)
-                y: CENTER_Y + y * scale,
-                scale: scale
-            };
-        };
-
-        // --- Rendering ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            const state = physicsRef.current;
-            const theta = state.angle;
-            
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // --- 1. Draw Generator (Left Side) ---
-            
-            // Magnetic Field
-            if (showField) {
-                const grad = ctx.createLinearGradient(50, 0, 350, 0);
-                grad.addColorStop(0, 'rgba(56, 189, 248, 0)');
-                grad.addColorStop(0.2, 'rgba(56, 189, 248, 0.2)');
-                grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.2)');
-                grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-                
-                ctx.fillStyle = grad;
-                ctx.fillRect(50, 100, 300, 250);
-                
-                // Lines
-                ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
-                ctx.lineWidth = 1;
-                for (let y = 120; y < 350; y+=30) {
-                    ctx.beginPath(); ctx.moveTo(50, y); ctx.lineTo(350, y); ctx.stroke();
-                    // Arrow
-                    ctx.fillStyle = 'rgba(56, 189, 248, 0.5)';
-                    ctx.beginPath(); ctx.moveTo(200, y); ctx.lineTo(195, y-3); ctx.lineTo(195, y+3); ctx.fill();
-                }
-                ctx.font = "bold 20px sans-serif";
-                ctx.fillStyle = "#38bdf8";
-                ctx.fillText("B", 200, 90);
-            }
-
-            // Magnets
-            const magW = 60, magH = 200;
-            // N (Left)
-            ctx.fillStyle = '#ef4444';
-            ctx.fillRect(50 - magW, CENTER_Y - magH/2, magW, magH);
-            ctx.fillStyle = 'white'; ctx.fillText("N", 50 - 30, CENTER_Y);
-            // S (Right)
-            ctx.fillStyle = '#3b82f6';
-            ctx.fillRect(350, CENTER_Y - magH/2, magW, magH);
-            ctx.fillStyle = 'white'; ctx.fillText("S", 350 + 20, CENTER_Y);
-
-            // Coil
-            const coilW = 160 * paramsRef.current.area; // Scale width by area param
-            const coilH = 100;
-            const r = coilH / 2;
-            const halfW = coilW / 2;
-            
-            // Rotate around X-axis (Horizontal axis on screen)
-            // But visually better: Magnets Left/Right, Coil rotates around Z axis (Depth)?
-            // No, Magnets Left/Right -> B Field is Horizontal (X).
-            // Axle must be Z axis (Into screen) for coil sides to cut flux.
-            // Let's visualize coil rotating around Z axis (2D rotation on screen).
-            // This is simpler and clearer for "cutting lines".
-            
-            ctx.save();
-            ctx.translate(200, CENTER_Y); // Move to Generator Center
-            
-            // Draw Axle
-            ctx.fillStyle = '#64748b';
-            ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
-            
-            // Rotate Coil
-            ctx.rotate(theta);
-            
-            // Coil Frame (Rect)
-            ctx.strokeStyle = '#f59e0b'; // Amber wire
-            ctx.lineWidth = 6;
-            ctx.lineJoin = 'round';
-            ctx.strokeRect(-halfW, -r, coilW, coilH);
-            
-            // Current Direction Arrows (if moving)
-            if (Math.abs(voltage) > 0.1) {
-                // Determine direction based on voltage sign
-                // V > 0: Current CCW?
-                const dir = voltage > 0 ? 1 : -1;
-                
-                ctx.fillStyle = '#fff';
-                // Top wire arrow
-                drawArrowHead(ctx, 0, -r, dir * 10, 0);
-                // Bottom wire arrow
-                drawArrowHead(ctx, 0, r, -dir * 10, 0);
-            }
-            
-            ctx.restore();
-
-            // Slip Rings & Brushes (Side View Illusion)
-            // Draw statically below or overlay? 
-            // Let's draw schematic connection to scope
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = '#94a3b8';
-            ctx.beginPath();
-            ctx.moveTo(200, CENTER_Y); // Center axle
-            ctx.lineTo(200, CENTER_Y + 150); // Down
-            ctx.lineTo(400, CENTER_Y + 150); // Right to Scope
-            ctx.stroke();
-
-
-            // --- 2. Draw Oscilloscope (Right Side) ---
-            const scopeX = 400;
-            const scopeY = 50;
-            const scopeW = 380;
-            const scopeH = 300;
-            const scopeCenterY = scopeY + scopeH / 2;
-
-            // Screen Bezel
-            ctx.fillStyle = '#1e1e1e';
-            ctx.fillRect(scopeX, scopeY, scopeW, scopeH);
-            ctx.strokeStyle = '#475569';
-            ctx.strokeRect(scopeX, scopeY, scopeW, scopeH);
-
-            // Grid
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            // Horizontal center
-            ctx.moveTo(scopeX, scopeCenterY); ctx.lineTo(scopeX + scopeW, scopeCenterY);
-            // Vertical lines
-            for (let i=0; i<=scopeW; i+=40) {
-                ctx.moveTo(scopeX + i, scopeY); ctx.lineTo(scopeX + i, scopeY + scopeH);
-            }
-            // Horizontal lines
-            for (let i=0; i<=scopeH; i+=40) {
-                ctx.moveTo(scopeX, scopeY + i); ctx.lineTo(scopeX + scopeW, scopeY + i);
-            }
-            ctx.stroke();
-
-            // Waveform
-            ctx.strokeStyle = '#10b981'; // Green Trace
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            
-            // Map history to graph
-            // history contains voltage values
-            // x step = 2px
-            const history = state.history;
-            if (history.length > 0) {
-                const startX = scopeX + scopeW; // Draw from right to left (scrolling)
-                
-                for (let i = 0; i < history.length; i++) {
-                    const val = history[history.length - 1 - i];
-                    const x = startX - i * 2;
-                    if (x < scopeX) break;
-                    
-                    // Scale V to Y pixels. Max V approx 5 * 1.5 * 2 ~ 15?
-                    // Let's auto scale or fixed scale. Fixed scale is better to show amplitude change.
-                    // Max height = 100px. Max V = 20.
-                    const y = scopeCenterY - val * 5; 
-                    
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
-            }
-            ctx.stroke();
-            
-            // Current Value Indicator (Dot)
-            if (history.length > 0) {
-                const currentY = scopeCenterY - history[history.length-1] * 5;
-                ctx.fillStyle = '#ef4444';
-                ctx.beginPath();
-                ctx.arc(scopeX + scopeW - 2, currentY, 4, 0, Math.PI*2);
-                ctx.fill();
-                
-                // Digital Readout
-                ctx.font = '24px monospace';
-                ctx.fillStyle = '#10b981';
-                ctx.textAlign = 'right';
-                ctx.fillText(history[history.length-1].toFixed(2) + " V", scopeX + scopeW - 20, scopeY + 40);
-            }
-        };
-
-        const drawArrowHead = (ctx, x, y, dx, dy) => {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            // perpendicular vector (-dy, dx)
-            // Normalized direction
-            const len = Math.sqrt(dx*dx + dy*dy);
-            if(len === 0) return;
-            const udx = dx/len;
-            const udy = dy/len;
-            
-            // Tip is at x+dx, y+dy. Base is at x, y.
-            // Draw triangle at tip
-            ctx.moveTo(x + dx, y + dy);
-            ctx.lineTo(x + dx - 6*udx - 4*udy, y + dy - 6*udy + 4*udx);
-            ctx.lineTo(x + dx - 6*udx + 4*udy, y + dy - 6*udy - 4*udx);
-            ctx.fill();
-        };
-
-        useEffect(() => {
-            draw();
-            return () => cancelAnimationFrame(requestRef.current);
-        }, []); // Initial draw
-
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
-
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-indigo-500/20 p-2 rounded-lg">
-                            <i data-lucide="activity" className="w-6 h-6 text-indigo-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">AC Generator Lab</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Electromagnetism
-                    </div>
-                </nav>
-
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-12">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[450px]">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-full object-contain bg-slate-950 rounded-xl"
-                            />
-                            
-                            <div className="absolute top-4 left-4 flex gap-4">
-                                <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs shadow-lg">
-                                    <div className="text-slate-400 font-bold uppercase mb-1">Coil Angle</div>
-                                    <div className="text-white font-mono">{Math.round(angleDeg)}°</div>
-                                </div>
-                                <div className="bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs shadow-lg">
-                                    <div className="text-slate-400 font-bold uppercase mb-1">Instant EMF</div>
-                                    <div className={`text-xl font-mono font-bold ${voltage > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                        {voltage.toFixed(2)} V
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Controls */}
-                    <div className="lg:col-span-8 flex flex-col gap-6">
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-8">
-                            
-                            {/* Rotation Speed */}
-                            <div>
-                                <label className="flex justify-between text-xs text-indigo-300 font-bold mb-2">
-                                    Rotation Speed ($\omega$) <span>{speed.toFixed(1)}x</span>
-                                </label>
-                                <input 
-                                    type="range" min="0" max="5.0" step="0.1" 
-                                    value={speed} onChange={(e) => setSpeed(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-indigo" 
-                                />
-                            </div>
-
-                            {/* Field Strength */}
-                            <div>
-                                <label className="flex justify-between text-xs text-rose-300 font-bold mb-2">
-                                    Magnetic Field ($B$) <span>{fieldStrength.toFixed(1)} T</span>
-                                </label>
-                                <input 
-                                    type="range" min="0" max="3.0" step="0.5" 
-                                    value={fieldStrength} onChange={(e) => setFieldStrength(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-rose" 
-                                />
-                            </div>
-
-                            {/* Area */}
-                            <div>
-                                <label className="flex justify-between text-xs text-emerald-300 font-bold mb-2">
-                                    Coil Area ($A$) <span>{area.toFixed(1)} m²</span>
-                                </label>
-                                <input 
-                                    type="range" min="0.5" max="1.5" step="0.1" 
-                                    value={area} onChange={(e) => setArea(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-green" 
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Right: Actions */}
-                    <div className="lg:col-span-4 flex flex-col gap-4">
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 h-full flex flex-col justify-center gap-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <button 
-                                    onClick={isRunning ? stopSim : startSim}
-                                    className={`py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${isRunning ? 'bg-slate-700 text-slate-400' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
-                                >
-                                    <i data-lucide={isRunning ? "pause" : "play"} className="w-5 h-5"></i>
-                                    {isRunning ? "Pause" : "Spin"}
-                                </button>
-                                <button 
-                                    onClick={resetSim}
-                                    className="py-4 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
-                                >
-                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i>
-                                    Reset
-                                </button>
-                            </div>
-                            
-                            <label className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-lg border border-slate-600 cursor-pointer hover:bg-slate-700 transition">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showField} 
-                                    onChange={() => setShowField(!showField)}
-                                    className="w-5 h-5 rounded text-indigo-500 bg-slate-800 border-slate-500 focus:ring-0"
-                                />
-                                <span className="text-sm font-bold text-slate-300">Show B-Field Lines</span>
-                            </label>
-                        </div>
-                    </div>
-
-                </main>
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-slate-700 pb-3 shrink-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-white tracking-tight">AC Generator Simulation</h1>
+                <div class="flex gap-4 mt-2">
+                    <p class="text-slate-400 text-xs md:text-sm">Magnetic Flux: <span class="text-flux font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-700 shadow-inner">Φ = B·A·cos(ωt)</span></p>
+                    <p class="text-slate-400 text-xs md:text-sm">Induced E.M.F: <span class="text-emf font-mono bg-slate-800 px-2 py-0.5 rounded border border-slate-700 shadow-inner">V = -dΦ/dt = B·A·ω·sin(ωt)</span></p>
+                </div>
             </div>
-        );
-    };
+            <div class="hidden md:block text-right text-xs md:text-sm text-slate-400">
+                <p>Observe Faraday's Law of Induction and the</p>
+                <p>continuous slip rings producing alternating current.</p>
+            </div>
+        </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+        <!-- Main Workspace -->
+        <main class="flex flex-col lg:flex-row gap-6 h-full min-h-0">
+            
+            <!-- Left Panel: Controls & Telemetry -->
+            <div class="flex flex-col gap-4 w-full lg:w-3/12 min-h-0 shrink-0 overflow-y-auto no-scrollbar pb-2">
+                
+                <!-- Generator Input Controls -->
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 flex flex-col gap-5 shrink-0">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Mechanical & Magnetic Inputs</h2>
+                    
+                    <!-- Angular Velocity (Omega) -->
+                    <div>
+                        <div class="flex justify-between mb-1.5">
+                            <label class="text-sm font-semibold text-slate-300">Angular Velocity (<span class="italic font-serif text-emf">ω</span>)</label>
+                            <span class="text-xs font-mono bg-slate-900 px-2 py-0.5 rounded text-emf font-bold" id="val-omega">2.0 rad/s</span>
+                        </div>
+                        <input type="range" id="slider-omega" min="0.5" max="6.0" step="0.1" value="2.0">
+                        <p class="text-[10px] text-slate-500 mt-1">Faster rotation increases both frequency AND peak voltage.</p>
+                    </div>
+
+                    <!-- Magnetic Field (B) -->
+                    <div>
+                        <div class="flex justify-between mb-1.5">
+                            <label class="text-sm font-semibold text-slate-300">Magnetic Field (<span class="italic font-serif text-bfield">B</span>)</label>
+                            <span class="text-xs font-mono bg-slate-900 px-2 py-0.5 rounded text-bfield font-bold" id="val-b">1.0 T</span>
+                        </div>
+                        <input type="range" id="slider-b" min="0" max="2.0" step="0.1" value="1.0">
+                    </div>
+
+                    <!-- Coil Area (A) -->
+                    <div>
+                        <div class="flex justify-between mb-1.5">
+                            <label class="text-sm font-semibold text-slate-300">Coil Area (<span class="italic font-serif text-normal">A</span>)</label>
+                            <span class="text-xs font-mono bg-slate-900 px-2 py-0.5 rounded text-normal font-bold" id="val-area">2.0 m²</span>
+                        </div>
+                        <input type="range" id="slider-area" min="1.0" max="4.0" step="0.1" value="2.0">
+                    </div>
+                </div>
+
+                <!-- Display Toggles -->
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 flex flex-col gap-3 shrink-0">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Vector Overlays</h2>
+                    
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="font-semibold text-bfield flex items-center gap-2"><span class="w-3 h-3 bg-bfield rounded-sm block shadow-[0_0_8px_rgba(139,92,246,0.6)]"></span> Magnetic Field (B)</span>
+                        <input type="checkbox" id="toggle-b-vec" checked class="w-4 h-4 accent-bfield rounded cursor-pointer">
+                    </div>
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="font-semibold text-normal flex items-center gap-2"><span class="w-3 h-3 bg-normal rounded-sm block shadow-[0_0_8px_rgba(245,158,11,0.6)]"></span> Area Vector (n)</span>
+                        <input type="checkbox" id="toggle-n-vec" checked class="w-4 h-4 accent-normal rounded cursor-pointer">
+                    </div>
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="font-semibold text-emf flex items-center gap-2"><span class="w-3 h-3 bg-emf rounded-sm block shadow-[0_0_8px_rgba(56,189,248,0.6)]"></span> Induced Current (I)</span>
+                        <input type="checkbox" id="toggle-i-vec" checked class="w-4 h-4 accent-emf rounded cursor-pointer">
+                    </div>
+                </div>
+
+                <!-- Live Physics Telemetry -->
+                <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 flex-1 flex flex-col min-h-0 relative justify-center">
+                    <h3 class="text-xs text-slate-400 uppercase tracking-widest font-bold mb-4">Real-Time Sensor Data</h3>
+                    
+                    <div class="space-y-3 font-mono text-sm mb-4">
+                        <div class="flex justify-between items-center bg-slate-900 p-2.5 rounded border border-slate-700/50">
+                            <span class="text-slate-400 font-sans text-xs">Angle to B-Field (θ)</span>
+                            <span class="text-white" id="out-theta">0°</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-slate-900 p-2.5 rounded border border-flux/30 shadow-[inset_0_0_10px_rgba(16,185,129,0.05)]">
+                            <span class="text-slate-400 font-sans text-xs font-bold uppercase tracking-wider">Magnetic Flux (Φ)</span>
+                            <span class="text-flux font-bold text-lg" id="out-flux">0.00 Wb</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-slate-900 p-2.5 rounded border border-emf/30 shadow-[inset_0_0_10px_rgba(56,189,248,0.05)]">
+                            <span class="text-slate-400 font-sans text-xs font-bold uppercase tracking-wider">Induced E.M.F. (V)</span>
+                            <span class="text-emf font-bold text-lg drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]" id="out-emf">0.00 V</span>
+                        </div>
+                    </div>
+                    
+                    <button id="btn-pause" class="mt-auto w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-lg transition-colors border border-slate-500 shadow-lg">
+                        ⏸ PAUSE SIMULATION
+                    </button>
+                </div>
+
+            </div>
+
+            <!-- Right Panel: Visualizer & Graph -->
+            <div class="w-full lg:w-9/12 flex flex-col gap-4 min-h-0 relative">
+                
+                <!-- 3D Three.js Visualizer -->
+                <div class="flex-1 bg-black rounded-xl border border-slate-700 relative overflow-hidden flex flex-col min-h-[350px] shadow-[inset_0_0_40px_rgba(0,0,0,0.8)]" id="three-container">
+                    <div class="absolute top-4 left-4 z-10 pointer-events-none">
+                        <h2 class="text-xs font-bold text-slate-300 uppercase tracking-widest bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-700 shadow">3D Generator Mechanics</h2>
+                        <p class="text-[10px] text-slate-400 mt-1.5 bg-slate-900/50 px-2 py-1 rounded inline-block">Left-click to rotate • Scroll to zoom</p>
+                    </div>
+                    <!-- Three.js canvas will be injected here -->
+                </div>
+
+                <!-- Oscilloscope Graph -->
+                <div class="bg-slate-800 rounded-xl border border-slate-700 p-4 relative h-[280px] lg:h-[320px] shrink-0 flex flex-col shadow-inner">
+                    <h2 class="text-xs font-bold text-slate-300 uppercase tracking-widest absolute top-4 left-4 z-10 bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-700 shadow">Oscilloscope Trace</h2>
+                    
+                    <div class="absolute top-4 right-4 z-10 flex gap-4 text-[10px] font-mono font-bold bg-slate-900/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-700 pointer-events-none shadow">
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 bg-flux block rounded-sm shadow-[0_0_5px_rgba(16,185,129,0.5)]"></span> Flux (Φ)</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 bg-emf block rounded-sm shadow-[0_0_5px_rgba(56,189,248,0.5)]"></span> E.M.F (V)</span>
+                    </div>
+
+                    <div class="w-full h-full mt-8 relative bg-[#020617] rounded-lg border border-slate-700">
+                        <canvas id="waveChart"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Application Logic -->
+    <script>
+        /**
+         * PHYSICS STATE & GENERATOR MECHANICS
+         * Flux Phi = B * A * cos(theta)
+         * EMF V = -dPhi/dt = B * A * omega * sin(theta)
+         * theta = omega * time
+         */
+
+        const state = {
+            omega: 2.0, // rad/s
+            B: 1.0,     // Tesla
+            A: 2.0,     // m^2
+            
+            time: 0.0,
+            theta: 0.0, // rad
+            flux: 0.0,  // Wb
+            emf: 0.0,   // Volts
+            
+            isRunning: true,
+            
+            // Toggles
+            showBVec: true,
+            showNVec: true,
+            showIVec: true
+        };
+
+        // Graph data buffer
+        const MAX_GRAPH_POINTS = 200;
+        let chartInstance = null;
+        let lastGraphUpdate = 0;
+
+        // DOM Caching
+        const ui = {
+            sliderOmega: document.getElementById('slider-omega'), valOmega: document.getElementById('val-omega'),
+            sliderB: document.getElementById('slider-b'), valB: document.getElementById('val-b'),
+            sliderA: document.getElementById('slider-area'), valA: document.getElementById('val-area'),
+            
+            togB: document.getElementById('toggle-b-vec'),
+            togN: document.getElementById('toggle-n-vec'),
+            togI: document.getElementById('toggle-i-vec'),
+            
+            outTheta: document.getElementById('out-theta'),
+            outFlux: document.getElementById('out-flux'),
+            outEmf: document.getElementById('out-emf'),
+            
+            btnPause: document.getElementById('btn-pause'),
+            threeContainer: document.getElementById('three-container')
+        };
+
+        // --- Initialization ---
+        function init() {
+            bindEvents();
+            initChart();
+            initThreeJS();
+        }
+
+        function bindEvents() {
+            ui.sliderOmega.addEventListener('input', (e) => {
+                state.omega = parseFloat(e.target.value);
+                ui.valOmega.textContent = `${state.omega.toFixed(1)} rad/s`;
+            });
+            ui.sliderB.addEventListener('input', (e) => {
+                state.B = parseFloat(e.target.value);
+                ui.valB.textContent = `${state.B.toFixed(1)} T`;
+            });
+            ui.sliderA.addEventListener('input', (e) => {
+                state.A = parseFloat(e.target.value);
+                ui.valA.textContent = `${state.A.toFixed(1)} m²`;
+                rebuildCoilMesh(); // Adjust 3D model width to represent Area
+            });
+
+            ui.togB.addEventListener('change', (e) => { state.showBVec = e.target.checked; updateVectorVisibility(); });
+            ui.togN.addEventListener('change', (e) => { state.showNVec = e.target.checked; updateVectorVisibility(); });
+            ui.togI.addEventListener('change', (e) => { state.showIVec = e.target.checked; updateVectorVisibility(); });
+
+            ui.btnPause.addEventListener('click', () => {
+                state.isRunning = !state.isRunning;
+                ui.btnPause.innerHTML = state.isRunning ? "⏸ PAUSE SIMULATION" : "▶ RESUME SIMULATION";
+                ui.btnPause.classList.toggle('bg-slate-700');
+                ui.btnPause.classList.toggle('bg-emerald-600');
+                ui.btnPause.classList.toggle('border-slate-500');
+                ui.btnPause.classList.toggle('border-emerald-500');
+            });
+            
+            window.addEventListener('resize', resizeThreeJS);
+        }
+
+        function updatePhysics(dt) {
+            if (!state.isRunning) return;
+
+            state.time += dt;
+            state.theta = (state.time * state.omega) % (2 * Math.PI);
+            
+            // Flux = B * A * cos(theta)
+            state.flux = state.B * state.A * Math.cos(state.theta);
+            
+            // EMF = -d(Phi)/dt = B * A * omega * sin(theta)
+            state.emf = state.B * state.A * state.omega * Math.sin(state.theta);
+
+            updateTelemetryUI();
+            updateChart();
+        }
+
+        function updateTelemetryUI() {
+            let deg = (state.theta * 180 / Math.PI);
+            ui.outTheta.textContent = `${deg.toFixed(0)}°`;
+            
+            // Format with signs for visual clarity
+            let fSign = state.flux >= 0 ? "+" : "";
+            let eSign = state.emf >= 0 ? "+" : "";
+            
+            ui.outFlux.textContent = `${fSign}${state.flux.toFixed(2)} Wb`;
+            ui.outEmf.textContent = `${eSign}${state.emf.toFixed(2)} V`;
+        }
+
+        // --- Chart.js Configuration ---
+        function initChart() {
+            const ctx = document.getElementById('waveChart').getContext('2d');
+            Chart.defaults.color = '#64748b';
+            Chart.defaults.font.family = 'Inter, sans-serif';
+
+            // Custom gradient for Flux
+            let gradFlux = ctx.createLinearGradient(0, 0, 0, 400);
+            gradFlux.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
+            gradFlux.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+
+            // Custom gradient for EMF
+            let gradEmf = ctx.createLinearGradient(0, 0, 0, 400);
+            gradEmf.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
+            gradEmf.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array(MAX_GRAPH_POINTS).fill(''),
+                    datasets: [
+                        {
+                            label: 'Magnetic Flux (Wb)',
+                            data: Array(MAX_GRAPH_POINTS).fill(null),
+                            borderColor: '#10b981', // Emerald
+                            backgroundColor: gradFlux,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            fill: true,
+                            tension: 0.4,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Induced EMF (V)',
+                            data: Array(MAX_GRAPH_POINTS).fill(null),
+                            borderColor: '#38bdf8', // Sky Blue
+                            backgroundColor: gradEmf,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            fill: true,
+                            tension: 0.4,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { 
+                            display: false // Hide X axis labels for cleaner oscilloscope look
+                        },
+                        y: { 
+                            position: 'left',
+                            grid: { color: (c) => c.tick.value === 0 ? '#475569' : '#1e293b', lineWidth: (c) => c.tick.value === 0 ? 2 : 1 },
+                            min: -10, max: 10 // Max B=2, A=4 -> Max Flux=8. Scale to 10.
+                        },
+                        y1: {
+                            position: 'right',
+                            grid: { drawOnChartArea: false }, // Prevent gridline overlap
+                            min: -50, max: 50 // Max B=2, A=4, w=6 -> Max EMF=48. Scale to 50.
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart() {
+            // Decouple graph updates slightly from physics frame rate to ensure steady wave
+            if (state.time - lastGraphUpdate >= 0.02) {
+                chartInstance.data.datasets[0].data.push(state.flux);
+                chartInstance.data.datasets[1].data.push(state.emf);
+
+                if (chartInstance.data.datasets[0].data.length > MAX_GRAPH_POINTS) {
+                    chartInstance.data.datasets[0].data.shift();
+                    chartInstance.data.datasets[1].data.shift();
+                }
+
+                chartInstance.update();
+                lastGraphUpdate = state.time;
+            }
+        }
+
+        // --- Three.js 3D Visualization ---
+        let scene, camera, renderer, controls;
+        let rotorGroup, coilGroup;
+        
+        // Materials
+        const matWire = new THREE.MeshStandardMaterial({ color: '#f59e0b', metalness: 0.8, roughness: 0.2 }); // Bright Copper
+        
+        // Dynamic Meshes
+        let bulbMesh, bulbMaterial;
+        
+        // Vectors
+        let bFieldArrows = [];
+        let normalArrow;
+        let iArrow1, iArrow2; // Current arrows
+
+        function initThreeJS() {
+            const container = ui.threeContainer;
+            
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020617, 0.015);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(12, 12, 22);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // High-DPI support
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(0, 0, 0);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            dirLight.position.set(10, 20, 15);
+            scene.add(dirLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(-10, -10, -10);
+            scene.add(backLight);
+
+            buildGenerator();
+            buildVectors();
+            updateVectorVisibility();
+
+            // Start Animation Loop
+            let lastTime = performance.now();
+            function animate(time) {
+                requestAnimationFrame(animate);
+                
+                let dt = (time - lastTime) / 1000;
+                lastTime = time;
+                if (dt > 0.1) dt = 0.1;
+
+                updatePhysics(dt);
+                updateVisuals();
+
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate(performance.now());
+        }
+
+        function buildGenerator() {
+            // Axes Definition:
+            // Z-axis: Rotation Axis (Axle)
+            // X-axis: Magnetic Field (North at -X, South at +X) -> B points +X.
+
+            // 1. STATOR: Magnets
+            const magnetGeo = new THREE.BoxGeometry(2, 10, 14);
+            const matNorth = new THREE.MeshStandardMaterial({ color: '#ef4444', metalness: 0.3, roughness: 0.4 });
+            const magnetN = new THREE.Mesh(magnetGeo, matNorth);
+            magnetN.position.set(-9, 0, 0);
+            scene.add(magnetN);
+            
+            const matSouth = new THREE.MeshStandardMaterial({ color: '#3b82f6', metalness: 0.3, roughness: 0.4 });
+            const magnetS = new THREE.Mesh(magnetGeo, matSouth);
+            magnetS.position.set(9, 0, 0);
+            scene.add(magnetS);
+
+            // Magnet Labels
+            create3DText("N", -8.4, 6, 0, '#ffffff', scene);
+            create3DText("S", 8.4, 6, 0, '#ffffff', scene);
+
+            // 2. STATOR: Brushes & External Circuit
+            const brushGeo = new THREE.BoxGeometry(1.5, 1, 2.5);
+            const matBrush = new THREE.MeshStandardMaterial({ color: '#475569', metalness: 0.5, roughness: 0.8 });
+            
+            // Brush 1 (touches Ring 1)
+            const brush1 = new THREE.Mesh(brushGeo, matBrush);
+            brush1.position.set(2.5, 0, 6);
+            scene.add(brush1);
+
+            // Brush 2 (touches Ring 2)
+            const brush2 = new THREE.Mesh(brushGeo, matBrush);
+            brush2.position.set(2.5, 0, 9);
+            scene.add(brush2);
+
+            // External circuit leads
+            const matLead = new THREE.MeshStandardMaterial({ color: '#94a3b8', metalness: 0.8, roughness: 0.3 });
+            
+            // Lead 1 goes out, down, and across
+            const lead1a = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 4), matLead);
+            lead1a.rotation.z = Math.PI/2; lead1a.position.set(5, 0, 6); scene.add(lead1a);
+            const lead1b = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 6), matLead);
+            lead1b.position.set(7, -3, 6); scene.add(lead1b);
+            const lead1c = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1.5), matLead);
+            lead1c.rotation.x = Math.PI/2; lead1c.position.set(7, -6, 6.75); scene.add(lead1c);
+            
+            // Lead 2 goes out, down, and across
+            const lead2a = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 4), matLead);
+            lead2a.rotation.z = Math.PI/2; lead2a.position.set(5, 0, 9); scene.add(lead2a);
+            const lead2b = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 6), matLead);
+            lead2b.position.set(7, -3, 9); scene.add(lead2b);
+            const lead2c = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1.5), matLead);
+            lead2c.rotation.x = Math.PI/2; lead2c.position.set(7, -6, 8.25); scene.add(lead2c);
+
+            // Lightbulb Base between leads
+            const bulbBase = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1), new THREE.MeshStandardMaterial({color: '#334155'}));
+            bulbBase.rotation.x = Math.PI/2;
+            bulbBase.position.set(7, -6, 7.5);
+            scene.add(bulbBase);
+
+            // Lightbulb Glass
+            bulbMaterial = new THREE.MeshStandardMaterial({ 
+                color: '#fef08a', 
+                emissive: '#eab308',
+                emissiveIntensity: 0,
+                transparent: true,
+                opacity: 0.8
+            });
+            bulbMesh = new THREE.Mesh(new THREE.SphereGeometry(1.5, 16, 16), bulbMaterial);
+            bulbMesh.position.set(7, -6, 7.5);
+            scene.add(bulbMesh);
+
+            // 3. ROTOR: Axle, CONTINUOUS Slip Rings
+            rotorGroup = new THREE.Group();
+            scene.add(rotorGroup);
+
+            // Axle
+            const matAxle = new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.6, roughness: 0.4 });
+            const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 22), matAxle);
+            axle.rotation.x = Math.PI / 2;
+            rotorGroup.add(axle);
+
+            // Continuous Slip Rings (Torus)
+            const matRing = new THREE.MeshStandardMaterial({ color: '#fde047', metalness: 0.8, roughness: 0.2 }); // Brass/Gold
+            
+            ring1 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.3, 16, 32), matRing);
+            ring1.position.z = 6;
+            rotorGroup.add(ring1);
+
+            ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.3, 16, 32), matRing);
+            ring2.position.z = 9;
+            rotorGroup.add(ring2);
+
+            // The Coil is built dynamically in rebuildCoilMesh so it can scale perfectly
+            coilGroup = new THREE.Group();
+            rotorGroup.add(coilGroup);
+            
+            rebuildCoilMesh();
+        }
+
+        function rebuildCoilMesh() {
+            // Clear old coil if exists
+            while(coilGroup.children.length > 0){ 
+                coilGroup.remove(coilGroup.children[0]); 
+            }
+
+            // Map Area (1.0 to 4.0) to physical coil width (Y-axis distance between arms)
+            // Area = Width * Length. Let Length = 8. Width = Area / 8. 
+            // We scale it visually: A=2 -> W=4. A=4 -> W=8.
+            let W = state.A * 2.0; 
+            const coilLength = 8; // Z length (from z=-4 to z=4)
+            const coilRadius = 0.2;
+            
+            // Physics Alignment: 
+            // At theta=0, Area vector (Normal) must point +X.
+            // This means the coil must lie flat in the Y-Z plane.
+            // Wire 1 is at +Y, Wire 2 is at -Y.
+
+            // 1. Long wire segments (parallel to Z)
+            const wire1 = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, coilLength), matWire);
+            wire1.rotation.x = Math.PI / 2;
+            wire1.position.set(0, W/2, 0); // Positioned at +Y
+            coilGroup.add(wire1);
+
+            const wire2 = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, coilLength), matWire);
+            wire2.rotation.x = Math.PI / 2;
+            wire2.position.set(0, -W/2, 0); // Positioned at -Y
+            coilGroup.add(wire2);
+
+            // 2. Back wire connecting them (parallel to Y)
+            const backWire = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, W), matWire);
+            backWire.position.set(0, 0, -coilLength/2);
+            coilGroup.add(backWire);
+
+            // 3. Connectors to Slip Rings
+            // Wire 1 (at +Y) connects to Ring 1 (at Z=6)
+            // It needs a Z-segment to bridge the gap, then a radial drop to the axle.
+            const w1Ext = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, 2), matWire);
+            w1Ext.rotation.x = Math.PI/2;
+            w1Ext.position.set(0, W/2, 5); // Z from 4 to 6
+            coilGroup.add(w1Ext);
+
+            const w1Drop = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, W/2 - 1.5), matWire); // Drop down to ring radius 1.5
+            w1Drop.position.set(0, (W/2 + 1.5)/2, 6);
+            coilGroup.add(w1Drop);
+
+            // Wire 2 (at -Y) connects to Ring 2 (at Z=9)
+            const w2Ext = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, 5), matWire);
+            w2Ext.rotation.x = Math.PI/2;
+            w2Ext.position.set(0, -W/2, 6.5); // Z from 4 to 9
+            coilGroup.add(w2Ext);
+
+            const w2Drop = new THREE.Mesh(new THREE.CylinderGeometry(coilRadius, coilRadius, W/2 - 1.5), matWire);
+            w2Drop.position.set(0, -(W/2 + 1.5)/2, 9);
+            coilGroup.add(w2Drop);
+
+            // --- Attach Current Vectors to the new wires ---
+            // iArrow1 on wire1 (+Y). Direction Z.
+            iArrow1 = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0, 0, 0), 4, 0x38bdf8, 1, 0.5);
+            wire1.add(iArrow1);
+            
+            // iArrow2 on wire2 (-Y). Direction -Z.
+            iArrow2 = new THREE.ArrowHelper(new THREE.Vector3(0,0,-1), new THREE.Vector3(0, 0, 0), 4, 0x38bdf8, 1, 0.5);
+            wire2.add(iArrow2);
+        }
+
+        function buildVectors() {
+            // B-Field Arrows (Static, from -X to +X)
+            for (let z = -3; z <= 3; z += 3) {
+                for (let y = -4; y <= 4; y += 4) {
+                    let origin = new THREE.Vector3(-7, y, z);
+                    let dir = new THREE.Vector3(1, 0, 0); // B points +X
+                    let arrow = new THREE.ArrowHelper(dir, origin, 14, 0x8b5cf6, 1, 0.5); // Purple
+                    scene.add(arrow);
+                    bFieldArrows.push(arrow);
+                }
+            }
+
+            // Normal Vector (Area Vector) attached to the Rotor Group
+            // At theta=0, Area vector points +X.
+            normalArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 6, 0xf59e0b, 1.5, 0.6); // Amber
+            rotorGroup.add(normalArrow);
+        }
+
+        function updateVectorVisibility() {
+            bFieldArrows.forEach(a => a.visible = state.showBVec);
+            normalArrow.visible = state.showNVec;
+            
+            // Only show current vectors if EMF is non-zero
+            let isEmfActive = Math.abs(state.emf) > 0.5;
+            if(iArrow1 && iArrow2) {
+                iArrow1.visible = state.showIVec && isEmfActive;
+                iArrow2.visible = state.showIVec && isEmfActive;
+            }
+        }
+
+        function create3DText(text, x, y, z, color, parent) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 128; canvas.height = 128;
+            ctx.fillStyle = color;
+            ctx.font = 'bold 100px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 64, 64);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const mat = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(mat);
+            sprite.position.set(x, y, z);
+            sprite.scale.set(3, 3, 1);
+            parent.add(sprite);
+        }
+
+        function updateVisuals() {
+            // Rotate the entire rotor assembly around Z
+            rotorGroup.rotation.z = state.theta;
+
+            // EMF Visuals
+            // EMF V = B * A * omega * sin(theta).
+            // If V > 0, current flows one way. If V < 0, it reverses.
+            if (iArrow1 && iArrow2) {
+                if (state.emf > 0) {
+                    iArrow1.setDirection(new THREE.Vector3(0,1,0)); // Up the local Y (which maps to Z)
+                    iArrow2.setDirection(new THREE.Vector3(0,-1,0));
+                } else {
+                    iArrow1.setDirection(new THREE.Vector3(0,-1,0)); 
+                    iArrow2.setDirection(new THREE.Vector3(0,1,0)); 
+                }
+
+                // Scale arrows based on EMF magnitude
+                let emfMag = Math.abs(state.emf);
+                let arrowScale = Math.max(0.1, emfMag / 5);
+                if (arrowScale > 6) arrowScale = 6;
+                
+                iArrow1.setLength(arrowScale, arrowScale*0.3, arrowScale*0.15);
+                iArrow2.setLength(arrowScale, arrowScale*0.3, arrowScale*0.15);
+            }
+
+            // Glow Lightbulb based on absolute EMF
+            if (bulbMaterial) {
+                let intensity = Math.abs(state.emf) / 20; // normalize roughly
+                if (intensity > 1) intensity = 1;
+                
+                bulbMaterial.emissiveIntensity = intensity * 2;
+                // Shift color slightly whiter when very bright
+                bulbMaterial.emissive.setHSL(0.15, 1.0, 0.5 + intensity * 0.3);
+            }
+
+            updateVectorVisibility();
+        }
+
+        function resizeThreeJS() {
+            if (!renderer) return;
+            const container = ui.threeContainer;
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Boot
+        window.onload = init;
+
+    </script>
 </body>
 </html>
