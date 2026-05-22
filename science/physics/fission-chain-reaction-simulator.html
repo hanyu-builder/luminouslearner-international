@@ -3,449 +3,507 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fission Chain Reaction Lab | Luminous Learner</title>
+    <meta name="description" content="Interactive nuclear fission chain reaction simulator. Visualize U-235 splitting, secondary neutron emission, and reactor control rods.">
+    <title>Nuclear Fission Chain Reaction Simulator</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
+    <!-- p5.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- MathJax for rendering formulas -->
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 900: '#0F172A', 800: '#1E293B', 700: '#334155', 600: '#475569' },
+                        uranium: { 400: '#a3e635', 500: '#84cc16', 600: '#65a30d' }, // Lime/greenish
+                        neutron: { 400: '#38bdf8' }
+                    }
+                }
+            }
         }
-        .canvas-container { cursor: crosshair; }
-        .control-rod-container { cursor: ns-resize; }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0F172A; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        @media (max-width: 1024px) { body { overflow-y: auto; } }
+        
+        canvas { display: block; border-radius: 0.5rem; }
+        
+        /* Custom range slider styling */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 20px; width: 20px; border-radius: 4px; background: #94a3b8; cursor: ns-resize; margin-top: -8px; box-shadow: 0 0 5px rgba(0,0,0,0.5); border: 2px solid #475569; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+        /* Meltdown alert animation */
+        @keyframes flash-red {
+            0%, 100% { background-color: rgba(239, 68, 68, 0); }
+            50% { background-color: rgba(239, 68, 68, 0.3); }
+        }
+        .meltdown-warning { animation: flash-red 1s infinite; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col justify-center items-center p-2 sm:p-4">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const CANVAS_WIDTH = 800;
-    const CANVAS_HEIGHT = 500;
-    const ATOM_RADIUS = 13; // Slightly reduced for denser grid
-    const NEUTRON_RADIUS = 3;
-    const ROD_WIDTH = 40;
-    const ROD_SPACING = 120;
-    
-    const App = () => {
-        // --- State ---
-        const [controlRodLevel, setControlRodLevel] = useState(50); // 0 (Out) to 100 (In)
-        const [power, setPower] = useState(0); // Current Fission Rate
-        const [temperature, setTemperature] = useState(300); // Kelvin
-        const [simState, setSimState] = useState('running'); // running, meltdown
-
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
+    <!-- Main Container -->
+    <div id="app" class="w-full max-w-7xl max-h-[900px] h-full flex flex-col lg:flex-row gap-6 bg-slate-800 p-4 sm:p-6 rounded-2xl shadow-2xl border border-slate-700 relative overflow-hidden">
         
-        // Physics Objects (Mutable)
-        const atomsRef = useRef([]);
-        const neutronsRef = useRef([]);
-        const particlesRef = useRef([]); // Visual effects (energy flash)
-        
-        // --- Initialization ---
-        const initReactor = () => {
-            const atoms = [];
-            // Create Grid of U-235 (Increased density)
-            const cols = 12; // Increased from 8
-            const rows = 10; // Increased from 6
-            const xStep = CANVAS_WIDTH / (cols + 1);
-            const yStep = CANVAS_HEIGHT / (rows + 1);
+        <!-- Meltdown Overlay -->
+        <div id="meltdown-overlay" class="absolute inset-0 z-0 pointer-events-none transition-colors duration-500"></div>
 
-            for(let i=1; i<=cols; i++) {
-                for(let j=1; j<=rows; j++) {
-                    // Jitter position
-                    const x = i * xStep + (Math.random() - 0.5) * 15;
-                    const y = j * yStep + (Math.random() - 0.5) * 15;
+        <!-- LEFT PANEL: Reactor Canvas -->
+        <div class="flex-[3] flex flex-col relative rounded-xl overflow-hidden shadow-inner bg-slate-900 border border-slate-700 z-10" id="canvas-container">
+            <!-- p5.js canvas injects here -->
+            
+            <div class="absolute top-4 left-4 right-4 flex justify-between pointer-events-none">
+                <div class="bg-slate-800/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-600 pointer-events-auto shadow-lg">
+                    <h2 class="text-xl font-bold text-uranium-400">Reactor Core</h2>
+                    <p class="text-xs text-slate-300">Uranium-235 Assembly</p>
+                </div>
+                
+                <!-- Core Temperature Gauge -->
+                <div class="bg-slate-800/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-600 pointer-events-auto flex flex-col items-end shadow-lg min-w-[140px]">
+                    <span class="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Core Temp</span>
+                    <div class="w-full h-2 bg-slate-900 rounded-full mt-1 overflow-hidden">
+                        <div id="temp-bar" class="h-full bg-sky-500 transition-all duration-300" style="width: 5%;"></div>
+                    </div>
+                    <span id="temp-val" class="font-mono text-xl font-bold text-sky-400 mt-1">300 °C</span>
+                </div>
+            </div>
+            
+            <!-- Floating Control Label -->
+            <div class="absolute bottom-4 right-4 bg-slate-800/80 backdrop-blur px-3 py-1 rounded border border-slate-600 text-xs text-slate-400 pointer-events-none">
+                Neutron Absorbing Control Rods (Boron/Cadmium)
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Controls & Information -->
+        <div class="flex-[2] flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2 h-full z-10">
+            
+            <!-- Header -->
+            <div class="pb-2 border-b border-slate-700">
+                <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-uranium-400 to-emerald-400 mb-2">
+                    Fission Simulator
+                </h1>
+                <p class="text-sm text-slate-400 leading-relaxed">
+                    A single slow thermal neutron destabilizes U-235, causing it to split and release energy along with 2-3 fast neutrons, triggering a chain reaction.
+                </p>
+            </div>
+
+            <!-- Theory / Equation -->
+            <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-inner">
+                <p class="text-xs text-amber-500 font-bold uppercase tracking-wider mb-2">Fission Reaction</p>
+                <div class="text-center text-sm lg:text-base bg-slate-800 py-3 px-2 rounded font-serif text-slate-200 overflow-x-auto">
+                    $$^1_0n + ^{235}_{92}\text{U} \rightarrow ^{141}_{56}\text{Ba} + ^{92}_{36}\text{Kr} + 3^1_0n + E$$
+                </div>
+                <p class="text-xs text-slate-400 mt-2">
+                    Control rods absorb free neutrons without undergoing fission, acting as a brake on the reaction rate.
+                </p>
+            </div>
+
+            <!-- Controls -->
+            <div class="bg-slate-700/30 p-5 rounded-xl border border-slate-600 flex flex-col gap-5 mt-2 flex-grow">
+                <h3 class="font-bold text-slate-200 border-b border-slate-600 pb-2">Reactor Controls</h3>
+                
+                <!-- Control Rod Slider -->
+                <div class="flex flex-col gap-2 bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <div class="flex justify-between items-center mb-1">
+                        <label for="control-rods" class="text-sm font-semibold text-slate-300">Control Rod Depth</label>
+                        <span id="rod-val" class="text-xs font-mono bg-slate-900 px-2 py-1 rounded text-slate-300">80% (Safe)</span>
+                    </div>
+                    <input type="range" id="control-rods" min="0" max="100" value="80">
+                    <div class="flex justify-between text-[10px] text-slate-500 uppercase tracking-widest mt-1">
+                        <span>0% (Withdrawn)</span>
+                        <span>100% (Inserted)</span>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-3 mt-auto">
+                    <button id="btn-fire" class="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-amber-900/50 transition-all active:scale-95 flex flex-col items-center justify-center">
+                        <span>Fire Neutron</span>
+                        <span class="text-[10px] font-normal opacity-80">(Trigger Fission)</span>
+                    </button>
+                    <button id="btn-reset" class="flex-1 bg-slate-600 hover:bg-slate-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg active:scale-95 flex flex-col items-center justify-center">
+                        <span>Scram</span>
+                        <span class="text-[10px] font-normal opacity-80">(Reset Reactor)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Telemetry Dashboard -->
+            <div class="grid grid-cols-2 gap-3 mt-auto">
+                <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute left-0 top-0 bottom-0 w-1 bg-uranium-500"></div>
+                    <span class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Intact U-235</span>
+                    <span class="text-2xl font-bold text-uranium-400 font-mono" id="stat-u235">0</span>
+                </div>
+                
+                <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute left-0 top-0 bottom-0 w-1 bg-purple-500"></div>
+                    <span class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Fissions Occurred</span>
+                    <span class="text-2xl font-bold text-purple-400 font-mono" id="stat-fissions">0</span>
+                </div>
+                
+                <div class="col-span-2 bg-slate-900 p-3 rounded-xl border border-slate-700 flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute left-0 top-0 bottom-0 w-1 bg-sky-400"></div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-[10px] text-slate-400 uppercase tracking-wide">Free Neutrons (Flux)</span>
+                        <span class="text-xl font-bold text-sky-400 font-mono" id="stat-neutrons">0</span>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- p5.js Simulation Logic -->
+    <script>
+        // --- Simulation State Arrays & Variables ---
+        let nuclei = [];
+        let neutrons = [];
+        let fragments = [];
+        let flashes = []; // Visual flashes for explosions
+        
+        // Settings
+        const NUCLEI_COUNT = 150;
+        const NEUTRON_SPEED = 4;
+        const NUCLEUS_RADIUS = 12;
+        const ROD_COUNT = 5;
+        const ROD_WIDTH = 20;
+
+        // Telemetry
+        let tempCelsius = 300;
+        let fissionCount = 0;
+        let isMeltdown = false;
+
+        // HTML Elements
+        let container, rodSlider, rodValLabel;
+        let tempBar, tempVal, meltdownOverlay;
+
+        // --- p5.js Setup ---
+        function setup() {
+            container = document.getElementById('canvas-container');
+            let cw = Math.max(10, container.clientWidth);
+            let ch = Math.max(10, container.clientHeight);
+            let canvas = createCanvas(cw, ch);
+            canvas.parent('canvas-container');
+
+            // DOM Bindings
+            rodSlider = document.getElementById('control-rods');
+            rodValLabel = document.getElementById('rod-val');
+            tempBar = document.getElementById('temp-bar');
+            tempVal = document.getElementById('temp-val');
+            meltdownOverlay = document.getElementById('meltdown-overlay');
+
+            // Event Listeners
+            document.getElementById('btn-fire').addEventListener('click', fireNeutron);
+            document.getElementById('btn-reset').addEventListener('click', resetReactor);
+            
+            rodSlider.addEventListener('input', (e) => {
+                let val = e.target.value;
+                let label = `${val}%`;
+                if (val > 80) label += " (Safe)";
+                else if (val > 40) label += " (Critical)";
+                else label += " (Danger)";
+                rodValLabel.innerText = label;
+            });
+
+            resetReactor();
+        }
+
+        // --- Core Initialization ---
+        function resetReactor() {
+            nuclei = [];
+            neutrons = [];
+            fragments = [];
+            flashes = [];
+            fissionCount = 0;
+            tempCelsius = 300;
+            isMeltdown = false;
+            meltdownOverlay.classList.remove('meltdown-warning');
+            
+            // Distribute U-235 nuclei in a grid-like pattern with noise to look natural
+            let cols = 15;
+            let rows = 10;
+            let paddingX = width * 0.1;
+            let paddingY = height * 0.15; // Leave room at top for rods to descend
+            let cellW = (width - 2 * paddingX) / cols;
+            let cellH = (height - 2 * paddingY) / rows;
+
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    // Random displacement within cell
+                    let nx = paddingX + i * cellW + random(-cellW/3, cellW/3);
+                    let ny = paddingY + j * cellH + random(-cellH/3, cellH/3);
                     
-                    atoms.push({
-                        x, y,
-                        type: 'U-235', // U-235 or Splitting or Waste
-                        life: 1.0 // For splitting animation
+                    nuclei.push({
+                        x: nx,
+                        y: ny,
+                        state: 'intact', // intact, spent
+                        phase: random(TWO_PI) // For visual wobbling
                     });
                 }
             }
-            atomsRef.current = atoms;
-            neutronsRef.current = [];
-            particlesRef.current = [];
-            setPower(0);
-            setTemperature(300);
-            setSimState('running');
-        };
+            updateTelemetry();
+        }
 
-        useEffect(() => {
-            initReactor();
-        }, []);
-
-        // --- Actions ---
-        const fireNeutron = () => {
-            if (simState !== 'running') return;
-            // Fire from left
-            neutronsRef.current.push({
-                x: 0,
-                y: CANVAS_HEIGHT / 2,
-                vx: 6,
-                vy: (Math.random() - 0.5) * 1.5,
-                active: true
+        function fireNeutron() {
+            // Spawn a slow neutron from the bottom middle, aiming up
+            neutrons.push({
+                x: width / 2 + random(-50, 50),
+                y: height - 10,
+                vx: random(-1, 1),
+                vy: -NEUTRON_SPEED * 0.5 // Slower "thermal" neutron to start
             });
-        };
+        }
 
-        const reset = () => {
-            initReactor();
-            setControlRodLevel(50);
-        };
-
-        // --- Physics Loop ---
-        const loop = () => {
-            if (simState === 'meltdown') return;
-
-            // 1. Update Neutrons
-            neutronsRef.current.forEach(n => {
-                if (!n.active) return;
-                
-                n.x += n.vx;
-                n.y += n.vy;
-
-                // Bounds
-                if (n.x < 0 || n.x > CANVAS_WIDTH || n.y < 0 || n.y > CANVAS_HEIGHT) {
-                    n.active = false;
-                    return;
-                }
-
-                // Rod Collision
-                const rodY = (controlRodLevel / 100) * CANVAS_HEIGHT;
-                const rodX1 = CANVAS_WIDTH * 0.25;
-                const rodX2 = CANVAS_WIDTH * 0.5;
-                const rodX3 = CANVAS_WIDTH * 0.75;
-                const rods = [rodX1, rodX2, rodX3];
-                
-                if (n.y < rodY) {
-                    for (let rx of rods) {
-                        if (Math.abs(n.x - rx) < ROD_WIDTH/2) {
-                            n.active = false; // Absorbed!
-                            return;
-                        }
-                    }
-                }
-
-                // Atom Collision
-                atomsRef.current.forEach(atom => {
-                    if (atom.type === 'U-235' && Math.hypot(n.x - atom.x, n.y - atom.y) < ATOM_RADIUS) {
-                        n.active = false; // Absorbed by nucleus
-                        triggerFission(atom);
-                    }
-                });
-            });
-
-            // Cleanup Neutrons
-            neutronsRef.current = neutronsRef.current.filter(n => n.active);
-
-            // 2. Update Atoms (Animation)
-            let fissionCount = 0;
-            atomsRef.current.forEach(atom => {
-                if (atom.type === 'Splitting') {
-                    atom.life -= 0.1;
-                    if (atom.life <= 0) {
-                        atom.type = 'Waste'; // Become stable waste (Ba, Kr)
-                        // Emit 2-3 neutrons
-                        const numNeutrons = 2 + Math.floor(Math.random() * 2); // 2 or 3
-                        for(let i=0; i<numNeutrons; i++) {
-                            const angle = Math.random() * Math.PI * 2;
-                            const speed = 4 + Math.random() * 2;
-                            neutronsRef.current.push({
-                                x: atom.x,
-                                y: atom.y,
-                                vx: Math.cos(angle) * speed,
-                                vy: Math.sin(angle) * speed,
-                                active: true
-                            });
-                        }
-                        // Visual flash
-                        particlesRef.current.push({ x: atom.x, y: atom.y, r: 1, maxR: 40, alpha: 1 });
-                    }
-                    fissionCount++;
-                }
-            });
+        // --- p5.js Draw Loop ---
+        function draw() {
+            clear();
             
-            // 3. Update Particles (Explosions)
-            particlesRef.current.forEach(p => {
-                p.r += 2;
-                p.alpha -= 0.05;
-            });
-            particlesRef.current = particlesRef.current.filter(p => p.alpha > 0);
-
-            // 4. Update Stats
-            // Power proportional to fissions happening
-            setPower(p => p * 0.9 + fissionCount * 10);
-            
-            // Temperature logic
-            const cooling = (temperature - 300) * 0.02;
-            const heating = fissionCount * 0.5;
-            let newTemp = temperature + heating - cooling;
-            
-            if (newTemp > 1200) {
-                setSimState('meltdown');
-                newTemp = 1200;
+            // Cooling logic for temperature
+            if (tempCelsius > 300) {
+                tempCelsius -= 0.5; // Natural cooling
             }
-            setTemperature(newTemp);
-
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        const triggerFission = (atom) => {
-            atom.type = 'Splitting';
-            atom.life = 1.0; // Frames to split
-        };
-
-        // --- Rendering ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // 1. Draw Core Background
-            const heatRatio = Math.min(1, (temperature - 300) / 900);
-            const r = Math.floor(30 + heatRatio * 50);
-            ctx.fillStyle = `rgb(${r}, 40, 60)`; 
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // 2. Draw Atoms
-            atomsRef.current.forEach(atom => {
-                ctx.beginPath();
-                ctx.arc(atom.x, atom.y, ATOM_RADIUS, 0, Math.PI * 2);
+            
+            // Draw Control Rods
+            let rodDepthPct = parseFloat(rodSlider.value) / 100;
+            let rodHeight = height * rodDepthPct;
+            let spacing = width / (ROD_COUNT + 1);
+            
+            noStroke();
+            for (let i = 1; i <= ROD_COUNT; i++) {
+                let rx = i * spacing;
                 
-                if (atom.type === 'U-235') {
-                    ctx.fillStyle = '#22c55e'; // Green Uranium
-                    ctx.strokeStyle = '#15803d';
-                } else if (atom.type === 'Splitting') {
-                    ctx.fillStyle = '#fbbf24'; // Yellow exciting
-                    ctx.strokeStyle = '#fff';
-                    // Jitter
-                    const jx = (Math.random()-0.5)*5;
-                    const jy = (Math.random()-0.5)*5;
-                    ctx.beginPath(); ctx.arc(atom.x+jx, atom.y+jy, ATOM_RADIUS + 2, 0, Math.PI*2);
+                // Track groove
+                fill(30, 41, 59); // slate-800
+                rect(rx - ROD_WIDTH/2, 0, ROD_WIDTH, height);
+                
+                // Actual Rod (Graphite/Boron)
+                fill(71, 85, 105); // slate-600
+                rect(rx - ROD_WIDTH/2 + 2, 0, ROD_WIDTH - 4, rodHeight, 0, 0, 4, 4);
+                
+                // Rod Highlight
+                fill(100, 116, 139);
+                rect(rx - ROD_WIDTH/2 + 4, 0, 4, rodHeight);
+            }
+
+            // Update & Draw Nuclei
+            let intactCount = 0;
+            for (let i = 0; i < nuclei.length; i++) {
+                let n = nuclei[i];
+                if (n.state === 'intact') {
+                    intactCount++;
+                    drawU235(n.x, n.y, n.phase);
+                }
+            }
+
+            // Update & Draw Fragments
+            for (let i = fragments.length - 1; i >= 0; i--) {
+                let f = fragments[i];
+                f.x += f.vx;
+                f.y += f.vy;
+                f.life -= 2;
+                
+                if (f.life <= 0) {
+                    fragments.splice(i, 1);
                 } else {
-                    ctx.fillStyle = '#475569'; // Grey Waste
-                    ctx.strokeStyle = '#1e293b';
+                    noStroke();
+                    fill(168, 85, 247, f.life); // Purple fragments (Ba/Kr)
+                    circle(f.x, f.y, 8);
                 }
-                ctx.fill();
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            });
-
-            // 3. Draw Control Rods
-            const rodY = (controlRodLevel / 100) * CANVAS_HEIGHT;
-            const rodX1 = CANVAS_WIDTH * 0.25;
-            const rodX2 = CANVAS_WIDTH * 0.5;
-            const rodX3 = CANVAS_WIDTH * 0.75;
-            
-            ctx.fillStyle = '#64748b'; // Rod Grey
-            ctx.strokeStyle = '#94a3b8';
-            ctx.lineWidth = 2;
-            
-            [rodX1, rodX2, rodX3].forEach(x => {
-                ctx.fillRect(x - ROD_WIDTH/2, 0, ROD_WIDTH, rodY);
-                ctx.strokeRect(x - ROD_WIDTH/2, 0, ROD_WIDTH, rodY);
-                
-                // Handle/Top
-                ctx.fillStyle = '#334155';
-                ctx.fillRect(x - ROD_WIDTH/2 - 5, -10, ROD_WIDTH + 10, 20);
-                ctx.fillStyle = '#64748b'; // Reset for next rect
-            });
-
-            // 4. Draw Neutrons
-            ctx.fillStyle = '#f472b6'; // Pink neutrons
-            neutronsRef.current.forEach(n => {
-                ctx.beginPath();
-                ctx.arc(n.x, n.y, NEUTRON_RADIUS, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // 5. Draw Explosions
-            particlesRef.current.forEach(p => {
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(251, 191, 36, ${p.alpha})`; // Amber flash
-                ctx.fill();
-            });
-
-            // 6. Meltdown Warning
-            if (simState === 'meltdown') {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-                ctx.fillStyle = '#ef4444';
-                ctx.font = 'bold 60px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText("MELTDOWN DETECTED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
-                ctx.font = '20px sans-serif';
-                ctx.fillStyle = '#fff';
-                ctx.fillText("Core Temperature Critical", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
             }
-        };
 
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        });
+            // Update & Draw Flashes
+            for (let i = flashes.length - 1; i >= 0; i--) {
+                let fl = flashes[i];
+                fl.life -= 15;
+                if (fl.life <= 0) {
+                    flashes.splice(i, 1);
+                } else {
+                    noStroke();
+                    fill(250, 204, 21, fl.life); // Amber glow
+                    circle(fl.x, fl.y, fl.r * (1 + (255-fl.life)/100)); // expands as it fades
+                }
+            }
 
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
+            // Update & Draw Neutrons
+            for (let i = neutrons.length - 1; i >= 0; i--) {
+                let p = neutrons[i];
+                p.x += p.vx;
+                p.y += p.vy;
 
-        // Helper for temperature color
-        const getTempColor = (t) => {
-            if (t < 500) return 'text-emerald-400';
-            if (t < 900) return 'text-yellow-400';
-            return 'text-red-500 animate-pulse';
-        };
+                // Wall bounds (Delete if off screen)
+                if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
+                    neutrons.splice(i, 1);
+                    continue;
+                }
 
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-orange-500/20 p-2 rounded-lg">
-                            <i data-lucide="atom" className="w-6 h-6 text-orange-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Fission Chain Reaction Lab</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Nuclear Physics
-                    </div>
-                </nav>
+                // Collision with Control Rods
+                let hitRod = false;
+                if (p.y < rodHeight) {
+                    for (let r = 1; r <= ROD_COUNT; r++) {
+                        let rx = r * spacing;
+                        if (p.x > rx - ROD_WIDTH/2 && p.x < rx + ROD_WIDTH/2) {
+                            hitRod = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (hitRod) {
+                    neutrons.splice(i, 1); // Absorbed
+                    continue;
+                }
 
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: Simulation Canvas */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[500px]">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-full object-contain bg-slate-950 rounded-xl canvas-container"
-                                onClick={fireNeutron}
-                            />
-                            
-                            <div className="absolute top-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-xs shadow-lg space-y-1 pointer-events-none">
-                                <div className="flex justify-between gap-4">
-                                    <span className="text-slate-400">Neutron Count</span>
-                                    <span className="text-pink-400 font-mono font-bold">{neutronsRef.current.length}</span>
-                                </div>
-                                <div className="text-[10px] text-slate-500">Click canvas to fire neutron</div>
-                            </div>
-                        </div>
+                // Collision with Nuclei
+                let hitNucleus = false;
+                for (let j = 0; j < nuclei.length; j++) {
+                    let n = nuclei[j];
+                    if (n.state === 'intact') {
+                        let d = dist(p.x, p.y, n.x, n.y);
+                        if (d < NUCLEUS_RADIUS) {
+                            hitNucleus = true;
+                            triggerFission(n);
+                            break;
+                        }
+                    }
+                }
 
-                        {/* Controls */}
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 flex flex-wrap gap-8 items-center">
-                            
-                            {/* Rod Control */}
-                            <div className="flex-1 min-w-[200px]">
-                                <label className="flex justify-between text-xs text-slate-300 font-bold mb-2">
-                                    <span>Control Rods Depth</span>
-                                    <span className="text-blue-400">{controlRodLevel}%</span>
-                                </label>
-                                <input 
-                                    type="range" min="0" max="100" step="1" 
-                                    value={controlRodLevel} onChange={(e) => setControlRodLevel(Number(e.target.value))}
-                                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb"
-                                />
-                                <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                    <span>Retracted (High Reactivity)</span>
-                                    <span>Inserted (Safe)</span>
-                                </div>
-                            </div>
+                if (hitNucleus) {
+                    neutrons.splice(i, 1); // Consumed in fission
+                } else {
+                    // Draw active neutron
+                    fill(56, 189, 248); // sky-400
+                    noStroke();
+                    circle(p.x, p.y, 4);
+                    // Trail
+                    fill(56, 189, 248, 100);
+                    circle(p.x - p.vx, p.y - p.vy, 3);
+                }
+            }
+            
+            // Limit absolute max neutrons to prevent browser crash
+            if (neutrons.length > 500) {
+                neutrons.splice(0, neutrons.length - 500);
+            }
 
-                            <div className="flex gap-3">
-                                <button 
-                                    onClick={fireNeutron}
-                                    className="px-6 py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-bold shadow-lg transition-all flex items-center gap-2"
-                                >
-                                    <i data-lucide="zap" className="w-5 h-5"></i> Fire Neutron
-                                </button>
-                                <button onClick={reset} className="px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-white font-bold transition-colors">
-                                    <i data-lucide="rotate-ccw" className="w-5 h-5"></i> Reset
-                                </button>
-                            </div>
+            // Every 10 frames update UI to save performance
+            if (frameCount % 10 === 0) {
+                document.getElementById('stat-u235').innerText = intactCount;
+                document.getElementById('stat-fissions').innerText = fissionCount;
+                document.getElementById('stat-neutrons').innerText = neutrons.length;
+                updateTelemetry();
+            }
+        }
 
-                        </div>
-                    </div>
+        // --- Physics Actions ---
+        function triggerFission(nucleus) {
+            nucleus.state = 'spent';
+            fissionCount++;
+            tempCelsius += 15; // Spike temp per fission
+            
+            // Visual Flash
+            flashes.push({ x: nucleus.x, y: nucleus.y, r: 30, life: 255 });
+            
+            // Generate Fragments (Barium, Krypton)
+            for(let i=0; i<2; i++) {
+                let angle = random(TWO_PI);
+                fragments.push({
+                    x: nucleus.x,
+                    y: nucleus.y,
+                    vx: cos(angle) * 1.5,
+                    vy: sin(angle) * 1.5,
+                    life: 255
+                });
+            }
+            
+            // Generate Fast Neutrons (2 or 3)
+            let nYield = random(1) > 0.5 ? 3 : 2;
+            for(let i=0; i<nYield; i++) {
+                let angle = random(TWO_PI);
+                neutrons.push({
+                    x: nucleus.x + cos(angle) * NUCLEUS_RADIUS,
+                    y: nucleus.y + sin(angle) * NUCLEUS_RADIUS,
+                    vx: cos(angle) * NEUTRON_SPEED,
+                    vy: sin(angle) * NEUTRON_SPEED
+                });
+            }
+        }
 
-                    {/* Right: Monitoring */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-                            <h2 className="text-white font-bold mb-6 flex items-center">
-                                <i data-lucide="gauge" className="w-5 h-5 mr-2 text-indigo-400"></i>
-                                Reactor Status
-                            </h2>
-                            
-                            <div className="space-y-6">
-                                {/* Power Meter */}
-                                <div>
-                                    <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-slate-400">Power Output</span>
-                                        <span className="text-white font-mono font-bold">{power.toFixed(0)} MW</span>
-                                    </div>
-                                    <div className="w-full h-4 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
-                                        <div className="h-full bg-gradient-to-r from-emerald-500 to-yellow-400 transition-all duration-300" style={{width: `${Math.min(100, power/5)}%`}}></div>
-                                    </div>
-                                </div>
+        // --- Visual Helpers ---
+        function drawU235(x, y, phase) {
+            push();
+            translate(x, y);
+            
+            // "Wobble" effect to represent heavy unstable nucleus
+            let scaleOffset = sin(frameCount * 0.1 + phase) * 0.1;
+            scale(1 + scaleOffset);
+            
+            noStroke();
+            // Outer glow
+            fill(132, 204, 22, 50); // uranium-500 low alpha
+            circle(0, 0, NUCLEUS_RADIUS * 2 + 4);
+            
+            // Core
+            fill(101, 163, 13); // uranium-600
+            circle(0, 0, NUCLEUS_RADIUS * 2);
+            
+            // Highlights (representing protons/neutrons bundled)
+            fill(163, 230, 53); // uranium-400
+            circle(-4, -4, 6);
+            circle(4, 2, 8);
+            circle(-2, 4, 5);
+            
+            pop();
+        }
 
-                                {/* Temperature Meter */}
-                                <div>
-                                    <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-slate-400">Core Temp</span>
-                                        <span className={`font-mono font-bold ${getTempColor(temperature)}`}>{temperature.toFixed(0)} K</span>
-                                    </div>
-                                    <div className="w-full h-4 bg-slate-900 rounded-full overflow-hidden border border-slate-700 relative">
-                                        {/* Warning Zone */}
-                                        <div className="absolute right-0 top-0 bottom-0 w-[20%] bg-red-900/30"></div>
-                                        <div className={`h-full transition-all duration-300 ${temperature > 900 ? 'bg-red-500' : 'bg-blue-500'}`} style={{width: `${Math.min(100, (temperature-300)/9)}%`}}></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+        function updateTelemetry() {
+            // Temperature gauge logic
+            let displayTemp = Math.floor(tempCelsius);
+            tempVal.innerText = `${displayTemp} °C`;
+            
+            // 300C = 5%, 1500C = 100%
+            let tempPct = map(tempCelsius, 300, 1500, 5, 100, true);
+            tempBar.style.width = `${tempPct}%`;
+            
+            // Color shifts based on temp
+            if (tempCelsius < 600) {
+                tempBar.className = "h-full transition-all duration-300 bg-sky-500";
+                tempVal.className = "font-mono text-xl font-bold mt-1 text-sky-400";
+                if(isMeltdown) { isMeltdown=false; meltdownOverlay.classList.remove('meltdown-warning'); }
+            } else if (tempCelsius < 1000) {
+                tempBar.className = "h-full transition-all duration-300 bg-amber-500";
+                tempVal.className = "font-mono text-xl font-bold mt-1 text-amber-400";
+            } else {
+                tempBar.className = "h-full transition-all duration-300 bg-red-500";
+                tempVal.className = "font-mono text-xl font-bold mt-1 text-red-500";
+                
+                // Meltdown warning
+                if(!isMeltdown) {
+                    isMeltdown = true;
+                    meltdownOverlay.classList.add('meltdown-warning');
+                }
+            }
+        }
 
-                        <div className="bg-blue-900/10 border border-blue-500/20 p-5 rounded-2xl">
-                            <h3 className="text-blue-300 font-bold text-sm mb-2 flex items-center">
-                                <i data-lucide="shield-check" className="w-4 h-4 mr-2"></i> Safety System
-                            </h3>
-                            <p className="text-xs text-slate-300 leading-relaxed">
-                                <strong>Control Rods</strong> are made of Boron or Cadmium. They absorb neutrons like a sponge.
-                                <br/><br/>
-                                If the reaction gets too hot, drop the rods to 100% to stop the chain reaction instantly (SCRAM)!
-                            </p>
-                        </div>
-
-                    </div>
-
-                </main>
-            </div>
-        );
-    };
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+        // Handle Window Resize to keep simulation responsive
+        function windowResized() {
+            let cw = Math.max(10, container.clientWidth);
+            let ch = Math.max(10, container.clientHeight);
+            resizeCanvas(cw, ch);
+            resetReactor(); // Re-layout grid for new size
+        }
+    </script>
 </body>
 </html>
