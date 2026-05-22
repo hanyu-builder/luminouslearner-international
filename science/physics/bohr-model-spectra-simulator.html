@@ -13,6 +13,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 
     <!-- MathJax for rendering formulas -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']]
+            }
+        };
+    </script>
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
     <script>
@@ -82,7 +89,7 @@
                     <p class="text-[10px] text-slate-400 drop-shadow">Detected Emission Lines (Wavelength in nm)</p>
                 </div>
                 
-                <canvas id="spectroscope-canvas" class="w-full h-full absolute inset-0 mt-6"></canvas>
+                <canvas id="spectroscope-canvas" class="absolute inset-0"></canvas>
             </div>
             
         </div>
@@ -153,6 +160,29 @@
                 <button id="btn-fire" class="w-full bg-amber-600 hover:bg-amber-500 text-slate-900 font-bold py-3 px-4 rounded-lg shadow-[0_0_15px_rgba(217,119,6,0.4)] transition-all active:scale-95 mt-2">
                     Fire Photon
                 </button>
+            </div>
+
+            <!-- Controls: Visible Emission (Balmer Series) -->
+            <div class="bg-slate-700/30 p-5 rounded-xl border border-slate-600 flex flex-col gap-3 mt-1">
+                <div class="flex justify-between items-center border-b border-slate-600 pb-2">
+                    <h3 class="font-bold text-slate-200">Force Emission</h3>
+                    <span class="text-[10px] bg-emerald-900/50 text-emerald-400 px-2 py-1 rounded font-bold tracking-wider">Balmer Series</span>
+                </div>
+                <p class="text-[11px] text-slate-400 leading-tight">Only drops returning to <strong>n=2</strong> emit visible light. Click to instantly simulate these transitions:</p>
+                <div class="grid grid-cols-2 gap-2 mt-1">
+                    <button class="force-emit-btn bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 py-2 px-2 rounded border border-slate-600 transition-colors flex justify-between items-center" data-start="3" data-target="2">
+                        <span class="font-mono">n=3 &rarr; 2</span> <span class="text-[#ff3333] font-bold">Red</span>
+                    </button>
+                    <button class="force-emit-btn bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 py-2 px-2 rounded border border-slate-600 transition-colors flex justify-between items-center" data-start="4" data-target="2">
+                        <span class="font-mono">n=4 &rarr; 2</span> <span class="text-[#00ffff] font-bold">Cyan</span>
+                    </button>
+                    <button class="force-emit-btn bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 py-2 px-2 rounded border border-slate-600 transition-colors flex justify-between items-center" data-start="5" data-target="2">
+                        <span class="font-mono">n=5 &rarr; 2</span> <span class="text-[#3333ff] font-bold">Blue</span>
+                    </button>
+                    <button class="force-emit-btn bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 py-2 px-2 rounded border border-slate-600 transition-colors flex justify-between items-center" data-start="6" data-target="2">
+                        <span class="font-mono">n=6 &rarr; 2</span> <span class="text-[#8b5cf6] font-bold">Violet</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Live Telemetry -->
@@ -232,6 +262,8 @@
         let incomingPhotons = [];
         let outgoingPhotons = [];
         let spectralLines = []; // { wavelength, series, x }
+        let decayTimeout = null;
+        let pendingForcedDecay = null;
         
         // P5 variables
         let p5Canvas;
@@ -280,6 +312,24 @@
             document.getElementById('btn-clear-spec').addEventListener('click', () => {
                 spectralLines = [];
                 drawSpectroscopeBg();
+            });
+
+            document.querySelectorAll('.force-emit-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const btnEl = e.currentTarget;
+                    let start_n = parseInt(btnEl.getAttribute('data-start'));
+                    let target_n = parseInt(btnEl.getAttribute('data-target'));
+                    
+                    clearTimeout(decayTimeout);
+                    
+                    // Animate electron jumping up to start_n
+                    electron.n = start_n;
+                    electron.targetRadius = R_BASE * start_n;
+                    electron.state = 'JUMPING';
+                    pendingForcedDecay = target_n;
+                    updateUIState();
+                    showMessage(`Excited to n=${start_n}. Waiting to emit...`, 'text-amber-400');
+                });
             });
 
             // ROBUST SIZING FIX for WordPress/Iframes
@@ -389,7 +439,15 @@
                     
                     if (electron.n > 1) {
                         // Start decay timer
-                        setTimeout(() => triggerDecay(), 1500 + random(1000));
+                        clearTimeout(decayTimeout);
+                        if (pendingForcedDecay !== null) {
+                            decayTimeout = setTimeout(() => {
+                                triggerDecay(pendingForcedDecay);
+                                pendingForcedDecay = null;
+                            }, 1500);
+                        } else {
+                            decayTimeout = setTimeout(() => triggerDecay(), 1500 + random(1000));
+                        }
                     }
                 }
             }
@@ -434,6 +492,7 @@
                 // Allow a small tolerance
                 if (abs(deltaE - photon_eV) < 0.05) {
                     // Match!
+                    clearTimeout(decayTimeout);
                     electron.n = i + 1;
                     electron.targetRadius = R_BASE * electron.n;
                     electron.state = 'JUMPING';
@@ -451,16 +510,21 @@
             }
         }
 
-        function triggerDecay() {
+        function triggerDecay(forcedTarget = null) {
             if (electron.state !== 'STABLE' || electron.n === 1) return;
 
             // Pick a lower level to drop to (cascade effect)
-            // Mostly drops to 1 or 2, rarely 1 step at a time if high up
             let current_n = electron.n;
-            let options = [];
-            for (let i = 1; i < current_n; i++) options.push(i);
+            let target_n;
             
-            let target_n = options[Math.floor(Math.random() * options.length)];
+            if (forcedTarget !== null && forcedTarget < current_n) {
+                target_n = forcedTarget;
+            } else {
+                // Mostly drops to 1 or 2, rarely 1 step at a time if high up
+                let options = [];
+                for (let i = 1; i < current_n; i++) options.push(i);
+                target_n = options[Math.floor(Math.random() * options.length)];
+            }
             
             let current_E = energyLevels[current_n - 1].E;
             let target_E = energyLevels[target_n - 1].E;
@@ -505,9 +569,10 @@
         }
 
         function drawSpectroscopeBg() {
-            if(sCanvas.width === 0 || sCanvas.height === 0) return;
-            const w = sCanvas.width;
-            const h = sCanvas.height;
+            const w = specContainer.clientWidth;
+            const h = specContainer.clientHeight;
+            if (w === 0 || h === 0) return;
+            
             sCtx.clearRect(0, 0, w, h);
             
             // Draw gradient background representing invisible vs visible
@@ -518,38 +583,67 @@
             sCtx.fillStyle = '#0f172a'; // Base dark
             sCtx.fillRect(0, 0, w, h);
             
-            // Visible band hint
-            sCtx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-            if(xVisStart >= 0 && xVisEnd <= w) {
-                sCtx.fillRect(xVisStart, 0, xVisEnd - xVisStart, h);
-                sCtx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-                sCtx.font = "10px sans-serif";
-                sCtx.textAlign = "center";
-                sCtx.fillText("Visible Range", (xVisStart + xVisEnd)/2, 15);
-            }
+            // UV Region
+            sCtx.fillStyle = 'rgba(139, 92, 246, 0.05)';
+            sCtx.fillRect(0, 0, xVisStart, h - 20);
+            sCtx.fillStyle = 'rgba(139, 92, 246, 0.3)';
+            sCtx.font = "bold 10px sans-serif";
+            sCtx.textAlign = "center";
+            sCtx.fillText("ULTRAVIOLET", xVisStart / 2, h - 30);
+            
+            // Visible Region
+            sCtx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+            sCtx.fillRect(xVisStart, 0, xVisEnd - xVisStart, h - 20);
+            sCtx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            sCtx.fillText("VISIBLE", (xVisStart + xVisEnd) / 2, h - 30);
+
+            // IR Region
+            sCtx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+            sCtx.fillRect(xVisEnd, 0, w - xVisEnd, h - 20);
+            sCtx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+            sCtx.fillText("INFRARED", xVisEnd + (w - xVisEnd) / 2, h - 30);
+
+            // Draw axis line
+            sCtx.strokeStyle = '#334155';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath(); sCtx.moveTo(0, h - 20); sCtx.lineTo(w, h - 20); sCtx.stroke();
 
             // Draw tick marks
-            sCtx.strokeStyle = '#334155';
             sCtx.fillStyle = '#64748b';
             sCtx.font = "10px monospace";
             sCtx.textAlign = "center";
-            for (let w_nm = 100; w_nm <= 1800; w_nm += 200) {
+            for (let w_nm = 100; w_nm <= 1800; w_nm += 100) {
                 let x = mapWaveToX(w_nm, w);
-                sCtx.beginPath(); sCtx.moveTo(x, h); sCtx.lineTo(x, h - 5); sCtx.stroke();
-                sCtx.fillText(w_nm, x, h - 8);
+                sCtx.beginPath(); 
+                sCtx.moveTo(x, h - 20); 
+                if (w_nm % 200 === 0) {
+                    sCtx.lineTo(x, h - 15); 
+                    sCtx.fillText(w_nm, x, h - 5);
+                } else {
+                    sCtx.lineTo(x, h - 18);
+                }
+                sCtx.stroke();
             }
 
             // Draw collected lines
-            spectralLines.forEach(line => {
+            spectralLines.forEach((line, index) => {
                 sCtx.strokeStyle = line.color;
                 sCtx.lineWidth = 2;
-                sCtx.shadowBlur = 5;
+                sCtx.shadowBlur = 8;
                 sCtx.shadowColor = line.color;
                 sCtx.beginPath();
-                sCtx.moveTo(line.x, 20);
+                sCtx.moveTo(line.x, 40); // Start below the title
                 sCtx.lineTo(line.x, h - 20);
                 sCtx.stroke();
                 sCtx.shadowBlur = 0; // reset
+                
+                // Draw exact wavelength text
+                sCtx.fillStyle = '#f8fafc';
+                sCtx.font = "bold 10px sans-serif";
+                sCtx.textAlign = "center";
+                // Alternate height slightly to prevent overlap of close lines
+                let yOffset = (index % 2 === 0) ? 25 : 35;
+                sCtx.fillText(line.wavelength.toFixed(0) + " nm", line.x, yOffset);
             });
         }
 
@@ -566,7 +660,7 @@
                     wavelength: wavelength,
                     target: target_n,
                     color: colorStr,
-                    x: mapWaveToX(wavelength, sCanvas.width)
+                    x: mapWaveToX(wavelength, specContainer.clientWidth)
                 });
                 drawSpectroscopeBg();
             }
@@ -575,10 +669,19 @@
         function resizeSpectroscope() {
             let container = specContainer;
             if(!container) return;
-            sCanvas.width = container.clientWidth;
-            sCanvas.height = container.clientHeight - 24; // account for title
-            // Recalculate X positions
-            spectralLines.forEach(l => l.x = mapWaveToX(l.wavelength, sCanvas.width));
+            const dpr = window.devicePixelRatio || 1;
+            
+            // Set high resolution internally
+            sCanvas.width = container.clientWidth * dpr;
+            sCanvas.height = container.clientHeight * dpr;
+            // Force CSS size to match container
+            sCanvas.style.width = container.clientWidth + 'px';
+            sCanvas.style.height = container.clientHeight + 'px';
+            
+            sCtx.scale(dpr, dpr);
+            
+            // Recalculate X positions based on unscaled width
+            spectralLines.forEach(l => l.x = mapWaveToX(l.wavelength, container.clientWidth));
             drawSpectroscopeBg();
         }
 
