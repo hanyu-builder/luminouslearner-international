@@ -3,436 +3,691 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Right-Hand Grip Rule Lab | Luminous Learner</title>
+    <!-- SEO Keyword Integrated -->
+    <title>Right Hand Grip Rule 3D Physics Simulator</title>
+    <meta name="description" content="Interactive right hand grip rule 3D simulator. Visualize magnetic fields around straight wires and solenoids, and toggle current directions.">
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Three.js -->
+    <!-- Three.js and OrbitControls -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
-
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; }
-        .canvas-container { cursor: move; }
+        body { background-color: #0F172A; } /* Deep Slate */
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+        }
+
+        /* Math equation block */
+        .math-box {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+        }
+
+        /* 3D canvas wrapper */
+        #three-container {
+            border-radius: 0.5rem;
+            box-shadow: inset 0 0 30px rgba(0,0,0,1);
+            background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
+            cursor: grab;
+            position: relative;
+            overflow: hidden;
+        }
+        #three-container:active {
+            cursor: grabbing;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #0f172a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        
+        /* 3D tracking labels */
+        .label-3d {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 4px 8px;
+            border-radius: 4px;
+            backdrop-filter: blur(4px);
+            transition: opacity 0.2s;
+            z-index: 10;
+            white-space: nowrap;
+        }
     </style>
 </head>
-<body>
+<body class="text-slate-200 h-screen w-screen overflow-hidden flex items-center justify-center p-4 font-sans">
 
-<div id="root"></div>
+    <!-- Main Simulator Container -->
+    <main class="w-full max-w-[1400px] h-full max-h-[900px] flex flex-col glass-panel rounded-2xl shadow-2xl p-6 relative">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-end border-b border-slate-600 pb-4 mb-6 shrink-0">
+            <div>
+                <h1 class="text-3xl font-bold text-white tracking-wide">Right-Hand Grip Rule (3D)</h1>
+                <p class="text-slate-400 mt-1 text-sm">Visualize the relationship between Current ($I$) and Magnetic Field ($B$).</p>
+            </div>
+            <div class="text-right flex gap-3 hidden md:flex items-center">
+                <div class="math-box text-sm font-mono text-amber-400 px-4 py-2 rounded-lg" title="Current">
+                    <i class="fa-solid fa-bolt mr-1"></i> Current ($I$)
+                </div>
+                <div class="math-box text-sm font-mono text-sky-400 px-4 py-2 rounded-lg" title="Magnetic Field">
+                    <i class="fa-solid fa-magnet mr-1"></i> B-Field ($B$)
+                </div>
+            </div>
+        </header>
 
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    const App = () => {
-        const [mode, setMode] = useState('wire'); // 'wire' or 'solenoid'
-        const [currentDirection, setCurrentDirection] = useState(1); // 1 (Up/Right) or -1 (Down/Left)
-        const [showHand, setShowHand] = useState(true);
-        const [showField, setShowField] = useState(true);
-
-        const mountRef = useRef(null);
-        const sceneRef = useRef(null);
-        const cameraRef = useRef(null);
-        const rendererRef = useRef(null);
-        const objectsRef = useRef({});
-        const animationRef = useRef();
-
-        // --- Three.js Setup ---
-        useEffect(() => {
-            const mount = mountRef.current;
-            let width = mount.clientWidth;
-            let height = mount.clientHeight;
-
-            // Scene
-            const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0f172a);
-            scene.fog = new THREE.Fog(0x0f172a, 10, 50);
-            sceneRef.current = scene;
-
-            // Camera
-            const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-            camera.position.set(0, 5, 10);
-            camera.lookAt(0, 0, 0);
-            cameraRef.current = camera;
-
-            // Renderer
-            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(width, height);
-            renderer.setPixelRatio(window.devicePixelRatio); // Sharpness on HDPI screens
+        <!-- Main Content Area -->
+        <div class="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
             
-            // Force canvas to fill container via CSS
-            renderer.domElement.style.width = '100%';
-            renderer.domElement.style.height = '100%';
-            renderer.domElement.style.display = 'block';
-            
-            mount.appendChild(renderer.domElement);
-            rendererRef.current = renderer;
-
-            // Lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(5, 10, 7);
-            scene.add(dirLight);
-
-            // Orbit Controls Logic (Simple)
-            let isDragging = false;
-            let previousMousePosition = { x: 0, y: 0 };
-            
-            const onMouseDown = (e) => { isDragging = true; };
-            const onMouseUp = (e) => { isDragging = false; };
-            const onMouseMove = (e) => {
-                if (isDragging) {
-                    const deltaMove = {
-                        x: e.offsetX - previousMousePosition.x,
-                        y: e.offsetY - previousMousePosition.y
-                    };
-                    
-                    // Rotate camera around origin
-                    const radius = camera.position.length();
-                    let theta = Math.atan2(camera.position.x, camera.position.z);
-                    let phi = Math.acos(camera.position.y / radius);
-                    
-                    theta -= deltaMove.x * 0.01;
-                    phi -= deltaMove.y * 0.01;
-                    phi = Math.max(0.1, Math.min(Math.PI - 0.1, phi));
-
-                    camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
-                    camera.position.y = radius * Math.cos(phi);
-                    camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
-                    camera.lookAt(0, 0, 0);
-                }
-                previousMousePosition = { x: e.offsetX, y: e.offsetY };
-            };
-
-            const canvas = renderer.domElement;
-            canvas.addEventListener('mousedown', onMouseDown);
-            canvas.addEventListener('mouseup', onMouseUp);
-            canvas.addEventListener('mousemove', onMouseMove);
-            canvas.addEventListener('mouseleave', onMouseUp);
-
-            // Initial Objects
-            initObjects();
-
-            // Loop
-            const animate = () => {
-                animationRef.current = requestAnimationFrame(animate);
-                renderer.render(scene, camera);
-            };
-            animate();
-
-            // Robust Resize Observer
-            const resizeObserver = new ResizeObserver(() => {
-                if (!mount) return;
-                const newWidth = mount.clientWidth;
-                const newHeight = mount.clientHeight;
+            <!-- Left Column: Controls & Instructions -->
+            <div class="w-full lg:w-3/12 flex flex-col gap-5 h-full shrink-0 overflow-y-auto pr-2 custom-scrollbar">
                 
-                if (newWidth === 0 || newHeight === 0) return;
+                <!-- Conductor Mode -->
+                <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700 shrink-0">
+                    <h2 class="text-sm font-semibold text-emerald-400 mb-4 border-b border-slate-700 pb-2">
+                        <i class="fa-solid fa-shapes mr-2"></i> Conductor Type
+                    </h2>
+                    
+                    <div class="flex flex-col gap-3">
+                        <button id="btn-wire" class="bg-slate-900 border-2 border-emerald-500 text-emerald-400 hover:bg-slate-700 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group">
+                            <span>Straight Wire</span>
+                            <i class="fa-solid fa-arrow-up text-lg group-hover:scale-125 transition-transform"></i>
+                        </button>
+                        <button id="btn-solenoid" class="bg-slate-900 border border-slate-600 text-slate-400 hover:text-emerald-400 hover:border-emerald-500 hover:bg-slate-700 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group">
+                            <span>Solenoid (Coil)</span>
+                            <i class="fa-solid fa-tornado text-lg group-hover:scale-125 transition-transform"></i>
+                        </button>
+                    </div>
+                </div>
 
-                camera.aspect = newWidth / newHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(newWidth, newHeight);
-            });
+                <!-- Direction Toggle -->
+                <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700 shrink-0">
+                    <h2 class="text-sm font-semibold text-rose-400 mb-4 border-b border-slate-700 pb-2">
+                        <i class="fa-solid fa-bolt mr-2"></i> Current Direction
+                    </h2>
+                    
+                    <button id="btn-flip" class="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-4 px-4 rounded-lg transition shadow-lg flex justify-center items-center gap-3">
+                        <i class="fa-solid fa-arrows-up-down"></i> Reverse Direction
+                    </button>
+                </div>
+
+                <!-- Explanation Panel -->
+                <div class="bg-slate-800/80 rounded-xl p-5 border border-slate-700 flex-1 flex flex-col relative overflow-hidden">
+                    <div class="absolute top-0 right-0 bg-slate-700/50 text-[10px] uppercase font-bold px-2 py-1 rounded-bl-lg text-slate-400">The Rule</div>
+                    
+                    <h3 class="text-sm font-semibold text-white mb-3 border-b border-slate-700 pb-2">
+                        How to Apply It
+                    </h3>
+                    
+                    <div id="desc-wire" class="text-sm text-slate-300 leading-relaxed space-y-4">
+                        <p><strong>Step 1:</strong> Point your <strong class="text-amber-400">Right Thumb</strong> in the direction of the conventional current ($I$).</p>
+                        <p><strong>Step 2:</strong> The natural curl of your <strong class="text-sky-400">Fingers</strong> dictates the circular path and direction of the Magnetic Field lines ($B$).</p>
+                    </div>
+                    
+                    <div id="desc-solenoid" class="text-sm text-slate-300 leading-relaxed space-y-4 hidden">
+                        <p><em>(Alternative grip for coils)</em></p>
+                        <p><strong>Step 1:</strong> Curl your <strong class="text-amber-400">Fingers</strong> around the coil in the direction of the circulating current ($I$).</p>
+                        <p><strong>Step 2:</strong> Your <strong class="text-sky-400">Right Thumb</strong> now points in the direction of the Magnetic Field ($B$) inside the core (towards the North pole).</p>
+                    </div>
+
+                    <div class="mt-auto pt-4 flex gap-2 justify-center">
+                        <div class="bg-amber-900/30 border border-amber-500/50 text-amber-400 px-3 py-1 rounded text-xs font-mono font-bold" id="color-thumb">
+                            THUMB = I
+                        </div>
+                        <div class="bg-sky-900/30 border border-sky-500/50 text-sky-400 px-3 py-1 rounded text-xs font-mono font-bold" id="color-fingers">
+                            FINGERS = B
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Column: 3D Visualizer -->
+            <div class="w-full lg:w-9/12 bg-slate-900 rounded-xl border border-slate-600 relative shadow-inner overflow-hidden flex flex-col" id="three-container">
+                
+                <!-- Overlays -->
+                <div class="absolute bottom-4 left-4 z-10 bg-slate-900/80 border border-slate-700 px-3 py-2 rounded-lg shadow-lg text-xs font-mono pointer-events-none flex flex-col gap-1 text-slate-300">
+                    <span class="text-white font-bold"><i class="fa-solid fa-mouse text-slate-400 mr-1"></i> Camera Controls</span>
+                    <span>Left Click: Orbit</span>
+                    <span>Scroll: Zoom</span>
+                    <span>Right Click: Pan</span>
+                </div>
+
+                <!-- 3D Tracking Labels (Injected by JS) -->
+                <div id="label-thumb" class="label-3d bg-slate-900/80 border">THUMB</div>
+                <div id="label-fingers" class="label-3d bg-slate-900/80 border">FINGERS</div>
+
+                <!-- Three.js Canvas injected here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- 3D Simulator Logic -->
+    <script>
+        /**
+         * 3D RIGHT-HAND GRIP RULE SIMULATOR
+         * Uses Three.js to render a holographic hand and dynamic vector fields.
+         */
+
+        // --- State ---
+        const state = {
+            mode: 'wire', // 'wire' or 'solenoid'
+            direction: 1, // 1 (Up/Positive) or -1 (Down/Negative)
             
-            resizeObserver.observe(mount);
-
-            return () => {
-                resizeObserver.disconnect();
-                cancelAnimationFrame(animationRef.current);
-                if (mount && renderer.domElement) {
-                    mount.removeChild(renderer.domElement);
-                }
-                canvas.removeEventListener('mousedown', onMouseDown);
-                canvas.removeEventListener('mouseup', onMouseUp);
-                canvas.removeEventListener('mousemove', onMouseMove);
-                canvas.removeEventListener('mouseleave', onMouseUp);
-            };
-        }, []);
-
-        const toRadians = (angle) => angle * (Math.PI / 180);
-
-        // --- Scene Builder ---
-        const initObjects = () => {
-            const scene = sceneRef.current;
-            if (!scene) return;
-
-            while(scene.children.length > 0){ 
-                scene.remove(scene.children[0]); 
-            }
-            
-            // Re-add lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(5, 10, 7);
-            scene.add(dirLight);
-
-            objectsRef.current = {};
-
-            if (mode === 'wire') {
-                createStraightWire(scene);
-            } else {
-                createSolenoid(scene);
-            }
+            // Animation values
+            time: 0,
+            handTargetRotationZ: 0,
+            currentHandRotationZ: 0
         };
 
-        const createStraightWire = (scene) => {
-            // Wire
-            const geometry = new THREE.CylinderGeometry(0.2, 0.2, 8, 32);
-            const material = new THREE.MeshStandardMaterial({ color: 0xf59e0b });
-            const wire = new THREE.Mesh(geometry, material);
-            scene.add(wire);
+        // --- Colors ---
+        const COLOR_CURRENT = 0xfbbf24; // amber-400
+        const COLOR_BFIELD = 0x38bdf8;  // sky-400
+        const COLOR_WIRE = 0x94a3b8;    // slate-400
+        const COLOR_HAND_BASE = 0x334155; // slate-700
 
-            // Current Arrow
-            const dir = currentDirection;
-            const arrowLen = 2;
-            const arrowColor = 0xffffff;
-            const arrowDir = new THREE.Vector3(0, dir, 0);
-            const arrowOrigin = new THREE.Vector3(0, -dir * 2, 0);
-            const arrowHelper = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, arrowColor, 0.5, 0.3);
-            scene.add(arrowHelper);
+        // DOM Elements
+        const DOM = {
+            container: document.getElementById('three-container'),
+            btnWire: document.getElementById('btn-wire'),
+            btnSolenoid: document.getElementById('btn-solenoid'),
+            btnFlip: document.getElementById('btn-flip'),
+            descWire: document.getElementById('desc-wire'),
+            descSolenoid: document.getElementById('desc-solenoid'),
+            colorThumb: document.getElementById('color-thumb'),
+            colorFingers: document.getElementById('color-fingers'),
+            labelThumb: document.getElementById('label-thumb'),
+            labelFingers: document.getElementById('label-fingers')
+        };
 
-            // Field Lines
-            if (showField) {
-                const rings = [1.5, 3.0, 4.5];
-                rings.forEach(radius => {
-                    const curve = new THREE.EllipseCurve(0, 0, radius, radius, 0, 2 * Math.PI, false, 0);
-                    const points = curve.getPoints(50);
-                    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                    const material = new THREE.LineBasicMaterial({ color: 0x3b82f6 });
-                    const ring = new THREE.Line(geometry, material);
+        // --- Three.js Setup ---
+        const scene = new THREE.Scene();
+        // Add subtle fog to blend into background
+        scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, DOM.container.clientWidth / DOM.container.clientHeight, 0.1, 1000);
+        camera.position.set(20, 15, 25);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(DOM.container.clientWidth, DOM.container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        DOM.container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxDistance = 50;
+        controls.minDistance = 10;
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
+        
+        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
+        rimLight.position.set(-10, -10, -10);
+        scene.add(rimLight);
+
+        // --- Groups ---
+        const worldGroup = new THREE.Group(); // Holds wire/solenoid and fields
+        const handGroup = new THREE.Group();  // Holds the holographic hand
+        scene.add(worldGroup);
+        scene.add(handGroup);
+
+        // Specific sub-groups for easy updating
+        let currentIndicators = [];
+        let fieldIndicators = [];
+
+        // Reference points for HTML labels
+        const thumbTarget = new THREE.Object3D();
+        const fingersTarget = new THREE.Object3D();
+        handGroup.add(thumbTarget);
+        handGroup.add(fingersTarget);
+
+        // --- Materials ---
+        const matWire = new THREE.MeshStandardMaterial({ 
+            color: COLOR_WIRE, metalness: 0.8, roughness: 0.2 
+        });
+        
+        // Custom glowing materials
+        const matCurrent = new THREE.MeshBasicMaterial({ color: COLOR_CURRENT });
+        const matField = new THREE.MeshBasicMaterial({ color: COLOR_BFIELD });
+        
+        // Holographic hand materials
+        let matThumb = new THREE.MeshPhongMaterial({ color: COLOR_CURRENT, transparent: true, opacity: 0.8, shininess: 100 });
+        let matFingers = new THREE.MeshPhongMaterial({ color: COLOR_BFIELD, transparent: true, opacity: 0.7, shininess: 100, side: THREE.DoubleSide });
+        const matPalm = new THREE.MeshPhongMaterial({ color: COLOR_HAND_BASE, transparent: true, opacity: 0.5 });
+
+
+        // --- Geometry Generators ---
+
+        function createArrow(material, length, thickness) {
+            const group = new THREE.Group();
+            const cylGeo = new THREE.CylinderGeometry(thickness, thickness, length - thickness*3, 16);
+            const cyl = new THREE.Mesh(cylGeo, material);
+            cyl.position.y = (length - thickness*3)/2;
+            
+            const coneGeo = new THREE.ConeGeometry(thickness*2.5, thickness*3, 16);
+            const cone = new THREE.Mesh(coneGeo, material);
+            cone.position.y = length - thickness*1.5;
+            
+            group.add(cyl);
+            group.add(cone);
+            // Center the whole arrow around its base
+            group.position.y = -length/2;
+            
+            const wrapper = new THREE.Group();
+            wrapper.add(group);
+            return wrapper;
+        }
+
+        // The stylized 3D Hand
+        function buildHand() {
+            // Clear old
+            while(handGroup.children.length > 2) { // keep targets
+                handGroup.remove(handGroup.children[handGroup.children.length - 1]);
+            }
+
+            // Central Palm/Wrist
+            const palmGeo = new THREE.CylinderGeometry(2, 2.2, 5, 16);
+            const palm = new THREE.Mesh(palmGeo, matPalm);
+            palm.position.set(5, 0, 0); // Offset to side of wire
+            handGroup.add(palm);
+
+            // Thumb (Points up +Y)
+            const thumbGeo = new THREE.CylinderGeometry(0.8, 0.8, 5, 16);
+            const thumb = new THREE.Mesh(thumbGeo, matThumb);
+            thumb.position.set(4, 4, 0);
+            
+            const thumbTipGeo = new THREE.ConeGeometry(1, 1.5, 16);
+            const thumbTip = new THREE.Mesh(thumbTipGeo, matThumb);
+            thumbTip.position.set(4, 7, 0);
+            
+            handGroup.add(thumb, thumbTip);
+            
+            // Set label target
+            thumbTarget.position.set(4, 8, 0);
+
+            // Fingers (Curling around Y axis, from +X towards +Z)
+            // Using Torus segments
+            const fingerRadius = 4.5;
+            const fingersWrapper = new THREE.Group();
+            
+            for (let i = 0; i < 4; i++) {
+                // Arc covers 180 degrees (Math.PI)
+                const arcGeo = new THREE.TorusGeometry(fingerRadius, 0.6, 16, 32, Math.PI);
+                const finger = new THREE.Mesh(arcGeo, matFingers);
+                
+                // Rotate to lay flat, start at +X, curl to -X via +Z
+                finger.rotation.x = Math.PI / 2;
+                
+                finger.position.y = 1.5 - i * 1.0;
+                fingersWrapper.add(finger);
+                
+                // Add arrowhead to the tip of each finger
+                const tipGeo = new THREE.ConeGeometry(1.2, 2, 16);
+                const tip = new THREE.Mesh(tipGeo, matFingers);
+                // Position at end of Math.PI arc. x = -R, z = 0 (relative to torus center)
+                tip.position.set(-fingerRadius, finger.position.y, 0);
+                tip.rotation.x = Math.PI / 2; // Point along -Z direction
+                fingersWrapper.add(tip);
+            }
+            
+            // Set label target at the tip of the middle finger
+            fingersTarget.position.set(-fingerRadius - 2, 0, 0);
+
+            handGroup.add(fingersWrapper);
+        }
+
+        // Custom curve for Solenoid Helix
+        class HelixCurve extends THREE.Curve {
+            constructor(radius, height, turns) {
+                super();
+                this.radius = radius;
+                this.height = height;
+                this.turns = turns;
+            }
+            getPoint(t, optionalTarget = new THREE.Vector3()) {
+                const angle = 2 * Math.PI * this.turns * t;
+                const x = this.radius * Math.cos(angle);
+                const z = this.radius * Math.sin(angle);
+                const y = (t - 0.5) * this.height;
+                return optionalTarget.set(x, y, z);
+            }
+        }
+
+        // Build Straight Wire Scene
+        function buildWireScene() {
+            clearWorld();
+            currentIndicators = [];
+            fieldIndicators = [];
+
+            // 1. Central Wire
+            const wireGeo = new THREE.CylinderGeometry(0.8, 0.8, 30, 32);
+            const wire = new THREE.Mesh(wireGeo, matWire);
+            worldGroup.add(wire);
+
+            // 2. Current Indicators (Arrows along the wire)
+            for (let i = -10; i <= 10; i += 5) {
+                const arr = createArrow(matCurrent, 3, 0.2);
+                arr.position.y = i;
+                arr.position.x = 1.5; // Offset slightly from wire
+                worldGroup.add(arr);
+                currentIndicators.push(arr);
+            }
+
+            // 3. Magnetic Field Indicators (Rings with arrows)
+            const ringRadii = [6, 10];
+            const ringYPositions = [-5, 0, 5];
+
+            ringYPositions.forEach(y => {
+                ringRadii.forEach(r => {
+                    // Draw the faint ring path
+                    const ringGeo = new THREE.TorusGeometry(r, 0.05, 8, 64);
+                    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({color: COLOR_BFIELD, transparent: true, opacity: 0.3}));
                     ring.rotation.x = Math.PI / 2;
-                    scene.add(ring);
+                    ring.position.y = y;
+                    worldGroup.add(ring);
 
-                    // Arrows on Ring
-                    const arrowCount = 4;
-                    for(let i=0; i<arrowCount; i++) {
-                        const angle = (i / arrowCount) * Math.PI * 2;
-                        const x = Math.cos(angle) * radius;
-                        const z = Math.sin(angle) * radius;
-                        
-                        let dirX = -Math.sin(angle);
-                        let dirZ = Math.cos(angle);
-                        if (currentDirection === -1) {
-                            dirX = Math.sin(angle);
-                            dirZ = -Math.cos(angle);
-                        }
+                    // Add orbiting arrow
+                    const bArrow = createArrow(matField, 2, 0.4);
+                    // We wrap it in a pivot group to easily rotate it around the center
+                    const pivot = new THREE.Group();
+                    pivot.position.y = y;
+                    
+                    bArrow.position.set(r, 0, 0);
+                    // Point tangent to the circle
+                    bArrow.rotation.x = Math.PI/2;
+                    bArrow.rotation.z = Math.PI; // point counter-clockwise
 
-                        const dir = new THREE.Vector3(dirX, 0, dirZ);
-                        const origin = new THREE.Vector3(x, 0, z);
-                        const arrow = new THREE.ArrowHelper(dir, origin, 0.5, 0x3b82f6, 0.3, 0.2);
-                        scene.add(arrow);
-                    }
+                    pivot.add(bArrow);
+                    worldGroup.add(pivot);
+                    fieldIndicators.push(pivot);
+                });
+            });
+        }
+
+        // Build Solenoid Scene
+        function buildSolenoidScene() {
+            clearWorld();
+            currentIndicators = [];
+            fieldIndicators = [];
+
+            const radius = 4.5;
+            const height = 20;
+            const turns = 8;
+
+            // 1. The Helix Wire
+            const helix = new HelixCurve(radius, height, turns);
+            const tubeGeo = new THREE.TubeGeometry(helix, 200, 0.6, 16, false);
+            const tube = new THREE.Mesh(tubeGeo, matWire);
+            worldGroup.add(tube);
+
+            // 2. Current Indicators (Arrows riding along the helix)
+            // We use dummy objects that we update in the render loop using curve.getPointAt
+            for (let i = 0; i < 10; i++) {
+                const arr = createArrow(matCurrent, 2, 0.3);
+                // Store parametric 't' value
+                arr.userData.t = i / 10;
+                worldGroup.add(arr);
+                currentIndicators.push(arr);
+            }
+            
+            // Store the curve for the animation loop
+            worldGroup.userData.curve = helix;
+
+            // 3. Magnetic Field Indicators (Straight lines through core)
+            for (let x = -2; x <= 2; x+=2) {
+                for (let z = -2; z <= 2; z+=2) {
+                    if (Math.abs(x) === 2 && Math.abs(z) === 2) continue; // skip corners to make it somewhat circular
+                    
+                    // Draw faint line
+                    const lineGeo = new THREE.CylinderGeometry(0.05, 0.05, height + 10, 8);
+                    const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({color: COLOR_BFIELD, transparent: true, opacity: 0.3}));
+                    line.position.set(x, 0, z);
+                    worldGroup.add(line);
+
+                    // Draw moving arrow
+                    const bArrow = createArrow(matField, 3, 0.4);
+                    bArrow.position.set(x, 0, z);
+                    bArrow.userData.baseY = 0;
+                    bArrow.userData.offset = Math.random() * Math.PI * 2; // Randomize start phase
+                    worldGroup.add(bArrow);
+                    fieldIndicators.push(bArrow);
+                }
+            }
+        }
+
+        function clearWorld() {
+            while(worldGroup.children.length > 0){
+                const child = worldGroup.children[0];
+                worldGroup.remove(child);
+            }
+        }
+
+        // --- Logic Controllers ---
+
+        function updateMode() {
+            if (state.mode === 'wire') {
+                // UI
+                DOM.btnWire.className = "bg-slate-900 border-2 border-emerald-500 text-emerald-400 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group";
+                DOM.btnSolenoid.className = "bg-slate-900 border border-slate-600 text-slate-400 hover:text-emerald-400 hover:border-emerald-500 hover:bg-slate-700 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group";
+                
+                DOM.descWire.classList.remove('hidden');
+                DOM.descSolenoid.classList.add('hidden');
+                
+                DOM.colorThumb.className = "bg-amber-900/30 border border-amber-500/50 text-amber-400 px-3 py-1 rounded text-xs font-mono font-bold";
+                DOM.colorThumb.innerText = "THUMB = I";
+                DOM.colorFingers.className = "bg-sky-900/30 border border-sky-500/50 text-sky-400 px-3 py-1 rounded text-xs font-mono font-bold";
+                DOM.colorFingers.innerText = "FINGERS = B";
+
+                // Materials Mapping
+                matThumb.color.setHex(COLOR_CURRENT);
+                matFingers.color.setHex(COLOR_BFIELD);
+
+                DOM.labelThumb.style.borderColor = "#f59e0b"; // amber
+                DOM.labelThumb.style.color = "#fbbf24";
+                DOM.labelThumb.innerText = "THUMB (I)";
+                
+                DOM.labelFingers.style.borderColor = "#0ea5e9"; // sky
+                DOM.labelFingers.style.color = "#38bdf8";
+                DOM.labelFingers.innerText = "FINGERS (B)";
+
+                buildWireScene();
+            } else {
+                // Solenoid
+                DOM.btnSolenoid.className = "bg-slate-900 border-2 border-emerald-500 text-emerald-400 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group";
+                DOM.btnWire.className = "bg-slate-900 border border-slate-600 text-slate-400 hover:text-emerald-400 hover:border-emerald-500 hover:bg-slate-700 font-bold py-3 px-4 rounded-lg transition shadow-lg text-left flex justify-between items-center group";
+                
+                DOM.descWire.classList.add('hidden');
+                DOM.descSolenoid.classList.remove('hidden');
+
+                DOM.colorThumb.className = "bg-sky-900/30 border border-sky-500/50 text-sky-400 px-3 py-1 rounded text-xs font-mono font-bold";
+                DOM.colorThumb.innerText = "THUMB = B";
+                DOM.colorFingers.className = "bg-amber-900/30 border border-amber-500/50 text-amber-400 px-3 py-1 rounded text-xs font-mono font-bold";
+                DOM.colorFingers.innerText = "FINGERS = I";
+
+                // Materials Mapping (Inverted!)
+                matThumb.color.setHex(COLOR_BFIELD);
+                matFingers.color.setHex(COLOR_CURRENT);
+
+                DOM.labelThumb.style.borderColor = "#0ea5e9"; 
+                DOM.labelThumb.style.color = "#38bdf8";
+                DOM.labelThumb.innerText = "THUMB (B)";
+                
+                DOM.labelFingers.style.borderColor = "#f59e0b"; 
+                DOM.labelFingers.style.color = "#fbbf24";
+                DOM.labelFingers.innerText = "FINGERS (I)";
+
+                buildSolenoidScene();
+            }
+
+            // Reset direction state for visual clarity on switch
+            state.direction = 1;
+            state.handTargetRotationZ = 0;
+            updateDirectionVisuals();
+        }
+
+        function toggleDirection() {
+            state.direction *= -1;
+            
+            // To flip a right hand to point down, we rotate it 180 degrees around the Z axis 
+            // Wait, Z axis points OUT of the screen. Rotating around Z flips it upside down.
+            // If thumb is Y, fingers wrap around Y. Rotating around Z by PI makes thumb -Y, and fingers wrap oppositely. Perfect!
+            if (state.direction === 1) {
+                state.handTargetRotationZ = 0;
+            } else {
+                state.handTargetRotationZ = Math.PI;
+            }
+
+            updateDirectionVisuals();
+        }
+
+        function updateDirectionVisuals() {
+            // Update arrows on straight wire
+            if (state.mode === 'wire') {
+                currentIndicators.forEach(arr => {
+                    // Arrow geometry points up by default. 
+                    arr.rotation.z = state.direction === 1 ? 0 : Math.PI;
+                });
+            }
+            // Solenoid arrows update based on sign in the animation loop.
+            // B-field arrows update based on sign in the animation loop.
+        }
+
+        // --- Window Resize ---
+        window.addEventListener('resize', () => {
+            camera.aspect = DOM.container.clientWidth / DOM.container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(DOM.container.clientWidth, DOM.container.clientHeight);
+        });
+
+        // --- Render Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            state.time += 0.016; // Approx 60fps
+
+            // 1. Smooth Hand Rotation (Tweening)
+            state.currentHandRotationZ += (state.handTargetRotationZ - state.currentHandRotationZ) * 0.1;
+            handGroup.rotation.z = state.currentHandRotationZ;
+
+            // 2. Update Vector Animations based on Mode
+            if (state.mode === 'wire') {
+                // Rotate B-field rings
+                // Direction depends on current. Right hand rule!
+                // If I is +Y, B is CCW (positive rotation around Y)
+                fieldIndicators.forEach(pivot => {
+                    pivot.rotation.y += 0.02 * state.direction;
+                });
+
+                // Move I arrows slightly for flow effect
+                currentIndicators.forEach((arr, index) => {
+                    let newY = arr.position.y + 0.1 * state.direction;
+                    if (newY > 15) newY = -15;
+                    if (newY < -15) newY = 15;
+                    arr.position.y = newY;
+                });
+
+            } else if (state.mode === 'solenoid') {
+                // Solenoid I arrows riding the helix
+                const curve = worldGroup.userData.curve;
+                currentIndicators.forEach(arr => {
+                    // Update parametric t
+                    // Speed and direction based on state.direction
+                    arr.userData.t += 0.005 * state.direction;
+                    if (arr.userData.t > 1) arr.userData.t -= 1;
+                    if (arr.userData.t < 0) arr.userData.t += 1;
+
+                    // Get pos and tangent
+                    const pt = curve.getPoint(arr.userData.t);
+                    const tangent = curve.getTangent(arr.userData.t);
+
+                    arr.position.copy(pt);
+                    
+                    // Align arrow to tangent. The arrow points along Y by default.
+                    // We need a quaternion to rotate Y axis to tangent.
+                    const axis = new THREE.Vector3(0, 1, 0);
+                    const quaternion = new THREE.Quaternion().setFromUnitVectors(axis, tangent.normalize());
+                    arr.quaternion.copy(quaternion);
+                });
+
+                // Solenoid B-field straight arrows
+                fieldIndicators.forEach(arr => {
+                    // B field inside points UP if current is positive (using our helix math)
+                    let speed = 0.2;
+                    let newY = arr.position.y + speed * state.direction;
+                    
+                    // Loop
+                    if (newY > 15) newY = -15;
+                    if (newY < -15) newY = 15;
+                    
+                    arr.position.y = newY;
+                    arr.rotation.z = state.direction === 1 ? 0 : Math.PI; // point arrow
                 });
             }
 
-            // Hand
-            if (showHand) {
-                const handGroup = new THREE.Group();
-                const thumbGeo = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
-                const skinMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5 });
-                const thumb = new THREE.Mesh(thumbGeo, skinMat);
-                thumb.position.y = currentDirection * 1;
-                if (currentDirection === -1) thumb.rotation.x = Math.PI;
-                handGroup.add(thumb);
-                
-                const fingersGeo = new THREE.TorusGeometry(1.2, 0.3, 16, 20, Math.PI);
-                const fingers = new THREE.Mesh(fingersGeo, skinMat);
-                fingers.rotation.x = Math.PI / 2;
-                fingers.rotation.y = Math.PI;
-                handGroup.add(fingers);
+            // 3. Update HTML Label positions
+            updateLabels();
 
-                handGroup.position.set(0.5, 0, 0);
-                scene.add(handGroup);
-            }
-        };
+            controls.update();
+            renderer.render(scene, camera);
+        }
 
-        const createSolenoid = (scene) => {
-            const radius = 2;
-            const length = 8;
-            const turns = 10;
-            const tubeRadius = 0.1;
-            
-            const path = new THREE.Curve();
-            path.getPoint = function (t) {
-                const angle = t * turns * 2 * Math.PI;
-                const x = (t - 0.5) * length;
-                const y = Math.cos(angle) * radius;
-                const z = Math.sin(angle) * radius;
-                return new THREE.Vector3(x, y, z);
-            };
-            
-            const geometry = new THREE.TubeGeometry(path, 100, tubeRadius, 8, false);
-            const material = new THREE.MeshStandardMaterial({ color: 0xf59e0b });
-            const coil = new THREE.Mesh(geometry, material);
-            scene.add(coil);
+        // Helper to project 3D coords to 2D screen coords for HTML overlay
+        function updateLabels() {
+            const widthHalf = DOM.container.clientWidth / 2;
+            const heightHalf = DOM.container.clientHeight / 2;
 
-            const iColor = 0xffffff;
-            const inArrow = new THREE.ArrowHelper(new THREE.Vector3(currentDirection, 0, 0), new THREE.Vector3(-length/2 - 1, 0, 0), 1, iColor);
-            const outArrow = new THREE.ArrowHelper(new THREE.Vector3(currentDirection, 0, 0), new THREE.Vector3(length/2, 0, 0), 1, iColor);
-            scene.add(inArrow);
-            scene.add(outArrow);
+            function updateLabel(object3D, domElement) {
+                const vector = new THREE.Vector3();
+                object3D.getWorldPosition(vector);
+                vector.project(camera); // map to [-1, 1] device coords
 
-            if (showField) {
-                const bColor = 0x3b82f6;
-                const bDir = new THREE.Vector3(currentDirection, 0, 0);
-                const bOrigin = new THREE.Vector3(-length/2 - 2, 0, 0);
-                const bArrow = new THREE.ArrowHelper(bDir, bOrigin, length + 4, bColor, 1, 0.5);
-                scene.add(bArrow);
-                
-                for(let y=-1; y<=1; y+=2) {
-                     const paraOrigin = new THREE.Vector3(-length/2, y, 0);
-                     const paraArrow = new THREE.ArrowHelper(bDir, paraOrigin, length, bColor, 0.5, 0.3);
-                     scene.add(paraArrow);
+                // Convert to CSS coords
+                const x = (vector.x * widthHalf) + widthHalf;
+                const y = -(vector.y * heightHalf) + heightHalf;
+
+                // Hide if behind camera
+                if (vector.z > 1) {
+                    domElement.style.opacity = 0;
+                } else {
+                    domElement.style.opacity = 1;
+                    domElement.style.left = `${x}px`;
+                    domElement.style.top = `${y}px`;
                 }
             }
 
-            if (showHand) {
-                const handGroup = new THREE.Group();
-                const thumbGeo = new THREE.CylinderGeometry(0.3, 0.3, 2, 16);
-                const skinMat = new THREE.MeshStandardMaterial({ color: 0xfca5a5 });
-                const thumb = new THREE.Mesh(thumbGeo, skinMat);
-                thumb.rotation.z = -Math.PI / 2 * currentDirection;
-                thumb.position.x = currentDirection * 1;
-                handGroup.add(thumb);
-                
-                const fingersGeo = new THREE.TorusGeometry(2.2, 0.4, 16, 20, Math.PI * 1.5);
-                const fingers = new THREE.Mesh(fingersGeo, skinMat);
-                fingers.rotation.y = Math.PI / 2;
-                handGroup.add(fingers);
-                
-                handGroup.position.y = 2.5;
-                scene.add(handGroup);
-            }
-        };
+            updateLabel(thumbTarget, DOM.labelThumb);
+            updateLabel(fingersTarget, DOM.labelFingers);
+        }
 
-        useEffect(() => {
-            initObjects();
-        }, [mode, currentDirection, showHand, showField]);
+        // --- Event Listeners ---
+        DOM.btnWire.addEventListener('click', () => { state.mode = 'wire'; updateMode(); });
+        DOM.btnSolenoid.addEventListener('click', () => { state.mode = 'solenoid'; updateMode(); });
+        DOM.btnFlip.addEventListener('click', toggleDirection);
 
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
+        // --- Initialize ---
+        buildHand();
+        updateMode();
+        animate();
 
-        const toggleDirection = () => {
-            setCurrentDirection(prev => prev * -1);
-        };
-
-        return (
-            <div className="min-h-screen bg-slate-900 text-slate-200 font-sans pb-12">
-                <nav className="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-cyan-500/20 p-2 rounded-lg">
-                            <i data-lucide="hand" className="w-6 h-6 text-cyan-400"></i>
-                        </div>
-                        <h1 className="text-xl font-bold text-white tracking-wide">Right-Hand Grip Rule Lab</h1>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1 rounded-full border border-slate-700">
-                        Topic: Electromagnetism
-                    </div>
-                </nav>
-
-                <main className="max-w-6xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* Left: 3D Simulation */}
-                    <div className="lg:col-span-9 flex flex-col gap-6">
-                        <div className="bg-slate-950 rounded-2xl border border-slate-700 p-1 shadow-2xl relative overflow-hidden h-[500px]" ref={mountRef}>
-                            {/* Canvas injected here by Three.js */}
-                            
-                            <div className="absolute top-4 left-4 flex gap-2">
-                                <button onClick={() => setMode('wire')} className={`px-4 py-2 rounded text-xs font-bold border transition ${mode==='wire' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900/80 border-slate-700 text-slate-400'}`}>
-                                    Straight Wire
-                                </button>
-                                <button onClick={() => setMode('solenoid')} className={`px-4 py-2 rounded text-xs font-bold border transition ${mode==='solenoid' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900/80 border-slate-700 text-slate-400'}`}>
-                                    Solenoid
-                                </button>
-                            </div>
-
-                            <div className="absolute bottom-4 left-4 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-700 text-xs text-slate-300 pointer-events-none">
-                                Left Click + Drag to <strong>Rotate</strong> View
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Right: Controls */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
-                            <h2 className="text-white font-bold mb-4 flex items-center">
-                                <i data-lucide="settings-2" className="w-5 h-5 mr-2 text-cyan-400"></i>
-                                Controls
-                            </h2>
-
-                            {/* Direction */}
-                            <div>
-                                <label className="text-xs font-bold text-slate-400 mb-2 block">Current Direction ($I$)</label>
-                                <button 
-                                    onClick={toggleDirection}
-                                    className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${currentDirection === 1 ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-rose-600 hover:bg-rose-500 text-white'}`}
-                                >
-                                    <i data-lucide={currentDirection === 1 ? "arrow-up" : "arrow-down"} className="w-5 h-5"></i>
-                                    {currentDirection === 1 ? (mode === 'wire' ? "Up" : "Right") : (mode === 'wire' ? "Down" : "Left")}
-                                </button>
-                            </div>
-
-                            {/* Toggles */}
-                            <div className="space-y-3">
-                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                                    <span className="text-sm font-bold text-slate-300">Show Hand</span>
-                                    <input type="checkbox" checked={showHand} onChange={() => setShowHand(!showHand)} className="w-5 h-5 rounded text-cyan-500 focus:ring-0" />
-                                </label>
-                                <label className="flex items-center justify-between p-3 rounded-lg bg-slate-700/50 cursor-pointer hover:bg-slate-700 transition-colors">
-                                    <span className="text-sm font-bold text-slate-300">Show B-Field</span>
-                                    <input type="checkbox" checked={showField} onChange={() => setShowField(!showField)} className="w-5 h-5 rounded text-blue-500 focus:ring-0" />
-                                </label>
-                            </div>
-                        </div>
-
-                        <div className="bg-blue-900/10 border border-blue-500/20 p-5 rounded-2xl">
-                            <h3 className="text-blue-300 font-bold text-sm mb-3 flex items-center">
-                                <i data-lucide="info" className="w-4 h-4 mr-2"></i> Quick Guide
-                            </h3>
-                            {mode === 'wire' ? (
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    <strong>Straight Wire:</strong>
-                                    <br/>
-                                    1. Point <strong>Thumb</strong> in direction of Current ($I$).
-                                    <br/>
-                                    2. <strong>Fingers</strong> curl in direction of Magnetic Field ($B$).
-                                </p>
-                            ) : (
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    <strong>Solenoid:</strong>
-                                    <br/>
-                                    1. Curl <strong>Fingers</strong> in direction of Current ($I$) around the coil.
-                                    <br/>
-                                    2. <strong>Thumb</strong> points to North Pole ($B$).
-                                </p>
-                            )}
-                        </div>
-
-                    </div>
-
-                </main>
-            </div>
-        );
-    };
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+    </script>
 </body>
 </html>
