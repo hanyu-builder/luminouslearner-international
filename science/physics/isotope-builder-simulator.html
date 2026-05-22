@@ -43,7 +43,11 @@
         }
 
         /* Prevent canvas interactions from scrolling the page on mobile */
-        #canvas-container canvas { touch-action: none; border-radius: 0.75rem; }
+        #canvas-container canvas { 
+            display: block;
+            touch-action: none; 
+            border-radius: 0.75rem; 
+        }
 
         /* Custom periodic table tile font */
         .element-symbol { font-family: 'Times New Roman', Times, serif; }
@@ -406,6 +410,18 @@
             let canvas = createCanvas(container.clientWidth, container.clientHeight);
             canvas.parent('canvas-container');
             
+            // ROBUST SIZING FIX: Use ResizeObserver instead of windowResized
+            // This ensures the canvas always exactly matches the container in WordPress/Iframes
+            const resizeObserver = new ResizeObserver(entries => {
+                for (let entry of entries) {
+                    let { width, height } = entry.contentRect;
+                    if (width > 0 && height > 0) {
+                        resizeCanvas(width, height);
+                    }
+                }
+            });
+            resizeObserver.observe(container);
+            
             // Initialize electrons arrays
             for(let i=0; i<30; i++) {
                 electronsAngles.push(random(TWO_PI));
@@ -413,11 +429,6 @@
 
             updateNucleusStructure();
             updateUI();
-        }
-
-        function windowResized() {
-            let container = document.getElementById('canvas-container');
-            resizeCanvas(container.clientWidth, container.clientHeight);
         }
 
         // Calculates a dense phyllotaxis spiral for the nucleus
@@ -477,13 +488,22 @@
             let cx = width / 2;
             let cy = height / 2 + 10; // offset slightly down for overlay
 
+            push(); // Master transformation wrapper
+            translate(cx, cy);
+            
+            // CLIPPING FIX: Dynamic auto-scaling
+            // If the container is too small to fit the 170px outer shell radius, scale everything down gracefully.
+            let maxRequiredSize = 370; // 170 radius * 2 + 30 padding
+            let currentMinSize = Math.min(width, height - 20); // -20 to account for overlay
+            if (currentMinSize < maxRequiredSize) {
+                let scaleFactor = currentMinSize / maxRequiredSize;
+                scale(scaleFactor);
+            }
+
             // 1. Draw Electron Shells & Electrons
             let eCount = atom.e;
             let shellIdx = 0;
             let drawnElectrons = 0;
-
-            push();
-            translate(cx, cy);
 
             while (eCount > 0 && shellIdx < shellCapacities.length) {
                 let capacity = shellCapacities[shellIdx];
@@ -526,12 +546,8 @@
                 drawnElectrons += numInThisShell;
                 shellIdx++;
             }
-            pop();
 
             // 2. Draw Nucleus
-            push();
-            translate(cx, cy);
-            
             // Sort by Y coordinate so overlapping looks correct (pseudo-3D depth)
             let sortedParticles = [...nucleusParticles].sort((a, b) => a.currentY - b.currentY);
 
@@ -573,7 +589,7 @@
                     line(drawX, drawY - 3, drawX, drawY + 3);
                 }
             }
-            pop();
+            pop(); // End master transformation wrapper
         }
 
     </script>
