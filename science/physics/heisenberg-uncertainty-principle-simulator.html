@@ -3,398 +3,496 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quantum Uncertainty Sim | Luminous Learner</title>
+    <title>Heisenberg Uncertainty Principle Simulation</title>
+    <meta name="description" content="Interactive Heisenberg uncertainty principle simulation. Visualize wave packet Fourier transform spreading and the fundamental limit of position and momentum.">
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Prop Types -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 900: '#0F172A', 800: '#1E293B', 700: '#334155', 600: '#475569' },
+                        position: '#38BDF8', // Light Blue for Position (x)
+                        momentum: '#A855F7', // Purple for Momentum (p)
+                        slit: '#10B981',     // Emerald for confinement
+                    }
+                }
+            }
+        }
+    </script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- MathJax Configuration and Script -->
+    <script>
+        window.MathJax = {
+            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <!-- p5.js for interactive waveform rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        
+        .seo-hidden {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); border-width: 0;
         }
-        .thumb-purple::-webkit-slider-thumb { background: #a855f7; }
-        .custom-scroll::-webkit-scrollbar { width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        #canvas-container canvas { 
+            display: block;
+            touch-action: none; 
+            border-radius: 0.75rem; 
+        }
+
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%;
+            background: currentColor; cursor: pointer; margin-top: -8px;
+            box-shadow: 0 0 10px currentColor;
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:active {
+            transform: scale(1.2);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-200 h-screen max-h-[1000px] overflow-hidden flex flex-col font-sans selection:bg-position selection:text-slate-900">
 
-<div id="root"></div>
+    <h1 class="seo-hidden">Heisenberg uncertainty principle simulation wave packet fourier transform</h1>
 
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo } = React;
-    const { ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } = Recharts;
-
-    const CANVAS_WIDTH = 900;
-    const CANVAS_HEIGHT = 550;
-    const CENTER_X = CANVAS_WIDTH / 2;
-    const CENTER_Y = CANVAS_HEIGHT / 2;
-
-    const App = () => {
-        // --- State ---
-        const [boxWidth, setBoxWidth] = useState(200); // Delta x (pixels)
-        const [showMomentum, setShowMomentum] = useState(true);
-        const [isPaused, setIsPaused] = useState(false);
-
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        
-        // Physics Calculation
-        // Uncertainty Principle: dx * dp >= h_bar / 2
-        // Let's use visual units.
-        // If boxWidth (dx) is small, momentumSpread (dp) is large.
-        // Constant K = dx * dp
-        const K = 10000; 
-        const momentumSpread = K / Math.max(10, boxWidth);
-
-        // --- Animation State ---
-        const animRef = useRef({
-            time: 0,
-            particles: [] // Visualizing probability cloud
-        });
-
-        // Initialize particles
-        useEffect(() => {
-            const ps = [];
-            for(let i=0; i<300; i++) {
-                ps.push({
-                    x: (Math.random() - 0.5) * boxWidth,
-                    y: (Math.random() - 0.5) * 200, // Just visual vertical spread
-                    phase: Math.random() * Math.PI * 2
-                });
-            }
-            animRef.current.particles = ps;
-        }, []); // Run once
-
-        // --- Loop ---
-        const loop = () => {
-            if (!isPaused) {
-                animRef.current.time += 0.05;
-                
-                // Update particles
-                // Their motion speed should relate to momentumSpread
-                const speedFactor = momentumSpread * 0.05;
-                
-                animRef.current.particles.forEach(p => {
-                    // Random jitter based on momentum uncertainty
-                    p.x += (Math.random() - 0.5) * speedFactor;
-                    
-                    // Constrain to box (infinite potential well)
-                    // If visual box is centered at CENTER_X with width boxWidth
-                    if (p.x > boxWidth/2) { p.x = boxWidth/2; }
-                    if (p.x < -boxWidth/2) { p.x = -boxWidth/2; }
-                });
-            }
-
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        // --- Drawing ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            // Clear
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            // --- 1. Position Space (Top Half) ---
-            const topY = 150;
-            
-            // Draw Box Boundaries (Infinite Potential Walls)
-            const leftWall = CENTER_X - boxWidth/2;
-            const rightWall = CENTER_X + boxWidth/2;
-            
-            ctx.fillStyle = '#1e293b';
-            ctx.fillRect(0, 0, leftWall, 300); // Left solid
-            ctx.fillRect(rightWall, 0, CANVAS_WIDTH - rightWall, 300); // Right solid
-            
-            ctx.strokeStyle = '#94a3b8';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(leftWall, 0); ctx.lineTo(leftWall, 300);
-            ctx.moveTo(rightWall, 0); ctx.lineTo(rightWall, 300);
-            ctx.stroke();
-
-            // Draw Wave Function psi(x)
-            ctx.beginPath();
-            ctx.strokeStyle = '#38bdf8'; // Cyan
-            ctx.lineWidth = 3;
-            
-            const sigma = boxWidth / 4; 
-            
-            for (let x = leftWall; x <= rightWall; x+=2) {
-                // Local coordinate relative to center
-                const localX = x - CENTER_X;
-                // Gaussian envelope
-                const env = Math.exp( - (localX*localX) / (2*sigma*sigma) );
-                // Probability density |psi|^2
-                const prob = env * env * 150; // Scale height
-                
-                const y = 280 - prob;
-                if (x === leftWall) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-            
-            // Fill area under curve
-            ctx.lineTo(rightWall, 280);
-            ctx.lineTo(leftWall, 280);
-            ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
-            ctx.fill();
-
-            // Draw Particle Cloud (Monte Carlo representation)
-            ctx.fillStyle = momentumSpread > 100 ? '#f472b6' : '#fff'; // Pink if high energy/uncertainty
-            animRef.current.particles.forEach(p => {
-                let dx = p.x;
-                if (dx > boxWidth/2) dx = boxWidth/2;
-                if (dx < -boxWidth/2) dx = -boxWidth/2;
-                
-                const px = CENTER_X + dx;
-                const py = 280 - Math.random() * 20; // Just bottom strip
-                ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI*2); ctx.fill();
-            });
-            
-            // Labels
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 14px sans-serif';
-            ctx.fillText("Position Space", 20, 30);
-            
-            // Delta X Measurement Line
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 1;
-            const measureY = 290;
-            ctx.beginPath(); 
-            ctx.moveTo(leftWall, measureY); ctx.lineTo(rightWall, measureY); 
-            // Arrows
-            ctx.moveTo(leftWall+5, measureY-3); ctx.lineTo(leftWall, measureY); ctx.lineTo(leftWall+5, measureY+3);
-            ctx.moveTo(rightWall-5, measureY-3); ctx.lineTo(rightWall, measureY); ctx.lineTo(rightWall-5, measureY+3);
-            ctx.stroke();
-            ctx.fillStyle = '#38bdf8';
-            ctx.textAlign = 'center';
-            ctx.fillText(`Δx`, CENTER_X, measureY + 15);
-
-            // --- 2. Momentum Space (Bottom Half) ---
-            if (showMomentum) {
-                const bottomBaseY = CANVAS_HEIGHT - 30;
-                const pCenterY = bottomBaseY - 100;
-                
-                // Draw Momentum Axis
-                ctx.strokeStyle = '#64748b';
-                ctx.beginPath(); ctx.moveTo(50, bottomBaseY); ctx.lineTo(CANVAS_WIDTH-50, bottomBaseY); ctx.stroke();
-                
-                // Draw Momentum Distribution phi(p)
-                const sigma_p = 4000 / boxWidth; 
-
-                ctx.beginPath();
-                ctx.strokeStyle = '#a855f7'; // Purple
-                ctx.lineWidth = 3;
-                
-                for (let px = 50; px <= CANVAS_WIDTH - 50; px+=2) {
-                    const localP = px - CENTER_X;
-                    const envP = Math.exp( - (localP*localP) / (2*sigma_p*sigma_p) );
-                    const probP = envP * envP * 150;
-                    
-                    const y = bottomBaseY - probP;
-                    if (px === 50) ctx.moveTo(px, y);
-                    else ctx.lineTo(px, y);
-                }
-                ctx.stroke();
-                
-                // Fill
-                ctx.lineTo(CANVAS_WIDTH-50, bottomBaseY);
-                ctx.lineTo(50, bottomBaseY);
-                ctx.fillStyle = 'rgba(168, 85, 247, 0.2)';
-                ctx.fill();
-
-                // Labels
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'left';
-                ctx.fillText("Momentum Space", 20, 340);
-                
-                // Delta P Measurement
-                const pLeft = CENTER_X - sigma_p;
-                const pRight = CENTER_X + sigma_p;
-                const pMeasureY = bottomBaseY + 15;
-                
-                ctx.strokeStyle = '#a855f7';
-                ctx.lineWidth = 1;
-                ctx.beginPath(); 
-                ctx.moveTo(pLeft, pMeasureY); ctx.lineTo(pRight, pMeasureY); 
-                // Arrows
-                ctx.moveTo(pLeft+5, pMeasureY-3); ctx.lineTo(pLeft, pMeasureY); ctx.lineTo(pLeft+5, pMeasureY+3);
-                ctx.moveTo(pRight-5, pMeasureY-3); ctx.lineTo(pRight, pMeasureY); ctx.lineTo(pRight-5, pMeasureY+3);
-                ctx.stroke();
-                ctx.fillStyle = '#a855f7';
-                ctx.textAlign = 'center';
-                ctx.fillText(`Δp`, CENTER_X, pMeasureY + 15);
-            }
-        };
-
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [boxWidth, showMomentum, isPaused]);
-
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
-
-        // Generate Hyperbola Data for Graph (dx * dp = constant)
-        const graphData = useMemo(() => {
-            const data = [];
-            for (let x = 10; x <= 400; x+=10) {
-                // Calculate p based on K/x
-                const p = K / x;
-                data.push({ x: x, y: p });
-            }
-            return data;
-        }, []);
-
-        return (
-            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
-                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-purple-500/20 p-1.5 rounded-lg">
-                            <i data-lucide="atom" className="w-5 h-5 text-purple-400"></i>
-                        </div>
-                        <h1 className="text-lg font-bold text-white tracking-wide">Heisenberg Uncertainty Principle</h1>
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
-                        Topic: Quantum Physics
-                    </div>
-                </nav>
-
-                <main className="flex-1 overflow-hidden">
-                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
-                        
-                        {/* LEFT: Canvas */}
-                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-full object-contain"
-                            />
-                            
-                            {/* Equation Overlay */}
-                            <div className="absolute top-4 right-4 bg-slate-900/80 p-4 rounded-xl border border-slate-700 backdrop-blur shadow-2xl">
-                                <div className="text-xl font-mono text-center mb-2 font-bold text-white">
-                                    &Delta;x &middot; &Delta;p &ge; <span className="text-slate-400">ℏ/2</span>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 text-center">
-                                    <div>
-                                        <div className="text-xs text-slate-400">Position Uncertainty</div>
-                                        <div className="text-lg font-mono text-sky-400 font-bold">{boxWidth.toFixed(0)}</div>
-                                        <div className="text-[10px] text-slate-500">pm</div>
-                                    </div>
-                                    <div>
-                                        <div className="text-xs text-slate-400">Momentum Uncertainty</div>
-                                        <div className="text-lg font-mono text-purple-400 font-bold">{momentumSpread.toFixed(1)}</div>
-                                        <div className="text-[10px] text-slate-500">units</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* RIGHT: Controls */}
-                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
-                            
-                            {/* 1. Hyperbola Graph */}
-                            <div className="h-48 w-full bg-slate-950 border-b border-slate-700 p-2 relative">
-                                <div className="text-[9px] text-slate-500 absolute top-2 left-2 z-10">&Delta;p vs &Delta;x</div>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
-                                        <XAxis type="number" dataKey="x" name="dx" unit="pm" tick={{fontSize: 9}} domain={[0, 400]} />
-                                        <YAxis type="number" dataKey="y" name="dp" tick={{fontSize: 9}} domain={[0, 1000]} />
-                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} contentStyle={{backgroundColor: '#1e293b', border: '1px solid #475569', fontSize: '10px'}} />
-                                        <Scatter name="Uncertainty" data={graphData} fill="#8884d8" line shape="circle" />
-                                        <ReferenceDot x={boxWidth} y={momentumSpread} r={5} fill="#f43f5e" stroke="white" />
-                                    </ScatterChart>
-                                </ResponsiveContainer>
-                            </div>
-
-                            {/* 2. Controls */}
-                            <div className="p-5 space-y-6 flex-1">
-                                
-                                {/* Box Width Slider */}
-                                <div>
-                                    <label className="flex justify-between text-xs font-bold text-sky-400 mb-2">
-                                        Box Width (&Delta;x)
-                                        <span>{boxWidth} pm</span>
-                                    </label>
-                                    <input 
-                                        type="range" min="20" max="400" step="5" 
-                                        value={boxWidth} onChange={(e) => setBoxWidth(Number(e.target.value))}
-                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-sky" 
-                                    />
-                                    <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                        <span>Narrow (High Precision)</span>
-                                        <span>Wide (Low Precision)</span>
-                                    </div>
-                                    <p className="text-[10px] text-slate-400 mt-2">
-                                        Try narrowing the box. Notice how the momentum wave packet (&Delta;p) widens!
-                                    </p>
-                                </div>
-
-                                <div className="h-px bg-slate-800"></div>
-
-                                {/* Analogy Box */}
-                                <div className="bg-slate-800 p-3 rounded border border-slate-700">
-                                    <h4 className="text-xs font-bold text-white mb-2 flex items-center">
-                                        <i data-lucide="lightbulb" className="w-4 h-4 mr-2 text-yellow-400"></i>
-                                        Intuitive Understanding
-                                    </h4>
-                                    <p className="text-[11px] text-slate-300 leading-relaxed">
-                                        If you confine a particle to a very small space (&Delta;x &darr;), it becomes very "agitated", moving wildly, making it impossible to predict where it will go next (&Delta;p &uarr;).
-                                    </p>
-                                </div>
-
-                                {/* Animation Control */}
-                                <button 
-                                    onClick={() => setIsPaused(!isPaused)}
-                                    className={`w-full py-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 border transition-all 
-                                        ${isPaused ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
-                                >
-                                    <i data-lucide={isPaused ? "play" : "pause"} className="w-4 h-4"></i>
-                                    {isPaused ? "Resume Simulation" : "Pause Simulation"}
-                                </button>
-
-                            </div>
-                        </div>
-
-                    </div>
-                </main>
+    <!-- App Header -->
+    <header class="bg-slate-800 border-b border-slate-700 p-4 flex justify-between items-center shrink-0 shadow-md z-10">
+        <div>
+            <h2 class="text-2xl font-bold flex items-center gap-2">
+                <span class="bg-gradient-to-r from-position to-momentum bg-clip-text text-transparent">Heisenberg Uncertainty Simulator</span>
+            </h2>
+            <p class="text-sm text-slate-400 mt-1">Wave Packet Fourier Transform Spreading</p>
+        </div>
+        <div class="hidden md:flex gap-4">
+            <div class="bg-slate-900 px-4 py-2 rounded-lg border border-slate-700 shadow-inner flex items-center gap-4 text-sm font-mono text-slate-300">
+                <span class="text-position">Position \(\Delta x\)</span>
+                <span class="text-momentum">Momentum \(\Delta p\)</span>
+                <div class="w-px h-6 bg-slate-700 mx-2"></div>
+                <span class="text-white font-bold">\( \sigma_x \sigma_p \ge \frac{\hbar}{2} \)</span>
             </div>
-        );
-    };
+        </div>
+    </header>
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden p-4 gap-4">
+        
+        <!-- Left Panel: Controls & Telemetry -->
+        <aside class="w-full md:w-80 flex flex-col gap-4 overflow-y-auto shrink-0 z-10">
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg flex flex-col h-full gap-4 relative">
+                
+                <h3 class="text-lg font-semibold text-white border-b border-slate-600 pb-2">Experiment Controls</h3>
+                
+                <div class="bg-slate-900/50 p-4 rounded-lg border border-slit/50 shadow-inner">
+                    <label class="flex justify-between text-sm font-medium text-slate-300 mb-4">
+                        <span class="text-slit font-bold flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                            Wave Packet Squeeze (\(\Delta x\))
+                        </span>
+                    </label>
+                    <input type="range" id="slider-dx" min="0.2" max="4.0" step="0.05" value="1.5" class="w-full text-slit relative z-10">
+                    <div class="text-[10px] text-slate-400 mt-2 text-center uppercase tracking-wider">Drag to confine or widen the particle</div>
+                </div>
+
+                <!-- NEW: Measurement Simulation -->
+                <div class="space-y-2 mt-1">
+                    <span class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Quantum Measurement (Collapse)</span>
+                    <div class="flex gap-2">
+                        <button id="btn-measure-x" class="flex-1 bg-position/20 hover:bg-position/40 text-position border border-position/50 py-2.5 rounded text-xs font-bold transition-all shadow-[0_0_10px_rgba(56,189,248,0.1)]">Measure Position</button>
+                        <button id="btn-measure-p" class="flex-1 bg-momentum/20 hover:bg-momentum/40 text-momentum border border-momentum/50 py-2.5 rounded text-xs font-bold transition-all shadow-[0_0_10px_rgba(168,85,247,0.1)]">Measure Momentum</button>
+                    </div>
+                </div>
+
+                <!-- Telemetry -->
+                <div class="space-y-3 mt-2">
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 relative overflow-hidden transition-colors" id="box-dx">
+                        <div class="absolute top-0 left-0 w-1 h-full bg-position"></div>
+                        <span class="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 pl-2">Position Uncertainty (\(\sigma_x\))</span>
+                        <div class="flex items-baseline justify-between pl-2">
+                            <span id="out-dx" class="text-3xl font-mono font-bold text-position">1.50</span>
+                            <span class="text-xs text-slate-500">nm</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 relative overflow-hidden transition-colors" id="box-dp">
+                        <div class="absolute top-0 left-0 w-1 h-full bg-momentum"></div>
+                        <span class="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 pl-2">Momentum Uncertainty (\(\sigma_p\))</span>
+                        <div class="flex items-baseline justify-between pl-2">
+                            <span id="out-dp" class="text-3xl font-mono font-bold text-momentum">0.33</span>
+                            <span class="text-xs text-slate-500">eV/c</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center px-4 shadow-inner">
+                        <span class="text-xs text-slate-400 font-mono">\(\sigma_x \cdot \sigma_p =\)</span>
+                        <span class="text-lg font-mono font-bold text-white">0.50 \(\hbar\)</span>
+                    </div>
+                </div>
+
+                <!-- Theory Box -->
+                <div class="mt-auto bg-slate-900 p-4 rounded-lg border border-slate-700 text-xs text-slate-300 leading-relaxed shadow-inner">
+                    <span class="block text-[10px] text-slate-500 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Observation</span>
+                    <p class="mb-2">
+                        A particle's position and momentum are <strong>Fourier conjugates</strong>. 
+                        To localize a particle in space (small \(\Delta x\)), you must superimpose waves of many different momenta.
+                    </p>
+                    <p>
+                        Consequently, squeezing the wave packet spatially mathematically forces its momentum distribution to spread out to infinity!
+                    </p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center Panel: Dual p5.js Graphs -->
+        <section class="flex-1 flex flex-col gap-4 overflow-hidden shrink-0 min-w-0 z-10">
+            <div id="canvas-container" class="bg-slate-800 rounded-xl border border-slate-700 shadow-inner relative flex-1 flex flex-col overflow-hidden min-h-[400px]">
+                <!-- Flash overlays for measurement collapse -->
+                <div id="flash-x" class="absolute top-0 left-0 w-full h-1/2 bg-position/20 opacity-0 pointer-events-none transition-opacity duration-300 z-20"></div>
+                <div id="flash-p" class="absolute bottom-0 left-0 w-full h-1/2 bg-momentum/20 opacity-0 pointer-events-none transition-opacity duration-300 z-20"></div>
+                
+                <!-- p5.js canvas -->
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        /**
+         * HEISENBERG UNCERTAINTY SIMULATOR
+         * p5.js visualization of Fourier conjugate wave packets.
+         */
+
+        // --- State & Constants ---
+        // For visualization, we scale constants: hbar = 1
+        // sigma_x * sigma_p = 0.5 (Minimum uncertainty for a Gaussian)
+        const HBAR_SCALED = 1.0;
+
+        const state = {
+            dx: 1.5, // Current standard deviation of position (sigma_x)
+            targetDx: 1.5, // For smooth animation during measurement collapse
+            dp: 0,   // Standard deviation of momentum (sigma_p)
+            time: 0  // For oscillating the real part of the wavefunction
+        };
+
+        // --- DOM Elements ---
+        const ui = {
+            sliderDx: document.getElementById('slider-dx'),
+            outDx: document.getElementById('out-dx'),
+            outDp: document.getElementById('out-dp'),
+            boxDx: document.getElementById('box-dx'),
+            boxDp: document.getElementById('box-dp'),
+            btnMeasureX: document.getElementById('btn-measure-x'),
+            btnMeasureP: document.getElementById('btn-measure-p'),
+            flashX: document.getElementById('flash-x'),
+            flashP: document.getElementById('flash-p'),
+            container: document.getElementById('canvas-container')
+        };
+
+        // --- Event Listeners ---
+        ui.sliderDx.addEventListener('input', (e) => {
+            state.targetDx = parseFloat(e.target.value);
+            state.dx = state.targetDx; // Snappy manual update
+            updatePhysics();
+        });
+
+        // Measurement Actions
+        ui.btnMeasureX.addEventListener('click', () => {
+            state.targetDx = parseFloat(ui.sliderDx.min); // Max confinement
+            triggerFlash(ui.flashX, ui.boxDx, 'border-position');
+        });
+
+        ui.btnMeasureP.addEventListener('click', () => {
+            state.targetDx = parseFloat(ui.sliderDx.max); // Max spread in X = Min spread in P
+            triggerFlash(ui.flashP, ui.boxDp, 'border-momentum');
+        });
+
+        function triggerFlash(flashEl, boxEl, borderClass) {
+            flashEl.classList.replace('opacity-0', 'opacity-100');
+            boxEl.classList.add(borderClass, 'bg-slate-800');
+            
+            setTimeout(() => {
+                flashEl.classList.replace('opacity-100', 'opacity-0');
+                boxEl.classList.remove(borderClass, 'bg-slate-800');
+            }, 300);
+        }
+
+        function updatePhysics() {
+            // Heisenberg relation for Gaussian wave packet: dx * dp = hbar / 2
+            state.dp = (HBAR_SCALED / 2.0) / state.dx;
+
+            // Update DOM telemetry
+            ui.outDx.innerText = state.dx.toFixed(2);
+            ui.outDp.innerText = state.dp.toFixed(2);
+        }
+
+        // --- p5.js Rendering Engine ---
+
+        function setup() {
+            let canvas = createCanvas(ui.container.clientWidth, ui.container.clientHeight);
+            canvas.parent('canvas-container');
+            updatePhysics();
+
+            // ROBUST SIZING FIX for WordPress/Iframes
+            const resizeObserver = new ResizeObserver(entries => {
+                for (let entry of entries) {
+                    let { width: newW, height: newH } = entry.contentRect;
+                    if (newW > 0 && newH > 0) {
+                        resizeCanvas(newW, newH);
+                    }
+                }
+            });
+            resizeObserver.observe(ui.container);
+        }
+
+        function draw() {
+            background('#1E293B'); // slate-800
+            
+            // Handle Animated Collapse (Lerp)
+            if (Math.abs(state.dx - state.targetDx) > 0.005) {
+                // Lerp for smooth visual transition
+                state.dx = lerp(state.dx, state.targetDx, 0.15);
+                ui.sliderDx.value = state.dx; // Sync slider visually
+                updatePhysics();
+            } else if (state.dx !== state.targetDx) {
+                state.dx = state.targetDx;
+                updatePhysics();
+            }
+
+            state.time += 0.05; // Advance animation time
+
+            // Split canvas horizontally into Top (Position) and Bottom (Momentum)
+            const graphHeight = height / 2;
+
+            drawPositionSpace(0, 0, width, graphHeight);
+            
+            // Divider line
+            stroke('#475569');
+            strokeWeight(2);
+            line(0, graphHeight, width, graphHeight);
+
+            drawMomentumSpace(0, graphHeight, width, graphHeight);
+        }
+
+        function drawPositionSpace(xOffset, yOffset, w, h) {
+            push();
+            translate(xOffset, yOffset);
+
+            // Labels
+            noStroke();
+            fill('#94A3B8');
+            textSize(12);
+            textAlign(LEFT, TOP);
+            text("POSITION SPACE", 15, 15);
+            fill('#38BDF8');
+            textSize(14);
+            text("Probability Density |ψ(x)|²", 15, 35);
+
+            // Origin axes
+            const cx = w / 2;
+            const cy = h * 0.75; // Baseline for graph
+
+            stroke('#334155');
+            strokeWeight(1);
+            line(0, cy, w, cy); // X-axis
+            line(cx, 0, cx, h); // Y-axis
+
+            // Scale mapping
+            // Physical space maps [-10, 10] to screen width
+            const physicalDomain = 10;
+            const scaleX = w / (physicalDomain * 2);
+            
+            // Dynamic scale Y: maintain constant probability area
+            // Gaussian peak = 1 / (dx * sqrt(2pi))
+            // We set the visual scale based on the absolute MINIMUM slider value 
+            // so the peak never shoots off the screen!
+            const min_dx = parseFloat(ui.sliderDx.min);
+            const maxProbX = 1.0 / (min_dx * Math.sqrt(TWO_PI));
+            const scaleY = (h * 0.55) / maxProbX;
+
+            // 1. Draw "Confinement Region" boundary (Visual guide)
+            const confineHalfWidth = state.dx * scaleX;
+            noStroke();
+            fill('rgba(16, 185, 129, 0.1)'); // Emerald translucent
+            rect(0, 0, cx - confineHalfWidth, h); // Left wall
+            rect(cx + confineHalfWidth, 0, w, h); // Right wall
+            
+            // Confinement boundaries (solid lines)
+            stroke('#10B981');
+            strokeWeight(2);
+            line(cx - confineHalfWidth, 0, cx - confineHalfWidth, h);
+            line(cx + confineHalfWidth, 0, cx + confineHalfWidth, h);
+            
+            // Confinement label
+            noStroke(); fill('#10B981'); textAlign(CENTER, BOTTOM); textSize(10);
+            text("CONFINEMENT REGION (Δx)", cx, h - 10);
+            
+            // Double arrows for confinement width
+            stroke('#10B981'); fill('#10B981');
+            line(cx - confineHalfWidth + 2, h - 25, cx + confineHalfWidth - 2, h - 25);
+            triangle(cx - confineHalfWidth, h - 25, cx - confineHalfWidth + 5, h - 28, cx - confineHalfWidth + 5, h - 22);
+            triangle(cx + confineHalfWidth, h - 25, cx + confineHalfWidth - 5, h - 28, cx + confineHalfWidth - 5, h - 22);
+
+
+            // 2. Draw Probability Envelope |psi(x)|^2
+            fill('rgba(56, 189, 248, 0.2)'); // Light blue filled
+            stroke('#38BDF8');
+            strokeWeight(3);
+            drawingContext.shadowBlur = 15;
+            drawingContext.shadowColor = '#38BDF8';
+            
+            beginShape();
+            vertex(0, cy); // Start at baseline
+            for (let px = 0; px <= w; px += 2) {
+                // Map screen px to physical x
+                let physX = (px - cx) / scaleX;
+                
+                // Gaussian probability density function: P(x) = (1 / (dx * sqrt(2*PI))) * exp(-0.5 * (x/dx)^2)
+                let prob = (1.0 / (state.dx * Math.sqrt(TWO_PI))) * Math.exp(-0.5 * Math.pow(physX / state.dx, 2));
+                
+                let py = cy - (prob * scaleY);
+                vertex(px, py);
+            }
+            vertex(w, cy); // End at baseline
+            endShape(CLOSE);
+            drawingContext.shadowBlur = 0; // reset
+
+
+            // 3. Draw Real part of wavefunction Re(psi(x))
+            // psi(x) = envelope * exp(i*(k*x - w*t)). Real part is envelope * cos(kx - wt)
+            // Note: envelope for amplitude is sqrt of probability density.
+            noFill();
+            stroke('rgba(255, 255, 255, 0.7)');
+            strokeWeight(1.5);
+            
+            let k0 = 12; // Carrier wave number (implies an average momentum p0)
+            
+            beginShape();
+            for (let px = 0; px <= w; px += 2) {
+                let physX = (px - cx) / scaleX;
+                
+                // Amplitude envelope (sqrt of prob)
+                let amp = Math.sqrt((1.0 / (state.dx * Math.sqrt(TWO_PI))) * Math.exp(-0.5 * Math.pow(physX / state.dx, 2)));
+                
+                // Oscillating carrier (speed up animation slightly)
+                let wave = amp * Math.cos(k0 * physX - state.time * 4);
+                
+                // Apply a visual scale multiplier to make the wave visible inside the envelope
+                // Prob density scales with 1/dx. Wave amp scales with 1/sqrt(dx). 
+                // To keep it looking nice inside the envelope, we apply a dynamic visual scalar.
+                let visualWaveScale = Math.sqrt(state.dx * Math.sqrt(TWO_PI)) * scaleY;
+                
+                let py = cy - (wave * visualWaveScale);
+                vertex(px, py);
+            }
+            endShape();
+
+            pop();
+        }
+
+        function drawMomentumSpace(xOffset, yOffset, w, h) {
+            push();
+            translate(xOffset, yOffset);
+
+            // Labels
+            noStroke();
+            fill('#94A3B8');
+            textSize(12);
+            textAlign(LEFT, TOP);
+            text("MOMENTUM SPACE", 15, 15);
+            fill('#A855F7');
+            textSize(14);
+            // Pedagogical Note: Explicitly label as deviation from average momentum
+            text("Probability Density |φ(p)|² around p₀", 15, 35);
+
+            // Origin axes
+            const cx = w / 2;
+            const cy = h * 0.85;
+
+            stroke('#334155');
+            strokeWeight(1);
+            line(0, cy, w, cy); // p-axis
+            line(cx, 0, cx, h); // Y-axis
+            
+            noStroke(); fill('#64748B'); textAlign(CENTER, TOP); textSize(10);
+            text("p₀", cx, cy + 5);
+
+            // Scale mapping
+            // Momentum domain maps [-3, 3] to screen width
+            const momentumDomain = 3;
+            const scaleP = w / (momentumDomain * 2);
+            
+            // Dynamic scale Y: conservation of probability
+            // Peak probability occurs at maximum Delta X (slider max)
+            const max_dx = parseFloat(ui.sliderDx.max);
+            const min_dp = (HBAR_SCALED / 2.0) / max_dx; // 0.125
+            const maxProbP = 1.0 / (min_dp * Math.sqrt(TWO_PI));
+            const scaleY = (h * 0.6) / maxProbP;
+
+            // Draw Momentum Probability Envelope |phi(p)|^2
+            // Since it's the Fourier transform of a Gaussian, it's also a Gaussian, but inverted width
+            // phi(p) envelope ~ exp(-p^2 / (2 * dp^2))
+            
+            fill('rgba(168, 85, 247, 0.2)'); // Purple filled
+            stroke('#A855F7');
+            strokeWeight(3);
+            drawingContext.shadowBlur = 15;
+            drawingContext.shadowColor = '#A855F7';
+            
+            beginShape();
+            vertex(0, cy);
+            for (let px = 0; px <= w; px += 2) {
+                // Here physP represents (p - p0)
+                let physP = (px - cx) / scaleP;
+                
+                // Momentum PDF
+                let prob = (1.0 / (state.dp * Math.sqrt(TWO_PI))) * Math.exp(-0.5 * Math.pow(physP / state.dp, 2));
+                
+                let py = cy - (prob * scaleY);
+                vertex(px, py);
+            }
+            vertex(w, cy);
+            endShape(CLOSE);
+            drawingContext.shadowBlur = 0;
+
+
+            // Draw standard deviation markers (Delta p)
+            const dpWidth = state.dp * scaleP;
+            // Draw horizontal bar representing Delta p spread
+            stroke('#F472B6'); // Pinkish
+            strokeWeight(2);
+            
+            // Height at 1 sigma for a normal distribution is peak * exp(-0.5)
+            let peakY = cy - ((1.0 / (state.dp * Math.sqrt(TWO_PI))) * scaleY) * Math.exp(-0.5); 
+            
+            // Ensure peakY isn't offscreen due to aggressive scaling limits
+            peakY = max(peakY, 15);
+
+            // Standard deviation bracket
+            line(cx - dpWidth, peakY, cx + dpWidth, peakY);
+            line(cx - dpWidth, peakY - 5, cx - dpWidth, peakY + 5);
+            line(cx + dpWidth, peakY - 5, cx + dpWidth, peakY + 5);
+
+            noStroke(); fill('#F472B6'); textAlign(CENTER, BOTTOM); textSize(10);
+            text("UNCERTAINTY SPREAD (2Δp)", cx, peakY - 8);
+
+            pop();
+        }
+
+    </script>
 </body>
 </html>
