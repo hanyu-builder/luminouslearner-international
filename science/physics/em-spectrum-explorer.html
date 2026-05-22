@@ -3,334 +3,463 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EM Spectrum Explorer | Luminous Learner</title>
+    <meta name="description" content="Electromagnetic spectrum interactive explorer. Visualize the inverse relationships between wavelength, frequency, and energy across radio to gamma rays.">
+    <title>EM Spectrum Explorer</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
+    <!-- D3.js Library -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- MathJax for rendering formulas -->
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 900: '#0F172A', 800: '#1E293B', 700: '#334155', 600: '#475569' },
+                        radio: '#ef4444',     // Red
+                        micro: '#f97316',     // Orange
+                        ir: '#ef4444',        // Deep Red
+                        uv: '#8b5cf6',        // Violet
+                        xray: '#0ea5e9',      // Sky
+                        gamma: '#f8fafc'      // White
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 20px; height: 20px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff; background: #3b82f6;
+        body { margin: 0; overflow: hidden; background-color: #0F172A; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        @media (max-width: 1024px) { body { overflow-y: auto; } }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%; 
+            background: #ffffff; cursor: pointer; margin-top: -10px; 
+            box-shadow: 0 0 10px rgba(255,255,255,0.8); border: 4px solid #3b82f6; 
+            transition: transform 0.1s;
         }
-        .spectrum-bg {
-            background: linear-gradient(to right, 
-                #ef4444 0%,    /* Radio - Red-ish */
-                #f97316 15%,   /* Micro - Orange */
-                #eab308 30%,   /* IR - Yellow */
-                #22c55e 45%,   /* Visible - Green center */
-                #3b82f6 60%,   /* UV - Blue */
-                #a855f7 75%,   /* X-ray - Purple */
-                #64748b 100%   /* Gamma - Grey/Black */
-            );
+        input[type=range]::-webkit-slider-thumb:active { transform: scale(1.15); }
+        input[type=range]::-webkit-slider-runnable-track { 
+            width: 100%; height: 4px; cursor: pointer; 
+            background: #334155; border-radius: 2px; 
         }
-        .custom-scroll::-webkit-scrollbar { width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        input[type=range]:focus { outline: none; }
+
+        .band-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            fill: #94a3b8;
+            user-select: none;
+            pointer-events: none;
+        }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col justify-center items-center p-2 sm:p-4">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef, useMemo } = React;
-
-    const CANVAS_WIDTH = 900;
-    const CANVAS_HEIGHT = 550;
-    
-    // Spectrum Data (Log scale approximation for slider 0-100)
-    // Frequency Range: 10^4 Hz to 10^20 Hz
-    const SPECTRUM_REGIONS = [
-        { name: "Radio Waves", min: 0, max: 20, color: "#ef4444", icon: "radio-tower", desc: "Communication, Broadcasting, Wi-Fi", hazard: "Generally safe. Heating effect at very high power." },
-        { name: "Microwaves", min: 20, max: 35, color: "#f97316", icon: "microwave", desc: "Cooking food, Radar, Satellite comms", hazard: "Internal heating of body tissues." },
-        { name: "Infrared (IR)", min: 35, max: 50, color: "#eab308", icon: "thermometer-sun", desc: "Remote controls, Thermal imaging, Optical fibre", hazard: "Skin burns." },
-        { name: "Visible Light", min: 50, max: 60, color: "#22c55e", icon: "eye", desc: "Vision, Photography, Photosynthesis", hazard: "Retina damage at high intensity." },
-        { name: "Ultraviolet (UV)", min: 60, max: 75, color: "#3b82f6", icon: "sun", desc: "Bank note check, Sterilization, Tanning", hazard: "Skin cancer, Cataracts (Ionizing)." },
-        { name: "X-rays", min: 75, max: 90, color: "#a855f7", icon: "bone", desc: "Medical imaging, Airport security", hazard: "Cell damage, Cancer risk (High energy ionizing)." },
-        { name: "Gamma Rays", min: 90, max: 100, color: "#64748b", icon: "radiation", desc: "Cancer treatment, Sterilization", hazard: "Extremely dangerous. Severe DNA damage." }
-    ];
-
-    const App = () => {
-        // --- State ---
-        const [sliderVal, setSliderVal] = useState(55); // 0-100
-        const [waveOffset, setWaveOffset] = useState(0);
+    <!-- Main Container -->
+    <div id="app" class="w-full max-w-[1400px] max-h-[950px] h-full flex flex-col lg:flex-row gap-6 bg-slate-800 p-4 sm:p-6 rounded-2xl shadow-2xl border border-slate-700 relative overflow-hidden">
         
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-
-        // --- Logic ---
-        const currentRegion = useMemo(() => {
-            return SPECTRUM_REGIONS.find(r => sliderVal >= r.min && sliderVal <= r.max) || SPECTRUM_REGIONS[SPECTRUM_REGIONS.length-1];
-        }, [sliderVal]);
-
-        // Scientific Values (Logarithmic mapping)
-        // Freq: 10^4 to 10^20. Range = 16 orders of magnitude.
-        // logF = 4 + (slider/100)*16
-        const logFreq = 4 + (sliderVal / 100) * 16;
-        const frequency = Math.pow(10, logFreq);
-        const wavelength = 3e8 / frequency;
-        const photonEnergy = 6.63e-34 * frequency; // Joules
-        const photonEnergyEV = photonEnergy / 1.6e-19; // eV
-
-        // Formatting
-        const formatSci = (num, unit) => {
-            const exp = Math.floor(Math.log10(num));
-            const mantissa = num / Math.pow(10, exp);
-            return (
-                <span>
-                    {mantissa.toFixed(2)} &times; 10<sup>{exp}</sup> {unit}
-                </span>
-            );
-        };
-
-        // --- Animation Loop ---
-        const loop = () => {
-            // Update wave animation speed based on slider (just visual representation)
-            // Low freq -> slow, High freq -> fast
-            // To avoid seizure-inducing speeds, map visually
-            const visualSpeed = 2 + (sliderVal / 100) * 15;
-            setWaveOffset(prev => prev + visualSpeed);
+        <!-- LEFT PANEL: Visualizers -->
+        <div class="flex-[3] flex flex-col gap-4 min-h-0 relative z-10">
             
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
-
-        // --- Drawing ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
-
-            // Clear
-            ctx.fillStyle = '#020617';
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-            const cx = CANVAS_WIDTH / 2;
-            const cy = CANVAS_HEIGHT / 2;
-
-            // 1. Draw Wave (Transverse)
-            // Wavelength visual: Low freq -> Long, High freq -> Short
-            // Map slider 0-100 to visual wavelength 200px - 10px
-            const visualWavelength = 300 - (sliderVal / 100) * 290;
-            const amplitude = 80;
-
-            ctx.beginPath();
-            ctx.strokeStyle = currentRegion.color;
-            ctx.lineWidth = 4;
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = currentRegion.color;
-
-            for (let x = 0; x <= CANVAS_WIDTH; x+=2) {
-                const y = cy + Math.sin((x + waveOffset) * (2 * Math.PI / visualWavelength)) * amplitude;
-                if (x === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-
-            // 2. Draw EM Field Vectors (E and B) - Stylized
-            // Just draw a few vertical arrows to indicate oscillation direction
-            ctx.lineWidth = 2;
-            ctx.fillStyle = currentRegion.color;
-            for (let x = 50; x < CANVAS_WIDTH; x += visualWavelength) {
-                // Find y at this x
-                const phase = (x + waveOffset) * (2 * Math.PI / visualWavelength);
-                const y = cy + Math.sin(phase) * amplitude;
+            <!-- Spectrum Ruler (D3.js) -->
+            <div class="flex-[2] relative rounded-xl overflow-hidden shadow-inner bg-slate-900 border border-slate-700 flex flex-col">
+                <div class="absolute top-4 left-4 z-20 pointer-events-none">
+                    <h2 class="text-xl font-bold text-sky-400">The Electromagnetic Spectrum</h2>
+                    <p class="text-xs text-slate-300">Logarithmic Scale: Wavelength (m)</p>
+                </div>
                 
-                // Draw E-field vector (Vertical)
-                ctx.beginPath();
-                ctx.moveTo(x, cy);
-                ctx.lineTo(x, y);
-                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-                ctx.stroke();
+                <div id="spectrum-container" class="w-full flex-grow mt-8 relative cursor-crosshair"></div>
                 
-                // Circle at tip
-                ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fill();
-            }
-
-            // 3. Scale Reference (Atom vs Building)
-            // Just a static visual hint
-            ctx.fillStyle = '#64748b';
-            ctx.font = '12px sans-serif';
-            ctx.textAlign = 'right';
-            ctx.fillText("Electric Field (E)", CANVAS_WIDTH - 20, cy - 100);
-        };
-
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [sliderVal, waveOffset]); // Dependency for redraw
-
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
-
-        return (
-            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
-                {/* Navbar */}
-                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-blue-500/20 p-1.5 rounded-lg">
-                            <i data-lucide="waves" className="w-5 h-5 text-blue-400"></i>
-                        </div>
-                        <h1 className="text-lg font-bold text-white tracking-wide">EM Spectrum Explorer</h1>
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
-                        Topic: Wave Motion
-                    </div>
-                </nav>
-
-                <main className="flex-1 overflow-hidden">
-                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
-                        
-                        {/* LEFT: Canvas (Wave Visualization) */}
-                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-full object-contain"
-                            />
-                            
-                            {/* Overlay Info */}
-                            <div className="absolute top-6 left-6">
-                                <h2 className="text-3xl font-bold mb-1 drop-shadow-lg" style={{color: currentRegion.color}}>
-                                    {currentRegion.name}
-                                </h2>
-                                <div className="flex items-center gap-2 text-sm text-slate-300 bg-slate-900/80 px-3 py-1 rounded-full w-fit backdrop-blur border border-slate-700">
-                                    <i data-lucide={currentRegion.icon} className="w-4 h-4"></i>
-                                    {currentRegion.desc}
-                                </div>
-                            </div>
-
-                            {/* Spectrum Slider (Bottom Overlay) */}
-                            <div className="absolute bottom-8 left-8 right-8 bg-slate-900/90 p-4 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur">
-                                <div className="flex justify-between text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-2">
-                                    <span>Radio</span>
-                                    <span>Micro</span>
-                                    <span>IR</span>
-                                    <span>Visible</span>
-                                    <span>UV</span>
-                                    <span>X-Ray</span>
-                                    <span>Gamma</span>
-                                </div>
-                                <div className="relative h-4 rounded-full spectrum-bg mb-4">
-                                    <input 
-                                        type="range" min="0" max="100" step="0.1" 
-                                        value={sliderVal} onChange={(e) => setSliderVal(Number(e.target.value))}
-                                        className="absolute top-[-6px] left-0 w-full h-full opacity-0 cursor-pointer z-10" 
-                                    />
-                                    {/* Custom Thumb Indicator */}
-                                    <div 
-                                        className="absolute top-[-4px] w-6 h-6 bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.8)] border-4 transition-all duration-75 pointer-events-none"
-                                        style={{
-                                            left: `calc(${sliderVal}% - 12px)`,
-                                            borderColor: currentRegion.color
-                                        }}
-                                    ></div>
-                                </div>
-                                <div className="text-center text-xs text-slate-500">
-                                    Drag slider to change frequency
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* RIGHT: Data Panel */}
-                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
-                            
-                            {/* 1. Scientific Data */}
-                            <div className="p-6 space-y-6">
-                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-700 pb-2">
-                                        Parameters
-                                    </h3>
-                                    
-                                    <div className="space-y-4">
-                                        <div>
-                                            <div className="text-[10px] text-slate-500 mb-1">Frequency (f)</div>
-                                            <div className="text-xl font-mono text-white flex items-baseline gap-2">
-                                                {formatSci(frequency, "Hz")}
-                                            </div>
-                                        </div>
-                                        
-                                        <div>
-                                            <div className="text-[10px] text-slate-500 mb-1">Wavelength (&lambda;)</div>
-                                            <div className="text-xl font-mono text-emerald-400 flex items-baseline gap-2">
-                                                {formatSci(wavelength, "m")}
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <div className="text-[10px] text-slate-500 mb-1">Photon Energy (E)</div>
-                                            <div className="text-lg font-mono text-blue-400">
-                                                {formatSci(photonEnergy, "J")}
-                                            </div>
-                                            <div className="text-xs font-mono text-slate-500">
-                                                ({formatSci(photonEnergyEV, "eV")})
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* 2. Application & Hazard */}
-                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg relative overflow-hidden">
-                                    <div className="absolute top-0 left-0 w-1 h-full" style={{backgroundColor: currentRegion.color}}></div>
-                                    
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-                                        Features & Hazards
-                                    </h3>
-                                    
-                                    <div className="mb-4">
-                                        <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                                            <i data-lucide="zap" className="w-4 h-4 text-yellow-400"></i> Typical Applications
-                                        </h4>
-                                        <p className="text-xs text-slate-300 leading-relaxed pl-6">
-                                            {currentRegion.desc}
-                                        </p>
-                                    </div>
-
-                                    <div>
-                                        <h4 className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                                            <i data-lucide="triangle-alert" className="w-4 h-4 text-rose-500"></i> Dangers
-                                        </h4>
-                                        <p className="text-xs text-rose-200/80 leading-relaxed pl-6">
-                                            {currentRegion.hazard}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                {/* 3. Formula Reference */}
-                                <div className="p-4 bg-slate-950/50 rounded-xl border border-slate-800 text-center">
-                                    <p className="font-mono text-lg text-slate-400 mb-1">c = f&lambda;</p>
-                                    <p className="text-[10px] text-slate-600">Speed of Light = Frequency &times; Wavelength</p>
-                                </div>
-
-                            </div>
-                        </div>
-
-                    </div>
-                </main>
+                <div class="absolute bottom-4 left-4 right-4 z-20">
+                    <input type="range" id="spectrum-slider" min="-14" max="4" step="0.01" value="-6.3">
+                </div>
             </div>
-        );
-    };
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+            <!-- Wave Animation & Scale Context -->
+            <div class="flex-[1] relative rounded-xl overflow-hidden shadow-inner bg-slate-950 border border-slate-700 flex flex-col">
+                <div class="absolute top-3 left-4 z-20 pointer-events-none">
+                    <h2 class="text-lg font-bold text-emerald-400 drop-shadow-md" id="current-band-title">Visible Light</h2>
+                    <p class="text-xs text-slate-300 drop-shadow-md">Simulated Wave Representation</p>
+                </div>
+                
+                <!-- Animated Canvas -->
+                <canvas id="wave-canvas" class="w-full h-full absolute inset-0 opacity-80"></canvas>
+                
+                <!-- Scale Context -->
+                <div class="absolute bottom-3 right-4 z-20 bg-slate-800/80 backdrop-blur px-3 py-2 rounded-lg border border-slate-600 text-right shadow-lg">
+                    <span class="text-[10px] text-slate-400 uppercase tracking-widest block mb-1">Physical Scale</span>
+                    <span class="text-sm font-bold text-amber-400 flex items-center justify-end gap-2" id="scale-context">
+                        <span>Protozoans</span>
+                    </span>
+                </div>
+            </div>
+            
+        </div>
+
+        <!-- RIGHT PANEL: Data & Theory -->
+        <div class="flex-[2] flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2 h-full z-10">
+            
+            <!-- Header -->
+            <div class="pb-2 border-b border-slate-700">
+                <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-sky-400 mb-2">
+                    EM Spectrum Explorer
+                </h1>
+                <p class="text-sm text-slate-400 leading-relaxed">
+                    Explore the fundamental inverse relationship between wavelength ($\lambda$), frequency ($f$), and photon energy ($E$).
+                </p>
+            </div>
+
+            <!-- Theory / Equations -->
+            <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-inner">
+                <p class="text-xs text-amber-500 font-bold uppercase tracking-wider mb-2">Planck-Einstein Relations</p>
+                <div class="flex flex-col gap-3 font-serif text-lg text-slate-200 bg-slate-800 p-3 rounded">
+                    <div class="flex items-center justify-center gap-4">
+                        <span class="bg-slate-900 px-3 py-1 rounded text-emerald-400 border border-slate-700">$$c = \lambda f$$</span>
+                        <span class="bg-slate-900 px-3 py-1 rounded text-sky-400 border border-slate-700">$$E = hf = \frac{hc}{\lambda}$$</span>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mt-3 text-[10px] text-slate-500 bg-slate-950 p-2 rounded text-center">
+                    <div>$c \approx 3 \times 10^8$ m/s</div>
+                    <div>$h \approx 4.136 \times 10^{-15}$ eV·s</div>
+                </div>
+            </div>
+
+            <!-- Live Telemetry -->
+            <div class="bg-slate-700/30 p-4 rounded-xl border border-slate-600 flex flex-col gap-3">
+                <h3 class="font-bold text-slate-200 border-b border-slate-600 pb-2">Photon Properties</h3>
+                
+                <div class="grid grid-cols-1 gap-3">
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center relative overflow-hidden">
+                        <div class="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500"></div>
+                        <span class="text-xs text-slate-400 uppercase tracking-wide pl-2">Wavelength ($\lambda$)</span>
+                        <span class="text-xl font-bold text-emerald-400 font-mono" id="val-wavelength">0.00 <span class="text-xs">m</span></span>
+                    </div>
+                    
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center relative overflow-hidden">
+                        <div class="absolute left-0 top-0 bottom-0 w-1 bg-amber-500"></div>
+                        <span class="text-xs text-slate-400 uppercase tracking-wide pl-2">Frequency ($f$)</span>
+                        <span class="text-xl font-bold text-amber-400 font-mono" id="val-frequency">0.00 <span class="text-xs">Hz</span></span>
+                    </div>
+                    
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center relative overflow-hidden">
+                        <div class="absolute left-0 top-0 bottom-0 w-1 bg-sky-500"></div>
+                        <span class="text-xs text-slate-400 uppercase tracking-wide pl-2">Photon Energy ($E$)</span>
+                        <span class="text-xl font-bold text-sky-400 font-mono" id="val-energy">0.00 <span class="text-xs">eV</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Contextual Info -->
+            <div class="bg-slate-900 rounded-xl border border-slate-700 shadow-inner mt-auto flex-grow flex flex-col">
+                <div class="bg-slate-800 px-4 py-2 border-b border-slate-700">
+                    <span class="text-xs font-bold text-purple-400 uppercase tracking-wide">Astronomical & Practical Context</span>
+                </div>
+                <div class="p-4 flex flex-col gap-4">
+                    <div>
+                        <span class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Common Astronomical Sources</span>
+                        <p class="text-sm text-slate-300 leading-relaxed" id="ctx-astro">...</p>
+                    </div>
+                    <div>
+                        <span class="text-[10px] text-slate-500 uppercase font-bold block mb-1">Practical Applications</span>
+                        <p class="text-sm text-slate-300 leading-relaxed" id="ctx-app">...</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Simulator Logic -->
+    <script>
+        // --- Physics Constants ---
+        const C = 299792458; // Speed of light in m/s
+        const H_EV = 4.135667696e-15; // Planck constant in eV*s
+
+        // --- Band Definitions (By Wavelength Exponent: 10^y) ---
+        const BANDS = [
+            { id: 'radio', name: 'Radio', max: 4, min: 0, color: 'rgba(239, 68, 68, 0.2)', text: '#fca5a5', 
+              scale: 'Buildings / Humans', astro: 'Pulsars, Supernova Remnants, Active Galactic Nuclei, Cosmic Gas Clouds.', app: 'Telecommunications, TV/Radio broadcasting, MRI.' },
+            { id: 'microwave', name: 'Microwave', max: 0, min: -3, color: 'rgba(249, 115, 22, 0.2)', text: '#fdba74', 
+              scale: 'Insects / Grains of Sand', astro: 'Cosmic Microwave Background (CMB), Molecular clouds.', app: 'Radar, Wi-Fi, Satellite communications, Microwave ovens.' },
+            { id: 'ir', name: 'Infrared', max: -3, min: -6.15, color: 'rgba(225, 29, 72, 0.2)', text: '#fda4af', 
+              scale: 'Pinpoint / Cells', astro: 'Cool stars, Brown dwarfs, Planetary accretion disks, Interstellar dust.', app: 'Thermal imaging, Remote controls, Fiber optic communications.' },
+            { id: 'visible', name: 'Visible', max: -6.15, min: -6.4, color: 'url(#visibleGradient)', text: '#ffffff', 
+              scale: 'Bacteria / Viruses', astro: 'The Sun, Main-sequence stars, Galaxies.', app: 'Human vision, Optical telescopes, Lasers, Photography.' },
+            { id: 'uv', name: 'Ultraviolet', max: -6.4, min: -8, color: 'rgba(139, 92, 246, 0.2)', text: '#c4b5fd', 
+              scale: 'Large Molecules', astro: 'Hot O and B type stars, Quasars, Supernovae.', app: 'Sterilization, Blacklights, Fluorescence, Lithography.' },
+            { id: 'xray', name: 'X-Ray', max: -8, min: -11, color: 'rgba(14, 165, 233, 0.2)', text: '#7dd3fc', 
+              scale: 'Atoms', astro: 'Black hole accretion disks, Neutron stars, Galaxy clusters.', app: 'Medical imaging, Security scanners, Crystallography.' },
+            { id: 'gamma', name: 'Gamma Ray', max: -11, min: -14, color: 'rgba(248, 250, 252, 0.2)', text: '#f1f5f9', 
+              scale: 'Atomic Nuclei', astro: 'Gamma-Ray Bursts (GRBs), Pulsars, Nuclear reactions.', app: 'Cancer radiotherapy, Food irradiation, Nuclear engineering.' }
+        ];
+
+        // --- State ---
+        // Exponent 'y' where Wavelength = 10^y meters
+        // Slider goes from +4 to -14 (but range input naturally outputs based on its min/max, 
+        // we set min="-14" max="4", so we map correctly)
+        let currentExp = -6.3; 
+
+        // --- DOM Elements ---
+        const slider = document.getElementById('spectrum-slider');
+        const d3Container = document.getElementById('spectrum-container');
+        const waveCanvas = document.getElementById('wave-canvas');
+        const waveCtx = waveCanvas.getContext('2d');
+
+        // --- Initialization ---
+        function init() {
+            initD3();
+            
+            slider.addEventListener('input', (e) => {
+                currentExp = parseFloat(e.target.value);
+                updateTelemetry();
+                updateD3Cursor();
+            });
+
+            window.addEventListener('resize', onResize);
+            onResize(); // initial size catch
+            
+            updateTelemetry();
+            requestAnimationFrame(animateWave);
+        }
+
+        // --- D3.js Setup ---
+        let svg, xScale, cursorLine, cursorText;
+
+        function initD3() {
+            const width = d3Container.clientWidth;
+            const height = d3Container.clientHeight - 40; // leave room for axis and slider
+
+            svg = d3.select('#spectrum-container').append('svg')
+                .attr('width', '100%')
+                .attr('height', '100%')
+                .style('position', 'absolute')
+                .style('top', '0')
+                .style('left', '0');
+
+            // Define visible light gradient
+            const defs = svg.append("defs");
+            const linearGradient = defs.append("linearGradient")
+                .attr("id", "visibleGradient")
+                .attr("x1", "0%").attr("y1", "0%")
+                .attr("x2", "100%").attr("y2", "0%");
+            // Visible runs from ~700nm (Red) to ~400nm (Violet) -> larger exp to smaller exp (left to right)
+            linearGradient.append("stop").attr("offset", "0%").style("stop-color", "#ef4444"); // Red
+            linearGradient.append("stop").attr("offset", "25%").style("stop-color", "#eab308"); // Yellow
+            linearGradient.append("stop").attr("offset", "50%").style("stop-color", "#22c55e"); // Green
+            linearGradient.append("stop").attr("offset", "75%").style("stop-color", "#3b82f6"); // Blue
+            linearGradient.append("stop").attr("offset", "100%").style("stop-color", "#a855f7"); // Violet
+
+            // X Scale: 10^4 to 10^-14
+            xScale = d3.scaleLinear().domain([4, -14]).range([0, width]);
+
+            // Draw Bands
+            const gBands = svg.append('g').attr('class', 'bands');
+            
+            BANDS.forEach(band => {
+                const x1 = xScale(band.max);
+                const x2 = xScale(band.min);
+                const bw = x2 - x1;
+
+                gBands.append('rect')
+                    .attr('x', x1)
+                    .attr('y', 0)
+                    .attr('width', bw)
+                    .attr('height', height)
+                    .attr('fill', band.color)
+                    .attr('stroke', 'rgba(255,255,255,0.1)')
+                    .attr('stroke-width', 1);
+
+                // Rotated Text Labels
+                gBands.append('text')
+                    .attr('class', 'band-label')
+                    .attr('fill', band.text)
+                    .attr('transform', `translate(${x1 + bw/2}, ${height/2}) rotate(-90)`)
+                    .attr('text-anchor', 'middle')
+                    .text(band.name);
+            });
+
+            // Draw Axis
+            const xAxis = d3.axisBottom(xScale)
+                .tickValues([4, 2, 0, -2, -4, -6, -8, -10, -12, -14])
+                .tickFormat(d => `10^${d}`);
+
+            svg.append('g')
+                .attr('transform', `translate(0, ${height})`)
+                .attr('class', 'x-axis')
+                .call(xAxis)
+                .selectAll("text")
+                .style("fill", "#94a3b8")
+                .style("font-size", "10px")
+                .style("font-family", "monospace");
+                
+            svg.selectAll(".domain, .tick line").attr("stroke", "#475569");
+
+            // Interactive Cursor
+            const gCursor = svg.append('g').attr('class', 'cursor');
+            
+            cursorLine = gCursor.append('line')
+                .attr('y1', 0)
+                .attr('y2', height)
+                .attr('stroke', '#ffffff')
+                .attr('stroke-width', 2)
+                .style('pointer-events', 'none')
+                .style('filter', 'drop-shadow(0 0 5px rgba(255,255,255,0.5))');
+
+            // Interactive Drag Area over the SVG
+            svg.on('mousedown mousemove touchmove', function(e) {
+                if(e.type === 'mousedown' || e.buttons === 1 || e.type === 'touchmove') {
+                    e.preventDefault();
+                    let ptr = d3.pointer(e, this);
+                    if (e.type === 'touchmove') {
+                        ptr = d3.pointer(e.touches[0], this);
+                    }
+                    
+                    let xPos = Math.max(0, Math.min(width, ptr[0]));
+                    let exp = xScale.invert(xPos);
+                    
+                    currentExp = exp;
+                    slider.value = exp; // Sync slider
+                    updateTelemetry();
+                    updateD3Cursor();
+                }
+            });
+
+            updateD3Cursor();
+        }
+
+        function updateD3Cursor() {
+            if (!xScale) return;
+            const x = xScale(currentExp);
+            cursorLine.attr('x1', x).attr('x2', x);
+        }
+
+        // --- Data & Telemetry ---
+        function getCurrentBand() {
+            for (let i = 0; i < BANDS.length; i++) {
+                if (currentExp <= BANDS[i].max && currentExp > BANDS[i].min) {
+                    return BANDS[i];
+                }
+            }
+            if (currentExp >= 4) return BANDS[0];
+            return BANDS[BANDS.length-1];
+        }
+
+        function formatSci(val) {
+            if (val === 0) return "0";
+            let parts = val.toExponential(2).split('e');
+            let mantissa = parts[0];
+            let exponent = parseInt(parts[1]);
+            return `${mantissa} &times; 10<sup class="text-[0.7em]">${exponent}</sup>`;
+        }
+
+        function updateTelemetry() {
+            // Calculate Physics values
+            const wavelength = Math.pow(10, currentExp);
+            const frequency = C / wavelength;
+            const energy = H_EV * frequency;
+
+            // DOM Updates
+            document.getElementById('val-wavelength').innerHTML = `${formatSci(wavelength)} <span class="text-xs text-emerald-500/70 font-bold ml-1">m</span>`;
+            document.getElementById('val-frequency').innerHTML = `${formatSci(frequency)} <span class="text-xs text-amber-500/70 font-bold ml-1">Hz</span>`;
+            document.getElementById('val-energy').innerHTML = `${formatSci(energy)} <span class="text-xs text-sky-500/70 font-bold ml-1">eV</span>`;
+
+            // Context Updates
+            const band = getCurrentBand();
+            
+            const titleEl = document.getElementById('current-band-title');
+            titleEl.innerText = band.name;
+            // Match color to band appropriately
+            titleEl.style.color = band.text; 
+
+            document.getElementById('scale-context').innerHTML = band.scale;
+            document.getElementById('ctx-astro').innerText = band.astro;
+            document.getElementById('ctx-app').innerText = band.app;
+        }
+
+        // --- Wave Animation (Canvas) ---
+        let waveTime = 0;
+
+        function animateWave() {
+            const w = waveCanvas.width;
+            const h = waveCanvas.height;
+            waveCtx.clearRect(0, 0, w, h);
+
+            // Map exponent to visual properties
+            // currentExp runs from 4 (Radio) to -14 (Gamma)
+            // Visual Wavelength (pixels): Radio (long) to Gamma (tight)
+            // Map 4 to 300px, -14 to 5px exponentially
+            let normExp = (currentExp - 4) / (-14 - 4); // 0 to 1 (Radio to Gamma)
+            
+            // Visual Wavelength (Exponential decay)
+            let visualWavelength = 300 * Math.pow(0.01, normExp) + 5; 
+            
+            // Visual Speed
+            let visualSpeed = 50 + normExp * 200; // pixels per second
+            
+            // Calculate visual frequency (k)
+            let k = (Math.PI * 2) / visualWavelength;
+            
+            waveTime += visualSpeed * (1/60); // Assuming 60fps
+
+            const centerY = h / 2;
+            const amplitude = h * 0.35;
+            
+            const band = getCurrentBand();
+            
+            // Draw Wave
+            waveCtx.beginPath();
+            waveCtx.lineWidth = 3;
+            // Glowing effect
+            waveCtx.shadowBlur = 10;
+            waveCtx.shadowColor = band.text === '#ffffff' ? '#3b82f6' : band.text; 
+            waveCtx.strokeStyle = band.text;
+
+            for(let x = 0; x <= w; x += 2) {
+                // y = A * sin(kx - wt)
+                let y = centerY + amplitude * Math.sin(k * x - waveTime * k);
+                if (x === 0) waveCtx.moveTo(x, y);
+                else waveCtx.lineTo(x, y);
+            }
+            waveCtx.stroke();
+            waveCtx.shadowBlur = 0; // reset
+
+            requestAnimationFrame(animateWave);
+        }
+
+        // --- Responsiveness ---
+        function onResize() {
+            // Resize D3
+            if (svg) {
+                const width = d3Container.clientWidth;
+                xScale.range([0, width]);
+                
+                // Re-draw bands and axes based on new width
+                d3Container.innerHTML = ''; 
+                initD3();
+            }
+
+            // Resize Canvas
+            const waveContainer = waveCanvas.parentElement;
+            waveCanvas.width = waveContainer.clientWidth;
+            waveCanvas.height = waveContainer.clientHeight;
+        }
+
+        // Boot
+        window.addEventListener('DOMContentLoaded', init);
+
+    </script>
 </body>
 </html>
