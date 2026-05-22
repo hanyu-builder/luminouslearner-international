@@ -3,344 +3,481 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stellar Parallax Lab | Luminous Learner</title>
+    <meta name="description" content="Interactive stellar parallax distance simulator. Visualize geometric distance measurement using Earth's orbit to find star distance in parsecs.">
+    <title>Stellar Parallax Distance Simulator</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    
-    <!-- Babel -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@0.263.1"></script>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- MathJax for rendering formulas -->
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #e2e8f0; overflow-y: hidden; /* Prevent body scroll inside iframe */ }
-        .slider-thumb::-webkit-slider-thumb {
-            -webkit-appearance: none; appearance: none; width: 16px; height: 16px;
-            border-radius: 50%; cursor: pointer; border: 2px solid #ffffff;
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 900: '#0F172A', 800: '#1E293B', 700: '#334155', 600: '#475569' },
+                        star: { 400: '#fbbf24', 500: '#f59e0b' },
+                        earth: { 400: '#38bdf8' }
+                    }
+                }
+            }
         }
-        .thumb-indigo::-webkit-slider-thumb { background: #6366f1; }
-        .canvas-container { cursor: crosshair; }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0F172A; color: #f8fafc; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        @media (max-width: 1024px) { body { overflow-y: auto; } }
         
-        /* Custom Scrollbar for sidebar if height exceeds */
-        .custom-scroll::-webkit-scrollbar { width: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #1e293b; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        
+        canvas { display: block; outline: none; }
+        
+        /* Custom Range Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #38bdf8; cursor: pointer; margin-top: -6px; box-shadow: 0 0 10px rgba(56,189,248,0.6); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; background: #334155; border-radius: 3px; }
+        input[type=range]:focus { outline: none; }
     </style>
 </head>
-<body>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col justify-center items-center p-2 sm:p-4">
 
-<div id="root"></div>
-
-<script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-
-    // Internal resolution (High res for sharpness, scaled down by CSS)
-    const CANVAS_WIDTH = 900;
-    const CANVAS_HEIGHT = 550; // Slightly taller to fit telescope view comfortably
-    
-    // Split screen setup
-    const VIEW_1_WIDTH = CANVAS_WIDTH * 0.55; // 55% for Solar System
-    // View 2 (Telescope) takes the rest
-
-    const App = () => {
-        // --- State ---
-        const [starDistance, setStarDistance] = useState(150); // Pixel distance from Sun
-        const [isPaused, setIsPaused] = useState(false);
-        const [showLines, setShowLines] = useState(true);
+    <!-- Main Container -->
+    <div id="app" class="w-full max-w-[1400px] max-h-[950px] h-full flex flex-col lg:flex-row gap-6 bg-slate-800 p-4 sm:p-6 rounded-2xl shadow-2xl border border-slate-700 relative overflow-hidden">
         
-        // Real-time Data
-        const [month, setMonth] = useState("Jan");
-        const [parallaxAngle, setParallaxAngle] = useState(0); // Arcseconds (simulated)
-
-        const canvasRef = useRef(null);
-        const requestRef = useRef();
-        
-        // Physics Logic Refs
-        const simRef = useRef({
-            earthAngle: 0, 
-            speed: 0.005,
-        });
-
-        // --- Logic ---
-        const loop = () => {
-            if (!isPaused) {
-                simRef.current.earthAngle += simRef.current.speed;
-            }
+        <!-- LEFT PANEL: Visualizers -->
+        <div class="flex-[3] flex flex-col gap-4 min-h-0 relative">
             
-            // Calculate Month
-            const deg = (simRef.current.earthAngle % (2 * Math.PI)) * (180 / Math.PI);
-            const monthIndex = Math.floor((deg / 360) * 12);
-            const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            setMonth(months[monthIndex] || "Jan");
+            <!-- 3D Orbit View (Top) -->
+            <div class="flex-[3] relative rounded-xl overflow-hidden shadow-inner bg-slate-900 border border-slate-700 z-10 flex flex-col">
+                <div class="absolute top-4 left-4 right-4 flex justify-between pointer-events-none z-20">
+                    <div class="bg-slate-800/80 backdrop-blur px-4 py-2 rounded-lg border border-slate-600 shadow-lg pointer-events-auto">
+                        <h2 class="text-xl font-bold text-star-400">Solar System View</h2>
+                        <p class="text-xs text-slate-300">Drag to rotate • Visualizes the 2 AU baseline</p>
+                    </div>
+                </div>
+                <!-- Three.js Canvas -->
+                <div id="orbit-canvas-container" class="w-full flex-grow cursor-move"></div>
+            </div>
 
-            draw();
-            requestRef.current = requestAnimationFrame(loop);
-        };
+            <!-- Telescope View (Bottom) -->
+            <div class="flex-[2] relative rounded-xl overflow-hidden shadow-inner bg-slate-950 border border-slate-700 z-10 flex flex-col">
+                <div class="absolute top-3 left-4 z-20 pointer-events-none">
+                    <h2 class="text-lg font-bold text-emerald-400 drop-shadow-md">Telescope View (Earth)</h2>
+                    <p class="text-xs text-slate-300 drop-shadow-md">Background stars at infinity</p>
+                </div>
+                <div class="absolute top-3 right-4 z-20 text-right pointer-events-none">
+                    <span class="text-xs font-mono bg-slate-800/80 px-2 py-1 rounded border border-slate-600 text-emerald-300">Grid = 0.1 arcsec</span>
+                </div>
+                <!-- 2D Canvas -->
+                <canvas id="telescope-canvas" class="w-full h-full absolute inset-0"></canvas>
+            </div>
+            
+        </div>
 
-        // --- Rendering ---
-        const draw = () => {
-            const ctx = canvasRef.current?.getContext('2d');
-            if (!ctx) return;
+        <!-- RIGHT PANEL: Data, Theory & Controls -->
+        <div class="flex-[2] flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2 h-full z-10">
+            
+            <!-- Header -->
+            <div class="pb-2 border-b border-slate-700">
+                <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-sky-400 mb-2">
+                    Stellar Parallax Simulator
+                </h1>
+                <p class="text-sm text-slate-400 leading-relaxed">
+                    By observing a nearby star from opposite sides of Earth's orbit (a 6-month baseline), we can measure its apparent shift against distant background stars to calculate its precise distance.
+                </p>
+            </div>
 
-            // Clear Background
-            ctx.fillStyle = '#020617'; 
-            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            <!-- Theory / Equation -->
+            <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-inner">
+                <p class="text-xs text-amber-500 font-bold uppercase tracking-wider mb-2">Geometric Distance</p>
+                <div class="flex flex-col gap-2 bg-slate-800 py-3 px-4 rounded text-center text-slate-200">
+                    <div class="text-xl">$$d = \frac{1}{p}$$</div>
+                    <div class="text-[11px] text-slate-400 mt-1 border-t border-slate-700 pt-2 text-left">
+                        Where <strong class="text-emerald-400">$d$</strong> is distance in <strong class="text-emerald-400">parsecs (pc)</strong>, and <strong class="text-sky-400">$p$</strong> is the parallax angle in <strong class="text-sky-400">arcseconds (")</strong>.
+                    </div>
+                </div>
+                <div class="mt-2 text-[10px] text-slate-500 bg-slate-950 p-2 rounded">
+                    1 Parsec = 3.26 Light Years = 206,265 AU. (1 AU = Distance from Earth to Sun).
+                </div>
+            </div>
 
-            // --- 1. LEFT PANEL: Top-Down Solar System ---
-            const sunX = VIEW_1_WIDTH / 2;
-            const sunY = CANVAS_HEIGHT - 120; // Lower Sun position
-            const earthOrbitRadius = 90;
+            <!-- Controls -->
+            <div class="bg-slate-700/30 p-5 rounded-xl border border-slate-600 flex flex-col gap-6 mt-1 flex-grow">
+                <h3 class="font-bold text-slate-200 border-b border-slate-600 pb-2">Observatory Controls</h3>
+                
+                <!-- Distance Slider -->
+                <div class="flex flex-col gap-2">
+                    <div class="flex justify-between items-center mb-1">
+                        <label for="star-distance" class="text-sm font-semibold text-emerald-400">True Distance to Star ($d$)</label>
+                        <span id="dist-val" class="text-xs font-mono bg-slate-900 px-2 py-1 rounded text-emerald-300 border border-slate-600 shadow-inner">2.00 pc</span>
+                    </div>
+                    <input type="range" id="star-distance" min="1" max="10" step="0.1" value="2.0">
+                    <div class="flex justify-between text-[10px] text-slate-500 uppercase tracking-widest mt-1">
+                        <span>1 pc (Close)</span>
+                        <span>10 pc (Far)</span>
+                    </div>
+                </div>
 
-            // Divider Line
-            ctx.strokeStyle = '#1e293b';
-            ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(VIEW_1_WIDTH, 0); ctx.lineTo(VIEW_1_WIDTH, CANVAS_HEIGHT); ctx.stroke();
+                <!-- Time of Year Slider -->
+                <div class="flex flex-col gap-2 mt-2">
+                    <div class="flex justify-between items-center mb-1">
+                        <label for="time-month" class="text-sm font-semibold text-sky-400">Time of Observation</label>
+                        <span id="month-val" class="text-xs font-mono bg-slate-900 px-2 py-1 rounded text-sky-300 border border-slate-600 shadow-inner">Month 0</span>
+                    </div>
+                    <input type="range" id="time-month" min="0" max="12" step="0.1" value="0">
+                    <div class="flex justify-between text-[10px] text-slate-500 uppercase tracking-widest mt-1">
+                        <span>Month 0 (Left Side)</span>
+                        <span>Month 6 (Right Side)</span>
+                    </div>
+                </div>
 
-            // Background Stars (Static)
-            drawBackgroundStars(ctx, 0, 0, VIEW_1_WIDTH, CANVAS_HEIGHT - 150);
+                <div class="flex gap-2 mt-auto">
+                    <button id="btn-animate" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 px-4 rounded transition-colors shadow">
+                        Auto Orbit
+                    </button>
+                    <button id="btn-measure" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-4 rounded transition-colors shadow">
+                        6-Month Jump
+                    </button>
+                </div>
+            </div>
+
+            <!-- Telemetry Dashboard -->
+            <div class="grid grid-cols-2 gap-3 mt-auto">
+                <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute left-0 top-0 bottom-0 w-1 bg-sky-500"></div>
+                    <span class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Parallax Angle ($p$)</span>
+                    <div class="flex items-baseline gap-1">
+                        <span class="text-2xl font-bold text-sky-400 font-mono" id="stat-parallax">0.50</span>
+                        <span class="text-xs text-sky-500/70 font-bold">arcsec</span>
+                    </div>
+                </div>
+                
+                <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute left-0 top-0 bottom-0 w-1 bg-purple-500"></div>
+                    <span class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Total Shift (6 Mo)</span>
+                    <div class="flex items-baseline gap-1">
+                        <span class="text-2xl font-bold text-purple-400 font-mono" id="stat-shift">1.00</span>
+                        <span class="text-xs text-purple-500/70 font-bold">arcsec</span>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Simulator Logic -->
+    <script>
+        // --- State Variables ---
+        let currentDistancePc = 2.0; // Parsecs
+        let currentMonth = 0; // 0 to 12
+        let isAutoOrbiting = false;
+
+        // Visual Scales (Not mathematically to scale, but visually representative)
+        const ORBIT_RADIUS = 5; 
+        const STAR_BASE_Z = -15; // Z position representing 1 parsec visually
+        
+        // Data derived variables
+        let parallaxAngle = 1 / currentDistancePc;
+
+        // DOM Elements
+        const distSlider = document.getElementById('star-distance');
+        const monthSlider = document.getElementById('time-month');
+        const distVal = document.getElementById('dist-val');
+        const monthVal = document.getElementById('month-val');
+        const statParallax = document.getElementById('stat-parallax');
+        const statShift = document.getElementById('stat-shift');
+
+        // --- Three.js Variables ---
+        let scene, camera, renderer, controls;
+        let earth, starTarget, sightLine, baseLine, fixedLine;
+
+        // --- Telescope Canvas Variables ---
+        const teleCanvas = document.getElementById('telescope-canvas');
+        const teleCtx = teleCanvas.getContext('2d');
+        let backgroundStars = [];
+
+        // --- Initialize Everything ---
+        function init() {
+            // Setup Listeners
+            distSlider.addEventListener('input', (e) => {
+                currentDistancePc = parseFloat(e.target.value);
+                parallaxAngle = 1 / currentDistancePc;
+                updateTelemetryUI();
+            });
+
+            monthSlider.addEventListener('input', (e) => {
+                currentMonth = parseFloat(e.target.value);
+                isAutoOrbiting = false; // Stop auto if user drags
+                document.getElementById('btn-animate').innerText = "Auto Orbit";
+                updateTelemetryUI();
+            });
+
+            document.getElementById('btn-animate').addEventListener('click', (e) => {
+                isAutoOrbiting = !isAutoOrbiting;
+                e.target.innerText = isAutoOrbiting ? "Pause Orbit" : "Auto Orbit";
+            });
+
+            document.getElementById('btn-measure').addEventListener('click', () => {
+                // Jump 6 months ahead for baseline comparison
+                currentMonth = (currentMonth + 6) % 12;
+                monthSlider.value = currentMonth;
+                updateTelemetryUI();
+            });
+
+            // Initialize visual systems
+            initThreeJS();
+            generateBackgroundStars();
+            
+            // Handle Resizing
+            window.addEventListener('resize', onWindowResize);
+            onWindowResize(); // Force initial sizing
+            
+            updateTelemetryUI();
+            
+            // Start Animation Loops
+            requestAnimationFrame(animate);
+        }
+
+        // --- Three.js 3D Setup ---
+        function initThreeJS() {
+            const container = document.getElementById('orbit-canvas-container');
+            
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 30, 20); // Top down, slightly angled
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.maxDistance = 80;
+            controls.minDistance = 10;
+            // Restrict rotation so user can't flip it upside down easily
+            controls.maxPolarAngle = Math.PI / 2 - 0.1;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambientLight);
 
             // Sun
-            ctx.fillStyle = '#f59e0b';
-            ctx.shadowBlur = 20; ctx.shadowColor = '#f59e0b';
-            ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI*2); ctx.fill();
-            ctx.shadowBlur = 0;
+            const sunGeo = new THREE.SphereGeometry(1.5, 32, 32);
+            const sunMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+            const sun = new THREE.Mesh(sunGeo, sunMat);
+            scene.add(sun);
+            
+            // Sun glow
+            const glowMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.3 });
+            const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(2, 32, 32), glowMat);
+            scene.add(sunGlow);
 
-            // Earth Orbit
-            ctx.strokeStyle = '#334155'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.arc(sunX, sunY, earthOrbitRadius, 0, Math.PI*2); ctx.stroke();
+            // Earth Orbit Path
+            const orbitGeo = new THREE.BufferGeometry();
+            const orbitPts = [];
+            for(let i=0; i<=64; i++) {
+                let theta = (i/64) * Math.PI * 2;
+                orbitPts.push(new THREE.Vector3(Math.cos(theta)*ORBIT_RADIUS, 0, Math.sin(theta)*ORBIT_RADIUS));
+            }
+            orbitGeo.setFromPoints(orbitPts);
+            const orbitMat = new THREE.LineBasicMaterial({ color: 0x475569 });
+            scene.add(new THREE.Line(orbitGeo, orbitMat));
 
             // Earth
-            const ex = sunX + Math.cos(simRef.current.earthAngle - Math.PI/2) * earthOrbitRadius;
-            const ey = sunY + Math.sin(simRef.current.earthAngle - Math.PI/2) * earthOrbitRadius;
-            ctx.fillStyle = '#3b82f6';
-            ctx.beginPath(); ctx.arc(ex, ey, 9, 0, Math.PI*2); ctx.fill();
+            const earthGeo = new THREE.SphereGeometry(0.5, 32, 32);
+            const earthMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.5 });
+            earth = new THREE.Mesh(earthGeo, earthMat);
+            scene.add(earth);
 
-            // Target Star (Actual Position)
-            const starX = sunX; 
-            const starY = sunY - 180 - starDistance; // Relative to Sun
-            
-            ctx.fillStyle = '#f43f5e';
-            ctx.shadowBlur = 15; ctx.shadowColor = '#f43f5e';
-            ctx.beginPath(); drawStar(ctx, starX, starY, 5, 9, 4); ctx.fill();
-            ctx.shadowBlur = 0;
+            // Target Star (The one being measured)
+            const starGeo = new THREE.SphereGeometry(0.8, 32, 32);
+            const starMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            starTarget = new THREE.Mesh(starGeo, starMat);
+            scene.add(starTarget);
 
             // Sight Lines
-            if (showLines) {
-                ctx.strokeStyle = 'rgba(244, 63, 94, 0.4)';
-                ctx.setLineDash([5, 5]);
-                ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(starX, starY);
-                // Extend to background
-                const bgY = 40;
-                const slope = (starY - ey) / (starX - ex);
-                let bgX = starX;
-                if (Math.abs(starX - ex) > 0.1) {
-                     const c = ey - slope * ex;
-                     bgX = (bgY - c) / slope;
-                }
-                ctx.lineTo(bgX, bgY); ctx.stroke();
-                ctx.setLineDash([]);
-                
-                // Background Plane
-                ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-                ctx.beginPath(); ctx.moveTo(40, bgY); ctx.lineTo(VIEW_1_WIDTH-40, bgY); ctx.stroke();
-                ctx.fillStyle = '#64748b'; ctx.font = "10px sans-serif"; ctx.fillText("Background Stars", 40, bgY - 10);
-            }
-
-            // --- 2. RIGHT PANEL: Telescope View ---
-            const view2W = CANVAS_WIDTH - VIEW_1_WIDTH;
-            const center2X = VIEW_1_WIDTH + view2W / 2;
-            const center2Y = CANVAS_HEIGHT / 2;
-
-            // Scope Mask
-            ctx.save();
-            ctx.beginPath(); ctx.arc(center2X, center2Y, 180, 0, Math.PI*2); ctx.clip();
+            const lineMat = new THREE.LineDashedMaterial({ color: 0x10b981, dashSize: 1, gapSize: 0.5 });
             
-            // Scope BG
-            ctx.fillStyle = '#0f172a'; ctx.fillRect(VIEW_1_WIDTH, 0, view2W, CANVAS_HEIGHT);
-            drawBackgroundStars(ctx, VIEW_1_WIDTH, 0, view2W, CANVAS_HEIGHT);
+            // Dynamic Line from Earth to Star
+            const slGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+            sightLine = new THREE.Line(slGeo, lineMat);
+            sightLine.computeLineDistances();
+            scene.add(sightLine);
 
-            // Parallax Calculation
-            const baseline = ex - sunX; 
-            const shiftFactor = 8000 / (starDistance + 150); 
-            const apparentX = center2X - (baseline * shiftFactor / 80) * 15; 
+            // Fixed line from Sun to Star
+            const flGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-100)]);
+            const fMat = new THREE.LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.5 });
+            fixedLine = new THREE.Line(flGeo, fMat);
+            scene.add(fixedLine);
             
-            // Draw Target Star (Apparent)
-            ctx.fillStyle = '#f43f5e'; 
-            ctx.shadowBlur = 20; ctx.shadowColor = '#f43f5e';
-            ctx.beginPath(); drawStar(ctx, apparentX, center2Y, 5, 14, 7); ctx.fill();
-            ctx.shadowBlur = 0;
-
-            // Crosshair
-            ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(center2X, center2Y - 180); ctx.lineTo(center2X, center2Y + 180);
-            ctx.moveTo(center2X - 180, center2Y); ctx.lineTo(center2X + 180, center2Y);
-            ctx.stroke();
-            ctx.restore();
-
-            // Labels
-            ctx.fillStyle = '#94a3b8'; ctx.font = "bold 16px sans-serif";
-            ctx.fillText("1. Top-Down View", 30, 40);
-            ctx.fillText("2. Telescope View", VIEW_1_WIDTH + 30, 40);
-
-            // Update State
-            const simulatedAngle = 1000 / (starDistance + 50);
-            setParallaxAngle(simulatedAngle);
-        };
-
-        const drawStar = (ctx, cx, cy, spikes, outerRadius, innerRadius) => {
-            let rot = Math.PI / 2 * 3;
-            let x = cx; let y = cy; let step = Math.PI / spikes;
-            ctx.moveTo(cx, cy - outerRadius);
-            for (let i = 0; i < spikes; i++) {
-                x = cx + Math.cos(rot) * outerRadius; y = cy + Math.sin(rot) * outerRadius; ctx.lineTo(x, y); rot += step;
-                x = cx + Math.cos(rot) * innerRadius; y = cy + Math.sin(rot) * innerRadius; ctx.lineTo(x, y); rot += step;
-            }
-            ctx.lineTo(cx, cy - outerRadius); ctx.closePath();
+            // Base line connecting the two extreme Earth positions
+            const blGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-ORBIT_RADIUS, 0, 0), new THREE.Vector3(ORBIT_RADIUS, 0, 0)]);
+            const bMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.3 });
+            baseLine = new THREE.Line(blGeo, bMat);
+            scene.add(baseLine);
         }
 
-        const starsCache = useRef([]);
-        if (starsCache.current.length === 0) {
-            for(let i=0; i<80; i++) starsCache.current.push({ x: Math.random(), y: Math.random(), size: Math.random() * 2 });
+        // --- 2D Telescope Canvas ---
+        function generateBackgroundStars() {
+            backgroundStars = [];
+            for (let i = 0; i < 150; i++) {
+                backgroundStars.push({
+                    x: Math.random(), // 0 to 1 percentage
+                    y: Math.random(),
+                    size: Math.random() * 1.5 + 0.5,
+                    brightness: Math.random() * 0.5 + 0.3
+                });
+            }
         }
-        const drawBackgroundStars = (ctx, startX, startY, w, h) => {
-            ctx.fillStyle = '#ffffff';
-            starsCache.current.forEach(s => {
-                const sx = startX + s.x * w;
-                const sy = startY + s.y * h;
-                ctx.globalAlpha = 0.3 + Math.random() * 0.5;
-                ctx.beginPath(); ctx.arc(sx, sy, s.size, 0, Math.PI*2); ctx.fill();
+
+        function renderTelescope() {
+            const w = teleCanvas.width;
+            const h = teleCanvas.height;
+            
+            teleCtx.fillStyle = '#020617'; // slate-950
+            teleCtx.fillRect(0, 0, w, h);
+
+            // 1. Draw Fixed Background Stars
+            backgroundStars.forEach(star => {
+                teleCtx.fillStyle = `rgba(255, 255, 255, ${star.brightness})`;
+                teleCtx.beginPath();
+                teleCtx.arc(star.x * w, star.y * h, star.size, 0, Math.PI * 2);
+                teleCtx.fill();
             });
-            ctx.globalAlpha = 1.0;
+
+            // 2. Draw Measurement Grid (Simulating arcseconds)
+            const gridSpacing = 40; // Pixels per 0.1 arcsec
+            const centerX = w / 2;
+            const centerY = h / 2;
+
+            teleCtx.strokeStyle = 'rgba(16, 185, 129, 0.2)'; // Faint emerald
+            teleCtx.lineWidth = 1;
+            
+            // Vertical grid lines
+            for(let i = 0; i < w/2; i += gridSpacing) {
+                teleCtx.beginPath(); teleCtx.moveTo(centerX + i, 0); teleCtx.lineTo(centerX + i, h); teleCtx.stroke();
+                teleCtx.beginPath(); teleCtx.moveTo(centerX - i, 0); teleCtx.lineTo(centerX - i, h); teleCtx.stroke();
+            }
+            // Center crosshair
+            teleCtx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+            teleCtx.beginPath(); teleCtx.moveTo(centerX, 0); teleCtx.lineTo(centerX, h); teleCtx.stroke();
+            teleCtx.beginPath(); teleCtx.moveTo(0, centerY); teleCtx.lineTo(w, centerY); teleCtx.stroke();
+
+            // 3. Draw The Target Star (with Parallax Shift)
+            // If p = 1 arcsec, shift is 1.0. 
+            // We scale 0.1 arcsec = gridSpacing. So 1 arcsec = 10 * gridSpacing.
+            const scalePixelsPerArcsec = gridSpacing * 10; 
+            
+            // Earth Position in Orbit: theta = (month/12) * 2PI
+            const theta = (currentMonth / 12) * Math.PI * 2;
+            
+            // Shift is maximal when Earth is at X extremes (Month 0 and Month 6)
+            // Month 0: Earth is at +X. Looking at -Z, star appears shifted to -X (Left).
+            // Shift = - parallaxAngle * cos(theta)
+            const apparentShiftX = -parallaxAngle * Math.cos(theta) * scalePixelsPerArcsec;
+            
+            const starX = centerX + apparentShiftX;
+            const starY = centerY; // Assuming planar orbit, no vertical shift
+
+            // Glow
+            const gradient = teleCtx.createRadialGradient(starX, starY, 0, starX, starY, 20);
+            gradient.addColorStop(0, 'rgba(251, 191, 36, 1)'); // Amber center
+            gradient.addColorStop(0.3, 'rgba(251, 191, 36, 0.8)');
+            gradient.addColorStop(1, 'rgba(251, 191, 36, 0)');
+            
+            teleCtx.fillStyle = gradient;
+            teleCtx.beginPath();
+            teleCtx.arc(starX, starY, 20, 0, Math.PI * 2);
+            teleCtx.fill();
+
+            // Core
+            teleCtx.fillStyle = '#ffffff';
+            teleCtx.beginPath();
+            teleCtx.arc(starX, starY, 3, 0, Math.PI * 2);
+            teleCtx.fill();
+            
+            // Ghost trace of the full ellipse (straight line in this planar case)
+            teleCtx.strokeStyle = 'rgba(251, 191, 36, 0.3)';
+            teleCtx.setLineDash([2, 4]);
+            teleCtx.beginPath();
+            teleCtx.moveTo(centerX - (parallaxAngle * scalePixelsPerArcsec), centerY);
+            teleCtx.lineTo(centerX + (parallaxAngle * scalePixelsPerArcsec), centerY);
+            teleCtx.stroke();
+            teleCtx.setLineDash([]);
         }
 
-        useEffect(() => {
-            requestRef.current = requestAnimationFrame(loop);
-            return () => cancelAnimationFrame(requestRef.current);
-        }, [isPaused, starDistance, showLines]);
+        // --- Main Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
 
-        useEffect(() => {
-            if (window.lucide) window.lucide.createIcons();
-        });
+            if (isAutoOrbiting) {
+                currentMonth += 0.05;
+                if (currentMonth >= 12) currentMonth = 0;
+                monthSlider.value = currentMonth;
+                updateTelemetryUI(false); // don't update chart text heavily every frame to avoid jitter
+            }
 
-        return (
-            <div className="h-screen bg-slate-900 text-slate-200 font-sans overflow-hidden flex flex-col">
-                {/* Compact Navbar */}
-                <nav className="bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between shrink-0 h-14">
-                    <div className="flex items-center space-x-3">
-                        <div className="bg-indigo-500/20 p-1.5 rounded-lg">
-                            <i data-lucide="telescope" className="w-5 h-5 text-indigo-400"></i>
-                        </div>
-                        <h1 className="text-lg font-bold text-white tracking-wide">Stellar Parallax Lab</h1>
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded-full border border-slate-700">
-                        Topic: Astrophysics
-                    </div>
-                </nav>
+            // Update 3D Geometry
+            const theta = (currentMonth / 12) * Math.PI * 2;
+            const ex = Math.cos(theta) * ORBIT_RADIUS;
+            const ez = Math.sin(theta) * ORBIT_RADIUS;
+            earth.position.set(ex, 0, ez);
 
-                {/* Main Content - Dashboard Layout */}
-                <main className="flex-1 overflow-hidden">
-                    <div className="h-full max-w-[1200px] mx-auto grid grid-cols-1 lg:grid-cols-4">
-                        
-                        {/* LEFT: Canvas (Takes 3/4 space) */}
-                        <div className="lg:col-span-3 bg-slate-950 relative border-r border-slate-700">
-                            <canvas 
-                                ref={canvasRef} 
-                                width={CANVAS_WIDTH} 
-                                height={CANVAS_HEIGHT}
-                                className="w-full h-full object-contain"
-                            />
-                        </div>
+            // Update Star Position based on distance slider
+            // Map 1-10 pc to visual Z distance (e.g., -15 to -60)
+            const visualZ = STAR_BASE_Z - (currentDistancePc * 5); 
+            starTarget.position.set(0, 0, visualZ);
 
-                        {/* RIGHT: Controls & Stats (Takes 1/4 space) */}
-                        <div className="lg:col-span-1 bg-slate-900 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scroll">
-                            
-                            {/* 1. Live Stats Panel */}
-                            <div className="p-4 bg-slate-800/50 border-b border-slate-700">
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Live Data</h3>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
-                                        <div className="text-[10px] text-slate-500 mb-1">Month</div>
-                                        <div className="text-white font-mono font-bold text-lg">{month}</div>
-                                    </div>
-                                    <div className="bg-slate-900 p-2 rounded border border-slate-700 text-center">
-                                        <div className="text-[10px] text-slate-500 mb-1">Angle ($p$)</div>
-                                        <div className="text-emerald-400 font-mono font-bold text-lg">{parallaxAngle.toFixed(2)}"</div>
-                                    </div>
-                                </div>
-                            </div>
+            // Update Sightline
+            const positions = sightLine.geometry.attributes.position.array;
+            positions[0] = ex; positions[1] = 0; positions[2] = ez;
+            positions[3] = 0; positions[4] = 0; positions[5] = visualZ;
+            sightLine.geometry.attributes.position.needsUpdate = true;
+            sightLine.computeLineDistances(); // Required for dashed lines
 
-                            {/* 2. Controls */}
-                            <div className="p-5 flex-1 flex flex-col gap-6">
-                                {/* Distance Slider */}
-                                <div>
-                                    <label className="flex justify-between text-xs font-bold text-indigo-300 mb-2">
-                                        Star Distance
-                                        <span>{((starDistance + 50) / 10).toFixed(0)} ly</span>
-                                    </label>
-                                    <input 
-                                        type="range" min="0" max="300" step="1" 
-                                        value={starDistance} onChange={(e) => setStarDistance(Number(e.target.value))}
-                                        className="w-full h-2 bg-slate-700 rounded-lg slider-thumb thumb-indigo mb-1" 
-                                    />
-                                    <div className="flex justify-between text-[10px] text-slate-500">
-                                        <span>Near</span>
-                                        <span>Far</span>
-                                    </div>
-                                </div>
+            // Render Views
+            controls.update();
+            renderer.render(scene, camera);
+            renderTelescope();
+        }
 
-                                {/* Toggles */}
-                                <div className="space-y-3">
-                                    <button 
-                                        onClick={() => setIsPaused(!isPaused)}
-                                        className={`w-full py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all ${!isPaused ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
-                                    >
-                                        <i data-lucide={isPaused ? "play" : "pause"} className="w-4 h-4"></i>
-                                        {isPaused ? "Resume Orbit" : "Pause Orbit"}
-                                    </button>
-                                    
-                                    <label className="flex items-center gap-3 p-3 bg-slate-800 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-750 transition">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={showLines} 
-                                            onChange={() => setShowLines(!showLines)}
-                                            className="w-4 h-4 rounded text-indigo-500 bg-slate-900 border-slate-600 focus:ring-0"
-                                        />
-                                        <span className="text-xs font-bold text-slate-300">Show Lines of Sight</span>
-                                    </label>
-                                </div>
+        // --- UI Updates ---
+        function updateTelemetryUI(updateText = true) {
+            if (updateText) {
+                distVal.innerText = `${currentDistancePc.toFixed(2)} pc`;
+                monthVal.innerText = `Month ${currentMonth.toFixed(1)}`;
+                
+                statParallax.innerText = parallaxAngle.toFixed(3);
+                statShift.innerText = (parallaxAngle * 2).toFixed(3); // Total shift is 2p
+            }
+        }
 
-                                {/* Info Box */}
-                                <div className="mt-auto bg-indigo-900/20 border border-indigo-500/20 p-3 rounded-lg">
-                                    <h4 className="text-indigo-300 font-bold text-xs mb-1 flex items-center">
-                                        <i data-lucide="info" className="w-3 h-3 mr-1"></i> Lab Challenge
-                                    </h4>
-                                    <p className="text-[11px] text-slate-400 leading-snug">
-                                        Increase the star distance. Does the star wobble <em>more</em> or <em>less</em> in the telescope view?
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
+        function onWindowResize() {
+            // 3D Canvas
+            const container = document.getElementById('orbit-canvas-container');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            
+            // 2D Canvas
+            const teleContainer = teleCanvas.parentElement;
+            teleCanvas.width = teleContainer.clientWidth;
+            teleCanvas.height = teleContainer.clientHeight;
+        }
 
-                    </div>
-                </main>
-            </div>
-        );
-    };
+        // Boot
+        window.addEventListener('DOMContentLoaded', init);
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+    </script>
 </body>
 </html>
