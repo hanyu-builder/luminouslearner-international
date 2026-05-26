@@ -2,390 +2,678 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enzyme Kinetics Lab | LuminousLearner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Biology Virtual Labs - Enzyme Kinetics Lab</title>
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for Dynamic Graphing -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* Custom Slider */
-        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; 
-            background: #38bdf8; cursor: pointer; margin-top: -6px; 
-            box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
-        }
-        input[type=range]::-webkit-slider-runnable-track {
-            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        body {
+            background-color: #0F172A; /* Slate 900 */
+            color: #F8FAFC;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
         }
 
-        /* Canvas Pattern */
-        .sim-canvas {
-            background-image: radial-gradient(#1e293b 1px, transparent 1px);
-            background-size: 20px 20px;
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+        /* Custom Sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+            width: 100%;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px; width: 18px;
+            border-radius: 50%;
+            background: currentColor;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:active { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 6px;
+            cursor: pointer; border-radius: 4px;
+            background: #334155;
+        }
+
+        /* Inhibitor Toggle Radio Buttons */
+        .inhibitor-radio:checked + div {
+            border-color: currentColor;
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Canvas Container */
+        #molecular-canvas {
+            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%);
         }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen w-screen flex justify-center items-center p-2 md:p-4">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
-        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label } = window.Recharts;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- SIMULATION ENGINE ---
-        const CANVAS_WIDTH = 400;
-        const CANVAS_HEIGHT = 300;
-
-        const App = () => {
-            const canvasRef = useRef(null);
-            const [mode, setMode] = useState('temp'); // temp, ph, conc
+    <div class="w-full h-full max-w-7xl max-h-[950px] flex flex-col bg-slate-900 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] overflow-hidden border border-slate-700/50">
+        
+        <!-- Header -->
+        <header class="p-4 md:px-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-sm z-10 shrink-0 gap-3 md:gap-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-500 flex items-center gap-3">
+                    <i class="fa-solid fa-chart-line text-emerald-400"></i> Enzyme Kinetics Lab
+                </h1>
+                <p class="text-[10px] md:text-xs font-medium text-slate-400 uppercase tracking-widest mt-1">Michaelis-Menten & Environmental Analysis</p>
+            </div>
             
-            // Parameters
-            const [temperature, setTemperature] = useState(37); // 0-100
-            const [ph, setPh] = useState(7); // 0-14
-            const [substrateConc, setSubstrateConc] = useState(50); // 0-100
-            
-            // Simulation State
-            const particlesRef = useRef([]);
-            const [rate, setRate] = useState(0);
-            
-            // Optimal Conditions (Hidden Constants)
-            const OPT_TEMP = 40;
-            const OPT_PH = 7;
-            const V_MAX = 100;
-            const KM = 20; // Michaelis constant
-
-            // --- KINETIC CALCULATIONS ---
-            const calculateRate = (t, p, s) => {
-                // 1. Temperature Factor (Bell curve skewed right)
-                // Denaturation starts > 45, complete > 60
-                let tempFactor = 0;
-                if (t < OPT_TEMP) {
-                    tempFactor = 0.1 + (t / OPT_TEMP) * 0.9; // Increasing KE
-                } else if (t <= 60) {
-                    tempFactor = 1 - Math.pow((t - OPT_TEMP) / (60 - OPT_TEMP), 2); // Denaturation drop
-                } else {
-                    tempFactor = 0; // Denatured
-                }
-
-                // 2. pH Factor (Bell curve)
-                const phDiff = Math.abs(p - OPT_PH);
-                const phFactor = Math.max(0, 1 - Math.pow(phDiff / 2.5, 2)); // Range +/- 2.5
-
-                // 3. Substrate Factor (Michaelis-Menten)
-                // V = (Vmax * [S]) / (Km + [S])
-                const subFactor = s / (KM + s);
-
-                // Combined Rate
-                return V_MAX * tempFactor * phFactor * subFactor;
-            };
-
-            // Update Rate when params change
-            useEffect(() => {
-                const r = calculateRate(temperature, ph, substrateConc);
-                setRate(r);
-            }, [temperature, ph, substrateConc]);
-
-            // --- VISUALIZER (PARTICLE SYSTEM) ---
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                let animationId;
-
-                // Initialize particles if empty or count changed significantly
-                if (particlesRef.current.length === 0 || Math.abs(particlesRef.current.length - (10 + substrateConc)) > 5) {
-                    const newParticles = [];
-                    // Enzymes (Fixed count)
-                    for(let i=0; i<5; i++) {
-                        newParticles.push({ type: 'enzyme', x: Math.random()*CANVAS_WIDTH, y: Math.random()*CANVAS_HEIGHT, vx: 0, vy: 0, state: 'free' });
-                    }
-                    // Substrates (Based on conc)
-                    const subCount = Math.floor(substrateConc * 0.8); 
-                    for(let i=0; i<subCount; i++) {
-                        newParticles.push({ type: 'substrate', x: Math.random()*CANVAS_WIDTH, y: Math.random()*CANVAS_HEIGHT, vx: 0, vy: 0 });
-                    }
-                    particlesRef.current = newParticles;
-                }
-
-                const render = () => {
-                    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-                    
-                    // Speed multiplier based on Temp
-                    // 0C -> 0.1, 100C -> 3.0
-                    const speedMult = 0.2 + (temperature / 100) * 3;
-                    
-                    // Denaturation Visual: Enzymes shake/deform if high temp or extreme pH
-                    const isDenatured = (temperature > 55 || Math.abs(ph - OPT_PH) > 2.5);
-                    
-                    // Draw Particles
-                    particlesRef.current.forEach(p => {
-                        // Movement
-                        p.vx += (Math.random() - 0.5) * 0.5;
-                        p.vy += (Math.random() - 0.5) * 0.5;
-                        // Clamp velocity
-                        const v = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
-                        if (v > speedMult) {
-                            p.vx = (p.vx/v) * speedMult;
-                            p.vy = (p.vy/v) * speedMult;
-                        }
-                        
-                        p.x += p.vx;
-                        p.y += p.vy;
-                        
-                        // Bounce walls
-                        if (p.x < 0 || p.x > CANVAS_WIDTH) p.vx *= -1;
-                        if (p.y < 0 || p.y > CANVAS_HEIGHT) p.vy *= -1;
-
-                        // Render
-                        if (p.type === 'enzyme') {
-                            ctx.fillStyle = isDenatured ? "#94a3b8" : "#34d399"; // Grey if dead, Green if active
-                            // Draw Pacman shape
-                            ctx.beginPath();
-                            ctx.arc(p.x, p.y, 15, 0.2 * Math.PI, 1.8 * Math.PI);
-                            ctx.lineTo(p.x, p.y);
-                            ctx.fill();
-                            
-                            if (isDenatured) {
-                                // Draw X on top
-                                ctx.strokeStyle = "#ef4444";
-                                ctx.lineWidth = 2;
-                                ctx.beginPath();
-                                ctx.moveTo(p.x-5, p.y-5); ctx.lineTo(p.x+5, p.y+5);
-                                ctx.moveTo(p.x+5, p.y-5); ctx.lineTo(p.x-5, p.y+5);
-                                ctx.stroke();
-                            }
-                        } else {
-                            ctx.fillStyle = "#facc15"; // Yellow substrate
-                            ctx.beginPath();
-                            ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
-                            ctx.fill();
-                        }
-                    });
-                    
-                    animationId = requestAnimationFrame(render);
-                };
-                render();
-                return () => cancelAnimationFrame(animationId);
-            }, [temperature, ph, substrateConc]);
-
-            // --- CHART DATA GENERATION ---
-            const generateData = () => {
-                const data = [];
-                if (mode === 'temp') {
-                    for (let t = 0; t <= 70; t+=2) {
-                        data.push({ x: t, y: calculateRate(t, ph, substrateConc) });
-                    }
-                } else if (mode === 'ph') {
-                    for (let p = 0; p <= 14; p+=0.5) {
-                        data.push({ x: p, y: calculateRate(temperature, p, substrateConc) });
-                    }
-                } else {
-                    for (let s = 0; s <= 100; s+=2) {
-                        data.push({ x: s, y: calculateRate(temperature, ph, s) });
-                    }
-                }
-                return data;
-            };
-
-            const chartData = generateData();
-            const currentX = mode === 'temp' ? temperature : mode === 'ph' ? ph : substrateConc;
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar Controls */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="activity" className="text-emerald-400" /> Enzyme Kinetics
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Factors affecting Rate of Reaction</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
-                            
-                            {/* Mode Select */}
-                            <div className="grid grid-cols-3 gap-1 bg-slate-800 p-1 rounded-xl">
-                                {['temp', 'ph', 'conc'].map(m => (
-                                    <button 
-                                        key={m}
-                                        onClick={() => setMode(m)}
-                                        className={`py-2 text-[10px] font-bold rounded-lg transition-all uppercase ${mode === m ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                    >
-                                        {m === 'conc' ? '[Substrate]' : m}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* Active Control */}
-                            <div className="space-y-6">
-                                <div className={mode !== 'temp' ? 'opacity-50' : ''}>
-                                    <div className="flex justify-between text-xs mb-2">
-                                        <span className="text-slate-400 font-bold">Temperature</span>
-                                        <span className="font-mono text-orange-400">{temperature}°C</span>
-                                    </div>
-                                    <input 
-                                        type="range" min="0" max="70" 
-                                        value={temperature} 
-                                        onChange={(e) => { setTemperature(parseInt(e.target.value)); if(mode!=='temp') setMode('temp'); }} 
-                                        className="w-full accent-orange-500"
-                                    />
-                                </div>
-
-                                <div className={mode !== 'ph' ? 'opacity-50' : ''}>
-                                    <div className="flex justify-between text-xs mb-2">
-                                        <span className="text-slate-400 font-bold">pH Level</span>
-                                        <span className="font-mono text-purple-400">{ph}</span>
-                                    </div>
-                                    <input 
-                                        type="range" min="0" max="14" step="0.1"
-                                        value={ph} 
-                                        onChange={(e) => { setPh(parseFloat(e.target.value)); if(mode!=='ph') setMode('ph'); }} 
-                                        className="w-full accent-purple-500"
-                                    />
-                                </div>
-
-                                <div className={mode !== 'conc' ? 'opacity-50' : ''}>
-                                    <div className="flex justify-between text-xs mb-2">
-                                        <span className="text-slate-400 font-bold">[Substrate]</span>
-                                        <span className="font-mono text-blue-400">{substrateConc}%</span>
-                                    </div>
-                                    <input 
-                                        type="range" min="0" max="100" 
-                                        value={substrateConc} 
-                                        onChange={(e) => { setSubstrateConc(parseInt(e.target.value)); if(mode!=='conc') setMode('conc'); }} 
-                                        className="w-full accent-blue-500"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Status Info */}
-                            <div className="bg-slate-800 p-4 rounded-xl border border-slate-700">
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="text-xs font-bold text-slate-500 uppercase">Reaction Rate</span>
-                                    <span className={`text-xl font-mono font-black ${rate > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>
-                                        {rate.toFixed(1)}
-                                    </span>
-                                </div>
-                                <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
-                                    <div className="h-full bg-emerald-500 transition-all duration-300" style={{width: `${rate}%`}}></div>
-                                </div>
-                                <p className="text-[10px] text-slate-400 mt-2">
-                                    {rate === 0 ? "Enzyme is inactive (Denatured or No Substrate)." : 
-                                     rate > 80 ? "Optimal conditions! High activity." : 
-                                     "Sub-optimal conditions."}
-                                </p>
-                            </div>
-
-                        </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden gap-4">
-                        
-                        {/* Visualizer */}
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden sim-canvas flex flex-col items-center justify-center">
-                            <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="w-full h-full object-contain" />
-                            <div className="absolute bottom-4 text-xs text-slate-500 font-mono">Molecular View (Simplifed)</div>
-                        </div>
-
-                        {/* Graph */}
-                        <div className="h-64 bg-slate-900 rounded-2xl border border-slate-800 p-4 relative">
-                            <div className="text-xs font-bold text-slate-500 uppercase mb-2">
-                                Rate vs {mode === 'temp' ? 'Temperature' : mode === 'ph' ? 'pH' : 'Substrate Conc.'}
-                            </div>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={chartData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                    <XAxis 
-                                        dataKey="x" 
-                                        stroke="#94a3b8" 
-                                        label={{ value: mode === 'temp' ? 'Temp (°C)' : mode === 'ph' ? 'pH' : '[S]', position: 'insideBottomRight', offset: -5, fill: '#94a3b8', fontSize: 10 }} 
-                                        type="number"
-                                        domain={['dataMin', 'dataMax']}
-                                    />
-                                    <YAxis 
-                                        stroke="#94a3b8" 
-                                        label={{ value: 'Rate', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }} 
-                                        domain={[0, 100]}
-                                    />
-                                    <Tooltip 
-                                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
-                                        itemStyle={{ color: '#fff' }}
-                                        formatter={(value) => value.toFixed(1)}
-                                    />
-                                    <Line type="monotone" dataKey="y" stroke="#38bdf8" strokeWidth={3} dot={false} activeDot={{ r: 6, fill: '#38bdf8' }} />
-                                    {/* Current Position Indicator */}
-                                    <ReferenceLine x={currentX} stroke="#ef4444" strokeDasharray="3 3" />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </div>
-
-                    </div>
-
+            <!-- Live Math Dashboard -->
+            <div class="flex gap-4 md:gap-6 bg-slate-900/50 p-2 px-4 md:px-6 rounded-xl border border-slate-700/50 shadow-inner w-full md:w-auto justify-between">
+                <div class="text-center">
+                    <div class="text-xl md:text-2xl font-mono font-bold text-yellow-400" id="stat-v0">0.0</div>
+                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold">V₀ (Current Rate)</div>
                 </div>
-            );
+                <div class="w-px bg-slate-700"></div>
+                <div class="text-center">
+                    <div class="text-xl md:text-2xl font-mono font-bold text-emerald-400" id="stat-vmax">100.0</div>
+                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Apparent Vmax</div>
+                </div>
+                <div class="w-px bg-slate-700 hidden md:block"></div>
+                <div class="text-center hidden md:block">
+                    <div class="text-xl md:text-2xl font-mono font-bold text-purple-400" id="stat-km">20.0</div>
+                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Apparent Km</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="flex flex-col md:flex-row flex-1 overflow-hidden relative z-0">
+            
+            <!-- Left Sidebar (Controls & Visuals) -->
+            <aside class="w-full md:w-[360px] flex flex-col gap-4 p-4 shrink-0 h-full overflow-y-auto bg-slate-800/30 border-r border-slate-700 custom-scrollbar">
+                
+                <!-- Substrate Concentration -->
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner">
+                    <div class="flex justify-between items-end mb-2">
+                        <label class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                            <i class="fa-solid fa-cubes text-cyan-400"></i> Substrate [S]
+                        </label>
+                        <span id="val-sub" class="font-mono text-cyan-400 font-bold bg-cyan-950/30 px-2 py-0.5 rounded text-sm border border-cyan-800/50">20 mM</span>
+                    </div>
+                    <input type="range" id="slider-sub" min="0" max="100" value="20" class="text-cyan-500">
+                    <p class="text-[10px] text-slate-400 mt-2 leading-tight">Increases the chance of an enzyme finding a substrate molecule.</p>
+                </div>
+
+                <!-- NEW: Environmental Factors (Temp & pH) -->
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-4">
+                    <h3 class="text-xs font-bold text-slate-200 flex items-center gap-2 mb-1">
+                        <i class="fa-solid fa-temperature-half text-orange-500"></i> Environment
+                    </h3>
+                    
+                    <!-- Temperature -->
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-xs font-bold text-slate-300">Temperature</label>
+                            <span id="val-temp" class="font-mono text-orange-400 font-bold bg-orange-950/30 px-2 py-0.5 rounded text-xs border border-orange-800/50">37 °C</span>
+                        </div>
+                        <input type="range" id="slider-temp" min="0" max="60" value="37" class="text-orange-500">
+                    </div>
+
+                    <!-- pH Level -->
+                    <div>
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-xs font-bold text-slate-300">pH Level</label>
+                            <span id="val-ph" class="font-mono text-emerald-400 font-bold bg-emerald-950/30 px-2 py-0.5 rounded text-xs border border-emerald-800/50">7.0</span>
+                        </div>
+                        <input type="range" id="slider-ph" min="1" max="14" step="0.1" value="7" class="text-emerald-500">
+                    </div>
+                </div>
+
+                <!-- Inhibitor Controls -->
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-3">
+                    <h3 class="text-xs font-bold text-slate-200 flex items-center gap-2 mb-1">
+                        <i class="fa-solid fa-shield-virus text-red-400"></i> Inhibitors
+                    </h3>
+                    
+                    <!-- Toggle Types -->
+                    <div class="grid grid-cols-3 gap-2">
+                        <label class="cursor-pointer text-slate-400 hover:text-slate-200">
+                            <input type="radio" name="inhibitorType" value="none" class="hidden inhibitor-radio" checked>
+                            <div class="text-center py-2 border border-slate-600 rounded-lg text-xs font-bold transition-all text-slate-300">None</div>
+                        </label>
+                        <label class="cursor-pointer text-red-400 hover:text-red-300">
+                            <input type="radio" name="inhibitorType" value="competitive" class="hidden inhibitor-radio">
+                            <div class="text-center py-2 border border-slate-600 rounded-lg text-xs font-bold transition-all">Comp.</div>
+                        </label>
+                        <label class="cursor-pointer text-pink-400 hover:text-pink-300">
+                            <input type="radio" name="inhibitorType" value="noncompetitive" class="hidden inhibitor-radio">
+                            <div class="text-center py-2 border border-slate-600 rounded-lg text-xs font-bold transition-all">Non-Comp.</div>
+                        </label>
+                    </div>
+
+                    <!-- Inhibitor Concentration -->
+                    <div class="mt-2 transition-opacity duration-300 opacity-50 pointer-events-none" id="inhibitor-slider-container">
+                        <div class="flex justify-between items-end mb-2">
+                            <label class="text-xs font-bold text-slate-300">Inhibitor [I]</label>
+                            <span id="val-inh" class="font-mono text-red-400 font-bold bg-red-950/30 px-2 py-0.5 rounded text-xs border border-red-800/50">0 mM</span>
+                        </div>
+                        <input type="range" id="slider-inh" min="0" max="50" value="0" class="text-red-500">
+                    </div>
+                </div>
+
+                <!-- Dynamic Explanation Box -->
+                <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700 mt-1 flex items-center shrink-0">
+                    <p id="system-desc" class="text-[10px] text-slate-300 leading-relaxed">
+                        <strong class="text-cyan-400">Optimal Kinetics:</strong> The enzyme binds only to the substrate at optimal environmental conditions.
+                    </p>
+                </div>
+
+                <!-- Molecular View (Canvas) -->
+                <div class="flex-1 min-h-[220px] rounded-xl border border-slate-700 shadow-inner relative overflow-hidden flex flex-col mt-2">
+                    <div class="bg-slate-800/80 px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-slate-700 uppercase tracking-widest absolute top-0 w-full z-10 flex justify-between">
+                        <span>Molecular View</span>
+                        <span id="mol-status" class="text-emerald-400">Optimal Shape</span>
+                    </div>
+                    <canvas id="molecular-canvas" class="w-full h-full absolute inset-0"></canvas>
+                </div>
+            </aside>
+
+            <!-- Chart Area (Right) -->
+            <section class="flex-1 relative p-4 md:p-6 bg-slate-950 flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-bold text-white">Michaelis-Menten Plot</h2>
+                    <div class="flex gap-4 text-xs font-mono font-bold">
+                        <span class="text-emerald-400"><i class="fa-solid fa-minus"></i> Vmax Asymptote</span>
+                        <span class="text-purple-400"><i class="fa-solid fa-minus"></i> 1/2 Vmax (Km)</span>
+                    </div>
+                </div>
+                
+                <div class="flex-1 relative w-full h-full bg-slate-900/50 rounded-xl border border-slate-700 p-2 shadow-inner">
+                    <canvas id="mmChart"></canvas>
+                </div>
+
+                <div class="mt-4 bg-slate-800/50 p-3 rounded-xl border border-slate-700/50 flex gap-4 items-center">
+                    <i class="fa-solid fa-circle-info text-blue-400 text-xl ml-2"></i>
+                    <p class="text-[11px] text-slate-300 leading-relaxed">
+                        <strong>Vmax:</strong> Max reaction velocity when enzymes are saturated. It drops if enzymes are inhibited (Non-Comp) or denatured (extreme Temp/pH).<br>
+                        <strong>Km:</strong> Substrate concentration [S] required to reach 1/2 Vmax. Indicates binding affinity (high Km = low affinity).
+                    </p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        /**
+         * ENZYME KINETICS LAB SIMULATION
+         * Integrates Temperature (Collision/Denaturation) and pH parameters.
+         */
+
+        // --- Core Biological Constants ---
+        const BASE_VMAX = 100; // umol/min
+        const BASE_KM = 20;    // mM
+        const KI = 15;         // Inhibitor dissociation constant
+        const OPTIMAL_TEMP = 37;
+        const OPTIMAL_PH = 7.0;
+
+        // --- State Variables ---
+        let state = {
+            s: 20,           
+            i: 0,            
+            temp: 37,        
+            ph: 7.0,         
+            type: 'none',    
+            vmaxApp: BASE_VMAX,
+            kmApp: BASE_KM,
+            v0: 0,
+            denaturationFactor: 0 // 0 = perfectly healthy, 1 = completely denatured
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // --- DOM Elements ---
+        const DOM = {
+            valSub: document.getElementById('val-sub'),
+            valInh: document.getElementById('val-inh'),
+            valTemp: document.getElementById('val-temp'),
+            valPh: document.getElementById('val-ph'),
+            
+            sliderSub: document.getElementById('slider-sub'),
+            sliderInh: document.getElementById('slider-inh'),
+            sliderTemp: document.getElementById('slider-temp'),
+            sliderPh: document.getElementById('slider-ph'),
+            
+            inhContainer: document.getElementById('inhibitor-slider-container'),
+            inhRadios: document.querySelectorAll('.inhibitor-radio'),
+            systemDesc: document.getElementById('system-desc'),
+            
+            statV0: document.getElementById('stat-v0'),
+            statVmax: document.getElementById('stat-vmax'),
+            statKm: document.getElementById('stat-km'),
+            
+            molCanvas: document.getElementById('molecular-canvas'),
+            molStatus: document.getElementById('mol-status')
+        };
+
+        // --- Chart.js Setup ---
+        const ctx = document.getElementById('mmChart').getContext('2d');
+        
+        const guideLinesPlugin = {
+            id: 'guideLines',
+            beforeDraw: (chart) => {
+                const { ctx, chartArea: { top, bottom, left, right }, scales: { x, y } } = chart;
+                
+                // Draw Vmax Line
+                const vmaxPixel = y.getPixelForValue(state.vmaxApp);
+                if (vmaxPixel >= top && vmaxPixel <= bottom) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.strokeStyle = 'rgba(52, 211, 153, 0.5)'; // Emerald
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.moveTo(left, vmaxPixel);
+                    ctx.lineTo(right, vmaxPixel);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // Draw Km Line
+                const kmPixelX = x.getPixelForValue(state.kmApp);
+                const halfVmaxPixelY = y.getPixelForValue(state.vmaxApp / 2);
+                
+                // Don't draw if heavily denatured (graph is flat)
+                if (kmPixelX >= left && kmPixelX <= right && state.vmaxApp > 5) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.strokeStyle = 'rgba(192, 38, 211, 0.5)'; // Purple
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.moveTo(kmPixelX, bottom);
+                    ctx.lineTo(kmPixelX, halfVmaxPixelY);
+                    ctx.lineTo(left, halfVmaxPixelY); 
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        };
+
+        Chart.register(guideLinesPlugin);
+
+        let mmChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        label: 'Michaelis-Menten Curve',
+                        data: [], 
+                        borderColor: '#38bdf8', 
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        borderWidth: 4,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: true
+                    },
+                    {
+                        label: 'Current Rate (V₀)',
+                        data: [], 
+                        type: 'scatter',
+                        backgroundColor: '#fde047', 
+                        borderColor: '#ca8a04',
+                        borderWidth: 2,
+                        pointRadius: 8,
+                        pointHoverRadius: 10,
+                        z: 10
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 200 }, 
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: 0, max: 100,
+                        title: { display: true, text: 'Substrate Concentration [S] (mM)', color: '#94a3b8', font: { weight: 'bold', size: 14 } },
+                        grid: { color: 'rgba(51, 65, 85, 0.5)' },
+                        ticks: { color: '#94a3b8' }
+                    },
+                    y: {
+                        type: 'linear',
+                        min: 0, max: 120, // Keep fixed so denaturation flattening is obvious
+                        title: { display: true, text: 'Initial Velocity V₀ (µmol/min)', color: '#94a3b8', font: { weight: 'bold', size: 14 } },
+                        grid: { color: 'rgba(51, 65, 85, 0.5)' },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                if (context.datasetIndex === 1) return `V₀: ${context.parsed.y.toFixed(1)} at [S]: ${context.parsed.x}`;
+                                return `[S]: ${context.parsed.x}, Rate: ${context.parsed.y.toFixed(1)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+
+        // --- Core Algorithmic Logic ---
+
+        function calculateKinetics() {
+            
+            // 1. Calculate Environmental Multipliers (Temp & pH)
+            let tempFactor = 1;
+            // Q10 effect: reaction doubles roughly every 10 degrees up to optimum
+            if (state.temp <= OPTIMAL_TEMP) {
+                tempFactor = Math.pow(2, (state.temp - OPTIMAL_TEMP) / 10);
+            } else {
+                // Denaturation: steep exponential drop past optimum
+                tempFactor = Math.exp(-0.2 * Math.pow(state.temp - OPTIMAL_TEMP, 2));
+            }
+
+            // pH effect: Bell curve centered on optimal pH (7.0)
+            let phFactor = Math.exp(-0.6 * Math.pow(state.ph - OPTIMAL_PH, 2));
+
+            // Determine overall health of the enzyme for UI/Canvas
+            let health = tempFactor * phFactor;
+            state.denaturationFactor = 1 - health;
+
+            let envVmax = BASE_VMAX * health;
+            let envKm = BASE_KM; 
+            
+            // Extreme pH also slightly damages affinity (increases Km)
+            if (Math.abs(state.ph - OPTIMAL_PH) > 2) {
+                envKm *= 1.5; 
+            }
+
+            // 2. Apply Inhibitor Math
+            if (state.type === 'competitive') {
+                state.kmApp = envKm * (1 + (state.i / KI));
+                state.vmaxApp = envVmax;
+            } else if (state.type === 'noncompetitive') {
+                state.vmaxApp = envVmax / (1 + (state.i / KI));
+                state.kmApp = envKm;
+            } else {
+                state.vmaxApp = envVmax;
+                state.kmApp = envKm;
+            }
+
+            // Clean up math extremes
+            if (state.vmaxApp < 0.1) state.vmaxApp = 0;
+
+            // 3. Calculate Current V0 (Michaelis-Menten Equation)
+            if (state.vmaxApp > 0) {
+                state.v0 = (state.vmaxApp * state.s) / (state.kmApp + state.s);
+            } else {
+                state.v0 = 0;
+            }
+
+            updateUI();
+            updateChart();
+            updateMolecularViewCount();
+        }
+
+        function updateChart() {
+            const curveData = [];
+            for (let x = 0; x <= 100; x += 2) {
+                let y = 0;
+                if(state.vmaxApp > 0) {
+                    y = (state.vmaxApp * x) / (state.kmApp + x);
+                }
+                curveData.push({x: x, y: y});
+            }
+
+            mmChart.data.datasets[0].data = curveData;
+            
+            // Visual coloring based on state
+            if (state.denaturationFactor > 0.6) {
+                mmChart.data.datasets[0].borderColor = '#64748b'; // Slate (Dead)
+                mmChart.data.datasets[0].backgroundColor = 'rgba(100, 116, 139, 0.1)';
+            } else if(state.type === 'noncompetitive' && state.i > 0) {
+                mmChart.data.datasets[0].borderColor = '#f472b6'; // Pink
+                mmChart.data.datasets[0].backgroundColor = 'rgba(244, 114, 182, 0.1)';
+            } else if (state.type === 'competitive' && state.i > 0) {
+                mmChart.data.datasets[0].borderColor = '#f87171'; // Red
+                mmChart.data.datasets[0].backgroundColor = 'rgba(248, 113, 113, 0.1)';
+            } else {
+                mmChart.data.datasets[0].borderColor = '#38bdf8'; // Sky
+                mmChart.data.datasets[0].backgroundColor = 'rgba(56, 189, 248, 0.1)';
+            }
+
+            mmChart.data.datasets[1].data = [{x: state.s, y: state.v0}];
+            mmChart.update();
+        }
+
+        function updateUI() {
+            DOM.statV0.innerText = state.v0.toFixed(1);
+            DOM.statVmax.innerText = state.vmaxApp.toFixed(1);
+            
+            // Hide Km if completely denatured to avoid confusion
+            if(state.vmaxApp === 0) {
+                DOM.statKm.innerText = "N/A";
+            } else {
+                DOM.statKm.innerText = state.kmApp.toFixed(1);
+            }
+
+            // Explanations logic prioritizing Denaturation
+            if (state.denaturationFactor > 0.8) {
+                DOM.systemDesc.innerHTML = `<strong class="text-slate-400">Denatured:</strong> Extreme environmental conditions have unraveled the enzyme's 3D structure. Active site destroyed (Vmax = 0).`;
+                DOM.molStatus.innerText = "Denatured (Unraveled)";
+                DOM.molStatus.className = "text-slate-400";
+            }
+            else if (state.type === 'none') {
+                let tempContext = state.temp < OPTIMAL_TEMP ? " (Lower temps reduce collision rate)." : "";
+                DOM.systemDesc.innerHTML = `<strong class="text-cyan-400">Normal Kinetics:</strong> Enzyme binds only to substrate.${tempContext}`;
+                DOM.sliderInh.className = "text-slate-500";
+                DOM.molStatus.innerText = "Optimal Shape";
+                DOM.molStatus.className = "text-emerald-400";
+            } else if (state.type === 'competitive') {
+                DOM.systemDesc.innerHTML = `<strong class="text-red-400">Competitive:</strong> Inhibitor mimics substrate and blocks active site. (<span class="text-purple-400">Km increases</span>).`;
+                DOM.sliderInh.className = "text-red-500";
+                DOM.molStatus.innerText = "Active Site Blocked";
+                DOM.molStatus.className = "text-red-400";
+            } else if (state.type === 'noncompetitive') {
+                DOM.systemDesc.innerHTML = `<strong class="text-pink-400">Non-Competitive:</strong> Inhibitor binds allosteric site, altering enzyme shape. (<span class="text-emerald-400">Vmax decreases</span>).`;
+                DOM.sliderInh.className = "text-pink-500";
+                DOM.molStatus.innerText = "Allosterically Altered";
+                DOM.molStatus.className = "text-pink-400";
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        DOM.sliderSub.addEventListener('input', (e) => {
+            state.s = parseInt(e.target.value);
+            DOM.valSub.innerText = `${state.s} mM`;
+            calculateKinetics();
+        });
+
+        DOM.sliderInh.addEventListener('input', (e) => {
+            state.i = parseInt(e.target.value);
+            DOM.valInh.innerText = `${state.i} mM`;
+            calculateKinetics();
+        });
+
+        DOM.sliderTemp.addEventListener('input', (e) => {
+            state.temp = parseInt(e.target.value);
+            DOM.valTemp.innerText = `${state.temp} °C`;
+            calculateKinetics();
+        });
+
+        DOM.sliderPh.addEventListener('input', (e) => {
+            state.ph = parseFloat(e.target.value);
+            DOM.valPh.innerText = state.ph.toFixed(1);
+            calculateKinetics();
+        });
+
+        DOM.inhRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                state.type = e.target.value;
+                if (state.type === 'none') {
+                    DOM.inhContainer.classList.add('opacity-50', 'pointer-events-none');
+                    state.i = 0;
+                    DOM.sliderInh.value = 0;
+                    DOM.valInh.innerText = `0 mM`;
+                } else {
+                    DOM.inhContainer.classList.remove('opacity-50', 'pointer-events-none');
+                    if(state.i === 0) {
+                        state.i = 15;
+                        DOM.sliderInh.value = 15;
+                        DOM.valInh.innerText = `15 mM`;
+                    }
+                }
+                calculateKinetics();
+            });
+        });
+
+
+        // --- Molecular Canvas Animation (2D Representation) ---
+        const mCtx = DOM.molCanvas.getContext('2d');
+        let mWidth, mHeight;
+        let particles = [];
+        const NUM_ENZYMES = 6;
+
+        function resizeMolecularCanvas() {
+            const rect = DOM.molCanvas.parentElement.getBoundingClientRect();
+            mWidth = rect.width;
+            mHeight = rect.height;
+            const dpr = window.devicePixelRatio || 1;
+            DOM.molCanvas.width = mWidth * dpr;
+            DOM.molCanvas.height = mHeight * dpr;
+            mCtx.scale(dpr, dpr);
+        }
+
+        class EnzymeParticle {
+            constructor() {
+                this.x = Math.random() * mWidth;
+                this.y = Math.random() * mHeight;
+                this.r = 15;
+                // Base speed, will be scaled by temp
+                this.baseVx = (Math.random() - 0.5) * 2;
+                this.baseVy = (Math.random() - 0.5) * 2;
+                this.wobble = Math.random() * Math.PI;
+            }
+            update(tempScale) {
+                // PEDAGOGY: Temperature drives kinetic energy/speed
+                this.x += this.baseVx * tempScale; 
+                this.y += this.baseVy * tempScale;
+                this.wobble += 0.1 * tempScale;
+
+                if(this.x < this.r || this.x > mWidth - this.r) this.baseVx *= -1;
+                if(this.y < this.r || this.y > mHeight - this.r) this.baseVy *= -1;
+            }
+            draw(denatFactor) {
+                mCtx.save();
+                mCtx.translate(this.x, this.y);
+                
+                // PEDAGOGY: Visual Denaturation
+                if (denatFactor > 0.8) {
+                    // Draw unravelled denatured protein (squiggle)
+                    mCtx.strokeStyle = '#64748b'; // Dead slate color
+                    mCtx.lineWidth = 3;
+                    mCtx.beginPath();
+                    for(let i=0; i<5; i++) {
+                        mCtx.lineTo((i*10)-20, Math.sin(this.wobble + i)*10);
+                    }
+                    mCtx.stroke();
+                } 
+                else if (denatFactor > 0.4 || state.type === 'noncompetitive') {
+                    // Partially denatured or allosterically altered (Warped shape)
+                    mCtx.fillStyle = state.type === 'noncompetitive' && state.i > 0 ? '#f472b6' : '#d8b4fe';
+                    mCtx.beginPath();
+                    mCtx.ellipse(0, 0, this.r * 1.2, this.r * 0.8, this.wobble, 0, Math.PI*2);
+                    mCtx.fill();
+                }
+                else {
+                    // Healthy Pacman
+                    mCtx.fillStyle = '#a855f7'; 
+                    mCtx.beginPath();
+                    let angle = Math.atan2(this.baseVy, this.baseVx);
+                    mCtx.rotate(angle);
+                    // Active site opening
+                    mCtx.arc(0, 0, this.r, 0.5, 2 * Math.PI - 0.5);
+                    mCtx.lineTo(0, 0);
+                    mCtx.fill();
+                }
+                mCtx.restore();
+            }
+        }
+
+        class MoleculeParticle {
+            constructor(type) {
+                this.type = type; // 'sub', 'comp'
+                this.x = Math.random() * mWidth;
+                this.y = Math.random() * mHeight;
+                this.r = type === 'sub' ? 4 : 6;
+                this.baseVx = (Math.random() - 0.5) * 4;
+                this.baseVy = (Math.random() - 0.5) * 4;
+            }
+            update(tempScale) {
+                this.x += this.baseVx * tempScale; 
+                this.y += this.baseVy * tempScale;
+                if(this.x < this.r || this.x > mWidth - this.r) this.baseVx *= -1;
+                if(this.y < this.r || this.y > mHeight - this.r) this.baseVy *= -1;
+            }
+            draw() {
+                if (this.type === 'sub') {
+                    mCtx.fillStyle = '#06b6d4'; 
+                    mCtx.beginPath(); mCtx.arc(this.x, this.y, this.r, 0, Math.PI*2); mCtx.fill();
+                } else if (this.type === 'comp') {
+                    mCtx.fillStyle = '#ef4444'; 
+                    mCtx.fillRect(this.x - this.r, this.y - this.r, this.r*2, this.r*2);
+                }
+            }
+        }
+
+        let enzymes = [];
+        for(let i=0; i<NUM_ENZYMES; i++) enzymes.push(new EnzymeParticle());
+
+        function updateMolecularViewCount() {
+            particles = [];
+            let subCount = Math.floor(state.s * 0.8);
+            let inhCount = Math.floor(state.i * 0.8);
+
+            for(let i=0; i<subCount; i++) particles.push(new MoleculeParticle('sub'));
+            
+            // Only spawn competitive inhibitors in the canvas to show active site competition
+            if (state.type === 'competitive') {
+                for(let i=0; i<inhCount; i++) particles.push(new MoleculeParticle('comp'));
+            }
+        }
+
+        function animateCanvas() {
+            if(!mWidth) resizeMolecularCanvas();
+            mCtx.clearRect(0, 0, mWidth, mHeight);
+            
+            // Calculate a speed scale based on temperature (Kelvin approx)
+            // 0 C is slow, 60 C is fast
+            let tempScale = (state.temp + 273) / 310; 
+
+            enzymes.forEach(e => { e.update(tempScale); e.draw(state.denaturationFactor); });
+            particles.forEach(p => { p.update(tempScale); p.draw(); });
+
+            requestAnimationFrame(animateCanvas);
+        }
+
+        window.addEventListener('resize', () => {
+            resizeMolecularCanvas();
+        });
+
+        // Initialize Everything
+        calculateKinetics();
+        resizeMolecularCanvas();
+        animateCanvas();
+
     </script>
 </body>
 </html>
