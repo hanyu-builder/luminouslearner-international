@@ -198,21 +198,30 @@
             <div class="h-1/2 w-full relative border-b border-slate-800" id="sim-container">
                 <canvas id="flaskCanvas"></canvas>
                 
-                <!-- Scientific Equation Overlay -->
-                <div class="absolute top-4 right-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-3 rounded-xl pointer-events-none z-10 shadow-xl text-right">
-                    <h3 class="text-[10px] font-bold text-emerald-400 uppercase tracking-widest border-b border-slate-700 pb-1 mb-2 inline-block">Anaerobic Respiration</h3>
-                    <div class="text-xs md:text-sm font-mono font-bold text-slate-300 flex items-center justify-end gap-2 mt-1">
-                        <span class="text-pink-400">C₆H₁₂O₆</span>
-                        <span class="text-yellow-500">→</span>
-                        <span class="text-purple-400">2 C₂H₅OH</span>
-                        <span class="text-slate-500">+</span>
-                        <span class="text-cyan-400">2 CO₂</span>
-                        <span class="text-slate-500">+</span>
-                        <span class="text-orange-400">2 ATP</span>
+                <!-- Scientific Equation Overlay (Now a Conclusion Modal) -->
+                <div id="conclusionOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center z-20 opacity-0 pointer-events-none transition-all duration-500">
+                    <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl shadow-2xl text-center max-w-md transform scale-95 transition-transform duration-500" id="conclusionModal">
+                        <h3 class="text-lg font-black text-emerald-400 uppercase tracking-widest border-b border-slate-700 pb-2 mb-4">Reaction Complete</h3>
+                        <p class="text-xs text-slate-300 mb-4">Anaerobic Respiration (Fermentation) yields:</p>
+                        
+                        <div class="text-sm md:text-lg font-mono font-bold text-slate-300 flex items-center justify-center gap-2 mb-4 bg-slate-950 p-4 rounded-xl border border-slate-800 flex-wrap">
+                            <span class="text-pink-400">C₆H₁₂O₆</span>
+                            <span class="text-yellow-500">→</span>
+                            <span class="text-purple-400">2 C₂H₅OH</span>
+                            <span class="text-slate-500">+</span>
+                            <span class="text-cyan-400">2 CO₂</span>
+                            <span class="text-slate-500">+</span>
+                            <span class="text-orange-400">2 ATP</span>
+                        </div>
+                        
+                        <p class="text-xs text-slate-400 leading-relaxed">
+                            In a sealed, oxygen-depleted flask, yeast converts Glucose into Ethanol and Carbon Dioxide gas to harvest a tiny amount of ATP. The reaction stopped due to <span id="conclusionReason" class="font-bold text-pink-400">depletion</span>.
+                        </p>
+                        
+                        <button onclick="document.getElementById('resetBtn').click()" class="mt-6 px-6 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold rounded-xl transition-all shadow-lg active:scale-95">
+                            Reset Flask
+                        </button>
                     </div>
-                    <p class="text-[9px] text-slate-400 mt-1.5 leading-tight max-w-[250px] ml-auto">
-                        In a sealed, oxygen-depleted flask, yeast converts Glucose into Ethanol and Carbon Dioxide gas to harvest a tiny amount of ATP.
-                    </p>
                 </div>
             </div>
 
@@ -270,7 +279,10 @@
             ethDisp: document.getElementById('ethanolDisplay'), flaskTDisp: document.getElementById('flaskTempDisplay'),
             atpDisp: document.getElementById('atpDisplay'), phDisp: document.getElementById('phDisplay'),
             gBar: document.getElementById('glucoseBar'), gAmt: document.getElementById('glucoseAmtDisplay'),
-            badge: document.getElementById('statusBadge')
+            badge: document.getElementById('statusBadge'),
+            conclusionOverlay: document.getElementById('conclusionOverlay'),
+            conclusionModal: document.getElementById('conclusionModal'),
+            conclusionReason: document.getElementById('conclusionReason')
         };
 
         // --- CANVAS & CHART ---
@@ -374,6 +386,10 @@
             
             ui.glucose.disabled = false;
             ui.yeast.disabled = false;
+
+            // Hide Conclusion Overlay
+            ui.conclusionOverlay.classList.add('opacity-0', 'pointer-events-none');
+            ui.conclusionModal.classList.replace('scale-100', 'scale-95');
 
             chartDataX = [];
             chartDataY_CO2 = [];
@@ -527,20 +543,33 @@
                 const coolingRate = (state.flaskTemp - state.temp) * 0.1 * dtMin;
                 state.flaskTemp -= coolingRate;
                 
-                // Check if reaction naturally stops
-                if (state.glucoseRemaining <= 0 || ethanolInhibition <= 0 || phInhibition <= 0) {
-                    state.glucoseRemaining = Math.max(0, state.glucoseRemaining);
+                // Check if reaction naturally stops (using thresholds to solve asymptotic decay)
+                if (state.glucoseRemaining <= 0.5 || ethanolInhibition <= 0.01 || phInhibition <= 0.01) {
+                    state.glucoseRemaining = 0; // Snap to clean 0
                     state.currentRate = 0;
                     state.isRunning = false;
                     ui.startBtn.innerText = "Reaction Complete";
                     ui.startBtn.disabled = true;
                     
                     let stopReason = "DEPLETED";
-                    if (ethanolInhibition <= 0) stopReason = "TOXIC (ETHANOL)";
-                    if (phInhibition <= 0) stopReason = "TOXIC (LOW pH)";
+                    let detailedReason = "complete depletion of the Glucose substrate";
+                    
+                    if (ethanolInhibition <= 0.01) {
+                        stopReason = "TOXIC (ETHANOL)";
+                        detailedReason = "toxic accumulation of Ethanol waste";
+                    }
+                    if (phInhibition <= 0.01) {
+                        stopReason = "TOXIC (LOW pH)";
+                        detailedReason = "a toxic drop in pH from dissolved Carbon Dioxide";
+                    }
                     
                     ui.badge.innerText = stopReason;
                     ui.badge.className = "px-2 py-1 rounded text-[9px] font-bold bg-pink-500/20 text-pink-400 border border-pink-500";
+                    
+                    // Show Conclusion Overlay
+                    ui.conclusionReason.innerText = detailedReason;
+                    ui.conclusionOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                    ui.conclusionModal.classList.replace('scale-95', 'scale-100');
                 }
 
             } else {
