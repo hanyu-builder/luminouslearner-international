@@ -3,409 +3,575 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leaf Structure Explorer | LuminousLearner</title>
+    <title>Leaf Structure Explorer | Interactive Histology</title>
+    <meta name="description" content="Interactive Leaf Structure histology viewer. Explore the epidermis, mesophyll, stomata, and gas exchange using deep-zoom capabilities.">
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
     
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    <!-- OpenSeadragon for Deep-Zoom Capability -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.0.0/openseadragon.min.js"></script>
 
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
     <script>
         tailwind.config = {
             theme: {
                 extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
                     colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
+                        slateBase: '#0F172A',
+                        slatePanel: '#1E293B',
+                        bioGreen: '#10B981',
+                        xylemRed: '#EF4444',
+                        phloemBlue: '#3B82F6',
+                        cuticleYellow: '#EAB308'
                     }
                 }
             }
         }
     </script>
-
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        body { background-color: #0F172A; margin: 0; color: white; overflow: hidden; }
         
-        /* Cell Hover Effect */
-        .leaf-layer { transition: all 0.3s ease; cursor: pointer; }
-        .leaf-layer:hover { filter: brightness(1.2) drop-shadow(0 0 5px rgba(255,255,255,0.5)); }
-        .leaf-layer.active { filter: brightness(1.3) drop-shadow(0 0 10px #34d399); stroke: #34d399; stroke-width: 2px; }
-        .leaf-layer.dimmed { opacity: 0.3; }
+        /* Glassmorphism for panels */
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* OpenSeadragon Container */
+        #osd-viewer {
+            width: 100%;
+            height: 100%;
+            background-color: #f8fafc; /* Light background for the microscope slide */
+            border-radius: 0.5rem;
+            overflow: hidden;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        /* Highlight Overlays applied to OSD Viewer */
+        .osd-overlay {
+            border: 3px dashed transparent;
+            background-color: transparent;
+            transition: all 0.5s ease;
+            pointer-events: none; /* Let clicks pass through to OSD */
+            border-radius: 8px;
+        }
         
-        /* Info Card Animation */
-        .info-card { animation: slideUp 0.3s ease-out; }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .osd-overlay.active {
+            border-color: #06b6d4;
+            background-color: rgba(6, 182, 212, 0.15);
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.4);
+            animation: pulse-overlay 2s infinite;
+        }
+
+        @keyframes pulse-overlay {
+            0% { box-shadow: 0 0 10px rgba(6, 182, 212, 0.3); }
+            50% { box-shadow: 0 0 25px rgba(6, 182, 212, 0.6); }
+            100% { box-shadow: 0 0 10px rgba(6, 182, 212, 0.3); }
+        }
+
+        /* Functional Gas Exchange Animations */
+        .flow-h2o { stroke: #3b82f6; stroke-dasharray: 15 25; animation: dashFlow 2s linear infinite; fill: none; stroke-width: 8; stroke-linecap: round; opacity: 0.8; }
+        .flow-co2 { stroke: #475569; stroke-dasharray: 15 25; animation: dashFlowRev 3s linear infinite; fill: none; stroke-width: 8; stroke-linecap: round; opacity: 0.8; }
+        .flow-o2 { stroke: #10b981; stroke-dasharray: 15 25; animation: dashFlow 2.5s linear infinite; fill: none; stroke-width: 8; stroke-linecap: round; opacity: 0.8; }
+
+        @keyframes dashFlow { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
+        @keyframes dashFlowRev { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 40; } }
+
+        /* Guard Cell (Stoma) Animations */
+        #guard-l, #guard-r, .chloro-l, .chloro-r { transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); transform-origin: center; }
         
-        /* Custom Scrollbar */
+        .stoma-closed #guard-l { transform: rotate(0deg) translate(18px, 0) scaleX(0.65) !important; }
+        .stoma-closed #guard-r { transform: rotate(0deg) translate(-18px, 0) scaleX(0.65) !important; }
+        .stoma-closed .chloro-l { transform: translate(12px, 0); }
+        .stoma-closed .chloro-r { transform: translate(-12px, 0); }
+
+        /* Custom Scrollbar for sidebar */
         ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748B; }
+
+        /* Custom Toggle Switches */
+        .toggle-checkbox:checked { right: 0; border-color: #10B981; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #059669; }
+        .toggle-checkbox { right: 4px; z-index: 1; transition: all 0.3s ease; }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen max-h-[1000px] flex flex-col font-sans">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+    <!-- Top Header -->
+    <header class="bg-slatePanel border-b border-slate-700/50 p-4 shadow-xl flex justify-between items-center z-20 shrink-0">
+        <div>
+            <h1 class="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-bioGreen to-blue-400 tracking-tight">
+                Leaf Structure Explorer
+            </h1>
+            <p class="text-sm text-slate-400 font-medium">Interactive Histology & Deep-Zoom Micrograph Simulator</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2 text-sm text-slate-300 bg-slate-800 px-4 py-2 rounded-lg border border-slate-700">
+                <svg class="w-5 h-5 text-bioGreen animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"></path></svg>
+                Use Mouse Wheel to Deep Zoom
+            </div>
+        </div>
+    </header>
 
-        // Robust Icon Component
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
+    <!-- Main Content Layout -->
+    <main class="flex-grow flex w-full overflow-hidden relative">
+        
+        <!-- Sidebar Navigation & Info -->
+        <aside class="w-80 lg:w-[400px] glass-panel border-r border-slate-700/50 flex flex-col z-10 shrink-0 shadow-[10px_0_15px_-3px_rgba(0,0,0,0.3)]">
             
-            useEffect(() => {
-                // Safety check for lucide
-                if (window.lucide && window.lucide.icons) {
-                    // Helper to convert kebab-case to PascalCase (e.g. arrow-right -> ArrowRight)
-                    const toPascalCase = (str) => 
-                        str.replace(/(^\w|-\w)/g, (g) => g.replace(/-/, "").toUpperCase());
+            <div class="p-6 flex-grow overflow-y-auto">
+                <h2 class="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4">Anatomical Layers</h2>
+                
+                <!-- Interactive Structure Buttons -->
+                <nav class="space-y-3 mb-6" id="structure-nav">
+                    <!-- Buttons are dynamically populated and bound via JS -->
+                </nav>
 
-                    const pascalName = toPascalCase(name);
-                    const iconData = window.lucide.icons[pascalName];
+                <!-- Functional Toggles (Connecting Structure to Function) -->
+                <div class="mb-6 pt-6 border-t border-slate-700/50">
+                    <h2 class="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4">Biological Functions</h2>
+                    
+                    <div class="space-y-4">
+                        <!-- Gas Exchange Toggle -->
+                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-600 flex justify-between items-center">
+                            <div>
+                                <label class="text-sm font-bold text-slate-200 block">Gas Exchange Flow</label>
+                                <span class="text-[10px] text-slate-400">Show H₂O, CO₂, and O₂ pathways</span>
+                            </div>
+                            <div class="relative inline-block w-12 h-6 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="toggle-gas" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer top-0 bottom-0 m-auto"/>
+                                <label for="toggle-gas" class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-600 cursor-pointer"></label>
+                            </div>
+                        </div>
 
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
+                        <!-- Guard Cell Turgor Toggle -->
+                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-600 flex justify-between items-center">
+                            <div>
+                                <label class="text-sm font-bold text-slate-200 block">Guard Cell Turgor</label>
+                                <span id="turgor-label" class="text-[10px] font-bold text-bioGreen uppercase">Turgid (Open Pore)</span>
+                            </div>
+                            <div class="relative inline-block w-12 h-6 align-middle select-none transition duration-200 ease-in">
+                                <input type="checkbox" id="toggle-stoma" checked class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-slate-600 appearance-none cursor-pointer top-0 bottom-0 m-auto"/>
+                                <label for="toggle-stoma" class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-600 cursor-pointer"></label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
-            if (!svgHtml) return <span className={`inline-block ${className}`} style={{ width: size, height: size }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
+                <!-- Detailed Information Panel -->
+                <div class="mt-2 pt-6 border-t border-slate-700/50">
+                    <h3 class="text-sm font-bold text-bioGreen uppercase tracking-wider mb-2">Microscope Analysis</h3>
+                    <h4 id="info-title" class="text-xl font-bold text-white mb-2">Whole Leaf Cross-Section</h4>
+                    <p id="info-desc" class="text-sm text-slate-300 leading-relaxed">
+                        Select a tissue layer above to automatically zoom in, highlight the structure, and learn about its specific biological function in photosynthesis and transpiration. Toggle the functions above to see the leaf in action.
+                    </p>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-slate-900/50 text-xs text-slate-500 text-center border-t border-slate-700/50">
+                Simulation powered by OpenSeadragon & Synthetic Vector Histology
+            </div>
+        </aside>
 
-        // --- DATA ---
-        const STRUCTURES = {
-            cuticle: {
-                id: 'cuticle',
-                name: 'Waxy Cuticle',
-                desc: 'A transparent, waterproof layer on the top surface.',
-                func: 'Reduces water loss by evaporation; Allows light to pass through.',
-                category: ['protection']
+        <!-- Main OpenSeadragon Viewer Area -->
+        <section class="flex-grow relative p-4 bg-slateBase">
+            <div id="osd-viewer"></div>
+            
+            <!-- Loading Indicator -->
+            <div id="loading-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-slateBase z-50 transition-opacity duration-500">
+                <div class="w-12 h-12 border-4 border-slate-600 border-t-bioGreen rounded-full animate-spin mb-4"></div>
+                <div class="text-bioGreen font-bold animate-pulse">Generating High-Res Tissue Sample...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Scientific Logic & OpenSeadragon Integration -->
+    <script>
+        // ============================================================================
+        // 1. SCIENTIFIC DATA & COORDINATE MAPPING
+        // ============================================================================
+        
+        // Base dimensions of our synthetic high-res SVG
+        const SVG_W = 2000;
+        const SVG_H = 1200;
+        
+        // Anatomical Data and Overlay Viewport Coordinates (x, y, width, height) relative to SVG size
+        const leafAnatomy = {
+            'overview': {
+                id: 'overview', name: "Reset View", color: 'slate',
+                desc: "Select a tissue layer above to automatically zoom in, highlight the structure, and learn about its specific biological function in photosynthesis and transpiration. Toggle the functions above to see the leaf in action.",
+                rect: null // Null means fit whole bounds
             },
-            upper_epidermis: {
-                id: 'upper_epidermis',
-                name: 'Upper Epidermis',
-                desc: 'A single layer of closely packed cells. No chloroplasts.',
-                func: 'Protects inner layers; Allows light to reach mesophyll.',
-                category: ['protection']
+            'cuticle': {
+                id: 'cuticle', name: "Cuticle & Upper Epidermis", color: 'cuticleYellow',
+                desc: "The Waxy Cuticle is a waterproof layer that prevents excessive water loss. The Upper Epidermis is a single layer of transparent cells that allows light to pass through to the mesophyll below while providing physical protection.",
+                rect: { x: 0, y: 0.015, w: 1, h: 0.1 } // relative to SVG width (2000)
             },
-            palisade: {
-                id: 'palisade',
-                name: 'Palisade Mesophyll',
-                desc: 'Column-shaped cells packed tightly near the top surface. Contains many chloroplasts.',
-                func: 'Main site of photosynthesis (maximises light absorption).',
-                category: ['photosynthesis']
+            'palisade': {
+                id: 'palisade', name: "Palisade Mesophyll", color: 'bioGreen',
+                desc: "These tall, column-like cells are tightly packed and contain the highest concentration of chloroplasts. They are positioned near the top of the leaf to maximize light absorption for photosynthesis.",
+                rect: { x: 0, y: 0.1, w: 1, h: 0.28 }
             },
-            spongy: {
-                id: 'spongy',
-                name: 'Spongy Mesophyll',
-                desc: 'Irregularly shaped cells with large air spaces between them. Fewer chloroplasts.',
-                func: 'Allows gas exchange (CO₂ diffusion) and some photosynthesis.',
-                category: ['photosynthesis', 'gas_exchange']
+            'spongy': {
+                id: 'spongy', name: "Spongy Mesophyll", color: 'bioGreen',
+                desc: "Irregularly shaped cells loosely packed with large air spaces between them. This structure facilitates the rapid diffusion of gases (CO₂ in, O₂ out, H₂O vapor out) necessary for photosynthesis and transpiration.",
+                rect: { x: 0.05, y: 0.38, w: 0.35, h: 0.35 } // Focus on a section away from vein
             },
-            vascular: {
-                id: 'vascular',
-                name: 'Vascular Bundle',
-                desc: 'Contains Xylem (top) and Phloem (bottom). The "vein" of the leaf.',
-                func: 'Transport: Xylem carries water/minerals; Phloem carries sugars (food). Support.',
-                category: ['transport']
+            'xylem': {
+                id: 'xylem', name: "Xylem (Vascular Bundle)", color: 'xylemRed',
+                desc: "Part of the leaf vein, the Xylem consists of thick-walled, dead cells (stained red/pink) that transport liquid water and dissolved minerals from the roots up to the leaves.",
+                rect: { x: 0.42, y: 0.42, w: 0.16, h: 0.12 }
             },
-            lower_epidermis: {
-                id: 'lower_epidermis',
-                name: 'Lower Epidermis',
-                desc: 'Bottom layer of cells. Contains many stomata guarded by guard cells.',
-                func: 'Protection; Regulation of gas exchange and water loss.',
-                category: ['protection', 'gas_exchange']
+            'phloem': {
+                id: 'phloem', name: "Phloem (Vascular Bundle)", color: 'phloemBlue',
+                desc: "Located typically below the xylem, Phloem tissue (stained blue) transports the sugars (glucose) produced by photosynthesis in the leaves to the rest of the plant.",
+                rect: { x: 0.43, y: 0.55, w: 0.14, h: 0.12 }
             },
-            stoma: {
-                id: 'stoma',
-                name: 'Stoma / Guard Cells',
-                desc: 'Pores surrounded by two kidney-shaped guard cells.',
-                func: 'Controls gas exchange (CO₂ in, O₂ out) and transpiration.',
-                category: ['gas_exchange']
+            'stomata': {
+                id: 'stomata', name: "Lower Epidermis & Stomata", color: 'slate',
+                desc: "The lower epidermis contains microscopic pores called Stomata. Each stoma is flanked by two Guard Cells that use osmotic turgor pressure to swell (opening the pore for gas exchange) or shrink (closing the pore to save water).",
+                rect: { x: 0.43, y: 0.75, w: 0.14, h: 0.15 } // Focus on the specific stoma
             }
         };
 
-        // --- SVG COMPONENT ---
-        const LeafCrossSection = ({ selected, filter, onSelect }) => {
+        // ============================================================================
+        // 2. SYNTHETIC HIGH-RES MICROGRAPH GENERATOR (SVG)
+        // ============================================================================
+        // Instead of relying on external images that might 404, we generate a massive, 
+        // scientifically accurate vector graphic natively in the browser.
+        
+        function generateLeafHistologySVG() {
+            let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SVG_W}" height="${SVG_H}" viewBox="0 0 ${SVG_W} ${SVG_H}">`;
             
-            const getClass = (id) => {
-                const isActive = selected === id;
-                const isDimmed = filter && STRUCTURES[id] && !STRUCTURES[id].category.includes(filter);
-                return `leaf-layer ${isActive ? 'active' : ''} ${isDimmed ? 'dimmed' : ''}`;
-            };
-
-            return (
-                <svg viewBox="0 0 800 500" className="w-full h-full drop-shadow-2xl" preserveAspectRatio="xMidYMid meet">
-                    <defs>
-                        {/* Simple patterns defined directly to avoid complexity */}
-                        <pattern id="palisadePattern" x="0" y="0" width="30" height="80" patternUnits="userSpaceOnUse">
-                            <rect x="2" y="2" width="26" height="76" rx="5" fill="#4ade80" stroke="#15803d" strokeWidth="1"/>
-                            {/* Chloroplasts */}
-                            <circle cx="10" cy="20" r="3" fill="#14532d" opacity="0.6"/>
-                            <circle cx="20" cy="30" r="3" fill="#14532d" opacity="0.6"/>
-                            <circle cx="10" cy="50" r="3" fill="#14532d" opacity="0.6"/>
-                            <circle cx="20" cy="60" r="3" fill="#14532d" opacity="0.6"/>
-                        </pattern>
-                    </defs>
-
-                    {/* Background */}
-                    <rect width="800" height="500" fill="#f0fdf4" rx="20"/>
-
-                    {/* 1. Cuticle */}
-                    <path 
-                        d="M 50 50 L 750 50 L 750 70 L 50 70 Z" 
-                        fill="#e2e8f0" fillOpacity="0.7" stroke="#94a3b8" strokeWidth="1"
-                        className={getClass('cuticle')}
-                        onClick={() => onSelect('cuticle')}
-                    />
-
-                    {/* 2. Upper Epidermis */}
-                    <g className={getClass('upper_epidermis')} onClick={() => onSelect('upper_epidermis')}>
-                        {/* Create a row of rects */}
-                        {Array.from({ length: 14 }).map((_, i) => (
-                            <rect key={`ue-${i}`} x={50 + i*50} y="70" width="50" height="40" fill="#bae6fd" stroke="#0369a1" strokeWidth="1" />
-                        ))}
-                    </g>
-
-                    {/* 3. Palisade Mesophyll */}
-                    <rect 
-                        x="50" y="110" width="700" height="120" 
-                        fill="url(#palisadePattern)" stroke="none"
-                        className={getClass('palisade')}
-                        onClick={() => onSelect('palisade')}
-                    />
-
-                    {/* 4. Vascular Bundle (Vein) */}
-                    <g transform="translate(350, 180)" className={getClass('vascular')} onClick={() => onSelect('vascular')}>
-                        <circle cx="50" cy="50" r="65" fill="#fef3c7" stroke="#d97706" strokeWidth="3" />
-                        {/* Xylem (Top) */}
-                        <path d="M 10 50 A 40 40 0 0 1 90 50" fill="#ef4444" opacity="0.8"/>
-                        <text x="50" y="40" textAnchor="middle" fontSize="10" fontWeight="bold" fill="#7f1d1d" style={{ pointerEvents: 'none' }}>XYLEM</text>
-                        {/* Phloem (Bottom) */}
-                        <path d="M 10 50 A 40 40 0 0 0 90 50" fill="#3b82f6" opacity="0.8"/>
-                        <text x="50" y="70" textAnchor="middle" fontSize="10" fontWeight="bold" fill="#1e3a8a" style={{ pointerEvents: 'none' }}>PHLOEM</text>
-                    </g>
-
-                    {/* 5. Spongy Mesophyll */}
-                    <g className={getClass('spongy')} onClick={() => onSelect('spongy')}>
-                        {/* Scatter some circles manually to avoid complex random logic in render */}
-                        <circle cx="100" cy="280" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="160" cy="260" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="140" cy="320" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="220" cy="300" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="280" cy="260" r="25" fill="#86efac" stroke="#166534" />
-                        
-                        <circle cx="500" cy="280" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="560" cy="320" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="600" cy="260" r="25" fill="#86efac" stroke="#166534" />
-                        <circle cx="650" cy="310" r="25" fill="#86efac" stroke="#166534" />
-                    </g>
-
-                    {/* 6. Lower Epidermis & Stomata */}
-                    {/* Lower Epidermis Background Click Area */}
-                    <g className={getClass('lower_epidermis')} onClick={() => onSelect('lower_epidermis')}>
-                         {/* Left Block */}
-                         <rect x="50" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="100" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="150" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="200" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-
-                         {/* Mid Block */}
-                         <rect x="300" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="350" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="400" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="450" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-
-                         {/* Right Block */}
-                         <rect x="550" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="600" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="650" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                         <rect x="700" y="380" width="50" height="40" fill="#bae6fd" stroke="#0369a1" />
-                    </g>
-
-                    {/* Stoma 1 */}
-                    <g transform="translate(250, 380)" className={getClass('stoma')} onClick={() => onSelect('stoma')}>
-                        <path d="M 0 0 Q 15 40 25 0" fill="#22c55e" stroke="#14532d" /> {/* Left Guard */}
-                        <path d="M 50 0 Q 35 40 25 0" fill="#22c55e" stroke="#14532d" /> {/* Right Guard */}
-                        <path d="M 25 5 L 25 25" stroke="#000" strokeWidth="2" /> {/* Pore */}
-                    </g>
-
-                    {/* Stoma 2 */}
-                    <g transform="translate(500, 380)" className={getClass('stoma')} onClick={() => onSelect('stoma')}>
-                        <path d="M 0 0 Q 15 40 25 0" fill="#22c55e" stroke="#14532d" />
-                        <path d="M 50 0 Q 35 40 25 0" fill="#22c55e" stroke="#14532d" />
-                        <path d="M 25 5 L 25 25" stroke="#000" strokeWidth="2" />
-                    </g>
-                </svg>
-            );
-        };
-
-        // --- MAIN APP ---
-        const App = () => {
-            const [selectedPart, setSelectedPart] = useState(null);
-            const [activeFilter, setActiveFilter] = useState(null); // photosynthesis, gas_exchange, transport
-
-            const handleSelect = (id) => {
-                setSelectedPart(id);
-                // We keep the filter active even if selecting a specific part, or we can clear it.
-                // Let's keep it for better UX (exploring within a function)
-            };
-
-            const toggleFilter = (filter) => {
-                if (activeFilter === filter) {
-                    setActiveFilter(null);
-                    setSelectedPart(null);
-                } else {
-                    setActiveFilter(filter);
-                    setSelectedPart(null); 
+            // Background slide color
+            svg += `<rect width="${SVG_W}" height="${SVG_H}" fill="#f8fafc" />`;
+            
+            // 1. Cuticle (Top)
+            svg += `<rect x="0" y="20" width="${SVG_W}" height="20" fill="#fef08a" opacity="0.8" />`;
+            
+            // 2. Upper Epidermis
+            for(let i=0; i<SVG_W; i+=100) {
+                svg += `<rect x="${i}" y="40" width="100" height="80" fill="#f1f5f9" stroke="#94a3b8" stroke-width="4" rx="8"/>`;
+                // Cell Nucleus
+                svg += `<circle cx="${i+50}" cy="${80}" r="12" fill="#cbd5e1" />`;
+            }
+            
+            // 3. Palisade Mesophyll
+            for(let i=0; i<SVG_W; i+=60) {
+                svg += `<rect x="${i+5}" y="130" width="50" height="320" fill="#bbf7d0" stroke="#22c55e" stroke-width="4" rx="20"/>`;
+                // High density of chloroplasts
+                for(let j=0; j<12; j++) {
+                    let cx = i + 30 + (Math.random()*16 - 8);
+                    let cy = 160 + j*22 + (Math.random()*10 - 5);
+                    svg += `<circle cx="${cx}" cy="${cy}" r="6" fill="#16a34a"/>`;
                 }
-            };
+            }
+            
+            // 4. Spongy Mesophyll (Loose, irregular cells)
+            for(let i=0; i<200; i++) {
+                let x = Math.random() * SVG_W;
+                let y = 470 + Math.random() * 400;
+                
+                // Avoid drawing in the center where the vascular bundle is located
+                if (x > 750 && x < 1250 && y > 450 && y < 850) continue;
+                
+                let r = 25 + Math.random()*35;
+                svg += `<circle cx="${x}" cy="${y}" r="${r}" fill="#dcfce3" stroke="#4ade80" stroke-width="4"/>`;
+                
+                // Fewer chloroplasts
+                for(let j=0; j<5; j++) {
+                    svg += `<circle cx="${x + (Math.random()*(r*1.2) - r*0.6)}" cy="${y + (Math.random()*(r*1.2) - r*0.6)}" r="5" fill="#16a34a"/>`;
+                }
+            }
+            
+            // 5. Vascular Bundle (Vein)
+            // Bundle Sheath
+            svg += `<circle cx="1000" cy="650" r="230" fill="#fef08a" stroke="#ca8a04" stroke-width="6"/>`;
+            for(let a=0; a<Math.PI*2; a+=0.25) {
+                let bx = 1000 + Math.cos(a)*230;
+                let by = 650 + Math.sin(a)*230;
+                svg += `<circle cx="${bx}" cy="${by}" r="28" fill="#fde047" stroke="#ca8a04" stroke-width="3"/>`;
+            }
+            
+            // Xylem (Large, empty red-stained vessels on top)
+            for(let i=0; i<30; i++) {
+                let x = 1000 + (Math.random()*220 - 110);
+                let y = 560 + (Math.random()*120 - 60);
+                if(Math.hypot(x-1000, y-560) > 110) continue;
+                let xr = 15 + Math.random()*20;
+                svg += `<circle cx="${x}" cy="${y}" r="${xr}" fill="#fee2e2" stroke="#dc2626" stroke-width="6"/>`;
+            }
+            
+            // Phloem (Smaller blue-stained cells on bottom with sieve plates)
+            for(let i=0; i<60; i++) {
+                let x = 1000 + (Math.random()*200 - 100);
+                let y = 740 + (Math.random()*100 - 50);
+                if(Math.hypot(x-1000, y-740) > 100) continue;
+                let pr = 8 + Math.random()*10;
+                svg += `<circle cx="${x}" cy="${y}" r="${pr}" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>`;
+                // Sieve plate lines
+                svg += `<line x1="${x-pr+2}" y1="${y}" x2="${x+pr-2}" y2="${y}" stroke="#1d4ed8" stroke-width="2"/>`;
+            }
+            
+            // 6. Lower Epidermis
+            for(let i=0; i<SVG_W; i+=100) {
+                // Leave a gap for the stoma in the middle (between 900 and 1100)
+                if (i === 900 || i === 1000) continue; 
+                svg += `<rect x="${i}" y="950" width="100" height="80" fill="#f1f5f9" stroke="#94a3b8" stroke-width="4" rx="8"/>`;
+                svg += `<circle cx="${i+50}" cy="${990}" r="12" fill="#cbd5e1" />`;
+            }
+            
+            // 7. Lower Cuticle
+            svg += `<rect x="0" y="1030" width="910" height="15" fill="#fef08a" opacity="0.8" />`;
+            svg += `<rect x="1090" y="1030" width="910" height="15" fill="#fef08a" opacity="0.8" />`;
 
-            const currentInfo = selectedPart ? STRUCTURES[selectedPart] : null;
+            svg += `</svg>`;
+            return svg;
+        }
 
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="leaf" className="text-emerald-400" /> Leaf Structure
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Microscopic Anatomy</p>
-                        </div>
+        // ============================================================================
+        // 3. UI GENERATION & OPENSEADRAGON INITIALIZATION
+        // ============================================================================
+        
+        let viewer;
+        let overlayElements = {};
+        const ASPECT_RATIO = SVG_H / SVG_W; // 1200/2000 = 0.6
 
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto">
-                            
-                            {/* Functional Filters */}
-                            <div className="space-y-3">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Highlight Function</label>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <button 
-                                        onClick={() => toggleFilter('photosynthesis')}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
-                                            ${activeFilter === 'photosynthesis' ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
-                                        `}
-                                    >
-                                        <Icon name="sun" size={18} className={activeFilter === 'photosynthesis' ? 'text-yellow-300' : ''}/> Photosynthesis
-                                    </button>
-                                    <button 
-                                        onClick={() => toggleFilter('gas_exchange')}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
-                                            ${activeFilter === 'gas_exchange' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
-                                        `}
-                                    >
-                                        <Icon name="wind" size={18} className={activeFilter === 'gas_exchange' ? 'text-sky-300' : ''}/> Gas Exchange
-                                    </button>
-                                    <button 
-                                        onClick={() => toggleFilter('transport')}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-sm font-bold
-                                            ${activeFilter === 'transport' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
-                                        `}
-                                    >
-                                        <Icon name="droplet" size={18} className={activeFilter === 'transport' ? 'text-blue-200' : ''}/> Transport
-                                    </button>
-                                </div>
-                            </div>
+        function initApp() {
+            buildNavigation();
+            initOpenSeadragon();
+            setupFunctionalToggles();
+        }
 
-                            {/* Parts List (Quick Select) */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Structures</label>
-                                <div className="flex flex-wrap gap-2">
-                                    {Object.entries(STRUCTURES).map(([id, info]) => (
-                                        <button 
-                                            key={id}
-                                            onClick={() => handleSelect(id)}
-                                            className={`text-[10px] px-2 py-1 rounded border transition-colors
-                                                ${selectedPart === id ? 'bg-slate-700 border-emerald-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'}
-                                            `}
-                                        >
-                                            {info.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+        function buildNavigation() {
+            const nav = document.getElementById('structure-nav');
+            
+            Object.keys(leafAnatomy).forEach(key => {
+                const data = leafAnatomy[key];
+                
+                // Determine color mapping for Tailwind
+                let colorClasses = "text-slate-300 hover:bg-slate-700/50 hover:text-white";
+                let dotClass = "bg-slate-500";
+                
+                if(data.color === 'bioGreen') { colorClasses = "hover:text-bioGreen hover:bg-bioGreen/10"; dotClass = "bg-bioGreen shadow-[0_0_8px_#10B981]"; }
+                if(data.color === 'xylemRed') { colorClasses = "hover:text-xylemRed hover:bg-xylemRed/10"; dotClass = "bg-xylemRed shadow-[0_0_8px_#EF4444]"; }
+                if(data.color === 'phloemBlue') { colorClasses = "hover:text-phloemBlue hover:bg-phloemBlue/10"; dotClass = "bg-phloemBlue shadow-[0_0_8px_#3B82F6]"; }
+                if(data.color === 'cuticleYellow') { colorClasses = "hover:text-cuticleYellow hover:bg-cuticleYellow/10"; dotClass = "bg-cuticleYellow shadow-[0_0_8px_#EAB308]"; }
 
-                        </div>
-                    </div>
+                if (key === 'overview') {
+                     nav.innerHTML += `
+                        <button onclick="focusLayer('${key}')" id="btn-${key}" class="w-full text-left px-4 py-3 rounded-xl transition-all duration-300 font-bold bg-slate-700 text-white shadow-lg border border-slate-600 mb-4">
+                            ${data.name}
+                        </button>
+                    `;
+                } else {
+                    nav.innerHTML += `
+                        <button onclick="focusLayer('${key}')" id="btn-${key}" class="w-full text-left px-4 py-3 rounded-xl transition-all duration-300 font-semibold border border-transparent flex items-center gap-3 ${colorClasses}">
+                            <div class="w-3 h-3 rounded-full ${dotClass}"></div>
+                            ${data.name}
+                        </button>
+                    `;
+                }
+            });
+        }
 
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
+        function initOpenSeadragon() {
+            // Generate the SVG and convert it to a Data URL format that OSD can read as an image
+            const svgString = generateLeafHistologySVG();
+            const encodedSvg = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgString)));
+
+            viewer = OpenSeadragon({
+                id: "osd-viewer",
+                prefixUrl: "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.0.0/images/",
+                tileSources: {
+                    type: 'image',
+                    url: encodedSvg
+                },
+                showNavigationControl: true,
+                navigationControlAnchor: OpenSeadragon.ControlAnchor.BOTTOM_RIGHT,
+                defaultZoomLevel: 1.1,
+                minZoomLevel: 0.8,
+                maxZoomLevel: 15, // High deep zoom
+                visibilityRatio: 1.0,
+                constrainDuringPan: true,
+                zoomPerClick: 1.5,
+                animationTime: 1.2, // Smooth flowing animations
+                springStiffness: 6.5
+            });
+
+            // Once the image is open, attach our interactive CSS overlays
+            viewer.addHandler('open', function() {
+                document.getElementById('loading-overlay').style.opacity = '0';
+                setTimeout(() => document.getElementById('loading-overlay').remove(), 500);
+
+                // 1. Create Standard Anatomical Highlight Overlays
+                Object.keys(leafAnatomy).forEach(key => {
+                    const data = leafAnatomy[key];
+                    if(data.rect) {
+                        let el = document.createElement("div");
+                        el.id = `overlay-${key}`;
+                        el.className = "osd-overlay";
                         
-                        {/* Visualizer */}
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center p-4">
-                            <LeafCrossSection selected={selectedPart} filter={activeFilter} onSelect={handleSelect} />
-                            
-                            <div className="absolute top-6 left-6 pointer-events-none">
-                                <div className="flex items-center gap-2 bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
-                                    <Icon name="microscope" size={16} className="text-slate-400"/>
-                                    <span className="text-xs text-slate-300 font-mono">Cross-section (x400)</span>
-                                </div>
-                            </div>
-                        </div>
+                        viewer.addOverlay({
+                            element: el,
+                            location: new OpenSeadragon.Rect(
+                                data.rect.x, 
+                                data.rect.y * ASPECT_RATIO, 
+                                data.rect.w, 
+                                data.rect.h * ASPECT_RATIO
+                            )
+                        });
+                        overlayElements[key] = el;
+                    }
+                });
 
-                        {/* Info Panel Overlay */}
-                        {currentInfo && (
-                            <div className="absolute bottom-8 left-8 right-8 md:left-auto md:right-8 md:w-96 bg-slate-800/90 backdrop-blur p-6 rounded-2xl border border-slate-600 shadow-2xl info-card z-20">
-                                <div className="flex justify-between items-start mb-3">
-                                    <h2 className="text-lg font-bold text-emerald-400">{currentInfo.name}</h2>
-                                    <button onClick={() => setSelectedPart(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={18}/></button>
-                                </div>
-                                <div className="space-y-3 text-sm">
-                                    <div>
-                                        <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Structure</span>
-                                        <p className="text-slate-300 leading-snug">{currentInfo.desc}</p>
-                                    </div>
-                                    <div>
-                                        <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Function</span>
-                                        <p className="text-white bg-slate-700/50 p-2 rounded border border-slate-600/50 leading-snug">
-                                            {currentInfo.func}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                // 2. Inject Functional Gas Exchange Animated Overlay (Full Screen Match)
+                let gasOverlay = document.createElement("div");
+                gasOverlay.id = "gas-overlay";
+                gasOverlay.className = "pointer-events-none transition-opacity duration-500 opacity-0";
+                gasOverlay.innerHTML = `
+                    <svg viewBox="0 0 ${SVG_W} ${SVG_H}" width="100%" height="100%">
+                        <!-- H2O Transpiration Pathways (Blue) -->
+                        <path d="M 1000 560 Q 800 700 950 950 T 1000 1050" class="flow-h2o"/>
+                        <path d="M 1000 560 Q 1200 700 1050 950 T 1000 1050" class="flow-h2o"/>
+                        <path d="M 1000 560 Q 700 600 600 900" class="flow-h2o"/>
+                        <!-- CO2 Intake Pathways (Slate) -->
+                        <path d="M 1000 1050 Q 900 900 400 300" class="flow-co2"/>
+                        <path d="M 1000 1050 Q 1100 900 1600 300" class="flow-co2"/>
+                        <!-- O2 Output Pathways (Green) -->
+                        <path d="M 600 300 Q 950 800 1000 1050" class="flow-o2"/>
+                        <path d="M 1400 300 Q 1050 800 1000 1050" class="flow-o2"/>
+                    </svg>
+                `;
+                viewer.addOverlay({
+                    element: gasOverlay,
+                    location: new OpenSeadragon.Rect(0, 0, 1, ASPECT_RATIO)
+                });
 
-                        {/* Filter Active Indicator */}
-                        {activeFilter && !currentInfo && (
-                            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-emerald-900/80 backdrop-blur px-6 py-3 rounded-full border border-emerald-500/50 text-emerald-200 text-sm font-bold shadow-lg flex items-center gap-2 info-card z-10">
-                                <Icon name="filter" size={16}/> 
-                                Highlighting: {activeFilter.replace('_', ' ').toUpperCase()}
-                            </div>
-                        )}
+                // 3. Inject Interactive Stoma Guard Cells Overlay
+                // Centers at X=1000, Y=990. width=200, height=100
+                // X = 900/2000 = 0.45. W = 200/2000 = 0.1
+                // Y = 940/2000 = 0.47 * ASPECT_RATIO. H = 100/2000 = 0.05 * ASPECT_RATIO
+                let stomaOverlay = document.createElement("div");
+                stomaOverlay.id = "stoma-overlay";
+                stomaOverlay.className = "pointer-events-none"; // Let OSD handle panning
+                stomaOverlay.innerHTML = `
+                    <svg viewBox="0 0 200 100" width="100%" height="100%" id="stoma-svg">
+                        <!-- Left Guard Cell -->
+                        <ellipse id="guard-l" cx="65" cy="50" rx="35" ry="45" fill="#bbf7d0" stroke="#15803d" stroke-width="4" transform="rotate(-20 65 50)" />
+                        <!-- Right Guard Cell -->
+                        <ellipse id="guard-r" cx="135" cy="50" rx="35" ry="45" fill="#bbf7d0" stroke="#15803d" stroke-width="4" transform="rotate(20 135 50)" />
+                        <!-- Chloroplasts -->
+                        <circle cx="55" cy="40" r="5" fill="#16a34a" class="chloro-l"/>
+                        <circle cx="75" cy="60" r="5" fill="#16a34a" class="chloro-l"/>
+                        <circle cx="145" cy="40" r="5" fill="#16a34a" class="chloro-r"/>
+                        <circle cx="125" cy="60" r="5" fill="#16a34a" class="chloro-r"/>
+                    </svg>
+                `;
+                viewer.addOverlay({
+                    element: stomaOverlay,
+                    location: new OpenSeadragon.Rect(0.45, 0.47 * ASPECT_RATIO, 0.1, 0.05 * ASPECT_RATIO)
+                });
 
-                    </div>
+            });
+        }
 
-                </div>
-            );
-        };
+        function setupFunctionalToggles() {
+            const toggleGas = document.getElementById('toggle-gas');
+            const toggleStoma = document.getElementById('toggle-stoma');
+            const turgorLabel = document.getElementById('turgor-label');
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+            toggleGas.addEventListener('change', (e) => {
+                const gasOverlay = document.getElementById('gas-overlay');
+                if (gasOverlay) {
+                    gasOverlay.style.opacity = e.target.checked ? '1' : '0';
+                }
+            });
+
+            toggleStoma.addEventListener('change', (e) => {
+                const stomaSvg = document.getElementById('stoma-svg');
+                if (stomaSvg) {
+                    if (e.target.checked) {
+                        stomaSvg.classList.remove('stoma-closed');
+                        turgorLabel.innerText = "Turgid (Open Pore)";
+                        turgorLabel.className = "text-[10px] font-bold text-bioGreen uppercase";
+                    } else {
+                        stomaSvg.classList.add('stoma-closed');
+                        turgorLabel.innerText = "Flaccid (Closed Pore)";
+                        turgorLabel.className = "text-[10px] font-bold text-slate-400 uppercase";
+                    }
+                }
+            });
+        }
+
+        // ============================================================================
+        // 4. INTERACTION & CAMERA LOGIC
+        // ============================================================================
+        
+        function focusLayer(key) {
+            const data = leafAnatomy[key];
+            
+            // 1. Update UI Text
+            document.getElementById('info-title').innerText = data.name;
+            document.getElementById('info-desc').innerText = data.desc;
+            
+            // Reset button styles
+            Object.keys(leafAnatomy).forEach(k => {
+                const btn = document.getElementById(`btn-${k}`);
+                if (k === 'overview') {
+                    btn.classList.remove('bg-bioGreen', 'text-white', 'border-bioGreen/50');
+                    btn.classList.add('bg-slate-700', 'text-white', 'border-slate-600');
+                } else {
+                    btn.classList.remove('bg-slate-800', 'border-slate-600');
+                    btn.classList.add('border-transparent');
+                }
+            });
+            
+            // Highlight selected button
+            const activeBtn = document.getElementById(`btn-${key}`);
+            if (key === 'overview') {
+                activeBtn.classList.remove('bg-slate-700', 'border-slate-600');
+                activeBtn.classList.add('bg-bioGreen', 'text-white', 'border-bioGreen/50');
+            } else {
+                activeBtn.classList.remove('border-transparent');
+                activeBtn.classList.add('bg-slate-800', 'border-slate-600');
+            }
+
+            // 2. Manage OSD Overlays (Glowing boxes)
+            Object.keys(overlayElements).forEach(k => {
+                overlayElements[k].classList.remove('active');
+            });
+            
+            if (overlayElements[key]) {
+                overlayElements[key].classList.add('active');
+            }
+
+            // 3. Move OpenSeadragon Camera
+            if (key === 'overview') {
+                viewer.viewport.goHome();
+            } else {
+                let targetRect = new OpenSeadragon.Rect(
+                    data.rect.x, 
+                    data.rect.y * ASPECT_RATIO, 
+                    data.rect.w, 
+                    data.rect.h * ASPECT_RATIO
+                );
+                // fitBounds automatically calculates the perfect zoom and pan
+                viewer.viewport.fitBounds(targetRect);
+            }
+        }
+
+        // Boot the application
+        window.onload = initApp;
+
     </script>
 </body>
 </html>
