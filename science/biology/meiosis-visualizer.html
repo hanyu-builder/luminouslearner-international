@@ -3,507 +3,514 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meiosis Visualizer | LuminousLearner</title>
+    <title>Meiosis Visualizer Virtual Lab</title>
+    <!-- SEO Keyword: Meiosis -->
+    <meta name="description" content="Interactive biology virtual lab visualizing Meiosis. Animation timeline of homologous chromosome pairing, crossing over, and independent assortment.">
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS for UI styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- GSAP for High-Performance Timeline Animation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
     
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
-
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        /* Base Deep Slate Theme */
+        body {
+            overflow: hidden;
+            background-color: #0F172A; 
+            background-image: radial-gradient(circle at 50% 50%, #1E293B 0%, #0F172A 100%);
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Custom Timeline Scrubber */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #A855F7; /* purple-500 */
+            cursor: pointer;
+            margin-top: -8px;
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+            transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #475569;
+            border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+
+        /* SVG Canvas specific styles */
+        #svg-container {
+            width: 100%;
+            height: 100%;
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .chromosome-arm {
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            transition: stroke 0.3s ease; /* Smooth color swapping for crossing over */
+        }
         
-        /* Smooth Transitions */
-        .cell-transition { transition: all 1s ease-in-out; }
-        .chromosome-transition { transition: all 1s ease-in-out; }
-        
-        /* Glow Effect for Crossing Over */
-        .glow { filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.8)); }
-        
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        .spindle, .spindle-m2 {
+            stroke: #94A3B8;
+            stroke-dasharray: 4;
+            opacity: 0; /* Managed by GSAP */
+        }
+
+        .nuclear-envelope {
+            stroke: #F8FAFC;
+            stroke-width: 2;
+            stroke-dasharray: 6 6;
+            fill: rgba(255, 255, 255, 0.05);
+            /* Opacity managed by GSAP */
+        }
+
+        .stage-btn {
+            transition: all 0.2s ease;
+        }
+        .stage-btn.active {
+            background-color: #A855F7;
+            color: white;
+            border-color: #A855F7;
+        }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen max-h-[1000px] w-full flex flex-col md:flex-row text-slate-200 font-sans p-4 gap-4 box-border">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+    <!-- Left UI Panel: Controls & Flow -->
+    <aside class="w-full md:w-[450px] h-full glass-panel p-6 flex flex-col shadow-2xl z-20 overflow-y-auto rounded-2xl border border-slate-700 shrink-0">
+        <div class="mb-4 border-b border-slate-700 pb-4">
+            <h1 class="text-2xl font-bold text-purple-400 mb-1 leading-tight">Meiosis Visualizer</h1>
+            <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Cell Division & Diversity</p>
+        </div>
 
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        <!-- Educational Content -->
+        <div class="mb-5 text-sm text-slate-300 space-y-2 bg-slate-900/50 p-4 rounded-xl border border-slate-800 shadow-inner">
+            <p>
+                <strong class="text-purple-300">Meiosis</strong> reduces the chromosome number by half (diploid to haploid) to create genetically unique gametes (sperm/egg).
+            </p>
+            <div class="flex gap-4 mt-2 text-xs font-bold">
+                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-rose-500"></span> Maternal</div>
+                <div class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-sky-500"></span> Paternal</div>
+            </div>
+        </div>
+
+        <!-- Timeline Scrubber -->
+        <div class="bg-slate-900/80 p-5 rounded-xl border border-slate-700 shadow-inner mb-4">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Animation Timeline</h3>
+                <span id="progress-val" class="text-xs text-purple-400 font-mono font-bold">0%</span>
+            </div>
+            <input type="range" id="timeline-slider" min="0" max="100" value="0" step="0.1">
+        </div>
+
+        <!-- Stage Information (Dynamic) -->
+        <div class="bg-purple-900/20 p-4 rounded-xl border border-purple-500/30 mb-4 h-32 flex flex-col justify-center transition-colors duration-300" id="stage-info-box">
+            <h2 id="stage-title" class="text-lg font-bold text-purple-400 mb-1">Interphase</h2>
+            <p id="stage-desc" class="text-xs text-slate-300 leading-relaxed">
+                DNA replicates. Chromosomes consist of two identical sister chromatids enclosed in the nuclear envelope.
+            </p>
+        </div>
+
+        <!-- Navigation Buttons -->
+        <div class="flex-grow space-y-4">
+            <div class="grid grid-cols-2 gap-2 text-xs font-bold">
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800 active" data-progress="0">Interphase</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="12">Prophase I</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="25">Metaphase I</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="38">Anaphase I</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="50">Telophase I</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="62">Prophase II</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="75">Metaphase II</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800" data-progress="88">Anaphase II</button>
+                <button class="stage-btn border border-slate-700 rounded p-2 hover:bg-slate-800 col-span-2" data-progress="100">Telophase II</button>
+            </div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-800">
+            <button id="zoom-btn" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-[0_0_15px_rgba(79,70,229,0.4)] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                🔍 Zoom to Chiasmata (Prophase I)
+            </button>
+        </div>
+    </aside>
+
+    <!-- Right Simulation Panel (SVG Canvas) -->
+    <main class="flex-grow h-full relative bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-inner flex items-center justify-center">
+        
+        <div id="svg-container" class="relative w-full h-full">
+            <!-- Main SVG Canvas. ViewBox ensures responsiveness -->
+            <svg id="meiosis-svg" viewBox="0 0 800 600" class="w-full h-full">
+                
+                <!-- Background Cells (Fading groups to simulate division) -->
+                <g id="cells-layer">
+                    <!-- Original Cell -->
+                    <circle id="cell-main" cx="400" cy="300" r="250" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4"/>
+                    <!-- Nuclear Envelope Main -->
+                    <circle id="nuc-main" cx="400" cy="300" r="140" class="nuclear-envelope"/>
+                    
+                    <!-- Meiosis I Cells -->
+                    <circle id="cell-l1" cx="200" cy="300" r="150" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-l1" cx="200" cy="300" r="80" class="nuclear-envelope" opacity="0"/>
+                    
+                    <circle id="cell-r1" cx="600" cy="300" r="150" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-r1" cx="600" cy="300" r="80" class="nuclear-envelope" opacity="0"/>
+                    
+                    <!-- Meiosis II Cells (Gametes) -->
+                    <circle id="cell-tl2" cx="200" cy="150" r="90" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-tl2" cx="200" cy="150" r="50" class="nuclear-envelope" opacity="0"/>
+                    
+                    <circle id="cell-bl2" cx="200" cy="450" r="90" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-bl2" cx="200" cy="450" r="50" class="nuclear-envelope" opacity="0"/>
+                    
+                    <circle id="cell-tr2" cx="600" cy="150" r="90" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-tr2" cx="600" cy="150" r="50" class="nuclear-envelope" opacity="0"/>
+                    
+                    <circle id="cell-br2" cx="600" cy="450" r="90" fill="rgba(30, 41, 59, 0.5)" stroke="#334155" stroke-width="4" opacity="0"/>
+                    <circle id="nuc-br2" cx="600" cy="450" r="50" class="nuclear-envelope" opacity="0"/>
+                </g>
+
+                <!-- Spindle Fibers Layer -->
+                <g id="spindles-layer"></g>
+
+                <!-- Chromosomes Layer -->
+                <!-- Built dynamically via JS for modular animation of chromatids -->
+                <g id="chromosomes-layer"></g>
+
+            </svg>
+        </div>
+        
+        <!-- On-canvas UI Hints -->
+        <div class="absolute bottom-4 right-4 pointer-events-none z-10 bg-slate-900/80 px-4 py-2 rounded-lg backdrop-blur-md border border-slate-700 shadow-lg">
+            <span class="text-xs text-slate-300 font-medium">Use the <strong class="text-purple-400">Slider</strong> to scrub through time.</span>
+        </div>
+
+    </main>
+
+    <script>
+        /**
+         * EDUCATIONAL WEB SIMULATOR LOGIC
+         * Core Concept: Meiosis (Crossing Over, Independent Assortment, Division)
+         * Engine: GSAP Timeline animating SVG elements.
+         */
+
+        // --- Configuration & Scientific Palette ---
+        const COLORS = {
+            mat: '#F43F5E',    // rose-500 (Maternal)
+            pat: '#0EA5E9',    // sky-500  (Paternal)
+            mat2: '#F97316',   // orange-500 (Maternal Pair 2)
+            pat2: '#14B8A6'    // teal-500   (Paternal Pair 2)
         };
 
-        // --- DATA: Meiosis Stages ---
-        const STAGES = [
-            { 
-                id: 'prophase1', name: 'Prophase I', 
-                desc: 'Homologous chromosomes pair up (Synapsis). Crossing over occurs to exchange genetic material.',
-                label: 'Homologous Pairing & Crossing Over',
-                state: 'crossing_over' 
-            },
-            { 
-                id: 'metaphase1', name: 'Metaphase I', 
-                desc: 'Homologous pairs align at the equator. Independent assortment occurs here.',
-                label: 'Homologous Pairs Align at Equator',
-                state: 'align_pairs'
-            },
-            { 
-                id: 'anaphase1', name: 'Anaphase I', 
-                desc: 'Homologous chromosomes separate and move to opposite poles. Sister chromatids stay together.',
-                label: 'Homologous Chromosomes Separate',
-                state: 'separate_pairs'
-            },
-            { 
-                id: 'telophase1', name: 'Telophase I', 
-                desc: 'Two haploid cells form. Each chromosome still consists of two chromatids.',
-                label: 'Two Haploid Cells Form',
-                state: 'two_cells'
-            },
-            { 
-                id: 'metaphase2', name: 'Metaphase II', 
-                desc: 'Chromosomes align at the equator in both cells.',
-                label: 'Chromosomes Align Individually',
-                state: 'align_chromosomes'
-            },
-            { 
-                id: 'anaphase2', name: 'Anaphase II', 
-                desc: 'Sister chromatids separate and move to opposite poles.',
-                label: 'Sister Chromatids Separate',
-                state: 'separate_chromatids'
-            },
-            { 
-                id: 'telophase2', name: 'Telophase II', 
-                desc: 'Four haploid daughter cells form, each genetically unique.',
-                label: 'Four Unique Haploid Cells',
-                state: 'four_cells'
-            }
+        const STAGE_DATA = [
+            { prog: 0, title: "Interphase", desc: "DNA replicates. Chromosomes consist of two identical sister chromatids enclosed in the nuclear envelope." },
+            { prog: 12, title: "Prophase I", desc: "Nuclear envelope breaks down. Homologous chromosomes pair up. Crossing Over occurs, forming a physical chiasma to exchange genetic material." },
+            { prog: 25, title: "Metaphase I", desc: "Homologous pairs align at the equator. Independent Assortment ensures random maternal/paternal distribution along the metaphase plate." },
+            { prog: 38, title: "Anaphase I", desc: "Spindle fibers retract. Homologous chromosomes separate and move to opposite poles. Sister chromatids remain attached." },
+            { prog: 50, title: "Telophase I", desc: "Two haploid cells form. Nuclear envelopes temporarily reappear. Each chromosome still consists of two sister chromatids." },
+            { prog: 62, title: "Prophase II", desc: "Nuclear envelopes break down again in both new cells. No DNA replication occurs before this stage." },
+            { prog: 75, title: "Metaphase II", desc: "Chromosomes align individually along the equator in both cells. New spindle fibers attach to the centromeres." },
+            { prog: 88, title: "Anaphase II", desc: "Sister chromatids finally separate, pulled to opposite poles by the spindle fibers." },
+            { prog: 100, title: "Telophase II", desc: "Four unique, haploid gametes are produced, each with half the original DNA. Nuclear envelopes reform." }
         ];
 
-        // --- COMPONENTS ---
+        // --- SVG Chromosome Generation ---
+        const chrLayer = document.getElementById('chromosomes-layer');
+        const spindleLayer = document.getElementById('spindles-layer');
 
-        // Single Chromosome (X-shape)
-        const Chromosome = ({ x, y, color, rotation, scale = 1, leftArmColor, rightArmColor, isSeparated = false, separationDist = 0 }) => {
-            // Base colors
-            const c1 = leftArmColor || color;
-            const c2 = rightArmColor || color;
+        // Helper to draw a single chromatid (half an 'X')
+        // Made of two lines (top arm, bottom arm) so we can change the color of just one arm for crossing over.
+        function createChromatid(id, color, length, isLeft) {
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            g.setAttribute("id", id);
             
-            // If separated (Anaphase II), we draw two chromatids apart
-            if (isSeparated) {
-                return (
-                    <g transform={`translate(${x}, ${y}) rotate(${rotation}) scale(${scale})`}>
-                        {/* Left Chromatid moving left */}
-                        <g transform={`translate(${-separationDist}, 0)`}>
-                            <path d="M-2 -20 Q -10 0 -2 20" stroke={c1} strokeWidth="8" fill="none" strokeLinecap="round" />
-                            <circle cx="-2" cy="0" r="3" fill="white" />
-                        </g>
-                        {/* Right Chromatid moving right */}
-                        <g transform={`translate(${separationDist}, 0)`}>
-                            <path d="M2 -20 Q 10 0 2 20" stroke={c2} strokeWidth="8" fill="none" strokeLinecap="round" />
-                            <circle cx="2" cy="0" r="3" fill="white" />
-                        </g>
-                    </g>
-                );
+            // X offset for the 'V' or '<' shape
+            const offset = isLeft ? -15 : 15;
+
+            // Top Arm
+            const top = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            top.setAttribute("id", `${id}-top`);
+            top.setAttribute("x1", 0); top.setAttribute("y1", 0);
+            top.setAttribute("x2", offset); top.setAttribute("y2", -length);
+            top.setAttribute("stroke", color);
+            top.setAttribute("stroke-width", "12");
+            top.setAttribute("class", "chromosome-arm");
+            
+            // Bottom Arm
+            const bot = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            bot.setAttribute("id", `${id}-bot`);
+            bot.setAttribute("x1", 0); bot.setAttribute("y1", 0);
+            bot.setAttribute("x2", offset); bot.setAttribute("y2", length);
+            bot.setAttribute("stroke", color);
+            bot.setAttribute("stroke-width", "12");
+            bot.setAttribute("class", "chromosome-arm");
+
+            // Centromere
+            const centro = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            centro.setAttribute("cx", 0); centro.setAttribute("cy", 0);
+            centro.setAttribute("r", "5");
+            centro.setAttribute("fill", "#FFF");
+
+            g.appendChild(top);
+            g.appendChild(bot);
+            g.appendChild(centro);
+            return g;
+        }
+
+        // Pair 1: Large Chromosomes (Red/Blue)
+        const c1_mat_l = createChromatid('c1_mat_l', COLORS.mat, 60, true);
+        const c1_mat_r = createChromatid('c1_mat_r', COLORS.mat, 60, false);
+        const c1_mat = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        c1_mat.setAttribute("id", "chr1_mat");
+        c1_mat.appendChild(c1_mat_l); c1_mat.appendChild(c1_mat_r);
+
+        const c1_pat_l = createChromatid('c1_pat_l', COLORS.pat, 60, true);
+        const c1_pat_r = createChromatid('c1_pat_r', COLORS.pat, 60, false);
+        const c1_pat = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        c1_pat.setAttribute("id", "chr1_pat");
+        c1_pat.appendChild(c1_pat_l); c1_pat.appendChild(c1_pat_r);
+
+        // Pair 2: Small Chromosomes (Orange/Teal)
+        const c2_mat_l = createChromatid('c2_mat_l', COLORS.mat2, 35, true);
+        const c2_mat_r = createChromatid('c2_mat_r', COLORS.mat2, 35, false);
+        const c2_mat = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        c2_mat.setAttribute("id", "chr2_mat");
+        c2_mat.appendChild(c2_mat_l); c2_mat.appendChild(c2_mat_r);
+
+        const c2_pat_l = createChromatid('c2_pat_l', COLORS.pat2, 35, true);
+        const c2_pat_r = createChromatid('c2_pat_r', COLORS.pat2, 35, false);
+        const c2_pat = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        c2_pat.setAttribute("id", "chr2_pat");
+        c2_pat.appendChild(c2_pat_l); c2_pat.appendChild(c2_pat_r);
+
+        chrLayer.appendChild(c1_mat); chrLayer.appendChild(c1_pat);
+        chrLayer.appendChild(c2_mat); chrLayer.appendChild(c2_pat);
+
+        // Draw Spindles (Lines)
+        function createSpindle(id, x1, y1, x2, y2, cssClass = "spindle") {
+            const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            l.setAttribute("id", id);
+            l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+            l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+            l.setAttribute("class", cssClass);
+            spindleLayer.appendChild(l);
+            return id;
+        }
+
+        // Spindles for Meiosis I (Horizontal alignment, pulled horizontally)
+        createSpindle('sp_m1_1', 150, 300, 350, 200);
+        createSpindle('sp_m1_2', 150, 300, 350, 400);
+        createSpindle('sp_m1_3', 650, 300, 450, 200);
+        createSpindle('sp_m1_4', 650, 300, 450, 400);
+
+        // Spindles for Meiosis II (Vertical alignment, pulled vertically inside new cells)
+        // Top Left Cell
+        createSpindle('sp_m2_1', 200, 50, 200, 150, "spindle-m2");
+        createSpindle('sp_m2_2', 200, 250, 200, 150, "spindle-m2");
+        // Bottom Left Cell
+        createSpindle('sp_m2_3', 200, 350, 200, 450, "spindle-m2");
+        createSpindle('sp_m2_4', 200, 550, 200, 450, "spindle-m2");
+        // Top Right Cell
+        createSpindle('sp_m2_5', 600, 50, 600, 150, "spindle-m2");
+        createSpindle('sp_m2_6', 600, 250, 600, 150, "spindle-m2");
+        // Bottom Right Cell
+        createSpindle('sp_m2_7', 600, 350, 600, 450, "spindle-m2");
+        createSpindle('sp_m2_8', 600, 550, 600, 450, "spindle-m2");
+
+
+        // --- GSAP TIMELINE BUILDER ---
+        
+        // Initial Positions (Interphase)
+        gsap.set(c1_mat, { x: 340, y: 240, rotation: 15 });
+        gsap.set(c1_pat, { x: 460, y: 360, rotation: -25 });
+        gsap.set(c2_mat, { x: 460, y: 220, rotation: 45 });
+        gsap.set(c2_pat, { x: 320, y: 380, rotation: -10 });
+
+        // Centromere origins for internal chromatid rotation
+        gsap.set([c1_mat_l, c1_mat_r, c1_pat_l, c1_pat_r, c2_mat_l, c2_mat_r, c2_pat_l, c2_pat_r], { transformOrigin: "0px 0px" });
+
+        const tl = gsap.timeline({ paused: true, onUpdate: updateUIFromTimeline });
+
+        // --- STAGE 0 to 1: Prophase I (Pairing & Crossing Over) ---
+        // 1. Nuclear Envelope Breaks Down
+        tl.to("#nuc-main", { opacity: 0, duration: 1 }, "prophase1");
+
+        // 2. Homologues pair up
+        tl.to([c1_mat, c1_pat, c2_mat, c2_pat], {
+            x: (i) => [380, 420, 380, 420][i], 
+            y: (i) => [200, 200, 400, 400][i],
+            rotation: 0,
+            duration: 2, ease: "power2.inOut"
+        }, "prophase1+=0.5");
+
+        // 3. CROSSING OVER LOGIC: Physically cross the inner arms to form a Chiasma
+        tl.to(c1_mat_r, { rotation: 12, duration: 0.8, ease: "power1.inOut" }, "prophase1+=2.5");
+        tl.to(c1_pat_l, { rotation: -12, duration: 0.8, ease: "power1.inOut" }, "prophase1+=2.5");
+        
+        // Swap colors while touching
+        tl.add(() => {
+            document.getElementById('c1_mat_r-bot').setAttribute('stroke', COLORS.pat);
+            document.getElementById('c1_pat_l-bot').setAttribute('stroke', COLORS.mat);
+        }, "prophase1+=3.3");
+        // Reverse logic for scrubbing backwards
+        tl.add(() => {
+            document.getElementById('c1_mat_r-bot').setAttribute('stroke', COLORS.mat);
+            document.getElementById('c1_pat_l-bot').setAttribute('stroke', COLORS.pat);
+        }, "prophase1+=3.2"); 
+
+        // Uncross
+        tl.to([c1_mat_r, c1_pat_l], { rotation: 0, duration: 0.8, ease: "power1.inOut" }, "prophase1+=3.5");
+
+
+        // --- STAGE 1 to 2: Metaphase I (Independent Assortment) ---
+        // Align at equator.
+        // Independent Assortment Demo: Pair 1 (Mat Left, Pat Right), Pair 2 (Pat Left, Mat Right)
+        tl.to(c1_mat, { x: 350, y: 200, rotation: 90, duration: 2, ease: "power2.inOut" }, "metaphase1")
+          .to(c1_pat, { x: 450, y: 200, rotation: 90, duration: 2, ease: "power2.inOut" }, "metaphase1")
+          .to(c2_pat, { x: 350, y: 400, rotation: 90, duration: 2, ease: "power2.inOut" }, "metaphase1") // Note: Pat on left!
+          .to(c2_mat, { x: 450, y: 400, rotation: 90, duration: 2, ease: "power2.inOut" }, "metaphase1")
+          // Show Spindles
+          .to(".spindle", { opacity: 1, duration: 1 }, "metaphase1+=1");
+
+
+        // --- STAGE 2 to 3: Anaphase I (Homologous Separation) ---
+        tl.to([c1_mat, c2_pat], { x: 200, duration: 2, ease: "power2.inOut" }, "anaphase1")
+          .to([c1_pat, c2_mat], { x: 600, duration: 2, ease: "power2.inOut" }, "anaphase1")
+          .to(".spindle", { opacity: 0, duration: 0.5 }, "anaphase1");
+
+
+        // --- STAGE 3 to 4: Telophase I (Cell Division) ---
+        tl.to("#cell-main", { opacity: 0, duration: 1.5 }, "telophase1")
+          .to(["#cell-l1", "#cell-r1"], { opacity: 1, duration: 1.5 }, "telophase1")
+          .to(["#nuc-l1", "#nuc-r1"], { opacity: 1, duration: 1.5 }, "telophase1");
+
+
+        // --- STAGE 4 to 5: Prophase II ---
+        // Break down temporary nuclear envelopes
+        tl.to(["#nuc-l1", "#nuc-r1"], { opacity: 0, duration: 1 }, "prophase2");
+
+
+        // --- STAGE 5 to 6: Metaphase II (Align in two cells) ---
+        tl.to([c1_mat, c2_pat], { x: 200, rotation: 0, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          .to(c1_mat, { y: 150, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          .to(c2_pat, { y: 450, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          
+          .to([c1_pat, c2_mat], { x: 600, rotation: 0, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          .to(c1_pat, { y: 150, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          .to(c2_mat, { y: 450, duration: 2, ease: "power2.inOut" }, "metaphase2")
+          
+          // M2 Spindles appear
+          .to(".spindle-m2", { opacity: 1, duration: 1 }, "metaphase2+=1");
+
+
+        // --- STAGE 6 to 7: Anaphase II (Sister Chromatids split) ---
+        // We animate the internal group components (left/right chromatids) independently
+        // Pull them up and down (Y axis) based on M2 vertical orientation
+        tl.to([c1_mat_l, c1_pat_l, c2_mat_l, c2_pat_l], { y: -50, duration: 2, ease: "power2.inOut" }, "anaphase2")
+          .to([c1_mat_r, c1_pat_r, c2_mat_r, c2_pat_r], { y: 50, duration: 2, ease: "power2.inOut" }, "anaphase2")
+          .to(".spindle-m2", { opacity: 0, duration: 0.5 }, "anaphase2");
+
+
+        // --- STAGE 7 to 8: Telophase II (4 Haploid Gametes) ---
+        tl.to(["#cell-l1", "#cell-r1"], { opacity: 0, duration: 1.5 }, "telophase2")
+          .to(["#cell-tl2", "#cell-bl2", "#cell-tr2", "#cell-br2"], { opacity: 1, duration: 1.5 }, "telophase2")
+          .to(["#nuc-tl2", "#nuc-bl2", "#nuc-tr2", "#nuc-br2"], { opacity: 1, duration: 1.5 }, "telophase2");
+
+
+        // --- UI & Interaction Logic ---
+
+        const slider = document.getElementById('timeline-slider');
+        const progressVal = document.getElementById('progress-val');
+        const stageTitle = document.getElementById('stage-title');
+        const stageDesc = document.getElementById('stage-desc');
+        const stageBtns = document.querySelectorAll('.stage-btn');
+        const zoomBtn = document.getElementById('zoom-btn');
+        const svgContainer = document.getElementById('svg-container');
+
+        let isZoomed = false;
+
+        function updateUIFromTimeline() {
+            // Update Slider
+            const progress = (tl.progress() * 100).toFixed(1);
+            slider.value = progress;
+            progressVal.innerText = `${progress}%`;
+
+            // Determine active stage based on thresholds
+            let activeStage = STAGE_DATA[0];
+            for (let i = 0; i < STAGE_DATA.length; i++) {
+                if (progress >= STAGE_DATA[i].prog - 2) { // Small buffer for smoother text transition
+                    activeStage = STAGE_DATA[i];
+                }
             }
 
-            return (
-                <g transform={`translate(${x}, ${y}) rotate(${rotation}) scale(${scale})`}>
-                    {/* Left Chromatid */}
-                    <path d="M-2 -25 Q -15 0 -2 25" stroke={c1} strokeWidth="8" fill="none" strokeLinecap="round" />
-                    {/* Right Chromatid */}
-                    <path d="M2 -25 Q 15 0 2 25" stroke={c2} strokeWidth="8" fill="none" strokeLinecap="round" />
-                    {/* Centromere */}
-                    <circle cx="0" cy="0" r="4" fill="white" stroke="#333" strokeWidth="1" />
-                </g>
-            );
-        };
+            stageTitle.innerText = activeStage.title;
+            stageDesc.innerText = activeStage.desc;
 
-        // Helper for single chromatid in Telophase II
-        const SingleChromatid = ({ x, y, color, rotation, scale = 1 }) => (
-            <g transform={`translate(${x}, ${y}) rotate(${rotation}) scale(${scale})`}>
-                <path d="M0 -20 Q -8 0 0 20" stroke={color} strokeWidth="6" fill="none" strokeLinecap="round" />
-                <circle cx="0" cy="0" r="3" fill="white" stroke="#333" strokeWidth="1" />
-            </g>
-        );
-
-        // Main Visualization Canvas
-        const MeiosisCanvas = ({ stageIdx, crossedOver }) => {
-            const state = STAGES[stageIdx].state;
-            
-            // --- CONFIG ---
-            const cx = 300;
-            const cy = 250;
-            
-            // Colors
-            const paternalColor = "#3b82f6"; // Blue
-            const maternalColor = "#ef4444"; // Red
-            
-            const pColor = crossedOver ? "url(#gradP)" : paternalColor;
-            const mColor = crossedOver ? "url(#gradM)" : maternalColor;
-
-            // --- RENDER LOGIC ---
-            const renderContent = () => {
-                switch (state) {
-                    case 'crossing_over':
-                        return (
-                            <>
-                                <circle cx={cx} cy={cy} r="140" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                {/* Pair 1 (Large) */}
-                                <g className={crossedOver ? "" : "animate-pulse"}> {/* Pulse to suggest interaction */}
-                                    <Chromosome x={cx-15} y={cy} color={pColor} rotation={10} scale={1.2} />
-                                    <Chromosome x={cx+15} y={cy} color={mColor} rotation={-10} scale={1.2} />
-                                </g>
-                                {/* Pair 2 (Small) - simplified for clarity */}
-                                <Chromosome x={cx-50} y={cy+60} color={pColor} rotation={45} scale={0.8} />
-                                <Chromosome x={cx+20} y={cy-60} color={mColor} rotation={-45} scale={0.8} />
-                                
-                                {!crossedOver && (
-                                    <text x={cx} y={cy+160} textAnchor="middle" fill="#fbbf24" fontSize="14" fontWeight="bold" className="animate-bounce">
-                                        Click 'Apply Crossing Over' to mix genes!
-                                    </text>
-                                )}
-                            </>
-                        );
-
-                    case 'align_pairs':
-                        return (
-                            <>
-                                <circle cx={cx} cy={cy} r="140" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                {/* Spindle Fibers */}
-                                <line x1={cx-140} y1={cy} x2={cx-20} y2={cy} stroke="#64748b" strokeWidth="1" strokeDasharray="4,4" />
-                                <line x1={cx+140} y1={cy} x2={cx+20} y2={cy} stroke="#64748b" strokeWidth="1" strokeDasharray="4,4" />
-                                
-                                {/* Aligned Pairs at Equator (Vertical) */}
-                                {/* Large Pair */}
-                                <Chromosome x={cx-15} y={cy-20} color={pColor} rotation={90} scale={1.2} />
-                                <Chromosome x={cx+15} y={cy-20} color={mColor} rotation={90} scale={1.2} />
-                                {/* Small Pair */}
-                                <Chromosome x={cx-15} y={cy+50} color={mColor} rotation={90} scale={0.8} /> {/* Independent assortment: random side */}
-                                <Chromosome x={cx+15} y={cy+50} color={pColor} rotation={90} scale={0.8} />
-                            </>
-                        );
-
-                    case 'separate_pairs':
-                        return (
-                            <>
-                                <circle cx={cx} cy={cy} r="140" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                {/* Separating */}
-                                <Chromosome x={cx-60} y={cy-20} color={pColor} rotation={90} scale={1.2} />
-                                <Chromosome x={cx+60} y={cy-20} color={mColor} rotation={90} scale={1.2} />
-                                
-                                <Chromosome x={cx-60} y={cy+50} color={mColor} rotation={90} scale={0.8} />
-                                <Chromosome x={cx+60} y={cy+50} color={pColor} rotation={90} scale={0.8} />
-                            </>
-                        );
-
-                    case 'two_cells':
-                        return (
-                            <>
-                                {/* Cell 1 */}
-                                <circle cx={cx-80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx-80} y={cy-15} color={pColor} rotation={Math.random()*180} scale={1.2} />
-                                <Chromosome x={cx-80} y={cy+25} color={mColor} rotation={Math.random()*180} scale={0.8} />
-                                
-                                {/* Cell 2 */}
-                                <circle cx={cx+80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx+80} y={cy-15} color={mColor} rotation={Math.random()*180} scale={1.2} />
-                                <Chromosome x={cx+80} y={cy+25} color={pColor} rotation={Math.random()*180} scale={0.8} />
-                            </>
-                        );
-
-                    case 'align_chromosomes':
-                        return (
-                            <>
-                                {/* Cell 1 */}
-                                <circle cx={cx-80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx-80} y={cy-15} color={pColor} rotation={0} scale={1.2} />
-                                <Chromosome x={cx-80} y={cy+25} color={mColor} rotation={0} scale={0.8} />
-
-                                {/* Cell 2 */}
-                                <circle cx={cx+80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx+80} y={cy-15} color={mColor} rotation={0} scale={1.2} />
-                                <Chromosome x={cx+80} y={cy+25} color={pColor} rotation={0} scale={0.8} />
-                                
-                                <line x1={cx-80} y1={cy-80} x2={cx-80} y2={cy+80} stroke="#64748b" strokeWidth="1" strokeDasharray="2,2" />
-                                <line x1={cx+80} y1={cy-80} x2={cx+80} y2={cy+80} stroke="#64748b" strokeWidth="1" strokeDasharray="2,2" />
-                            </>
-                        );
-
-                    case 'separate_chromatids':
-                        return (
-                            <>
-                                {/* Cell 1 Separating */}
-                                <circle cx={cx-80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx-80} y={cy-15} color={pColor} rotation={0} scale={1.2} isSeparated={true} separationDist={20} />
-                                <Chromosome x={cx-80} y={cy+25} color={mColor} rotation={0} scale={0.8} isSeparated={true} separationDist={20} />
-
-                                {/* Cell 2 Separating */}
-                                <circle cx={cx+80} cy={cy} r="70" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <Chromosome x={cx+80} y={cy-15} color={mColor} rotation={0} scale={1.2} isSeparated={true} separationDist={20} />
-                                <Chromosome x={cx+80} y={cy+25} color={pColor} rotation={0} scale={0.8} isSeparated={true} separationDist={20} />
-                            </>
-                        );
-                    
-                    case 'four_cells':
-                         return (
-                            <g transform={`translate(${cx}, ${cy})`}>
-                                {/* Top Left Cell */}
-                                <circle cx="-100" cy="-60" r="50" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <circle cx="-100" cy="-60" r="35" fill="none" stroke="#64748b" strokeWidth="1" strokeDasharray="3,3" /> {/* Nucleus */}
-                                <SingleChromatid x="-100" y="-75" color={pColor} rotation={-10} scale={1.0} />
-                                <SingleChromatid x="-100" y="-45" color={mColor} rotation={10} scale={0.7} />
-                                <text x="-100" y="-60" textAnchor="middle" fontSize="40" fill="white" opacity="0.1" fontWeight="bold">n</text>
-                                
-                                {/* Top Right Cell */}
-                                <circle cx="100" cy="-60" r="50" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <circle cx="100" cy="-60" r="35" fill="none" stroke="#64748b" strokeWidth="1" strokeDasharray="3,3" />
-                                <SingleChromatid x="100" y="-75" color={pColor} rotation={10} scale={1.0} />
-                                <SingleChromatid x="100" y="-45" color={mColor} rotation={-10} scale={0.7} />
-                                <text x="100" y="-60" textAnchor="middle" fontSize="40" fill="white" opacity="0.1" fontWeight="bold">n</text>
-                                
-                                {/* Bottom Left Cell */}
-                                <circle cx="-100" cy="60" r="50" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <circle cx="-100" cy="60" r="35" fill="none" stroke="#64748b" strokeWidth="1" strokeDasharray="3,3" />
-                                <SingleChromatid x="-100" y="45" color={mColor} rotation={-10} scale={1.0} />
-                                <SingleChromatid x="-100" y="75" color={pColor} rotation={10} scale={0.7} />
-                                <text x="-100" y="60" textAnchor="middle" fontSize="40" fill="white" opacity="0.1" fontWeight="bold">n</text>
-
-                                {/* Bottom Right Cell */}
-                                <circle cx="100" cy="60" r="50" fill="#1e293b" stroke="#475569" strokeWidth="2" />
-                                <circle cx="100" cy="60" r="35" fill="none" stroke="#64748b" strokeWidth="1" strokeDasharray="3,3" />
-                                <SingleChromatid x="100" y="45" color={mColor} rotation={10} scale={1.0} />
-                                <SingleChromatid x="100" y="75" color={pColor} rotation={-10} scale={0.7} />
-                                <text x="100" y="60" textAnchor="middle" fontSize="40" fill="white" opacity="0.1" fontWeight="bold">n</text>
-                            </g>
-                         );
-                     
-                    default: return null;
+            // Highlight active button
+            stageBtns.forEach(btn => {
+                if (parseFloat(btn.dataset.progress) === activeStage.prog) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
                 }
-            };
+            });
 
-            return (
-                <svg width="100%" height="100%" viewBox="0 0 600 500" className="bg-slate-900 rounded-2xl shadow-inner border border-slate-800">
-                    <defs>
-                        {/* Gradients for Crossing Over Effect */}
-                        <linearGradient id="gradP" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#ef4444" /> {/* Red Tip */}
-                            <stop offset="20%" stopColor="#3b82f6" /> {/* Blue Body */}
-                            <stop offset="80%" stopColor="#3b82f6" />
-                            <stop offset="100%" stopColor="#ef4444" /> {/* Red Tip */}
-                        </linearGradient>
-                        <linearGradient id="gradM" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stopColor="#3b82f6" /> {/* Blue Tip */}
-                            <stop offset="20%" stopColor="#ef4444" /> {/* Red Body */}
-                            <stop offset="80%" stopColor="#ef4444" />
-                            <stop offset="100%" stopColor="#3b82f6" /> {/* Blue Tip */}
-                        </linearGradient>
-                    </defs>
-                    {renderContent()}
-                </svg>
-            );
-        };
+            // Enable/Disable Zoom Button (Only active near Prophase I - 12%)
+            if (progress > 8 && progress < 20) {
+                zoomBtn.disabled = false;
+            } else {
+                zoomBtn.disabled = true;
+                if (isZoomed) toggleZoom(); // Auto unzoom if scrubbing past
+            }
+        }
 
-        // --- MAIN APP ---
-        const App = () => {
-            const [stage, setStage] = useState(0);
-            const [crossedOver, setCrossedOver] = useState(false);
-            const [isPlaying, setIsPlaying] = useState(false);
+        slider.addEventListener('input', (e) => {
+            const progress = e.target.value / 100;
+            tl.progress(progress); // Instantly jump timeline
+        });
 
-            // Auto-play
-            useEffect(() => {
-                let interval;
-                if (isPlaying) {
-                    interval = setInterval(() => {
-                        setStage(s => {
-                            if (s >= STAGES.length - 1) {
-                                setIsPlaying(false);
-                                return s;
-                            }
-                            // Auto trigger crossing over at stage 0
-                            if (s === 0) setCrossedOver(true);
-                            return s + 1;
-                        });
-                    }, 2000);
-                }
-                return () => clearInterval(interval);
-            }, [isPlaying]);
+        stageBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const targetProgress = parseFloat(e.target.dataset.progress) / 100;
+                // Tween the timeline progress for smooth transition between states
+                gsap.to(tl, { progress: targetProgress, duration: 2, ease: "power2.inOut" });
+            });
+        });
 
-            const nextStage = () => setStage(s => Math.min(s + 1, STAGES.length - 1));
-            const prevStage = () => setStage(s => Math.max(0, s - 1));
-            const reset = () => { setStage(0); setCrossedOver(false); setIsPlaying(false); };
+        function toggleZoom() {
+            isZoomed = !isZoomed;
+            if (isZoomed) {
+                // Focus on Chiasmata (x:400, y:200)
+                svgContainer.style.transform = 'scale(2.5) translate(0px, 120px)';
+                zoomBtn.innerText = "🔍 Reset View";
+                zoomBtn.classList.replace('bg-indigo-600', 'bg-slate-600');
+            } else {
+                svgContainer.style.transform = 'scale(1) translate(0px, 0px)';
+                zoomBtn.innerText = "🔍 Zoom to Chiasmata (Prophase I)";
+                zoomBtn.classList.replace('bg-slate-600', 'bg-indigo-600');
+            }
+        }
 
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="dna" className="text-purple-400" /> Meiosis Sim
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Cell Division & Variation</p>
-                        </div>
+        zoomBtn.addEventListener('click', toggleZoom);
 
-                        <div className="p-6 flex-1 overflow-y-auto space-y-6">
-                            
-                            {/* Stage Indicator */}
-                            <div>
-                                <div className="flex justify-between text-xs font-bold text-slate-500 uppercase mb-2">
-                                    <span>Progress</span>
-                                    <span>{stage + 1} / {STAGES.length}</span>
-                                </div>
-                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                                    <div className="h-full bg-purple-500 transition-all duration-500" style={{width: `${((stage + 1) / STAGES.length) * 100}%`}}></div>
-                                </div>
-                            </div>
+        // Boot
+        updateUIFromTimeline();
 
-                            {/* Info Box */}
-                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
-                                <div className="text-xs font-bold text-slate-500 uppercase mb-2">Current Phase</div>
-                                <div className="text-xl font-black text-white mb-1">{STAGES[stage].name}</div>
-                                <div className="text-xs font-bold text-emerald-400 mb-3">{STAGES[stage].label}</div>
-                                <p className="text-sm text-slate-300 leading-relaxed border-t border-slate-700 pt-3">
-                                    {STAGES[stage].desc}
-                                </p>
-                            </div>
-
-                            {/* Crossing Over Control */}
-                            {stage === 0 && (
-                                <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 animate-in fade-in">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <div className="text-xs font-bold text-blue-400 uppercase flex items-center gap-2">
-                                            <Icon name="shuffle" size={14} /> Variation
-                                        </div>
-                                        <span className={`text-xs font-mono px-2 py-0.5 rounded ${crossedOver ? 'bg-green-500 text-white' : 'bg-slate-700 text-slate-400'}`}>
-                                            {crossedOver ? 'ACTIVE' : 'OFF'}
-                                        </span>
-                                    </div>
-                                    <button 
-                                        onClick={() => setCrossedOver(!crossedOver)}
-                                        className={`w-full py-2 rounded-lg font-bold text-sm transition-all border
-                                            ${crossedOver ? 'bg-green-600 border-green-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'}
-                                        `}
-                                    >
-                                        {crossedOver ? 'Crossing Over Applied' : 'Apply Crossing Over'}
-                                    </button>
-                                    <p className="text-[10px] text-slate-400 mt-2">
-                                        Exchanges DNA between homologous chromosomes, creating genetic diversity.
-                                    </p>
-                                </div>
-                            )}
-                            
-                            {/* Legend */}
-                            <div className="flex gap-4 text-[10px] text-slate-400">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-blue-500"></div> Paternal
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-red-500"></div> Maternal
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-4 overflow-hidden">
-                        
-                        {/* Visualizer */}
-                        <div className="flex-1 flex items-center justify-center relative">
-                            <MeiosisCanvas stageIdx={stage} crossedOver={crossedOver} />
-                        </div>
-
-                        {/* Control Bar */}
-                        <div className="h-24 mt-4 flex items-center justify-center gap-6 shrink-0">
-                            <button 
-                                onClick={prevStage} 
-                                disabled={stage === 0}
-                                className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-30 transition-all border border-slate-700"
-                            >
-                                <Icon name="chevron-left" size={24} />
-                            </button>
-
-                            <button 
-                                onClick={() => setIsPlaying(!isPlaying)}
-                                className={`px-8 py-3 rounded-full font-bold shadow-lg flex items-center gap-2 transition-all active:scale-95
-                                    ${isPlaying ? 'bg-yellow-600 text-white' : 'bg-purple-600 hover:bg-purple-500 text-white'}
-                                `}
-                            >
-                                <Icon name={isPlaying ? "pause" : "play"} fill="currentColor" />
-                                {isPlaying ? 'Pause' : 'Auto Play'}
-                            </button>
-
-                            <button 
-                                onClick={nextStage}
-                                disabled={stage === STAGES.length - 1}
-                                className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-30 transition-all border border-slate-700"
-                            >
-                                <Icon name="chevron-right" size={24} />
-                            </button>
-
-                            <button 
-                                onClick={reset}
-                                className="p-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all border border-slate-700 ml-4"
-                                title="Reset"
-                            >
-                                <Icon name="rotate-ccw" size={20} />
-                            </button>
-                        </div>
-
-                    </div>
-
-                </div>
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
     </script>
 </body>
 </html>
