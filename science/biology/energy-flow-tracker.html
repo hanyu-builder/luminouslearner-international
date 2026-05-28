@@ -3,278 +3,655 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Energy Flow Tracker | LuminousLearner</title>
+    <meta name="description" content="Interactive biology virtual labs: Energy Flow Tracker. Visualize the 10% rule, biomass transfer, Sankey diagrams, and Ecological Pyramids of trophic levels.">
+    <title>Energy Flow Tracker - Biology Virtual Labs</title>
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
-
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- D3.js and D3-Sankey for Graphing -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        body { font-family: 'Inter', sans-serif; background-color: #020617; overflow: hidden; user-select: none; }
         
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-
-        .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .7; }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
         }
+
+        /* Scientific Sliders */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { 
+            -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; 
+            cursor: pointer; margin-top: -8px; border: 3px solid white; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.5); transition: transform 0.1s; 
+        }
+        input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; border-radius: 3px; background: #334155; }
+        
+        #energySlider::-webkit-slider-thumb { background: #facc15; border-color: #ca8a04; }
+        #effSlider::-webkit-slider-thumb { background: #10b981; border-color: #059669; }
+
+        /* Sankey Diagram Elements */
+        .node rect { cursor: pointer; transition: fill 0.2s; filter: drop-shadow(0 0 8px rgba(0,0,0,0.5)); stroke: rgba(255,255,255,0.2); stroke-width: 1px; }
+        .node text { font-family: 'Inter', sans-serif; pointer-events: none; text-shadow: 0 2px 4px rgba(0,0,0,0.9); font-weight: 700; font-size: 12px; }
+        
+        .link { fill: none; stroke-opacity: 0.5; transition: stroke-opacity 0.2s, stroke-width 0.2s; }
+        .link:hover { stroke-opacity: 0.8; }
+
+        /* Tooltip */
+        .d3-tooltip {
+            position: absolute;
+            text-align: left;
+            padding: 10px 14px;
+            font-size: 12px;
+            font-family: 'Inter', sans-serif;
+            background: rgba(15, 23, 42, 0.95);
+            color: #f8fafc;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            transform: translate(-50%, -100%);
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+            z-index: 50;
+            white-space: nowrap;
+            transition: opacity 0.2s;
+        }
+
+        /* View Toggle Tabs */
+        .view-tab { transition: all 0.3s; }
+        .view-tab.active { background-color: #f59e0b; color: #020617; font-weight: 900; }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen w-full flex items-center justify-center p-2 sm:p-4">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
-        const { motion, AnimatePresence } = window.Motion;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- COMPONENTS ---
+    <!-- Main Container -->
+    <main class="w-full max-w-[1500px] h-full max-h-[950px] bg-[#0F172A] rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.6)] flex flex-col md:flex-row border border-slate-700 overflow-hidden relative">
         
-        const Connector = () => (
-            <svg className="absolute top-full left-20 w-32 h-20 pointer-events-none" style={{ zIndex: 0, overflow: 'visible' }}>
-                {/* L-Shape Connector Path */}
-                <path d="M 0 0 V 40 H 60 V 80" stroke="#334155" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                {/* Animated Energy Particle */}
-                <circle r="3" fill="#10b981">
-                    <animateMotion path="M 0 0 V 40 H 60 V 80" dur="1.5s" repeatCount="indefinite" />
-                </circle>
-                {/* Arrow Head */}
-                <path d="M 55 75 L 60 82 L 65 75" fill="#334155" />
-            </svg>
-        );
+        <!-- Left Sidebar: Controls & Dashboards -->
+        <aside class="w-full md:w-[420px] glass-panel p-5 flex flex-col h-full z-10 border-r border-slate-700 shrink-0 overflow-y-auto custom-scrollbar">
+            <div class="mb-5 border-b border-slate-700 pb-4">
+                <h1 class="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500 mb-1 flex items-center gap-3">
+                    <i class="fa-solid fa-bolt text-amber-400"></i> Energy Flow
+                </h1>
+                <p class="text-[10px] md:text-xs text-slate-400 uppercase tracking-widest font-bold">Trophic Biomass Transfer Lab</p>
+            </div>
 
-        const TrophicLevel = ({ data, index, isLast }) => {
-            const lossRespiration = data.energy * 0.6; // 60% Heat
-            const lossWaste = data.energy * 0.3; // 30% Waste
-            const transfer = data.energy * 0.1; // 10% Transfer
+            <!-- Educational Context -->
+            <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-5 shadow-inner text-xs text-slate-300 leading-relaxed">
+                <p>According to the <strong>10% Rule (Lindeman's Efficiency)</strong>, only a fraction of the energy from one trophic level is successfully passed to the next. The vast majority (~90%) is lost to the environment.</p>
+            </div>
 
-            return (
-                <motion.div 
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.1 }}
-                    className={`relative flex items-start ${isLast ? 'mb-0' : 'mb-8'}`}
-                    style={{ marginLeft: `${index * 60}px` }} // Staircase effect
-                >
-                    {/* 1. Main Organism Card */}
-                    <div className={`w-40 h-40 bg-slate-800 rounded-2xl border-2 flex flex-col items-center justify-center shadow-xl z-10 shrink-0 relative`}
-                         style={{ borderColor: data.color }}
-                    >
-                        <div className="mb-2" style={{ color: data.color }}>
-                            <Icon name={data.icon} size={40} />
-                        </div>
-                        <div className="text-sm font-bold text-white mb-1 text-center px-2">{data.name}</div>
-                        <div className="text-lg font-mono font-black" style={{ color: data.color }}>
-                            {data.energy.toLocaleString()} J
-                        </div>
-                        {/* Corner Label */}
-                        <div className="absolute top-2 left-2 text-[10px] text-slate-500 font-bold uppercase">
-                            L{index + 1}
-                        </div>
-                        
-                        {/* Connector to next level */}
-                        {!isLast && <Connector />}
-                    </div>
-
-                    {/* 2. Data Details Panel (Right Side) */}
-                    <div className="ml-6 mt-4 flex flex-col gap-3 min-w-[240px]">
-                        {/* Heat Loss */}
-                        <div className="flex items-center justify-between bg-red-900/10 border border-red-500/20 p-2 rounded-lg">
-                            <div className="flex items-center gap-2 text-red-400">
-                                <Icon name="flame" size={16}/>
-                                <span className="text-xs font-bold">Heat Loss (60%)</span>
-                            </div>
-                            <span className="text-xs font-mono text-red-300">-{lossRespiration.toLocaleString()} J</span>
-                        </div>
-
-                        {/* Waste */}
-                        <div className="flex items-center justify-between bg-slate-700/20 border border-slate-600/30 p-2 rounded-lg">
-                            <div className="flex items-center gap-2 text-slate-400">
-                                <Icon name="trash-2" size={16}/>
-                                <span className="text-xs font-bold">Waste (30%)</span>
-                            </div>
-                            <span className="text-xs font-mono text-slate-400">-{lossWaste.toLocaleString()} J</span>
-                        </div>
-
-                        {/* Transfer (Next Level) */}
-                        {!isLast && (
-                            <div className="flex items-center justify-between bg-emerald-900/10 border border-emerald-500/20 p-2 rounded-lg mt-1">
-                                <div className="flex items-center gap-2 text-emerald-400">
-                                    <Icon name="arrow-right-circle" size={16}/>
-                                    <span className="text-xs font-bold">Transfer (10%)</span>
-                                </div>
-                                <span className="text-xs font-mono text-emerald-300">{transfer.toLocaleString()} J</span>
-                            </div>
-                        )}
-                    </div>
-
-                </motion.div>
-            );
-        };
-
-        const SunNode = () => (
-            <div className="relative flex items-start mb-8">
-                {/* Sun Card */}
-                <div className="w-40 h-40 bg-yellow-900/20 rounded-full border-4 border-yellow-500 flex flex-col items-center justify-center shadow-[0_0_30px_rgba(234,179,8,0.2)] z-10 shrink-0 animate-pulse-slow">
-                    <Icon name="sun" size={48} className="text-yellow-400 mb-2" />
-                    <div className="text-lg font-black text-yellow-400">SUN</div>
-                    <div className="text-[10px] text-yellow-200/70">Ultimate Source</div>
-                    <Connector />
-                </div>
+            <!-- Interactive Parameters -->
+            <div class="space-y-4 mb-5">
+                <label class="text-[10px] text-slate-500 font-bold uppercase tracking-wider block border-b border-slate-700 pb-1.5">Ecosystem Inputs</label>
                 
-                {/* Sun Info */}
-                <div className="ml-6 mt-12 text-sm text-slate-400 max-w-xs">
-                    Solar energy enters the ecosystem. Producers capture ~1% for photosynthesis.
+                <!-- Solar Energy Slider -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 shadow-lg">
+                    <div class="flex justify-between items-end mb-3">
+                        <span class="text-[11px] font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                            <i class="fa-solid fa-sun text-yellow-400 text-sm"></i> Solar Energy Captured
+                        </span>
+                        <span id="energyVal" class="text-base font-black text-yellow-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700">1,000,000</span>
+                    </div>
+                    <input type="range" id="energySlider" min="10000" max="2000000" value="1000000" step="10000">
+                    <p class="text-[9px] text-slate-400 mt-2 font-medium">Energy absorbed by primary producers via photosynthesis (measured in kilocalories).</p>
+                </div>
+
+                <!-- Transfer Efficiency Slider -->
+                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 shadow-lg">
+                    <div class="flex justify-between items-end mb-3">
+                        <span class="text-[11px] font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                            <i class="fa-solid fa-recycle text-emerald-400 text-sm"></i> Ecological Efficiency
+                        </span>
+                        <span id="effVal" class="text-base font-black text-emerald-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700">10%</span>
+                    </div>
+                    <input type="range" id="effSlider" min="5" max="25" value="10" step="1">
+                    <p class="text-[9px] text-slate-400 mt-2 font-medium">The percentage of energy stored as biomass and successfully eaten by the next trophic level.</p>
                 </div>
             </div>
-        );
 
-        // --- MAIN APP ---
-        const App = () => {
-            const [sunEnergy, setSunEnergy] = useState(100000); // Joules (Input to producers)
-
-            // Calculate Energy at each level (10% Rule)
-            const producerEnergy = sunEnergy; 
-            const primaryEnergy = Math.floor(producerEnergy * 0.1);
-            const secondaryEnergy = Math.floor(primaryEnergy * 0.1);
-            const tertiaryEnergy = Math.floor(secondaryEnergy * 0.1);
-
-            const levels = [
-                { id: 'producer', name: 'Producer', icon: 'leaf', color: '#22c55e', energy: producerEnergy },
-                { id: 'primary', name: 'Primary Consumer', icon: 'rabbit', color: '#eab308', energy: primaryEnergy },
-                { id: 'secondary', name: 'Secondary Consumer', icon: 'worm', color: '#f97316', energy: secondaryEnergy },
-                { id: 'tertiary', name: 'Tertiary Consumer', icon: 'bird', color: '#ef4444', energy: tertiaryEnergy }
-            ];
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col overflow-hidden font-sans">
+            <!-- Trophic Telemetry Dashboard -->
+            <div class="bg-slate-900 p-5 rounded-xl border border-slate-600 shadow-inner flex-grow relative overflow-hidden flex flex-col">
+                <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-4 border-b border-slate-700 pb-2">Retained Biomass Energy (kcal)</p>
+                
+                <div class="space-y-3 flex-grow">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-sm bg-[#4ADE80]"></div>
+                            <span class="text-xs font-bold text-slate-300">1. Primary Producers</span>
+                        </div>
+                        <span class="font-mono text-emerald-400 font-bold bg-slate-950 px-2 rounded border border-slate-800" id="statT1">0</span>
+                    </div>
                     
-                    {/* Header / Controls */}
-                    <div className="h-20 bg-slate-900 border-b border-slate-800 flex items-center px-8 justify-between shrink-0 z-30 shadow-md">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-400">
-                                <Icon name="zap" size={24}/>
-                            </div>
-                            <div>
-                                <h1 className="text-xl font-black tracking-tight">Energy Flow Tracker</h1>
-                                <p className="text-xs text-slate-400">The 10% Rule in Ecosystems</p>
-                            </div>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-sm bg-[#60A5FA]"></div>
+                            <span class="text-xs font-bold text-slate-300">2. Primary Consumers</span>
                         </div>
-
-                        <div className="flex items-center gap-4 bg-slate-800 p-2 px-4 rounded-xl border border-slate-700">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase">START ENERGY (PRODUCERS)</label>
-                            <div className="flex items-center gap-3 w-64">
-                                <input 
-                                    type="range" 
-                                    min="1000" max="1000000" step="1000"
-                                    value={sunEnergy}
-                                    onChange={(e) => setSunEnergy(parseInt(e.target.value))}
-                                    className="w-full accent-emerald-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-                                />
-                                <span className="font-mono font-bold text-emerald-400 w-24 text-right text-sm">{sunEnergy.toLocaleString()} J</span>
-                            </div>
-                        </div>
+                        <span class="font-mono text-blue-400 font-bold bg-slate-950 px-2 rounded border border-slate-800" id="statT2">0</span>
                     </div>
 
-                    {/* Main Stage: Staircase Layout */}
-                    <div className="flex-1 overflow-y-auto overflow-x-auto p-12 custom-scrollbar relative">
-                        
-                        {/* Background Grid */}
-                        <div className="absolute inset-0 opacity-5 pointer-events-none" 
-                            style={{backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '30px 30px'}}>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-sm bg-[#F97316]"></div>
+                            <span class="text-xs font-bold text-slate-300">3. Secondary Consumers</span>
                         </div>
-
-                        <div className="min-w-max pb-10">
-                            
-                            {/* 1. Sun */}
-                            <SunNode />
-
-                            {/* 2. Trophic Levels */}
-                            {levels.map((level, i) => (
-                                <TrophicLevel 
-                                    key={level.id} 
-                                    data={level} 
-                                    index={i + 1} // Offset for sun
-                                    isLast={i === levels.length - 1} 
-                                />
-                            ))}
-
-                        </div>
+                        <span class="font-mono text-orange-400 font-bold bg-slate-950 px-2 rounded border border-slate-800" id="statT3">0</span>
                     </div>
 
-                    {/* Footer Legend */}
-                    <div className="bg-slate-900 border-t border-slate-800 p-3 flex justify-center gap-8 text-xs text-slate-400 shrink-0 z-30">
-                        <div className="flex items-center gap-2">
-                            <Icon name="flame" size={14} className="text-red-500"/>
-                            <span><strong>90% Loss:</strong> Heat (Respiration), Movement, Excretion, Uneaten parts.</span>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-sm bg-[#EF4444]"></div>
+                            <span class="text-xs font-bold text-slate-300">4. Apex Predators</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                            <Icon name="arrow-right-circle" size={14} className="text-emerald-500"/>
-                            <span><strong>10% Transfer:</strong> Stored as biomass (Growth) available for next level.</span>
-                        </div>
+                        <span class="font-mono text-red-400 font-bold bg-slate-950 px-2 rounded border border-slate-800" id="statT4">0</span>
                     </div>
-
                 </div>
-            );
+
+                <!-- Waste Node Stat -->
+                <div class="mt-4 pt-3 border-t border-slate-700">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-full bg-[#94A3B8]"></div>
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Environmental Loss</span>
+                        </div>
+                        <span class="font-mono text-slate-300 font-bold text-sm" id="statHeat">0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <button id="resetBtn" class="w-full mt-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors border border-slate-600 shadow-lg active:scale-95 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-rotate-right"></i> Reset to 10% Standard
+            </button>
+
+        </aside>
+
+        <!-- Right Viewport: Interactive Visualizations -->
+        <section class="flex-grow bg-[#0B1120] flex flex-col relative overflow-hidden">
+            
+            <!-- View Mode Switcher -->
+            <div class="absolute top-6 right-6 z-20 flex bg-slate-900/80 backdrop-blur-sm p-1.5 rounded-xl border border-slate-700 shadow-xl">
+                <button onclick="switchView('sankey')" id="tab-sankey" class="view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-water"></i> Sankey Flow
+                </button>
+                <button onclick="switchView('pyramid')" id="tab-pyramid" class="view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-mountain"></i> Energy Pyramid
+                </button>
+            </div>
+
+            <!-- Visualization: SANKEY DIAGRAM -->
+            <div id="view-sankey" class="w-full h-full p-4 md:p-6 flex flex-col relative">
+                <div class="flex justify-between items-center mb-2 shrink-0 z-10">
+                    <h2 class="text-lg font-bold text-slate-200 tracking-wide flex items-center gap-2">
+                        <i class="fa-solid fa-diagram-project text-amber-500"></i> Sankey Energy Dissipation Diagram
+                    </h2>
+                </div>
+                <p class="text-[10px] text-slate-400 mb-2 z-10 shrink-0 font-medium">Link width represents the exact quantity of energy (kcal) flowing between pools. Hover over pathways for details.</p>
+
+                <!-- Sankey Legend -->
+                <div class="flex gap-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 z-10 shrink-0 bg-slate-900/60 p-2 rounded-lg border border-slate-800 w-max">
+                    <div class="flex items-center gap-1.5"><span class="w-4 h-1 bg-emerald-400 rounded"></span> Biomass Consumed</div>
+                    <div class="flex items-center gap-1.5"><span class="w-4 h-1 bg-gradient-to-r from-red-500 to-slate-500 rounded"></span> Lost as Heat / Feces / Uneaten</div>
+                </div>
+
+                <!-- D3 Container -->
+                <div id="chart-container" class="flex-grow w-full relative">
+                    <!-- SVG Injected Here -->
+                </div>
+            </div>
+
+            <!-- Visualization: ECOLOGICAL PYRAMID -->
+            <div id="view-pyramid" class="w-full h-full p-4 md:p-6 flex-col relative hidden items-center justify-center">
+                <h2 class="absolute top-6 left-6 text-lg font-bold text-slate-200 tracking-wide flex items-center gap-2 z-10">
+                    <i class="fa-solid fa-mountain text-amber-500"></i> Ecological Pyramid
+                </h2>
+                <p class="absolute top-14 left-6 text-[10px] text-slate-400 z-10 font-medium max-w-sm leading-relaxed">
+                    Demonstrates the sharp decline in available biomass at higher trophic levels. This limits food chains to 4 or 5 levels, as there is not enough energy to support a higher apex predator.
+                </p>
+
+                <!-- SVG Pyramid -->
+                <div class="relative w-full max-w-[600px] h-[500px] mt-10">
+                    <svg id="pyramid-svg" width="100%" height="100%" viewBox="0 0 600 500" class="drop-shadow-2xl">
+                        <!-- Polygons injected via JS -->
+                    </svg>
+                </div>
+            </div>
+
+            <!-- HTML Tooltip -->
+            <div id="tooltip" class="d3-tooltip"></div>
+        </section>
+
+    </main>
+
+    <script>
+        /**
+         * ENERGY FLOW TRACKER
+         * Uses D3.js and d3-sankey to build an interactive ecosystem visualization.
+         */
+
+        // --- DOM ELEMENTS ---
+        const ui = {
+            energySlider: document.getElementById('energySlider'),
+            energyVal: document.getElementById('energyVal'),
+            effSlider: document.getElementById('effSlider'),
+            effVal: document.getElementById('effVal'),
+            resetBtn: document.getElementById('resetBtn'),
+            
+            statT1: document.getElementById('statT1'),
+            statT2: document.getElementById('statT2'),
+            statT3: document.getElementById('statT3'),
+            statT4: document.getElementById('statT4'),
+            statHeat: document.getElementById('statHeat'),
+
+            viewSankey: document.getElementById('view-sankey'),
+            viewPyramid: document.getElementById('view-pyramid'),
+            tabSankey: document.getElementById('tab-sankey'),
+            tabPyramid: document.getElementById('tab-pyramid'),
+
+            chartContainer: document.getElementById('chart-container'),
+            pyramidSvg: d3.select('#pyramid-svg'),
+            tooltip: document.getElementById('tooltip')
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // --- STATE VARIABLES ---
+        let state = {
+            energyIn: 1000000,
+            efficiency: 0.10,
+            viewMode: 'sankey' // 'sankey' or 'pyramid'
+        };
+
+        // --- D3 GLOBALS ---
+        let svg, gNodes, gLinks;
+        let sankeyLayout, pathGenerator;
+        let width, height;
+        const margin = { top: 20, right: 20, bottom: 20, left: 20 };
+        const formatNumber = d3.format(",.0f");
+
+        // Fixed Nodes Definition
+        const NODES_TEMPLATE = [
+            { id: "Sun", name: "Solar Input", color: "#FACC15" },
+            { id: "Producers", name: "Primary Producers", color: "#4ADE80" },
+            { id: "Primary", name: "Primary Consumers", color: "#60A5FA" },
+            { id: "Secondary", name: "Secondary Consumers", color: "#F97316" },
+            { id: "Apex", name: "Apex Predators", color: "#EF4444" },
+            { id: "Heat", name: "Environmental Loss (Heat, Feces, Detritus)", color: "#64748b" }
+        ];
+
+        const nodeIndices = {};
+        NODES_TEMPLATE.forEach((n, i) => nodeIndices[n.id] = i);
+
+        // --- VIEW MANAGEMENT ---
+        window.switchView = function(mode) {
+            state.viewMode = mode;
+            if (mode === 'sankey') {
+                ui.tabSankey.className = "view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2";
+                ui.tabPyramid.className = "view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white";
+                ui.viewSankey.classList.remove('hidden');
+                ui.viewSankey.classList.add('flex');
+                ui.viewPyramid.classList.add('hidden');
+                ui.viewPyramid.classList.remove('flex');
+                
+                // Re-initialize D3 because container size might have been zero
+                initD3();
+                updateSimulation();
+            } else {
+                ui.tabPyramid.className = "view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2";
+                ui.tabSankey.className = "view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white";
+                ui.viewPyramid.classList.remove('hidden');
+                ui.viewPyramid.classList.add('flex');
+                ui.viewSankey.classList.add('hidden');
+                ui.viewSankey.classList.remove('flex');
+                
+                updateSimulation(); // Draw pyramid
+            }
+        };
+
+        // --- INITIALIZATION ---
+        function init() {
+            setupEventListeners();
+            initD3();
+            updateSimulation();
+
+            window.addEventListener('resize', () => {
+                if(state.viewMode === 'sankey') {
+                    initD3();
+                    updateSimulation();
+                } else {
+                    updateSimulation();
+                }
+            });
+        }
+
+        function setupEventListeners() {
+            ui.energySlider.addEventListener('input', (e) => {
+                state.energyIn = parseInt(e.target.value);
+                ui.energyVal.innerText = formatNumber(state.energyIn);
+                updateSimulation();
+            });
+
+            ui.effSlider.addEventListener('input', (e) => {
+                state.efficiency = parseInt(e.target.value) / 100;
+                ui.effVal.innerText = e.target.value + "%";
+                updateSimulation();
+            });
+
+            ui.resetBtn.addEventListener('click', () => {
+                ui.energySlider.value = 1000000;
+                ui.effSlider.value = 10;
+                ui.energySlider.dispatchEvent(new Event('input'));
+                ui.effSlider.dispatchEvent(new Event('input'));
+            });
+        }
+
+        // --- DATA GENERATION (10% Rule Math) ---
+        function generateGraphData() {
+            const e = state.energyIn;
+            const eff = state.efficiency;
+            const heatRate = 1 - eff;
+
+            const t1 = e;
+            const t2 = t1 * eff;
+            const t3 = t2 * eff;
+            const t4 = t3 * eff;
+
+            const rawLinks = [
+                { source: "Sun", target: "Producers", value: t1, type: 'energy' },
+                
+                { source: "Producers", target: "Primary", value: t2, type: 'energy' },
+                { source: "Producers", target: "Heat", value: t1 * heatRate, type: 'heat' },
+                
+                { source: "Primary", target: "Secondary", value: t3, type: 'energy' },
+                { source: "Primary", target: "Heat", value: t2 * heatRate, type: 'heat' },
+                
+                { source: "Secondary", target: "Apex", value: t4, type: 'energy' },
+                { source: "Secondary", target: "Heat", value: t3 * heatRate, type: 'heat' },
+                
+                { source: "Apex", target: "Heat", value: t4, type: 'heat' } // Apex eventually dies/decomposes
+            ];
+
+            const links = rawLinks.map(l => ({
+                source: nodeIndices[l.source],
+                target: nodeIndices[l.target],
+                value: l.value,
+                type: l.type
+            }));
+
+            // Deep copy nodes to prevent d3-sankey from mutating the template permanently
+            const nodes = NODES_TEMPLATE.map(n => Object.assign({}, n));
+
+            return { nodes, links, stats: { t1, t2, t3, t4, heatTotal: t1 } }; 
+        }
+
+        // --- D3.JS RENDERING (SANKEY) ---
+        function initD3() {
+            width = ui.chartContainer.clientWidth - margin.left - margin.right;
+            height = ui.chartContainer.clientHeight - margin.top - margin.bottom;
+
+            d3.select('#chart-container svg').remove();
+
+            if(width <= 0 || height <= 0) return; // Prevent errors if hidden
+
+            svg = d3.select('#chart-container')
+                .append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            gLinks = svg.append("g").attr("class", "links");
+            gNodes = svg.append("g").attr("class", "nodes");
+
+            // Setup Sankey generator
+            sankeyLayout = d3.sankey()
+                .nodeWidth(20)
+                .nodePadding(40)
+                .extent([[0, 0], [width, height]])
+                .nodeAlign(d3.sankeyJustify); // Push heat to the right
+
+            pathGenerator = d3.sankeyLinkHorizontal();
+        }
+
+        function renderPyramid(stats) {
+            ui.pyramidSvg.selectAll("*").remove();
+
+            const pWidth = 600;
+            const pHeight = 500;
+            const levels = [
+                { name: "Apex Predators", val: stats.t4, color: "#EF4444" },
+                { name: "Secondary Consumers", val: stats.t3, color: "#F97316" },
+                { name: "Primary Consumers", val: stats.t2, color: "#60A5FA" },
+                { name: "Primary Producers", val: stats.t1, color: "#4ADE80" }
+            ];
+
+            const layerHeight = pHeight / levels.length;
+
+            // Draw layers
+            levels.forEach((lvl, i) => {
+                // Calculate trapezoid widths
+                // Top layer is narrowest, bottom is widest
+                const topWidth = (i / levels.length) * pWidth;
+                const bottomWidth = ((i + 1) / levels.length) * pWidth;
+                
+                const topY = i * layerHeight;
+                const bottomY = (i + 1) * layerHeight;
+
+                const topLeftX = (pWidth - topWidth) / 2;
+                const topRightX = pWidth - topLeftX;
+                
+                const bottomLeftX = (pWidth - bottomWidth) / 2;
+                const bottomRightX = pWidth - bottomLeftX;
+
+                const points = `${topLeftX},${topY} ${topRightX},${topY} ${bottomRightX},${bottomY} ${bottomLeftX},${bottomY}`;
+
+                // Add slight gap between layers
+                const gap = 4;
+                const gapPoints = `${topLeftX},${topY + gap} ${topRightX},${topY + gap} ${bottomRightX},${bottomY - gap} ${bottomLeftX},${bottomY - gap}`;
+
+
+                ui.pyramidSvg.append("polygon")
+                    .attr("points", gapPoints)
+                    .attr("fill", lvl.color)
+                    .attr("opacity", 0.9)
+                    .attr("stroke", "#0f172a")
+                    .attr("stroke-width", 2)
+                    .style("transition", "all 0.3s")
+                    .on("mouseover", function() { d3.select(this).attr("opacity", 1).attr("filter", "brightness(1.2)"); })
+                    .on("mouseout", function() { d3.select(this).attr("opacity", 0.9).attr("filter", null); });
+
+                // Text Labels
+                const textY = topY + (layerHeight / 2) + 5; // Center vertically
+                
+                ui.pyramidSvg.append("text")
+                    .attr("x", pWidth / 2)
+                    .attr("y", textY - 8)
+                    .attr("text-anchor", "middle")
+                    .attr("fill", "#0f172a")
+                    .attr("font-weight", "900")
+                    .attr("font-family", "Inter")
+                    .attr("font-size", i === 0 ? "14px" : "18px")
+                    .text(lvl.name);
+                    
+                ui.pyramidSvg.append("text")
+                    .attr("x", pWidth / 2)
+                    .attr("y", textY + 12)
+                    .attr("text-anchor", "middle")
+                    .attr("fill", "#ffffff")
+                    .attr("font-weight", "900")
+                    .attr("font-family", "JetBrains Mono")
+                    .attr("font-size", "16px")
+                    .style("text-shadow", "0 1px 3px rgba(0,0,0,0.8)")
+                    .text(`${formatNumber(lvl.val)} kcal`);
+            });
+        }
+
+        function updateSimulation() {
+            const data = generateGraphData();
+
+            // 1. UPDATE DASHBOARD STATS
+            ui.statT1.innerText = formatNumber(data.stats.t1);
+            ui.statT2.innerText = formatNumber(data.stats.t2);
+            ui.statT3.innerText = formatNumber(data.stats.t3);
+            ui.statT4.innerText = formatNumber(data.stats.t4);
+            ui.statHeat.innerText = formatNumber(data.stats.heatTotal);
+
+            if (state.viewMode === 'pyramid') {
+                renderPyramid(data.stats);
+                return;
+            }
+
+            if (!sankeyLayout) return;
+
+            // 2. RENDER SANKEY
+            const graph = sankeyLayout({
+                nodes: data.nodes,
+                links: data.links
+            });
+
+            // LINKS
+            const linkBinding = gLinks.selectAll(".link")
+                .data(graph.links, d => `${d.source.id}-${d.target.id}`);
+
+            const linkEnter = linkBinding.enter().append("path")
+                .attr("class", "link")
+                .attr("d", pathGenerator)
+                .style("stroke-width", d => Math.max(1, d.width))
+                .style("stroke", d => d.type === 'heat' ? "url(#gradient-heat)" : d.source.color)
+                .on("mouseover", handleLinkMouseOver)
+                .on("mousemove", handleMouseMove)
+                .on("mouseout", handleMouseOut);
+
+            // Global Heat Gradient
+            if (d3.select("#gradient-heat").empty()) {
+                const defs = d3.select('#chart-container svg').append("defs");
+                const gradient = defs.append("linearGradient")
+                    .attr("id", "gradient-heat")
+                    .attr("gradientUnits", "userSpaceOnUse");
+                gradient.append("stop").attr("offset", "0%").attr("stop-color", "#ef4444");
+                gradient.append("stop").attr("offset", "100%").attr("stop-color", "#64748b");
+            }
+
+            linkBinding.merge(linkEnter).transition().duration(500)
+                .attr("d", pathGenerator)
+                .style("stroke-width", d => Math.max(1, d.width))
+                .style("stroke", d => {
+                    if (d.type === 'heat') {
+                        // Dynamic gradient based on source color to gray
+                        const gradId = `grad-${d.source.id}-${d.target.id}`;
+                        let defs = d3.select('#chart-container svg defs');
+                        let grad = defs.select(`#${gradId}`);
+                        if(grad.empty()) {
+                            grad = defs.append("linearGradient")
+                                .attr("id", gradId)
+                                .attr("gradientUnits", "userSpaceOnUse");
+                            grad.append("stop").attr("offset", "0%").attr("stop-color", d.source.color);
+                            grad.append("stop").attr("offset", "100%").attr("stop-color", d.target.color);
+                        }
+                        grad.attr("x1", d.source.x1).attr("x2", d.target.x0)
+                            .attr("y1", d.y0).attr("y2", d.y1);
+                            
+                        return `url(#${gradId})`;
+                    }
+                    return d.source.color;
+                });
+
+            // NODES
+            const nodeBinding = gNodes.selectAll(".node")
+                .data(graph.nodes, d => d.id);
+
+            const nodeEnter = nodeBinding.enter().append("g")
+                .attr("class", "node")
+                .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+            nodeEnter.append("rect")
+                .attr("height", d => d.y1 - d.y0)
+                .attr("width", d => d.x1 - d.x0)
+                .attr("fill", d => d.color)
+                .attr("rx", 4)
+                .on("mouseover", handleNodeMouseOver)
+                .on("mousemove", handleMouseMove)
+                .on("mouseout", handleMouseOut);
+
+            nodeEnter.append("text")
+                .attr("x", -8)
+                .attr("y", d => (d.y1 - d.y0) / 2)
+                .attr("dy", "0.35em")
+                .attr("text-anchor", "end")
+                .attr("fill", "#f8fafc")
+                .text(d => d.name)
+                .filter(d => d.x0 < width / 2)
+                .attr("x", 8 + sankeyLayout.nodeWidth())
+                .attr("text-anchor", "start");
+
+            const nodeUpdate = nodeBinding.merge(nodeEnter).transition().duration(500)
+                .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+            nodeUpdate.select("rect")
+                .attr("height", d => Math.max(3, d.y1 - d.y0)) // Ensure visible
+                .attr("width", d => d.x1 - d.x0);
+
+            nodeUpdate.select("text")
+                .attr("y", d => (d.y1 - d.y0) / 2)
+                .text(d => d.name);
+        }
+
+        // --- TOOLTIP LOGIC ---
+        function handleLinkMouseOver(event, d) {
+            d3.select(this).style("stroke-opacity", 0.9);
+            
+            let html = `<strong style="color:${d.source.color}">${d.source.name}</strong> ➔ <strong style="color:${d.target.color}">${d.target.name}</strong><br>`;
+            
+            if (d.type === 'heat') {
+                html += `<span style="color:#94a3b8; font-size:10px;">Lost to Cellular Respiration / Waste</span><br>`;
+                html += `<span style="font-size:16px; font-weight:bold; color:#f8fafc">${formatNumber(d.value)} kcal</span>`;
+            } else {
+                html += `<span style="color:#94a3b8; font-size:10px;">Biomass successfully consumed</span><br>`;
+                html += `<span style="font-size:16px; font-weight:bold; color:#4ade80">${formatNumber(d.value)} kcal</span>`;
+            }
+
+            ui.tooltip.innerHTML = html;
+            ui.tooltip.style.opacity = 1;
+        }
+
+        function handleNodeMouseOver(event, d) {
+            d3.select(this).attr("filter", "brightness(1.3)");
+            
+            let html = `<strong style="color:${d.color}">${d.name}</strong><br>`;
+            html += `<span style="color:#94a3b8; font-size:10px;">Total Energy Contained</span><br>`;
+            html += `<span style="font-size:16px; font-weight:bold; color:#f8fafc">${formatNumber(d.value)} kcal</span>`;
+
+            ui.tooltip.innerHTML = html;
+            ui.tooltip.style.opacity = 1;
+        }
+
+        function handleMouseMove(event) {
+            const containerRect = ui.chartContainer.getBoundingClientRect();
+            let left = event.clientX - containerRect.left;
+            let top = event.clientY - containerRect.top - 15;
+            
+            ui.tooltip.style.left = left + "px";
+            ui.tooltip.style.top = top + "px";
+        }
+
+        function handleMouseOut() {
+            d3.select(this).style("stroke-opacity", null).attr("filter", null);
+            ui.tooltip.style.opacity = 0;
+        }
+
+        // Boot
+        window.onload = init;
+
     </script>
 </body>
 </html>
