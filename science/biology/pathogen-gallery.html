@@ -2,564 +2,902 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pathogen Gallery 3D | LuminousLearner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Interactive 3D Pathogen Gallery. Visualize viral capsids, bacterial morphologies, and eukaryotic fungi with interactive cross-section explode views.">
+    <title>Biology Virtual Labs - Pathogen Gallery 3D</title>
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Three.js (r128) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
-    
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        canvas { outline: none; }
-        
+        body {
+            background-color: #0F172A; /* Deep Slate */
+            color: #F8FAFC;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            user-select: none;
+            touch-action: none;
+        }
+
         /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+        #threejs-container {
+            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #050811 100%);
+            border-radius: 0.75rem;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            outline: none;
+            cursor: grab;
+        }
+        canvas:active { cursor: grabbing; }
+
+        /* 3D Anatomical Pins (HTML Overlays) */
+        .anatomical-pin {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid #475569;
+            color: #f8fafc;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            white-space: nowrap;
+            z-index: 20;
+            backdrop-filter: blur(4px);
+            opacity: 0.85;
+        }
+        .anatomical-pin::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #475569 transparent transparent transparent;
+        }
+        .pin-hidden {
+            opacity: 0 !important;
+            transform: translate(-50%, -50%) scale(0.5);
+        }
+
+        /* Selection Button States */
+        .pathogen-btn { transition: all 0.3s ease; }
+        .pathogen-btn.active {
+            background-color: rgba(30, 41, 59, 0.9) !important;
+            border-color: var(--active-color) !important;
+            box-shadow: inset 4px 0 0 var(--active-color);
+        }
+
+        /* Toggle Checkbox */
+        .toggle-checkbox:checked { right: 0; border-color: #f59e0b; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #f59e0b; }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen w-screen flex justify-center items-center p-2 md:p-4">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-        const { motion, AnimatePresence } = window.Motion;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- DATA ---
-        const PATHOGENS = [
-            {
-                id: 'flu',
-                name: 'Influenza Virus',
-                type: 'Virus',
-                desc: 'Enveloped RNA virus with surface spikes (Hemagglutinin & Neuraminidase). Causes flu.',
-                size: '~100 nm',
-                color: '#ef4444',
-                icon: 'virus'
-            },
-            {
-                id: 'adeno',
-                name: 'Adenovirus',
-                type: 'Virus',
-                desc: 'Non-enveloped virus with an icosahedral shape and fibers at vertices. Causes respiratory illnesses.',
-                size: '~90 nm',
-                color: '#14b8a6',
-                icon: 'hexagon'
-            },
-            {
-                id: 'phage',
-                name: 'Bacteriophage',
-                type: 'Virus',
-                desc: 'A virus that infects bacteria. Has a geometric head (capsid) and tail fibers.',
-                size: '~200 nm',
-                color: '#3b82f6',
-                icon: 'bot'
-            },
-            {
-                id: 'staph',
-                name: 'Staphylococcus',
-                type: 'Bacteria',
-                desc: 'Spherical bacteria (cocci) that cluster like grapes. Common cause of skin infections.',
-                size: '~1 µm',
-                color: '#a855f7',
-                icon: 'layout-grid'
-            },
-            {
-                id: 'ecoli',
-                name: 'E. coli',
-                type: 'Bacteria',
-                desc: 'Rod-shaped bacterium (bacillus) with flagella. Found in intestines.',
-                size: '~2 µm',
-                color: '#22c55e',
-                icon: 'align-justify'
-            },
-            {
-                id: 'vibrio',
-                name: 'Vibrio cholerae',
-                type: 'Bacteria',
-                desc: 'Comma-shaped bacterium with a single polar flagellum. Causes cholera.',
-                size: '~1.5 µm',
-                color: '#06b6d4',
-                icon: 'corner-down-right'
-            },
-            {
-                id: 'yeast',
-                name: 'Yeast',
-                type: 'Fungi',
-                desc: 'Single-celled fungus. Reproduces by budding. Larger than bacteria.',
-                size: '~4-10 µm',
-                color: '#eab308',
-                icon: 'cookie'
-            }
-        ];
-
-        // --- 3D SCENE ---
-        const PathogenScene = ({ pathogenId }) => {
-            const mountRef = useRef(null);
-            const frameIdRef = useRef(null);
-            const timeRef = useRef(0);
-
-            useEffect(() => {
-                if (!mountRef.current) return;
-                const container = mountRef.current;
-                
-                // Initial check
-                let width = container.clientWidth || 100;
-                let height = container.clientHeight || 100;
-
-                let scene, camera, renderer, controls, group;
-
-                try {
-                    // Scene Setup
-                    scene = new THREE.Scene();
-                    scene.background = new THREE.Color(0x0f172a);
-                    scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
-
-                    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-                    camera.position.set(0, 0, 20);
-
-                    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-                    renderer.setSize(width, height);
-                    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-                    
-                    while(container.firstChild) container.removeChild(container.firstChild);
-                    container.appendChild(renderer.domElement);
-
-                    controls = new THREE.OrbitControls(camera, renderer.domElement);
-                    controls.enableDamping = true;
-                    controls.autoRotate = true;
-                    controls.autoRotateSpeed = 0.8;
-
-                    // Lighting
-                    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-                    scene.add(ambientLight);
-                    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-                    dirLight.position.set(10, 10, 10);
-                    scene.add(dirLight);
-                    const pointLight = new THREE.PointLight(0x60a5fa, 0.8);
-                    pointLight.position.set(-10, -10, 5);
-                    scene.add(pointLight);
-
-                    // --- MODEL BUILDER ---
-                    group = new THREE.Group();
-                    
-                    const matBase = (color) => new THREE.MeshStandardMaterial({ 
-                        color: color, roughness: 0.4, metalness: 0.2 
-                    });
-
-                    if (pathogenId === 'flu') {
-                        // Virus Body
-                        const bodyGeo = new THREE.SphereGeometry(4, 32, 32);
-                        const body = new THREE.Mesh(bodyGeo, matBase(0xef4444));
-                        group.add(body);
-                        
-                        // Spikes
-                        const spikeGeo = new THREE.CylinderGeometry(0.2, 0.2, 1.5, 8);
-                        const spikeHeadGeo = new THREE.SphereGeometry(0.5, 8, 8);
-                        const spikeMat = matBase(0xffaaaa);
-                        
-                        for(let i=0; i<60; i++) {
-                            const spikeGroup = new THREE.Group();
-                            const stalk = new THREE.Mesh(spikeGeo, spikeMat);
-                            stalk.position.y = 4.5;
-                            const head = new THREE.Mesh(spikeHeadGeo, spikeMat);
-                            head.position.y = 5.2;
-                            spikeGroup.add(stalk);
-                            spikeGroup.add(head);
-                            
-                            const phi = Math.acos(-1 + (2 * i) / 60);
-                            const theta = Math.sqrt(60 * Math.PI) * phi;
-                            
-                            const vec = new THREE.Vector3();
-                            vec.setFromSphericalCoords(1, phi, theta);
-                            spikeGroup.position.set(0,0,0);
-                            spikeGroup.lookAt(vec);
-                            
-                            group.add(spikeGroup);
-                        }
-                    } else if (pathogenId === 'adeno') {
-                        // Adenovirus - Icosahedron with fibers
-                        const bodyGeo = new THREE.IcosahedronGeometry(4, 0);
-                        const body = new THREE.Mesh(bodyGeo, matBase(0x14b8a6));
-                        group.add(body);
-                        
-                        // Fibers at vertices
-                        const fiberMat = matBase(0x99f6e4);
-                        const fiberGeo = new THREE.CylinderGeometry(0.1, 0.1, 2, 8);
-                        const knobGeo = new THREE.SphereGeometry(0.3, 8, 8);
-
-                        // Icosahedron (detail 0) has 12 vertices.
-                        const t = (1 + Math.sqrt(5)) / 2;
-                        const verts = [
-                            [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
-                            [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
-                            [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
-                        ];
-
-                        verts.forEach(v => {
-                            const vec = new THREE.Vector3(v[0], v[1], v[2]).normalize().multiplyScalar(4);
-                            
-                            const fiberGroup = new THREE.Group();
-                            const stick = new THREE.Mesh(fiberGeo, fiberMat);
-                            stick.position.y = 1;
-                            const knob = new THREE.Mesh(knobGeo, fiberMat);
-                            knob.position.y = 2;
-                            
-                            fiberGroup.add(stick);
-                            fiberGroup.add(knob);
-                            
-                            fiberGroup.position.copy(vec);
-                            fiberGroup.lookAt(vec.clone().multiplyScalar(2));
-                            fiberGroup.rotateX(Math.PI/2); 
-                            
-                            group.add(fiberGroup);
-                        });
-
-                    } else if (pathogenId === 'phage') {
-                        // Head (Icosahedron)
-                        const headGeo = new THREE.IcosahedronGeometry(3, 0);
-                        const head = new THREE.Mesh(headGeo, matBase(0x3b82f6));
-                        head.position.y = 3;
-                        group.add(head);
-                        
-                        // Neck
-                        const neckGeo = new THREE.CylinderGeometry(0.8, 0.8, 4, 8);
-                        const neck = new THREE.Mesh(neckGeo, matBase(0x60a5fa));
-                        group.add(neck);
-                        
-                        // Base Plate
-                        const plateGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.5, 6);
-                        const plate = new THREE.Mesh(plateGeo, matBase(0x2563eb));
-                        plate.position.y = -2;
-                        group.add(plate);
-                        
-                        // Legs
-                        for(let i=0; i<6; i++) {
-                            const angle = (i/6) * Math.PI * 2;
-                            const legGroup = new THREE.Group();
-                            const leg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3), matBase(0x93c5fd));
-                            leg1.position.set(0, -1.5, 0);
-                            leg1.rotation.z = Math.PI/4;
-                            const leg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3), matBase(0x93c5fd));
-                            leg2.position.set(1.8, -2.5, 0);
-                            leg2.rotation.z = -Math.PI/4;
-                            
-                            legGroup.add(leg1);
-                            legGroup.add(leg2);
-                            
-                            legGroup.position.set(Math.cos(angle)*1.2, -2, Math.sin(angle)*1.2);
-                            legGroup.rotation.y = -angle;
-                            group.add(legGroup);
-                        }
-                    } else if (pathogenId === 'staph') {
-                        // Cluster of spheres
-                        const sphereGeo = new THREE.SphereGeometry(1.5, 16, 16);
-                        const mat = matBase(0xa855f7);
-                        
-                        const positions = [
-                            [0,0,0], [2,0,0], [-1,1.5,0], [0,-1.8,1], [1,1.5,1.5], [-1.5,-1,-1], [1.5, -1, -1.5],
-                            [0, 2.5, -1], [0, -2.5, 0], [-2, 0, 1.5], [2, 1, -1]
-                        ];
-                        
-                        positions.forEach(pos => {
-                            const sphere = new THREE.Mesh(sphereGeo, mat);
-                            sphere.position.set(...pos);
-                            group.add(sphere);
-                        });
-                    } else if (pathogenId === 'ecoli') {
-                        // Rod shape
-                        const rodLength = 5;
-                        const rodRadius = 1.5;
-                        const cylGeo = new THREE.CylinderGeometry(rodRadius, rodRadius, rodLength, 32);
-                        const body = new THREE.Mesh(cylGeo, matBase(0x22c55e));
-                        const capGeo = new THREE.SphereGeometry(rodRadius, 32, 16, 0, Math.PI*2, 0, Math.PI/2);
-                        const topCap = new THREE.Mesh(capGeo, matBase(0x22c55e));
-                        topCap.position.y = rodLength / 2;
-                        body.add(topCap);
-                        const bottomCap = new THREE.Mesh(capGeo, matBase(0x22c55e));
-                        bottomCap.position.y = -rodLength / 2;
-                        bottomCap.rotation.x = Math.PI;
-                        body.add(bottomCap);
-                        body.rotation.z = Math.PI / 2; 
-                        group.add(body);
-                        
-                        // Flagella
-                        const flagellaCount = 8;
-                        for(let i=0; i<flagellaCount; i++) {
-                            const curve = new THREE.CatmullRomCurve3([
-                                new THREE.Vector3(3.5, 0, 0),
-                                new THREE.Vector3(5, 1, 0),
-                                new THREE.Vector3(6.5, -1, 0),
-                                new THREE.Vector3(8, 0.5, 0)
-                            ]);
-                            const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.1, 8, false), matBase(0x86efac));
-                            tube.position.x = 0;
-                            tube.rotation.x = (i/flagellaCount) * Math.PI * 2;
-                            group.add(tube);
-                        }
-                        // Pili
-                        const piliGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.8);
-                        for(let i=0; i<50; i++) {
-                            const pili = new THREE.Mesh(piliGeo, matBase(0x166534));
-                            const angle = Math.random() * Math.PI * 2;
-                            const z = (Math.random() - 0.5) * 6;
-                            const r = 1.5;
-                            pili.position.set(z, Math.sin(angle)*r, Math.cos(angle)*r);
-                            pili.lookAt(z*2, Math.sin(angle)*r*2, Math.cos(angle)*r*2);
-                            pili.rotateX(Math.PI/2);
-                            group.add(pili);
-                        }
-
-                    } else if (pathogenId === 'vibrio') {
-                        // Vibrio cholerae - Curved rod (Comma)
-                        const path = new THREE.QuadraticBezierCurve3(
-                            new THREE.Vector3(-2, 0, 0),
-                            new THREE.Vector3(0, 1.5, 0),
-                            new THREE.Vector3(2, 0, 0)
-                        );
-                        const tubeGeo = new THREE.TubeGeometry(path, 20, 1.2, 16, false);
-                        const body = new THREE.Mesh(tubeGeo, matBase(0x06b6d4));
-                        
-                        // Cap ends manually
-                        const capGeo = new THREE.SphereGeometry(1.2, 16, 16);
-                        const cap1 = new THREE.Mesh(capGeo, matBase(0x06b6d4));
-                        cap1.position.set(-2, 0, 0);
-                        const cap2 = new THREE.Mesh(capGeo, matBase(0x06b6d4));
-                        cap2.position.set(2, 0, 0);
-                        
-                        group.add(body);
-                        group.add(cap1);
-                        group.add(cap2);
-
-                        // Single Flagellum
-                        const flagPath = new THREE.CatmullRomCurve3([
-                            new THREE.Vector3(2, 0, 0),
-                            new THREE.Vector3(4, 1, 0),
-                            new THREE.Vector3(6, -1, 0),
-                            new THREE.Vector3(8, 1, 0)
-                        ]);
-                        const flagMesh = new THREE.Mesh(new THREE.TubeGeometry(flagPath, 20, 0.15, 8, false), matBase(0xa5f3fc));
-                        group.add(flagMesh);
-
-                    } else if (pathogenId === 'yeast') {
-                        // Mother cell
-                        const motherGeo = new THREE.SphereGeometry(3, 32, 32);
-                        const mat = matBase(0xeab308);
-                        const mother = new THREE.Mesh(motherGeo, mat);
-                        mother.scale.set(1, 1.2, 1);
-                        group.add(mother);
-                        
-                        // Bud
-                        const budGeo = new THREE.SphereGeometry(1.5, 32, 32);
-                        const bud = new THREE.Mesh(budGeo, mat);
-                        bud.position.set(2, 2.5, 0);
-                        bud.scale.set(1, 1.2, 1);
-                        bud.rotation.z = -0.5;
-                        group.add(bud);
-                        
-                        // Scars
-                        const scarGeo = new THREE.CircleGeometry(0.5, 16);
-                        const scar = new THREE.Mesh(scarGeo, new THREE.MeshStandardMaterial({color: 0xca8a04, side: THREE.DoubleSide}));
-                        scar.position.set(-2.5, 1, 1.5);
-                        scar.lookAt(0,0,0);
-                        group.add(scar);
-                    }
-
-                    scene.add(group);
-                } catch (err) {
-                    console.error("Three.js init error:", err);
-                }
-
-                // Animation
-                const animate = () => {
-                    timeRef.current += 0.01;
-                    
-                    if (group) {
-                        group.position.y = Math.sin(timeRef.current) * 0.5;
-                        if (pathogenId === 'ecoli' || pathogenId === 'vibrio') {
-                            group.rotation.x = Math.sin(timeRef.current * 2) * 0.1;
-                        }
-                    }
-
-                    if (controls) controls.update();
-                    if (renderer && scene && camera) renderer.render(scene, camera);
-                    frameIdRef.current = requestAnimationFrame(animate);
-                };
-                animate();
-
-                // Resize Observer
-                const resizeObserver = new ResizeObserver(() => {
-                    if (container.clientWidth && container.clientHeight) {
-                        const w = container.clientWidth;
-                        const h = container.clientHeight;
-                        if (camera) {
-                            camera.aspect = w / h;
-                            camera.updateProjectionMatrix();
-                        }
-                        if (renderer) renderer.setSize(w, h);
-                    }
-                });
-                resizeObserver.observe(container);
-
-                return () => {
-                    if (frameIdRef.current) cancelAnimationFrame(frameIdRef.current);
-                    resizeObserver.disconnect();
-                    if (container && renderer && renderer.domElement) {
-                        container.removeChild(renderer.domElement);
-                    }
-                    if (renderer) renderer.dispose();
-                };
-            }, [pathogenId]);
-
-            return <div ref={mountRef} className="w-full h-full min-h-[300px]" />;
-        };
-
-        // --- MAIN APP ---
-        const App = () => {
-            const [selectedId, setSelectedId] = useState('flu');
-            const currentPathogen = PATHOGENS.find(p => p.id === selectedId);
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="microscope" className="text-emerald-400" /> Pathogen Gallery
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Interactive 3D Microbiology</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
-                            
-                            {/* List */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Select Organism</label>
-                                {PATHOGENS.map(p => (
-                                    <button 
-                                        key={p.id}
-                                        onClick={() => setSelectedId(p.id)}
-                                        className={`w-full p-3 rounded-xl border transition-all flex items-center gap-3 text-left
-                                            ${selectedId === p.id 
-                                                ? `bg-slate-800 border-[${p.color}] text-white shadow-lg ring-1` 
-                                                : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
-                                        `}
-                                        style={selectedId === p.id ? { borderColor: p.color, '--tw-ring-color': p.color+'80' } : {}}
-                                    >
-                                        <div className={`p-2 rounded-lg bg-slate-900`} style={{color: p.color}}>
-                                            <Icon name={p.icon} size={20}/>
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-bold">{p.name.split(' (')[0]}</div>
-                                            <div className="text-[10px] opacity-70">{p.type}</div>
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-
-                        </div>
+    <div class="w-full h-full max-w-[1500px] max-h-[950px] flex flex-col bg-slate-900 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.6)] overflow-hidden border border-slate-700/50 relative">
+        
+        <header class="p-4 md:px-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-sm z-10 shrink-0 gap-4 md:gap-0">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-500 flex items-center gap-3">
+                    <i class="fa-solid fa-bugs text-emerald-400"></i> Pathogen Gallery 3D
+                </h1>
+                <p class="text-[10px] md:text-xs font-medium text-slate-400 uppercase tracking-widest mt-1">Viruses, Bacteria, and Eukaryotic Microbes</p>
+            </div>
+            
+            <div class="flex gap-4 md:gap-8 bg-slate-950 p-2 px-4 md:px-6 rounded-xl border border-slate-700 shadow-inner items-center">
+                <div class="text-center flex flex-col items-center">
+                    <div class="text-xs md:text-sm font-bold text-emerald-400 flex items-center gap-2">
+                        <i class="fa-solid fa-hand text-slate-400"></i> Drag to Rotate
                     </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 relative bg-gradient-to-b from-[#0F172A] to-[#1e293b] flex flex-col p-6 overflow-hidden">
-                        
-                        {/* 3D Viewer */}
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col items-center justify-center">
-                            <div className="absolute inset-0">
-                                <PathogenScene pathogenId={selectedId} />
-                            </div>
-                            
-                            {/* Info Overlay */}
-                            <div className="absolute bottom-8 left-8 right-8 bg-slate-900/90 backdrop-blur p-6 rounded-2xl border border-slate-700 shadow-2xl animate-in slide-in-from-bottom-4 max-w-2xl mx-auto">
-                                <div className="flex items-start justify-between mb-2">
-                                    <div>
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-xs font-bold uppercase px-2 py-0.5 rounded bg-slate-800 border border-slate-600" style={{color: currentPathogen.color}}>
-                                                {currentPathogen.type}
-                                            </span>
-                                            <span className="text-xs text-slate-500 font-mono">Size: {currentPathogen.size}</span>
-                                        </div>
-                                        <h2 className="text-2xl font-black text-white">{currentPathogen.name}</h2>
-                                    </div>
-                                </div>
-                                <p className="text-sm text-slate-300 leading-relaxed">
-                                    {currentPathogen.desc}
-                                </p>
-                            </div>
-
-                            <div className="absolute top-6 left-6 pointer-events-none">
-                                <div className="flex items-center gap-2 bg-black/50 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10">
-                                    <Icon name="box" size={14} className="text-slate-400"/>
-                                    <span className="text-xs text-slate-300 font-mono">3D View</span>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-
                 </div>
-            );
+                <div class="w-px bg-slate-700 h-6"></div>
+                <div class="text-center flex flex-col items-center">
+                    <div class="text-xs md:text-sm font-bold text-amber-400 flex items-center gap-2">
+                        <i class="fa-solid fa-cubes text-slate-400"></i> Toggle Internal View
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex flex-col md:flex-row flex-1 overflow-hidden relative z-0">
+            
+            <aside class="w-full md:w-[400px] flex flex-col gap-4 p-4 shrink-0 h-full overflow-y-auto bg-slate-800/30 border-r border-slate-700 custom-scrollbar">
+                
+                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg relative overflow-hidden flex flex-col min-h-[220px] shrink-0">
+                    <div class="absolute top-0 left-0 w-1 h-full bg-emerald-500 transition-colors duration-500" id="info-accent"></div>
+                    
+                    <div class="flex justify-between items-start mb-1">
+                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold" id="info-type">Microbiology</h3>
+                        <span id="info-size" class="text-[10px] font-mono font-bold bg-slate-900 px-2 py-1 rounded text-emerald-400 border border-emerald-500/30 shadow-inner">Size: --</span>
+                    </div>
+                    
+                    <h2 id="info-title" class="text-xl font-black text-white flex items-center gap-2 mb-2 leading-tight">
+                        Pathogen Database
+                    </h2>
+                    <p id="info-desc" class="text-xs text-slate-300 leading-relaxed">
+                        A <strong>pathogen</strong> is a microorganism that can cause disease. Select a microbe below to examine its unique structural morphology and genetic payload.
+                    </p>
+                </div>
+
+                <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-4 flex-1">
+                    
+                    <div class="flex items-center justify-between border-b border-slate-700 pb-4">
+                        <div>
+                            <label class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                                <i class="fa-solid fa-layer-group text-amber-400"></i> Internal Structure
+                            </label>
+                            <p class="text-[9px] text-slate-400 mt-1 max-w-[200px]">Separate outer structures to reveal internal DNA, RNA, or organelles.</p>
+                        </div>
+                        
+                        <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in mt-1">
+                            <input type="checkbox" name="toggle" id="explode-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
+                            <label for="explode-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-2 flex-1 mt-1">
+                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Pathogen Library</h3>
+                        
+                        <div class="flex flex-col gap-2 overflow-y-auto pr-2" id="directory-list">
+                            </div>
+                    </div>
+
+                    <button onclick="resetCamera()" class="mt-auto w-full bg-slate-700 hover:bg-slate-600 text-slate-300 py-2.5 rounded-lg text-xs font-bold transition-colors border border-slate-600 flex justify-center items-center gap-2">
+                        <i class="fa-solid fa-video"></i> Reset View
+                    </button>
+                </div>
+            </aside>
+
+            <section class="flex-1 p-2 md:p-4 bg-slate-950 flex flex-col relative overflow-hidden">
+                <div id="threejs-container" class="w-full h-full border border-slate-700 shadow-inner rounded-xl relative">
+                    <canvas id="renderCanvas"></canvas>
+                    <div id="pins-container" class="absolute inset-0 pointer-events-none"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        /**
+         * PATHOGEN GALLERY 3D
+         * Procedural generation of 7 distinct pathogen types.
+         */
+
+        // ==========================================
+        // PATHOGEN DATABASE
+        // ==========================================
+        const MICROBE_DATA = {
+            'influenza': { 
+                id: 'influenza', name: 'Influenza Virus', type: 'RNA Virus (Enveloped)', size: '80 - 120 nm', color: '#ef4444', 
+                desc: 'Causes the flu. An enveloped virus covered in Hemagglutinin (H) and Neuraminidase (N) glycoprotein spikes. Internally, it carries its genetic payload as 8 distinct segments of single-stranded RNA.'
+            },
+            'adenovirus': { 
+                id: 'adenovirus', name: 'Adenovirus', type: 'DNA Virus (Non-enveloped)', size: '90 - 100 nm', color: '#3b82f6', 
+                desc: 'Causes respiratory illnesses. It lacks a lipid envelope, instead relying on a tough icosahedral protein capsid. It features distinctive long protein fibers protruding from its vertices to attach to host cells.'
+            },
+            'phage': { 
+                id: 'phage', name: 'Bacteriophage T4', type: 'DNA Virus (Complex)', size: '90 x 200 nm', color: '#10b981', 
+                desc: 'A specialized virus that exclusively infects bacteria. Features an icosahedral head containing DNA and a complex tail structure used to inject genetic material into host cells like a syringe.'
+            },
+            'staph': { 
+                id: 'staph', name: 'Staphylococcus aureus', type: 'Bacteria (Gram+ Coccus)', size: '0.5 - 1.0 µm', color: '#a855f7', 
+                desc: 'Spherical bacteria (cocci) that divide and aggregate in grape-like clusters. They possess a thick peptidoglycan cell wall and are common pathogens in severe skin and systemic infections.'
+            },
+            'ecoli': { 
+                id: 'ecoli', name: 'Escherichia coli', type: 'Bacteria (Gram- Bacillus)', size: '1.0 - 2.0 µm', color: '#f59e0b', 
+                desc: 'A classic rod-shaped (bacillus) bacterium. Many strains possess peritrichous flagella (flagella pointing in all directions) for swimming. Its DNA is housed in an unstructured nucleoid region.'
+            },
+            'vibrio': { 
+                id: 'vibrio', name: 'Vibrio cholerae', type: 'Bacteria (Curved Rod)', size: '1.5 - 3.0 µm', color: '#0ea5e9', 
+                desc: 'A Gram-negative bacterium characterized by its curved, comma-like shape. It possesses a single polar flagellum that propels it rapidly through water. Causes the diarrheal disease cholera.'
+            },
+            'yeast': { 
+                id: 'yeast', name: 'Saccharomyces (Yeast)', type: 'Eukaryote (Fungi)', size: '5.0 - 10.0 µm', color: '#fcd34d', 
+                desc: 'A single-celled eukaryotic fungus. Unlike bacteria, it contains membrane-bound organelles, including a true nucleus and large vacuole. It reproduces asymmetrically via a process called budding.'
+            }
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // ==========================================
+        // BABYLON.JS SETUP & STATE
+        // ==========================================
+        const canvas = document.getElementById("renderCanvas");
+        const pinsContainer = document.getElementById("pins-container");
+        let engine, scene, camera;
+        
+        let currentMicrobeGroup = null;
+        let activeMicrobeId = null;
+        
+        // Explode Animation State
+        let isExploded = false;
+        let explodeFactor = 0; // 0 to 1
+
+        let pins = []; 
+
+        // UI DOM Elements
+        const DOM = {
+            infoTitle: document.getElementById('info-title'),
+            infoDesc: document.getElementById('info-desc'),
+            infoType: document.getElementById('info-type'),
+            infoSize: document.getElementById('info-size'),
+            infoAccent: document.getElementById('info-accent'),
+            dirList: document.getElementById('directory-list'),
+            explodeToggle: document.getElementById('explode-toggle')
+        };
+
+        function initEngine() {
+            engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+            
+            scene = new BABYLON.Scene(engine);
+            scene.clearColor = new BABYLON.Color4(0, 0, 0, 0); 
+
+            // Camera
+            camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 3, Math.PI / 2.5, 25, new BABYLON.Vector3(0, 0, 0), scene);
+            camera.attachControl(canvas, true);
+            camera.wheelPrecision = 30;
+            camera.lowerRadiusLimit = 5;
+            camera.upperRadiusLimit = 40;
+
+            // Lighting
+            const hemiLight = new BABYLON.HemisphericLight("hemiLight", new BABYLON.Vector3(0, 1, 0), scene);
+            hemiLight.intensity = 0.6;
+            hemiLight.groundColor = new BABYLON.Color3(0.1, 0.1, 0.2);
+            
+            const dirLight = new BABYLON.DirectionalLight("dirLight", new BABYLON.Vector3(1, -1, 1), scene);
+            dirLight.intensity = 0.8;
+
+            const backLight = new BABYLON.DirectionalLight("backLight", new BABYLON.Vector3(-1, 1, -1), scene);
+            backLight.intensity = 0.5;
+
+            buildUI();
+
+            scene.onBeforeRenderObservable.add(() => {
+                updateAnimations();
+                updatePins();
+            });
+
+            engine.runRenderLoop(() => {
+                scene.render();
+            });
+
+            window.addEventListener("resize", () => {
+                engine.resize();
+            });
+
+            selectMicrobe('influenza');
+        }
+
+        // ==========================================
+        // PROCEDURAL 3D PATHOGEN BUILDERS
+        // ==========================================
+
+        function clearCurrentMicrobe() {
+            if (currentMicrobeGroup) {
+                currentMicrobeGroup.dispose();
+                currentMicrobeGroup = null;
+            }
+            pinsContainer.innerHTML = '';
+            pins = [];
+            explodeFactor = 0;
+            DOM.explodeToggle.checked = false;
+            isExploded = false;
+        }
+
+        function createPin(label, pos3D, linkMesh) {
+            const el = document.createElement('div');
+            el.className = 'anatomical-pin';
+            el.innerText = label;
+            pinsContainer.appendChild(el);
+            pins.push({ element: el, pos3D: pos3D, linkMesh: linkMesh });
+        }
+
+        // --- 1. INFLUENZA VIRUS ---
+        function buildInfluenza() {
+            const group = new BABYLON.TransformNode("fluGrp");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matEnv = new BABYLON.StandardMaterial("envMat", scene);
+            matEnv.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['influenza'].color);
+            matEnv.alpha = 1.0;
+            matEnv.needDepthPrePass = true;
+
+            const matSpikeH = new BABYLON.StandardMaterial("hMat", scene);
+            matSpikeH.diffuseColor = new BABYLON.Color3(0.2, 0.6, 1); // Blue
+            const matSpikeN = new BABYLON.StandardMaterial("nMat", scene);
+            matSpikeN.diffuseColor = new BABYLON.Color3(1, 0.8, 0); // Yellow
+
+            const matRNA = new BABYLON.StandardMaterial("rnaMat", scene);
+            matRNA.diffuseColor = new BABYLON.Color3(1, 1, 1); // White
+            matRNA.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0.5);
+
+            // Envelope Hemispheres
+            const envTop = BABYLON.MeshBuilder.CreateSphere("envTop", {diameter: 10, slice: 0.5}, scene);
+            envTop.rotation.x = -Math.PI/2;
+            envTop.material = matEnv;
+            envTop.parent = group;
+            group.outerMeshes.push({ mesh: envTop, explodeDir: new BABYLON.Vector3(0, 5, 0) });
+            createPin("Viral Envelope", new BABYLON.Vector3(-4, 4, 0), envTop);
+
+            const envBot = BABYLON.MeshBuilder.CreateSphere("envBot", {diameter: 10, slice: 0.5}, scene);
+            envBot.rotation.x = Math.PI/2;
+            envBot.material = matEnv;
+            envBot.parent = group;
+            group.outerMeshes.push({ mesh: envBot, explodeDir: new BABYLON.Vector3(0, -5, 0) });
+
+            // Glycoprotein Spikes
+            const addSpikes = (parentMesh, explodeVec) => {
+                for (let i = 0; i < 40; i++) {
+                    const r = 5;
+                    const phi = Math.acos( -1 + ( 2 * i ) / 40 );
+                    const theta = Math.sqrt( 40 * Math.PI ) * phi;
+                    const y = r * Math.cos(phi);
+                    if((explodeVec.y > 0 && y < 0) || (explodeVec.y < 0 && y > 0)) continue;
+
+                    const isH = Math.random() > 0.3; // More H than N spikes
+                    const spikeGrp = new BABYLON.TransformNode("spike");
+                    spikeGrp.position.set(r * Math.cos(theta) * Math.sin(phi), y, r * Math.sin(theta) * Math.sin(phi));
+                    spikeGrp.lookAt(new BABYLON.Vector3(0,0,0));
+
+                    const stem = BABYLON.MeshBuilder.CreateCylinder("stem", {height: 1.5, diameter: 0.3}, scene);
+                    stem.rotation.x = Math.PI/2;
+                    stem.position.z = -0.75;
+                    stem.material = isH ? matSpikeH : matSpikeN;
+                    stem.parent = spikeGrp;
+
+                    const head = BABYLON.MeshBuilder.CreateSphere("head", {diameter: isH ? 1.0 : 0.8}, scene);
+                    head.position.z = -1.5;
+                    head.material = isH ? matSpikeH : matSpikeN;
+                    head.parent = spikeGrp;
+
+                    spikeGrp.parent = parentMesh;
+                }
+            };
+            addSpikes(envTop, new BABYLON.Vector3(0, 1, 0));
+            addSpikes(envBot, new BABYLON.Vector3(0, -1, 0));
+            createPin("H/N Glycoproteins", new BABYLON.Vector3(6, 0, 0), envTop);
+
+            // 8 RNA Segments
+            for(let i=0; i<8; i++) {
+                const rnaGrp = new BABYLON.TransformNode("rna");
+                const path = [];
+                for(let j=0; j<10; j++) {
+                    path.push(new BABYLON.Vector3(Math.sin(j)*0.3, j*0.4 - 2, 0));
+                }
+                const tube = BABYLON.MeshBuilder.CreateTube("tube", {path: path, radius: 0.2}, scene);
+                tube.material = matRNA;
+                tube.parent = rnaGrp;
+                
+                // Position randomly inside
+                rnaGrp.position.set((Math.random()-0.5)*4, (Math.random()-0.5)*4, (Math.random()-0.5)*4);
+                rnaGrp.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
+                rnaGrp.parent = group;
+                group.innerMeshes.push(rnaGrp);
+                
+                if (i===0) createPin("8 Segmented RNA Strands", new BABYLON.Vector3(0, 0, 0), rnaGrp);
+            }
+
+            return group;
+        }
+
+        // --- 2. ADENOVIRUS ---
+        function buildAdenovirus() {
+            const group = new BABYLON.TransformNode("adenoGrp");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matCap = new BABYLON.StandardMaterial("capMat", scene);
+            matCap.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['adenovirus'].color);
+            matCap.alpha = 1.0; matCap.needDepthPrePass = true;
+
+            const matFiber = new BABYLON.StandardMaterial("fibMat", scene);
+            matFiber.diffuseColor = new BABYLON.Color3(0.9, 0.2, 0.2); // Red
+
+            const matDNA = new BABYLON.StandardMaterial("dnaMat", scene);
+            matDNA.diffuseColor = new BABYLON.Color3(1, 1, 0); // Yellow
+            matDNA.emissiveColor = new BABYLON.Color3(0.5, 0.5, 0);
+
+            // Icosahedron Capsid
+            const capsid = BABYLON.MeshBuilder.CreatePolyhedron("capsid", {type: 1, size: 4}, scene);
+            capsid.material = matCap;
+            capsid.parent = group;
+            group.outerMeshes.push({ mesh: capsid, explodeDir: new BABYLON.Vector3(0, 4, 0), fadeOnly: true }); // Just fade out to reveal inside
+            createPin("Icosahedral Capsid", new BABYLON.Vector3(-4, 3, 0), capsid);
+
+            // Corner Fibers (Manually approximating vertex positions for a basic polyhedron)
+            const vertices = capsid.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+            // Polyhedron type 1 (Icosahedron) has 12 vertices. We sample a subset to represent corners.
+            for(let i=0; i<12; i++) {
+                const x = vertices[i*3]; const y = vertices[i*3+1]; const z = vertices[i*3+2];
+                const pos = new BABYLON.Vector3(x, y, z).normalize().scale(3.5);
+
+                const fiber = BABYLON.MeshBuilder.CreateCylinder("fiber", {height: 3, diameter: 0.15}, scene);
+                fiber.position = pos.scale(1.2);
+                fiber.lookAt(new BABYLON.Vector3(0,0,0));
+                fiber.rotation.x -= Math.PI/2;
+                fiber.material = matFiber;
+                fiber.parent = capsid;
+
+                const knob = BABYLON.MeshBuilder.CreateSphere("knob", {diameter: 0.6}, scene);
+                knob.position = pos.scale(1.6);
+                knob.material = matFiber;
+                knob.parent = capsid;
+            }
+            createPin("Protein Fibers", new BABYLON.Vector3(6, 4, 0), capsid);
+
+            // Internal dsDNA
+            const nPath = [];
+            for(let j=0; j<40; j++) {
+                nPath.push(new BABYLON.Vector3((Math.random()-0.5)*3, (Math.random()-0.5)*3, (Math.random()-0.5)*3));
+            }
+            const spline = BABYLON.Curve3.CreateCatmullRomSpline(nPath, 10, true); // closed loop
+            const dna = BABYLON.MeshBuilder.CreateTube("dna", {path: spline.getPoints(), radius: 0.2}, scene);
+            dna.material = matDNA;
+            dna.parent = group;
+            group.innerMeshes.push(dna);
+            createPin("Double-stranded DNA", new BABYLON.Vector3(0, 0, 0), dna);
+
+            return group;
+        }
+
+        // --- 3. BACTERIOPHAGE ---
+        function buildPhage() {
+            const group = new BABYLON.TransformNode("phageGroup");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matOuter = new BABYLON.StandardMaterial("phageMat", scene);
+            matOuter.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['phage'].color);
+            matOuter.specularColor = new BABYLON.Color3(0.2, 0.8, 0.5);
+            matOuter.alpha = 1.0; matOuter.needDepthPrePass = true;
+
+            const matInner = new BABYLON.StandardMaterial("dnaMat", scene);
+            matInner.diffuseColor = new BABYLON.Color3(1, 0, 0); 
+            matInner.emissiveColor = new BABYLON.Color3(0.5, 0, 0);
+
+            // Head 
+            const head = BABYLON.MeshBuilder.CreatePolyhedron("head", {type: 1, size: 3.5}, scene);
+            head.position.y = 5;
+            head.material = matOuter;
+            head.parent = group;
+            group.outerMeshes.push({ mesh: head, explodeDir: new BABYLON.Vector3(0, 4, 0) });
+            createPin("Icosahedral Capsid", new BABYLON.Vector3(4, 5, 0), head);
+
+            // Viral DNA 
+            const dnaPath = [];
+            for (let i = 0; i < 40; i++) {
+                dnaPath.push(new BABYLON.Vector3(Math.cos(i*0.5)*1.5, (i*0.1)+3.5, Math.sin(i*0.5)*1.5));
+            }
+            const dna = BABYLON.MeshBuilder.CreateTube("dna", {path: dnaPath, radius: 0.2, tessellation: 8}, scene);
+            dna.material = matInner;
+            dna.parent = group;
+            group.innerMeshes.push(dna);
+            createPin("Viral DNA Payload", new BABYLON.Vector3(0, 5, 2), dna);
+
+            // Tail Sheath
+            const sheath = BABYLON.MeshBuilder.CreateCylinder("sheath", {height: 6, diameter: 1.2, tessellation: 12}, scene);
+            sheath.position.y = 0;
+            sheath.material = matOuter;
+            sheath.parent = group;
+            group.outerMeshes.push({ mesh: sheath, explodeDir: new BABYLON.Vector3(0, 0, 0) }); 
+
+            // Baseplate
+            const base = BABYLON.MeshBuilder.CreateCylinder("base", {height: 0.5, diameter: 3, tessellation: 6}, scene);
+            base.position.y = -3;
+            base.material = matOuter;
+            base.parent = group;
+            group.outerMeshes.push({ mesh: base, explodeDir: new BABYLON.Vector3(0, -1, 0) });
+
+            // Tail Fibers
+            for (let i = 0; i < 6; i++) {
+                const angle = (i / 6) * Math.PI * 2;
+                const fiberGroup = new BABYLON.TransformNode("fiberGroup");
+                fiberGroup.position.y = -3;
+                fiberGroup.rotation.y = angle;
+                
+                const leg1 = BABYLON.MeshBuilder.CreateCylinder("leg1", {height: 4, diameter: 0.2}, scene);
+                leg1.position.set(1.5, -1.5, 0);
+                leg1.rotation.z = Math.PI / 4;
+                leg1.material = matOuter;
+                leg1.parent = fiberGroup;
+
+                const leg2 = BABYLON.MeshBuilder.CreateCylinder("leg2", {height: 4, diameter: 0.2}, scene);
+                leg2.position.set(4, -3.5, 0);
+                leg2.rotation.z = -Math.PI / 8;
+                leg2.material = matOuter;
+                leg2.parent = fiberGroup;
+
+                fiberGroup.parent = group;
+                group.outerMeshes.push({ mesh: fiberGroup, explodeDir: new BABYLON.Vector3(0, -1, 0) });
+            }
+            createPin("Tail Fibers", new BABYLON.Vector3(5, -4, 0), base);
+
+            return group;
+        }
+
+        // --- 4. STAPHYLOCOCCUS (Coccus Cluster) ---
+        function buildCocci() {
+            const group = new BABYLON.TransformNode("cocciGroup");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const mat = new BABYLON.StandardMaterial("mat", scene);
+            mat.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['staph'].color);
+            mat.alpha = 1.0; mat.needDepthPrePass = true;
+
+            const matInner = new BABYLON.StandardMaterial("inMat", scene);
+            matInner.diffuseColor = new BABYLON.Color3(1, 1, 0);
+
+            const positions = [
+                [0,0,0], [2,1,0], [-1.5,-1.5,1], [1,-2,-1], [-2,1,-1.5], [0.5,2.5,1], [-0.5,-3,0]
+            ];
+
+            positions.forEach((pos, idx) => {
+                const s = BABYLON.MeshBuilder.CreateSphere("s", {diameter: 3}, scene);
+                s.position.set(pos[0], pos[1], pos[2]);
+                s.material = mat;
+                s.parent = group;
+                
+                const expDir = new BABYLON.Vector3(pos[0], pos[1], pos[2]).normalize().scale(4);
+                if(idx === 0) expDir.set(0,0,-5); 
+
+                group.outerMeshes.push({ mesh: s, explodeDir: expDir });
+
+                const core = BABYLON.MeshBuilder.CreateSphere("core", {diameter: 1.5}, scene);
+                core.position.copyFrom(s.position);
+                core.material = matInner;
+                core.parent = group;
+                group.innerMeshes.push(core);
+
+                if (idx === 1) createPin("Gram+ Peptidoglycan Wall", s.position.add(new BABYLON.Vector3(2, 2, 0)), s);
+            });
+            createPin("Staphylo- Cluster", new BABYLON.Vector3(-4, -2, 0), group.outerMeshes[0].mesh);
+
+            return group;
+        }
+
+        // --- 5. E. COLI (Bacillus) ---
+        function buildEColi() {
+            const group = new BABYLON.TransformNode("ecoliGroup");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matWall = new BABYLON.StandardMaterial("wallMat", scene);
+            matWall.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['ecoli'].color);
+            matWall.alpha = 1.0; matWall.needDepthPrePass = true;
+
+            const matNucleoid = new BABYLON.StandardMaterial("nucMat", scene);
+            matNucleoid.diffuseColor = new BABYLON.Color3(1, 0.2, 0.2); // Redish nucleoid
+
+            // Capsule/Rod Body
+            const bodyShell = BABYLON.MeshBuilder.CreateCapsule("body", {height: 10, radius: 2}, scene);
+            bodyShell.material = matWall;
+            bodyShell.parent = group;
+            group.outerMeshes.push({ mesh: bodyShell, explodeDir: new BABYLON.Vector3(0, 0, 0), fadeOnly: true });
+            createPin("Cell Wall (Bacillus)", new BABYLON.Vector3(-3, 3, 0), bodyShell);
+
+            // Peritrichous Flagella
+            for(let i=0; i<8; i++) {
+                const fGrp = new BABYLON.TransformNode("fg");
+                const fp = [];
+                for(let j=0; j<15; j++) {
+                    fp.push(new BABYLON.Vector3(Math.sin(j)*0.5, j*0.5, Math.cos(j)*0.5));
+                }
+                const fl = BABYLON.MeshBuilder.CreateTube("fl", {path: fp, radius: 0.05}, scene);
+                
+                // Distribute around the capsule
+                fl.position.set((Math.random()-0.5)*3, (Math.random()-0.5)*8, (Math.random()-0.5)*3);
+                fl.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+                
+                fl.material = matWall;
+                fl.parent = fGrp;
+                fGrp.parent = bodyShell; // Attach to fading body
+                
+                if (i===0) createPin("Peritrichous Flagella", fl.position.add(new BABYLON.Vector3(3,3,0)), fl);
+            }
+
+            // Nucleoid DNA (Tangled mass)
+            const nucGrp = new BABYLON.TransformNode("nucGrp");
+            for(let i=0; i<3; i++) {
+                const nPath = [];
+                for(let j=0; j<30; j++) {
+                    nPath.push(new BABYLON.Vector3((Math.random()-0.5)*2, (Math.random()-0.5)*7, (Math.random()-0.5)*2));
+                }
+                const spline = BABYLON.Curve3.CreateCatmullRomSpline(nPath, 10, false);
+                const nucLine = BABYLON.MeshBuilder.CreateTube("nucLine", {path: spline.getPoints(), radius: 0.1}, scene);
+                nucLine.material = matNucleoid;
+                nucLine.parent = nucGrp;
+            }
+            nucGrp.parent = group;
+            group.innerMeshes.push(nucGrp);
+            createPin("Nucleoid (DNA)", new BABYLON.Vector3(0, 0, 0), nucGrp);
+
+            group.rotation.z = 0.5; // Tilt
+            return group;
+        }
+
+        // --- 6. VIBRIO CHOLERAE (Curved Rod) ---
+        function buildVibrio() {
+            const group = new BABYLON.TransformNode("vibrioGroup");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matWall = new BABYLON.StandardMaterial("wallMat", scene);
+            matWall.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['vibrio'].color);
+            matWall.alpha = 1.0; matWall.needDepthPrePass = true;
+
+            const matNuc = new BABYLON.StandardMaterial("nucMat", scene);
+            matNuc.diffuseColor = new BABYLON.Color3(1, 1, 0);
+
+            // Curved Body (Macaroni shape)
+            const cPath = [];
+            for(let i=-5; i<=5; i++) {
+                cPath.push(new BABYLON.Vector3(Math.sin(i*0.2)*2, i, 0));
+            }
+            const bodyCurve = BABYLON.Curve3.CreateCatmullRomSpline(cPath, 10, false);
+            // To make a capped tube, we can use a sphere at ends or rely on a thick tube
+            const bodyShell = BABYLON.MeshBuilder.CreateTube("body", {path: bodyCurve.getPoints(), radius: 1.5, cap: BABYLON.Mesh.CAP_ALL}, scene);
+            bodyShell.material = matWall;
+            bodyShell.parent = group;
+            group.outerMeshes.push({ mesh: bodyShell, explodeDir: new BABYLON.Vector3(0, 0, 0), fadeOnly: true });
+            createPin("Curved Rod (Vibrio)", new BABYLON.Vector3(-3, 2, 0), bodyShell);
+
+            // Single Polar Flagellum
+            const fPath = [];
+            for(let j=0; j<25; j++) {
+                fPath.push(new BABYLON.Vector3(Math.sin(j*0.5)*0.5, -5 - j*0.4, Math.cos(j*0.5)*0.5));
+            }
+            const flag = BABYLON.MeshBuilder.CreateTube("flag", {path: fPath, radius: 0.08}, scene);
+            flag.material = matWall;
+            flag.parent = bodyShell;
+            createPin("Polar Flagellum", new BABYLON.Vector3(2, -7, 0), flag);
+
+            // Nucleoid
+            const nucGrp = new BABYLON.TransformNode("nucGrp");
+            const nPath = [];
+            for(let j=0; j<30; j++) {
+                // Keep inside curve
+                let y = (Math.random()-0.5)*8;
+                let x = Math.sin(y*0.2)*2 + (Math.random()-0.5)*1.5;
+                nPath.push(new BABYLON.Vector3(x, y, (Math.random()-0.5)*1.5));
+            }
+            const spline = BABYLON.Curve3.CreateCatmullRomSpline(nPath, 10, false);
+            const nucLine = BABYLON.MeshBuilder.CreateTube("nucLine", {path: spline.getPoints(), radius: 0.15}, scene);
+            nucLine.material = matNuc;
+            nucLine.parent = nucGrp;
+            
+            nucGrp.parent = group;
+            group.innerMeshes.push(nucGrp);
+            createPin("Nucleoid", new BABYLON.Vector3(2, 0, 0), nucGrp);
+
+            group.rotation.z = Math.PI / 4;
+            return group;
+        }
+
+        // --- 7. YEAST (Saccharomyces - Eukaryote) ---
+        function buildYeast() {
+            const group = new BABYLON.TransformNode("yeastGroup");
+            group.outerMeshes = []; group.innerMeshes = [];
+
+            const matWall = new BABYLON.StandardMaterial("wallMat", scene);
+            matWall.diffuseColor = BABYLON.Color3.FromHexString(MICROBE_DATA['yeast'].color);
+            matWall.alpha = 1.0; matWall.needDepthPrePass = true;
+
+            const matNuc = new BABYLON.StandardMaterial("nucMat", scene);
+            matNuc.diffuseColor = new BABYLON.Color3(0.6, 0.2, 0.8); // Purple nucleus
+            
+            const matVac = new BABYLON.StandardMaterial("vacMat", scene);
+            matVac.diffuseColor = new BABYLON.Color3(0.2, 0.8, 0.8); // Cyan vacuole
+
+            // Main Cell Body
+            const mainCell = BABYLON.MeshBuilder.CreateSphere("main", {diameter: 8, slice: 0.5}, scene);
+            mainCell.rotation.x = -Math.PI/2;
+            mainCell.material = matWall;
+            mainCell.parent = group;
+            group.outerMeshes.push({ mesh: mainCell, explodeDir: new BABYLON.Vector3(0, 4, 0) });
+            createPin("Cell Wall (Chitin/Glucan)", new BABYLON.Vector3(-4, 2, 0), mainCell);
+
+            const mainCellBot = BABYLON.MeshBuilder.CreateSphere("mainBot", {diameter: 8, slice: 0.5}, scene);
+            mainCellBot.rotation.x = Math.PI/2;
+            mainCellBot.material = matWall;
+            mainCellBot.parent = group;
+            group.outerMeshes.push({ mesh: mainCellBot, explodeDir: new BABYLON.Vector3(0, -4, 0) });
+
+            // Budding Cell
+            const bud = BABYLON.MeshBuilder.CreateSphere("bud", {diameter: 4}, scene);
+            bud.position.set(3, 3, 0);
+            bud.material = matWall;
+            bud.parent = mainCell; // Attach to top half
+            createPin("Asexual Budding", new BABYLON.Vector3(5, 5, 0), bud);
+
+            // Eukaryotic Organelles (Nucleus & Vacuole)
+            const nucleus = BABYLON.MeshBuilder.CreateSphere("nucleus", {diameter: 2.5}, scene);
+            nucleus.position.set(-1.5, 0, 1);
+            nucleus.material = matNuc;
+            nucleus.parent = group;
+            group.innerMeshes.push(nucleus);
+            createPin("True Nucleus", new BABYLON.Vector3(-2, 0, 2), nucleus);
+
+            const vacuole = BABYLON.MeshBuilder.CreateSphere("vacuole", {diameter: 4}, scene);
+            vacuole.position.set(1, -1, -1);
+            vacuole.material = matVac;
+            vacuole.parent = group;
+            group.innerMeshes.push(vacuole);
+            createPin("Large Vacuole", new BABYLON.Vector3(2, -2, -2), vacuole);
+
+            return group;
+        }
+
+        // ==========================================
+        // UI & INTERACTION
+        // ==========================================
+        function buildUI() {
+            Object.keys(MICROBE_DATA).forEach(id => {
+                const data = MICROBE_DATA[id];
+                const btn = document.createElement('button');
+                btn.id = `btn-${id}`;
+                btn.className = `pathogen-btn w-full text-left p-3 rounded-xl border border-slate-700 bg-slate-800/50 text-xs font-bold text-slate-300 flex items-center gap-3`;
+                btn.style.setProperty('--active-color', data.color);
+                
+                btn.innerHTML = `
+                    <div class="w-4 h-4 rounded-full border border-slate-900 shadow-sm" style="background-color: ${data.color}"></div>
+                    ${data.name}
+                `;
+                
+                btn.onclick = () => selectMicrobe(id);
+                DOM.dirList.appendChild(btn);
+            });
+
+            DOM.explodeToggle.addEventListener('change', (e) => {
+                isExploded = e.target.checked;
+            });
+        }
+
+        function selectMicrobe(id) {
+            if (activeMicrobeId === id) return;
+            
+            clearCurrentMicrobe();
+            activeMicrobeId = id;
+            const data = MICROBE_DATA[id];
+
+            // 1. Build 3D Model
+            if (id === 'phage') currentMicrobeGroup = buildPhage();
+            else if (id === 'influenza') currentMicrobeGroup = buildInfluenza();
+            else if (id === 'adenovirus') currentMicrobeGroup = buildAdenovirus();
+            else if (id === 'bacillus') currentMicrobeGroup = buildBacillus(); // (Fallback to e.coli logic basically, but we made separate functions)
+            else if (id === 'ecoli') currentMicrobeGroup = buildEColi();
+            else if (id === 'vibrio') currentMicrobeGroup = buildVibrio();
+            else if (id === 'staph') currentMicrobeGroup = buildCocci();
+            else if (id === 'yeast') currentMicrobeGroup = buildYeast();
+
+            // Setup initial inner mesh states
+            currentMicrobeGroup.innerMeshes.forEach(m => {
+                m.visibility = 0; 
+            });
+
+            // 2. UI Updates
+            DOM.infoAccent.style.backgroundColor = data.color;
+            DOM.infoTitle.style.color = data.color;
+            DOM.infoTitle.innerText = data.name;
+            DOM.infoType.innerText = data.type;
+            DOM.infoDesc.innerText = data.desc;
+            DOM.infoSize.innerText = `Size: ${data.size}`;
+            DOM.infoSize.style.color = data.color;
+            DOM.infoSize.style.borderColor = `${data.color}50`;
+
+            // 3. Highlight Buttons
+            document.querySelectorAll('.pathogen-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${id}`).classList.add('active');
+
+            resetCamera();
+        }
+
+        function resetCamera() {
+            camera.setTarget(BABYLON.Vector3.Zero());
+            camera.alpha = Math.PI / 3;
+            camera.beta = Math.PI / 2.5;
+            camera.radius = 25;
+            
+            DOM.explodeToggle.checked = false;
+            isExploded = false;
+        }
+
+        // ==========================================
+        // RENDER LOOP UPDATES
+        // ==========================================
+        function updateAnimations() {
+            if (!currentMicrobeGroup) return;
+
+            // Slowly rotate pathogen for better viewing
+            if (!isExploded) {
+                currentMicrobeGroup.rotation.y += 0.005;
+            }
+
+            // Explode LERP logic
+            const targetFactor = isExploded ? 1 : 0;
+            explodeFactor += (targetFactor - explodeFactor) * 0.1; // Smooth interpolation
+
+            // Update Outer Meshes (Translate & fade)
+            currentMicrobeGroup.outerMeshes.forEach(item => {
+                const mesh = item.mesh;
+                
+                // Translation
+                if (!item.fadeOnly) {
+                    const offset = item.explodeDir.scale(explodeFactor);
+                    if (!mesh.basePosition) mesh.basePosition = mesh.position.clone();
+                    mesh.position = mesh.basePosition.add(offset);
+                }
+
+                // Opacity fading
+                if (mesh.material) {
+                    mesh.material.alpha = 1.0 - (explodeFactor * 0.8); // Drop to 0.2 opacity
+                }
+                
+                // Sub-hierarchy fade
+                mesh.getChildMeshes().forEach(c => {
+                    if (c.material) c.material.alpha = 1.0 - (explodeFactor * 0.8);
+                });
+            });
+
+            // Update Inner Meshes (Fade in)
+            currentMicrobeGroup.innerMeshes.forEach(mesh => {
+                mesh.visibility = explodeFactor;
+            });
+        }
+
+        function updatePins() {
+            if (!currentMicrobeGroup) return;
+            const canvasW = canvas.clientWidth;
+            const canvasH = canvas.clientHeight;
+            
+            const transformMatrix = scene.getTransformMatrix();
+            const viewport = camera.viewport.toGlobal(canvasW, canvasH);
+            const worldMatrix = currentMicrobeGroup.computeWorldMatrix(true);
+
+            pins.forEach(pin => {
+                let shouldHide = false;
+                if (isExploded && pin.linkMesh && pin.linkMesh.material && pin.linkMesh.material.alpha < 0.5) {
+                    shouldHide = true;
+                }
+
+                if (shouldHide) {
+                    pin.element.classList.add('pin-hidden');
+                    return;
+                }
+
+                const worldPos = BABYLON.Vector3.TransformCoordinates(pin.pos3D, worldMatrix);
+                const screenPos = BABYLON.Vector3.Project(
+                    worldPos,
+                    BABYLON.Matrix.Identity(),
+                    transformMatrix,
+                    viewport
+                );
+
+                if (screenPos.z > 1.0 || screenPos.z < 0.0) {
+                    pin.element.classList.add('pin-hidden');
+                } else {
+                    pin.element.classList.remove('pin-hidden');
+                    pin.element.style.left = `${screenPos.x}px`;
+                    pin.element.style.top = `${screenPos.y}px`;
+                }
+            });
+        }
+
+        // Bootstrap
+        window.onload = initEngine;
+
     </script>
 </body>
 </html>
