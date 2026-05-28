@@ -2,469 +2,976 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Food Web Builder | LuminousLearner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Interactive biology virtual labs: Food Web Builder. Visualize Directed Acyclic Graphs (DAG), trophic cascades, the 10% energy rule, and the Biomass Pyramid.">
+    <title>Food Web Builder - Biology Virtual Labs</title>
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
-    
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Cytoscape.js for Graph/DAG Rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
 
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        body { font-family: 'Inter', sans-serif; background-color: #020617; overflow: hidden; user-select: none; }
         
-        /* Canvas Grid */
-        .canvas-bg {
-            background-image: radial-gradient(#334155 1px, transparent 1px);
-            background-size: 20px 20px;
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
         }
-        
-        /* Connection Line Animation */
-        .flow-line { stroke-dasharray: 10; animation: dash 1s linear infinite; }
-        @keyframes dash { to { stroke-dashoffset: -20; } }
-        
+
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+
+        /* Mode Toggles */
+        .mode-btn { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .mode-btn.active { 
+            background-color: #38bdf8; color: #0f172a; border-color: #0284c7; 
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.5); font-weight: 900; transform: scale(1.05); 
+        }
+        .mode-btn.active-danger { 
+            background-color: #ef4444; color: #fff; border-color: #b91c1c; 
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.6); font-weight: 900; transform: scale(1.05); 
+        }
+
+        /* Toggle Checkbox */
+        .toggle-checkbox:checked { right: 0; border-color: #f59e0b; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #f59e0b; }
+
+        /* Draggable Palette Items */
+        .palette-item {
+            cursor: grab;
+            transition: transform 0.1s, box-shadow 0.2s;
+        }
+        .palette-item:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .palette-item:active { cursor: grabbing; transform: scale(0.95); }
+
+        /* Canvas Container */
+        #cy-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+            border-radius: 0.75rem;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
+        }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen w-full flex items-center justify-center p-2 sm:p-4">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
-        const { motion, AnimatePresence } = window.Motion;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- DATA ---
-        const ORGANISMS = [
-            // Producers
-            { id: 'grass', name: 'Grass', type: 'Producer', trophic: 1, icon: 'leaf', color: '#22c55e', diet: [] },
-            { id: 'tree', name: 'Tree', type: 'Producer', trophic: 1, icon: 'tree-deciduous', color: '#16a34a', diet: [] },
+    <!-- Main Container -->
+    <div class="w-full max-w-[1500px] h-full max-h-[950px] bg-[#0F172A] rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.6)] flex flex-col md:flex-row border border-slate-700 overflow-hidden relative">
+        
+        <!-- Left Sidebar: Controls & Information -->
+        <aside class="w-full md:w-[450px] glass-panel p-5 flex flex-col h-full z-10 border-r border-slate-700 shrink-0 overflow-y-auto custom-scrollbar">
             
-            // Primary Consumers
-            { id: 'rabbit', name: 'Rabbit', type: 'Primary Consumer', trophic: 2, icon: 'rabbit', color: '#fbbf24', diet: ['grass'] },
-            { id: 'insect', name: 'Insect', type: 'Primary Consumer', trophic: 2, icon: 'bug', color: '#f59e0b', diet: ['grass', 'tree'] },
-            { id: 'mouse', name: 'Mouse', type: 'Primary Consumer', trophic: 2, icon: 'rat', color: '#a3a3a3', diet: ['grass', 'tree'] },
-            
-            // Secondary/Tertiary Consumers
-            { id: 'frog', name: 'Frog', type: 'Secondary Consumer', trophic: 3, icon: 'snail', color: '#60a5fa', diet: ['insect'] },
-            { id: 'bird', name: 'Bird', type: 'Secondary Consumer', trophic: 3, icon: 'feather', color: '#38bdf8', diet: ['insect'] },
-            { id: 'snake', name: 'Snake', type: 'Secondary Consumer', trophic: 3, icon: 'worm', color: '#8b5cf6', diet: ['rabbit', 'frog', 'mouse', 'bird'] },
-            { id: 'fox', name: 'Fox', type: 'Secondary Consumer', trophic: 3, icon: 'dog', color: '#d97706', diet: ['rabbit', 'mouse', 'bird'] },
-            
-            // Top Predators
-            { id: 'hawk', name: 'Hawk', type: 'Tertiary Consumer', trophic: 4, icon: 'bird', color: '#ef4444', diet: ['rabbit', 'snake', 'frog', 'mouse', 'bird'] },
-            { id: 'owl', name: 'Owl', type: 'Tertiary Consumer', trophic: 4, icon: 'eye', color: '#7c2d12', diet: ['mouse', 'frog', 'snake', 'bird'] },
-            
-            // Decomposers
-            { id: 'fungi', name: 'Fungi', type: 'Decomposer', trophic: 0, icon: 'sprout', color: '#a8a29e', diet: ['all_dead'] }
-        ];
+            <div class="mb-5 border-b border-slate-700 pb-4">
+                <h1 class="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-sky-400 mb-1 flex items-center gap-2">
+                    <i class="fa-solid fa-leaf text-emerald-400"></i> Food Web Builder
+                </h1>
+                <p class="text-[10px] md:text-xs text-slate-400 uppercase tracking-widest font-bold">Ecosystem & Biomass Simulator</p>
+            </div>
 
-        // --- PRESETS ---
-        const PRESETS = {
-            empty: {
-                nodes: [],
-                connections: []
-            },
-            chain: {
-                nodes: [
-                    { id: 'p1', orgId: 'grass', x: 400, y: 450 },
-                    { id: 'c1', orgId: 'rabbit', x: 400, y: 300 },
-                    { id: 'c2', orgId: 'hawk', x: 400, y: 150 }
-                ],
-                connections: [
-                    { from: 'p1', to: 'c1' },
-                    { from: 'c1', to: 'c2' }
-                ]
-            },
-            textbook: { 
-                nodes: [
-                    { id: 'p1', orgId: 'grass', x: 400, y: 500 },
-                    { id: 'c1', orgId: 'insect', x: 250, y: 380 },
-                    { id: 'c2', orgId: 'mouse', x: 400, y: 380 },
-                    { id: 'c3', orgId: 'rabbit', x: 550, y: 380 },
-                    { id: 'c4', orgId: 'frog', x: 150, y: 250 },
-                    { id: 'c5', orgId: 'bird', x: 300, y: 250 },
-                    { id: 'c6', orgId: 'snake', x: 250, y: 120 },
-                    { id: 'c7', orgId: 'hawk', x: 500, y: 80 },
-                    { id: 'c8', orgId: 'fox', x: 600, y: 200 }
-                ],
-                connections: [
-                    { from: 'p1', to: 'c1' }, { from: 'p1', to: 'c2' }, { from: 'p1', to: 'c3' }, 
-                    { from: 'c1', to: 'c4' }, { from: 'c1', to: 'c5' }, 
-                    { from: 'c4', to: 'c6' }, 
-                    { from: 'c5', to: 'c6' }, 
-                    { from: 'c6', to: 'c7' }, 
-                    { from: 'c2', to: 'c7' }, 
-                    { from: 'c2', to: 'c8' }, 
-                    { from: 'c3', to: 'c8' }, 
-                    { from: 'c3', to: 'c7' }  
-                ]
-            },
-            web: {
-                nodes: [
-                    { id: 'p1', orgId: 'grass', x: 200, y: 450 },
-                    { id: 'p2', orgId: 'tree', x: 600, y: 450 },
-                    { id: 'c1', orgId: 'insect', x: 400, y: 350 },
-                    { id: 'c2', orgId: 'rabbit', x: 200, y: 300 },
-                    { id: 'c3', orgId: 'frog', x: 400, y: 250 },
-                    { id: 'c4', orgId: 'snake', x: 600, y: 200 },
-                    { id: 'c5', orgId: 'hawk', x: 300, y: 100 }
-                ],
-                connections: [
-                    { from: 'p1', to: 'c1' }, 
-                    { from: 'p2', to: 'c1' }, 
-                    { from: 'p1', to: 'c2' }, 
-                    { from: 'c1', to: 'c3' }, 
-                    { from: 'c2', to: 'c4' }, 
-                    { from: 'c3', to: 'c4' }, 
-                    { from: 'c2', to: 'c5' }, 
-                    { from: 'c4', to: 'c5' }, 
-                    { from: 'c3', to: 'c5' }  
-                ]
-            }
-        };
+            <!-- Interaction Modes -->
+            <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700 mb-4 shadow-lg shrink-0">
+                <label class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-3 block border-b border-slate-700 pb-2">Interaction Mode</label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button class="mode-btn active py-2.5 rounded-lg border border-slate-600 text-[10px] text-slate-300 bg-slate-800 flex flex-col items-center justify-center gap-1.5" data-mode="move">
+                        <i class="fa-solid fa-hand text-lg"></i> Build
+                    </button>
+                    <button class="mode-btn py-2.5 rounded-lg border border-slate-600 text-[10px] text-slate-300 bg-slate-800 flex flex-col items-center justify-center gap-1.5" data-mode="connect">
+                        <i class="fa-solid fa-link text-lg"></i> Energy Flow
+                    </button>
+                    <button class="mode-btn py-2.5 rounded-lg border border-slate-600 text-[10px] text-slate-300 bg-slate-800 flex flex-col items-center justify-center gap-1.5" data-mode="extinct">
+                        <i class="fa-solid fa-skull text-lg text-slate-400"></i> Extinction
+                    </button>
+                </div>
+                <div id="modeHint" class="text-[10px] text-sky-400 mt-3 text-center h-10 flex items-center justify-center bg-sky-950/30 rounded border border-sky-900/50 p-2 leading-tight">
+                    <i class="fa-solid fa-arrow-pointer mr-2"></i> Drag organisms from the palette onto the canvas to build.
+                </div>
+            </div>
 
-        // --- MAIN APP ---
-        const App = () => {
-            const [nodes, setNodes] = useState(PRESETS.chain.nodes); 
-            const [connections, setConnections] = useState(PRESETS.chain.connections);
-            const [draggedOrg, setDraggedOrg] = useState(null);
-            const [connectingNode, setConnectingNode] = useState(null);
-            const [errorMsg, setErrorMsg] = useState(null);
+            <!-- Analytical Overlays -->
+            <div class="bg-slate-900/50 p-4 rounded-xl border border-slate-700 mb-4 shadow-inner shrink-0">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <label class="text-xs font-bold text-amber-400 flex items-center gap-2">
+                            <i class="fa-solid fa-bolt"></i> Calculate 10% Energy Rule
+                        </label>
+                        <p class="text-[9px] text-slate-400 mt-0.5 max-w-[280px] leading-relaxed">
+                            Visualize energy transfer (10%) and heat/metabolic loss (90%) across trophic levels, resulting in a Pyramid of Biomass.
+                        </p>
+                    </div>
+                    <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in mt-1 shrink-0">
+                        <input type="checkbox" id="energy-toggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
+                        <label for="energy-toggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
+                    </div>
+                </div>
+            </div>
 
-            const canvasRef = useRef(null);
-
-            // --- Preset Loader ---
-            const loadPreset = (type) => {
-                const preset = PRESETS[type];
-                setNodes(JSON.parse(JSON.stringify(preset.nodes)));
-                setConnections(JSON.parse(JSON.stringify(preset.connections)));
-                setErrorMsg(null);
-                setConnectingNode(null);
-            };
-
-            // --- Drag & Drop Logic ---
-            const handleDragStart = (e, orgId) => {
-                setDraggedOrg(orgId);
-            };
-
-            const handleDrop = (e) => {
-                e.preventDefault();
-                if (!draggedOrg) return;
+            <!-- Organism Palette -->
+            <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700 mb-4 flex-grow flex flex-col min-h-[250px]">
+                <h3 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-700 pb-2 flex justify-between">
+                    <span>Species Palette</span>
+                    <span class="text-emerald-400"><i class="fa-solid fa-shield-virus"></i> Diet Validation ON</span>
+                </h3>
                 
-                const rect = canvasRef.current.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                
-                const newNode = {
-                    id: `node-${Date.now()}`,
-                    orgId: draggedOrg,
-                    x,
-                    y
-                };
-                
-                setNodes(prev => [...prev, newNode]);
-                setDraggedOrg(null);
-            };
-
-            const handleDragOver = (e) => e.preventDefault();
-
-            // --- Connection Logic ---
-            const handleNodeClick = (nodeId) => {
-                if (!connectingNode) {
-                    setConnectingNode(nodeId);
-                    setErrorMsg(null);
-                } else {
-                    if (connectingNode === nodeId) {
-                        setConnectingNode(null); 
-                        return;
-                    }
+                <div class="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-grow">
                     
-                    const sourceNode = nodes.find(n => n.id === connectingNode);
-                    const targetNode = nodes.find(n => n.id === nodeId);
-                    const sourceOrg = ORGANISMS.find(o => o.id === sourceNode.orgId);
-                    const targetOrg = ORGANISMS.find(o => o.id === targetNode.orgId);
-
-                    // Check if target eats source
-                    if (targetOrg.diet.includes(sourceOrg.id)) {
-                        const exists = connections.some(c => c.from === connectingNode && c.to === nodeId);
-                        if (!exists) {
-                            setConnections(prev => [...prev, { from: connectingNode, to: nodeId }]);
-                        }
-                        setErrorMsg(null);
-                    } else if (targetOrg.diet.includes('all_dead') && sourceOrg.type !== 'Decomposer') {
-                         // Decomposer eats everything (simplified) except other decomposers for now
-                        const exists = connections.some(c => c.from === connectingNode && c.to === nodeId);
-                        if (!exists) {
-                            setConnections(prev => [...prev, { from: connectingNode, to: nodeId }]);
-                        }
-                         setErrorMsg(null);
-                    } else {
-                        setErrorMsg(`Oops! ${targetOrg.name} does not eat ${sourceOrg.name}.`);
-                    }
-                    setConnectingNode(null);
-                }
-            };
-
-            const deleteNode = (e, nodeId) => {
-                e.stopPropagation();
-                setNodes(prev => prev.filter(n => n.id !== nodeId));
-                setConnections(prev => prev.filter(c => c.from !== nodeId && c.to !== nodeId));
-            };
-
-            // --- Canvas Rendering ---
-            const renderConnections = () => {
-                return connections.map((conn, i) => {
-                    const fromNode = nodes.find(n => n.id === conn.from);
-                    const toNode = nodes.find(n => n.id === conn.to);
-                    if (!fromNode || !toNode) return null;
-
-                    return (
-                        <g key={i}>
-                            <line 
-                                x1={fromNode.x} y1={fromNode.y} 
-                                x2={toNode.x} y2={toNode.y} 
-                                stroke="#64748b" strokeWidth="2" 
-                                markerEnd="url(#arrowhead)"
-                            />
-                            {/* Energy Flow Animation */}
-                            <circle r="3" fill="#fbbf24">
-                                <animateMotion dur="1.5s" repeatCount="indefinite" path={`M ${fromNode.x} ${fromNode.y} L ${toNode.x} ${toNode.y}`} />
-                            </circle>
-                        </g>
-                    );
-                });
-            };
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar: Organism Library */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="network" className="text-emerald-400" /> Food Web
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Ecosystem Builder</p>
-                        </div>
-
-                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
-                            
-                            {/* Preset Controls */}
-                            <div className="mb-8">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-3">Load Preset Example</label>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button onClick={() => loadPreset('empty')} className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs font-bold text-slate-300">Empty</button>
-                                    <button onClick={() => loadPreset('chain')} className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs font-bold text-blue-400">Simple Chain</button>
-                                    <button onClick={() => loadPreset('textbook')} className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs font-bold text-emerald-400 col-span-2">Textbook Web (Complex)</button>
-                                </div>
+                    <!-- Producers -->
+                    <div>
+                        <span class="text-[10px] text-emerald-400 font-bold uppercase block mb-1.5">Producers (T1)</span>
+                        <div class="flex gap-2 flex-wrap">
+                            <div class="palette-item bg-emerald-950/40 border border-emerald-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="producer" data-species="tree" data-name="Tree" data-emoji="🌳">
+                                <span class="text-2xl block mb-1">🌳</span><span class="text-[9px] text-emerald-200 font-bold block">Tree</span>
                             </div>
-
-                            <div className="space-y-6">
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-3">Producers</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {ORGANISMS.filter(o => o.type === 'Producer').map(org => (
-                                            <div 
-                                                key={org.id} 
-                                                draggable 
-                                                onDragStart={(e) => handleDragStart(e, org.id)}
-                                                className="p-3 bg-slate-800 rounded-xl border border-slate-700 cursor-grab active:cursor-grabbing hover:border-emerald-500 transition-colors flex flex-col items-center gap-2"
-                                            >
-                                                <div className="text-emerald-400"><Icon name={org.icon} size={24}/></div>
-                                                <span className="text-xs font-bold text-center">{org.name}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-3">Consumers</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {ORGANISMS.filter(o => o.type.includes('Consumer')).map(org => (
-                                            <div 
-                                                key={org.id} 
-                                                draggable 
-                                                onDragStart={(e) => handleDragStart(e, org.id)}
-                                                className="p-3 bg-slate-800 rounded-xl border border-slate-700 cursor-grab active:cursor-grabbing hover:border-blue-500 transition-colors flex flex-col items-center gap-2"
-                                            >
-                                                <div style={{color: org.color}}><Icon name={org.icon} size={24}/></div>
-                                                <span className="text-xs font-bold text-center">{org.name}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-3">Decomposers</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {ORGANISMS.filter(o => o.type === 'Decomposer').map(org => (
-                                            <div 
-                                                key={org.id} 
-                                                draggable 
-                                                onDragStart={(e) => handleDragStart(e, org.id)}
-                                                className="p-3 bg-slate-800 rounded-xl border border-slate-700 cursor-grab active:cursor-grabbing hover:border-slate-400 transition-colors flex flex-col items-center gap-2"
-                                            >
-                                                <div className="text-slate-400"><Icon name={org.icon} size={24}/></div>
-                                                <span className="text-xs font-bold text-center">{org.name}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                            <div class="palette-item bg-emerald-950/40 border border-emerald-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="producer" data-species="grass" data-name="Grass" data-emoji="🌿">
+                                <span class="text-2xl block mb-1">🌿</span><span class="text-[9px] text-emerald-200 font-bold block">Grass</span>
                             </div>
-                        </div>
-
-                        <div className="p-4 border-t border-slate-800 bg-slate-900/50 text-xs text-slate-400">
-                            Drag items to canvas. Click two items to connect (Prey &rarr; Predator).
+                            <div class="palette-item bg-emerald-950/40 border border-emerald-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="producer" data-species="berry" data-name="Berry Bush" data-emoji="🫐">
+                                <span class="text-2xl block mb-1">🫐</span><span class="text-[9px] text-emerald-200 font-bold block">Berries</span>
+                            </div>
+                            <div class="palette-item bg-emerald-950/40 border border-emerald-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="producer" data-species="algae" data-name="Phytoplankton" data-emoji="🦠">
+                                <span class="text-2xl block mb-1">🦠</span><span class="text-[9px] text-emerald-200 font-bold block">Algae</span>
+                            </div>
                         </div>
                     </div>
 
-                    {/* Main Stage: Canvas */}
-                    <div className="flex-1 relative bg-[#020617] overflow-hidden flex flex-col">
-                        
-                        <div 
-                            ref={canvasRef}
-                            onDrop={handleDrop}
-                            onDragOver={handleDragOver}
-                            className="flex-1 relative canvas-bg overflow-hidden cursor-crosshair"
-                        >
-                            {/* SVG Layer for Lines */}
-                            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-                                <defs>
-                                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="20" refY="3.5" orient="auto">
-                                        <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
-                                    </marker>
-                                </defs>
-                                {renderConnections()}
-                            </svg>
-
-                            {/* Nodes Layer */}
-                            {nodes.map(node => {
-                                const org = ORGANISMS.find(o => o.id === node.orgId);
-                                const isSelected = connectingNode === node.id;
-                                
-                                return (
-                                    <motion.div
-                                        key={node.id}
-                                        initial={{ scale: 0 }} animate={{ scale: 1 }}
-                                        style={{ left: node.x, top: node.y }}
-                                        className={`absolute -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-slate-900 border-2 flex items-center justify-center shadow-xl z-10 cursor-pointer
-                                            ${isSelected ? 'border-yellow-400 ring-4 ring-yellow-500/20' : 'border-slate-700 hover:border-white'}
-                                        `}
-                                        onClick={() => handleNodeClick(node.id)}
-                                    >
-                                        <div style={{color: org.color}}><Icon name={org.icon} size={28}/></div>
-                                        <div className="absolute -bottom-6 whitespace-nowrap text-xs font-bold bg-black/50 px-2 py-0.5 rounded text-white">
-                                            {org.name}
-                                        </div>
-                                        
-                                        {/* Delete Button (Hover) */}
-                                        <button 
-                                            onClick={(e) => deleteNode(e, node.id)}
-                                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-xs opacity-0 hover:opacity-100 transition-opacity"
-                                        >
-                                            ×
-                                        </button>
-                                    </motion.div>
-                                );
-                            })}
-
-                            {/* Hints / Errors Overlay */}
-                            <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none">
-                                <AnimatePresence>
-                                    {errorMsg && (
-                                        <motion.div 
-                                            initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -20, opacity: 0 }}
-                                            className="bg-red-500/90 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold flex items-center gap-2"
-                                        >
-                                            <Icon name="alert-circle" size={16}/> {errorMsg}
-                                        </motion.div>
-                                    )}
-                                    {connectingNode && !errorMsg && (
-                                        <motion.div 
-                                            initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-                                            className="bg-yellow-500/90 text-black px-4 py-2 rounded-full shadow-lg text-sm font-bold"
-                                        >
-                                            Select Predator...
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
+                    <!-- Primary Consumers -->
+                    <div>
+                        <span class="text-[10px] text-blue-400 font-bold uppercase block mb-1.5">Primary Consumers (T2)</span>
+                        <div class="flex gap-2 flex-wrap">
+                            <div class="palette-item bg-blue-950/40 border border-blue-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="primary" data-species="deer" data-name="Deer" data-emoji="🦌">
+                                <span class="text-2xl block mb-1">🦌</span><span class="text-[9px] text-blue-200 font-bold block">Deer</span>
                             </div>
-                            
-                            {/* Stats Overlay */}
-                            <div className="absolute top-4 right-4 bg-slate-900/80 backdrop-blur p-4 rounded-xl border border-slate-700 text-xs text-slate-300 pointer-events-none">
-                                <div className="font-bold text-white mb-2 uppercase">Ecosystem Stats</div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                                    <span>Producers:</span> <span className="text-emerald-400 font-mono">{nodes.filter(n => ORGANISMS.find(o=>o.id===n.orgId).type === 'Producer').length}</span>
-                                    <span>Consumers:</span> <span className="text-blue-400 font-mono">{nodes.filter(n => ORGANISMS.find(o=>o.id===n.orgId).type.includes('Consumer')).length}</span>
-                                    <span>Max Trophic Level:</span> <span className="text-yellow-400 font-mono">
-                                        {Math.max(0, ...nodes.map(n => ORGANISMS.find(o=>o.id===n.orgId).trophic))}
-                                    </span>
-                                </div>
+                            <div class="palette-item bg-blue-950/40 border border-blue-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="primary" data-species="rabbit" data-name="Rabbit" data-emoji="🐰">
+                                <span class="text-2xl block mb-1">🐰</span><span class="text-[9px] text-blue-200 font-bold block">Rabbit</span>
                             </div>
+                            <div class="palette-item bg-blue-950/40 border border-blue-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="primary" data-species="mouse" data-name="Mouse" data-emoji="🐭">
+                                <span class="text-2xl block mb-1">🐭</span><span class="text-[9px] text-blue-200 font-bold block">Mouse</span>
+                            </div>
+                            <div class="palette-item bg-blue-950/40 border border-blue-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="primary" data-species="hopper" data-name="Grasshopper" data-emoji="🦗">
+                                <span class="text-2xl block mb-1">🦗</span><span class="text-[9px] text-blue-200 font-bold block">Hopper</span>
+                            </div>
+                            <div class="palette-item bg-blue-950/40 border border-blue-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="primary" data-species="caterpillar" data-name="Caterpillar" data-emoji="🐛">
+                                <span class="text-2xl block mb-1">🐛</span><span class="text-[9px] text-blue-200 font-bold block">Caterpillar</span>
+                            </div>
+                        </div>
+                    </div>
 
+                    <!-- Secondary Consumers -->
+                    <div>
+                        <span class="text-[10px] text-amber-400 font-bold uppercase block mb-1.5">Secondary Consumers (T3)</span>
+                        <div class="flex gap-2 flex-wrap">
+                            <div class="palette-item bg-amber-950/40 border border-amber-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="secondary" data-species="bird" data-name="Bird" data-emoji="🐦">
+                                <span class="text-2xl block mb-1">🐦</span><span class="text-[9px] text-amber-200 font-bold block">Bird</span>
+                            </div>
+                            <div class="palette-item bg-amber-950/40 border border-amber-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="secondary" data-species="frog" data-name="Frog" data-emoji="🐸">
+                                <span class="text-2xl block mb-1">🐸</span><span class="text-[9px] text-amber-200 font-bold block">Frog</span>
+                            </div>
+                            <div class="palette-item bg-amber-950/40 border border-amber-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="secondary" data-species="snake" data-name="Snake" data-emoji="🐍">
+                                <span class="text-2xl block mb-1">🐍</span><span class="text-[9px] text-amber-200 font-bold block">Snake</span>
+                            </div>
+                            <div class="palette-item bg-amber-950/40 border border-amber-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="secondary" data-species="spider" data-name="Spider" data-emoji="🕷️">
+                                <span class="text-2xl block mb-1">🕷️</span><span class="text-[9px] text-amber-200 font-bold block">Spider</span>
+                            </div>
+                            <div class="palette-item bg-amber-950/40 border border-amber-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="secondary" data-species="fish" data-name="Fish" data-emoji="🐟">
+                                <span class="text-2xl block mb-1">🐟</span><span class="text-[9px] text-amber-200 font-bold block">Fish</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Apex Predators -->
+                    <div>
+                        <span class="text-[10px] text-rose-400 font-bold uppercase block mb-1.5">Apex Predators (T4)</span>
+                        <div class="flex gap-2 flex-wrap">
+                            <div class="palette-item bg-rose-950/40 border border-rose-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="apex" data-species="wolf" data-name="Wolf" data-emoji="🐺">
+                                <span class="text-2xl block mb-1">🐺</span><span class="text-[9px] text-rose-200 font-bold block">Wolf</span>
+                            </div>
+                            <div class="palette-item bg-rose-950/40 border border-rose-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="apex" data-species="hawk" data-name="Hawk" data-emoji="🦅">
+                                <span class="text-2xl block mb-1">🦅</span><span class="text-[9px] text-rose-200 font-bold block">Hawk</span>
+                            </div>
+                            <div class="palette-item bg-rose-950/40 border border-rose-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="apex" data-species="bear" data-name="Bear" data-emoji="🐻">
+                                <span class="text-2xl block mb-1">🐻</span><span class="text-[9px] text-rose-200 font-bold block">Bear</span>
+                            </div>
+                            <div class="palette-item bg-rose-950/40 border border-rose-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="apex" data-species="fox" data-name="Fox" data-emoji="🦊">
+                                <span class="text-2xl block mb-1">🦊</span><span class="text-[9px] text-rose-200 font-bold block">Fox</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Decomposers -->
+                    <div>
+                        <span class="text-[10px] text-purple-400 font-bold uppercase block mb-1.5">Decomposers</span>
+                        <div class="flex gap-2 flex-wrap">
+                            <div class="palette-item bg-purple-950/40 border border-purple-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="decomposer" data-species="fungi" data-name="Fungi" data-emoji="🍄">
+                                <span class="text-2xl block mb-1">🍄</span><span class="text-[9px] text-purple-200 font-bold block">Fungi</span>
+                            </div>
+                            <div class="palette-item bg-purple-950/40 border border-purple-700/50 rounded-lg p-2 text-center w-[72px]" draggable="true" data-type="decomposer" data-species="worm" data-name="Worm" data-emoji="🪱">
+                                <span class="text-2xl block mb-1">🪱</span><span class="text-[9px] text-purple-200 font-bold block">Worm</span>
+                            </div>
                         </div>
                     </div>
 
                 </div>
-            );
+            </div>
+
+            <!-- Ecosystem Controls -->
+            <div class="grid grid-cols-3 gap-2 mt-auto shrink-0">
+                <button id="loadPresetBtn" class="py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-[10px] uppercase tracking-wider font-bold rounded-xl transition-colors border border-slate-500 shadow-lg active:scale-95 flex flex-col items-center justify-center gap-1">
+                    <i class="fa-solid fa-tree text-sm"></i> Preset
+                </button>
+                <button id="autoLayoutBtn" class="py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-[10px] uppercase tracking-wider font-bold rounded-xl transition-colors border border-slate-500 shadow-lg active:scale-95 flex flex-col items-center justify-center gap-1">
+                    <i class="fa-solid fa-layer-group text-sm"></i> Organize Tiers
+                </button>
+                <button id="clearBtn" class="py-2.5 bg-slate-900 hover:bg-rose-950/50 text-rose-400 text-[10px] uppercase tracking-wider font-bold rounded-xl transition-colors border border-rose-900/50 shadow-lg active:scale-95 flex flex-col items-center justify-center gap-1">
+                    <i class="fa-solid fa-trash-can text-sm"></i> Clear
+                </button>
+            </div>
+            
+            <div class="mt-3 p-2 bg-slate-900/80 rounded-lg border border-slate-700 text-center flex flex-col justify-center shrink-0">
+                <span id="telemetryStatus" class="text-[11px] font-mono font-bold text-cyan-400 transition-colors duration-300">System Stable</span>
+            </div>
+        </aside>
+
+        <!-- Right Viewport: Interactive Graph Canvas -->
+        <section class="flex-grow relative w-full h-[500px] md:h-full overflow-hidden bg-slate-950 flex flex-col p-4">
+            
+            <div class="absolute top-8 left-8 z-10 text-slate-600 font-black text-xs uppercase tracking-widest pointer-events-none">Ecosystem Simulation Canvas</div>
+
+            <div class="absolute top-6 right-6 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl pointer-events-none z-10 shadow-2xl text-[10px] font-mono text-slate-300">
+                <h3 class="font-bold text-white mb-3 uppercase border-b border-slate-700 pb-1.5 tracking-wider">Trophic Legend</h3>
+                <div class="flex items-center gap-3 mb-2"><div class="w-3.5 h-3.5 rounded-full bg-emerald-500 border border-emerald-300 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div> Producers</div>
+                <div class="flex items-center gap-3 mb-2"><div class="w-3.5 h-3.5 rounded-full bg-blue-500 border border-blue-300 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div> Primary Consumers</div>
+                <div class="flex items-center gap-3 mb-2"><div class="w-3.5 h-3.5 rounded-full bg-amber-500 border border-amber-300 shadow-[0_0_8px_rgba(245,158,11,0.5)]"></div> Secondary Consumers</div>
+                <div class="flex items-center gap-3 mb-2"><div class="w-3.5 h-3.5 rounded-full bg-rose-500 border border-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div> Apex Predators</div>
+                <div class="flex items-center gap-3 mb-3"><div class="w-3.5 h-3.5 rounded-full bg-purple-500 border border-purple-300 shadow-[0_0_8px_rgba(168,85,247,0.5)]"></div> Decomposers</div>
+                <div class="flex items-center gap-2 pt-2 border-t border-slate-700 font-bold text-amber-400">
+                    <span class="text-lg leading-none">⟶</span> Energy Flow (Eaten By)
+                </div>
+            </div>
+
+            <!-- Cytoscape Target -->
+            <div id="cy-container"></div>
+            
+        </section>
+
+    </div>
+
+    <script>
+        /**
+         * FOOD WEB BUILDER
+         * Uses Cytoscape.js for Directed Acyclic Graph (DAG) construction and traversal.
+         * Simulates Trophic Cascades, the 10% Energy Rule, Biomass Pyramids, and Realistic Diets.
+         */
+
+        // --- BIOLOGICAL DIET DATABASE ---
+        const SPECIES_DB = {
+            'grass': { name: 'Grass', type: 'producer', diet: [] },
+            'berry': { name: 'Berry Bush', type: 'producer', diet: [] },
+            'algae': { name: 'Phytoplankton', type: 'producer', diet: [] },
+            'tree': { name: 'Tree', type: 'producer', diet: [] },
+            
+            'hopper': { name: 'Grasshopper', type: 'primary', diet: ['grass', 'berry'] },
+            'mouse': { name: 'Mouse', type: 'primary', diet: ['grass', 'berry', 'tree'] },
+            'rabbit': { name: 'Rabbit', type: 'primary', diet: ['grass', 'berry'] },
+            'caterpillar': { name: 'Caterpillar', type: 'primary', diet: ['tree', 'grass'] },
+            'deer': { name: 'Deer', type: 'primary', diet: ['tree', 'grass', 'berry'] },
+            
+            'frog': { name: 'Frog', type: 'secondary', diet: ['hopper', 'worm', 'caterpillar', 'spider'] },
+            'snake': { name: 'Snake', type: 'secondary', diet: ['mouse', 'rabbit', 'frog', 'fish', 'bird'] },
+            'fish': { name: 'Fish', type: 'secondary', diet: ['algae', 'hopper', 'worm'] },
+            'bird': { name: 'Small Bird', type: 'secondary', diet: ['hopper', 'caterpillar', 'worm', 'spider', 'berry'] },
+            'spider': { name: 'Spider', type: 'secondary', diet: ['hopper', 'caterpillar'] },
+            
+            'hawk': { name: 'Hawk', type: 'apex', diet: ['mouse', 'rabbit', 'snake', 'frog', 'fish', 'bird'] },
+            'fox': { name: 'Fox', type: 'apex', diet: ['mouse', 'rabbit', 'frog', 'berry', 'bird'] }, 
+            'bear': { name: 'Bear', type: 'apex', diet: ['fish', 'berry', 'rabbit', 'mouse', 'deer'] },
+            'wolf': { name: 'Wolf', type: 'apex', diet: ['deer', 'rabbit', 'mouse', 'fox'] },
+            
+            'fungi': { name: 'Fungi', type: 'decomposer', diet: ['all'] },
+            'worm': { name: 'Worm', type: 'decomposer', diet: ['all'] }
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        const NODE_COLORS = {
+            'producer': { bg: '#064e3b', border: '#10b981', textColor: '#34d399', energy: 10000 }, 
+            'primary': { bg: '#1e3a8a', border: '#3b82f6', textColor: '#93c5fd', energy: 1000 },  
+            'secondary': { bg: '#78350f', border: '#f59e0b', textColor: '#fcd34d', energy: 100 },
+            'apex': { bg: '#881337', border: '#f43f5e', textColor: '#fda4af', energy: 10 },
+            'decomposer': { bg: '#4c1d95', border: '#a855f7', textColor: '#d8b4fe', energy: 5000 } // Give decomposers a base energy from detritus so predators can feed on them
+        };
+
+        // --- CYTOSCAPE & STATE ---
+        let cy;
+        let state = {
+            mode: 'move', // 'move', 'connect', 'extinct'
+            sourceNode: null, 
+            nodeCount: 0,
+            showEnergy: false
+        };
+
+        // --- DOM ELEMENTS ---
+        const ui = {
+            modeBtns: document.querySelectorAll('.mode-btn'),
+            modeHint: document.getElementById('modeHint'),
+            paletteItems: document.querySelectorAll('.palette-item'),
+            container: document.getElementById('cy-container'),
+            loadBtn: document.getElementById('loadPresetBtn'),
+            clearBtn: document.getElementById('clearBtn'),
+            autoLayoutBtn: document.getElementById('autoLayoutBtn'),
+            energyToggle: document.getElementById('energy-toggle'),
+            telemetry: document.getElementById('telemetryStatus')
+        };
+
+        // --- INITIALIZATION ---
+        function init() {
+            initCytoscape();
+            setupUI();
+            setupDragAndDrop();
+        }
+
+        function initCytoscape() {
+            cy = cytoscape({
+                container: ui.container,
+                
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'width': 'data(size)', // Dynamically bound to energy level
+                            'height': 'data(size)',
+                            'background-color': 'data(bgColor)',
+                            'border-width': 4,
+                            'border-color': 'data(borderColor)',
+                            'label': function(ele) {
+                                let txt = ele.data('label');
+                                if (state.showEnergy && ele.data('id') !== 'ghost-node') {
+                                    if (ele.data('type') === 'decomposer') {
+                                        txt += `\n(Recycler)`;
+                                    } else {
+                                        txt += `\n${ele.data('energy')} kcal`;
+                                    }
+                                }
+                                return txt;
+                            },
+                            'color': 'data(textColor)',
+                            'font-family': 'Inter, sans-serif',
+                            'font-size': 12,
+                            'font-weight': 'bold',
+                            'text-valign': 'bottom',
+                            'text-margin-y': 8,
+                            'text-wrap': 'wrap',
+                            'text-outline-width': 2,
+                            'text-outline-color': '#0f172a',
+                            'transition-property': 'background-color, border-color, border-width, width, height, opacity',
+                            'transition-duration': '0.4s'
+                        }
+                    },
+                    {
+                        selector: 'node[emoji]',
+                        style: {
+                            'background-image': function(ele) {
+                                const size = ele.data('size');
+                                const fontSize = Math.max(16, size * 0.6); // Scale emoji with node
+                                const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 65 65"><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="${fontSize}">${ele.data('emoji')}</text></svg>`;
+                                return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+                            },
+                            'background-fit': 'contain',
+                            'background-clip': 'none'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 4,
+                            'line-color': '#94a3b8',
+                            'target-arrow-color': '#94a3b8',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'arrow-scale': 2,
+                            'target-distance-from-node': 8,
+                            'source-distance-from-node': 8,
+                            'text-rotation': 'autorotate',
+                            'transition-property': 'line-color, target-arrow-color, width, opacity',
+                            'transition-duration': '0.3s'
+                        }
+                    },
+                    // Display Energy Loss Label on Edges
+                    {
+                        selector: 'edge.show-energy',
+                        style: {
+                            'label': '10%',
+                            'font-size': 10,
+                            'color': '#fcd34d',
+                            'text-background-opacity': 0.8,
+                            'text-background-color': '#020617',
+                            'text-background-padding': 2,
+                            'text-margin-y': -10
+                        }
+                    },
+                    // Visual Ghost Edge for Drag-to-Connect
+                    {
+                        selector: '.ghost-node',
+                        style: {
+                            'width': 1, 'height': 1, 'opacity': 0, 'events': 'no'
+                        }
+                    },
+                    {
+                        selector: '.ghost-edge',
+                        style: {
+                            'line-color': '#facc15',
+                            'target-arrow-color': '#facc15',
+                            'line-style': 'dashed',
+                            'width': 4,
+                            'arrow-scale': 2,
+                            'target-arrow-shape': 'triangle',
+                            'events': 'no'
+                        }
+                    },
+                    // Dynamic Classes for Events
+                    {
+                        selector: '.source-highlight',
+                        style: {
+                            'border-color': '#facc15',
+                            'border-width': 6,
+                            'background-color': '#422006'
+                        }
+                    },
+                    {
+                        selector: '.node-dead',
+                        style: {
+                            'background-color': '#1e293b',
+                            'border-color': '#ef4444',
+                            'color': '#475569',
+                            'opacity': 0.3,
+                            'background-image': 'none' 
+                        }
+                    },
+                    {
+                        selector: '.node-overpopulated',
+                        style: {
+                            'border-width': 8,
+                            'border-color': '#10b981',
+                            'width': 100,
+                            'height': 100
+                        }
+                    },
+                    {
+                        selector: '.node-starving',
+                        style: {
+                            'border-width': 4,
+                            'border-color': '#f59e0b',
+                            'width': 50,
+                            'height': 50,
+                            'opacity': 0.7
+                        }
+                    },
+                    {
+                        selector: '.edge-dead',
+                        style: {
+                            'opacity': 0.1
+                        }
+                    },
+                    {
+                        selector: '.edge-stressed',
+                        style: {
+                            'line-color': '#f59e0b',
+                            'target-arrow-color': '#f59e0b',
+                            'line-style': 'dashed'
+                        }
+                    }
+                ],
+                
+                layout: { name: 'preset' },
+                userZoomingEnabled: true,
+                wheelSensitivity: 0.1,
+                boxSelectionEnabled: false
+            });
+
+            // INTERACTION EVENTS (Drag-to-Connect & Extinction)
+            
+            // 1. Extinction Mode (Click to kill)
+            cy.on('tap', 'node', function(evt){
+                const node = evt.target;
+                if (node.hasClass('node-dead') || node.id() === 'ghost-node') return; 
+                
+                if (state.mode === 'extinct') {
+                    runTrophicCascade(node);
+                }
+            });
+
+            // 2. Connect Mode (Drag to Connect)
+            cy.on('tapstart', 'node', function(evt){
+                if (state.mode === 'connect') {
+                    const node = evt.target;
+                    if (node.hasClass('node-dead') || node.id() === 'ghost-node') return;
+
+                    state.sourceNode = node;
+                    node.addClass('source-highlight');
+                    logTelemetry(`Linking from ${node.data('label')}...`, "text-amber-400");
+                }
+            });
+
+            cy.on('tapdrag', function(evt){
+                if (state.mode === 'connect' && state.sourceNode) {
+                    const pos = evt.position;
+                    let ghostNode = cy.getElementById('ghost-node');
+                    
+                    if (ghostNode.empty()) {
+                        cy.add([
+                            { 
+                                group: 'nodes', 
+                                data: { id: 'ghost-node', size: 1 }, 
+                                position: pos, 
+                                classes: 'ghost-node' 
+                            },
+                            { 
+                                group: 'edges', 
+                                data: { id: 'ghost-edge', source: state.sourceNode.id(), target: 'ghost-node' }, 
+                                classes: 'ghost-edge' 
+                            }
+                        ]);
+                    } else {
+                        ghostNode.position(pos);
+                    }
+                }
+            });
+
+            cy.on('tapend', function(evt){
+                if (state.mode === 'connect' && state.sourceNode) {
+                    const targetNode = evt.target;
+                    
+                    // Check if dropped on a valid target node
+                    if (targetNode && targetNode !== cy && targetNode.isNode() && targetNode.id() !== 'ghost-node' && !targetNode.hasClass('node-dead')) {
+                        if (state.sourceNode.id() !== targetNode.id()) {
+                            
+                            // --- BIOLOGICAL DIET VALIDATION ---
+                            const sourceSpecies = state.sourceNode.data('species');
+                            const targetSpecies = targetNode.data('species');
+                            const targetData = SPECIES_DB[targetSpecies];
+                            const sourceData = SPECIES_DB[sourceSpecies];
+
+                            let isValidDiet = false;
+                            if (targetData.diet.includes(sourceSpecies)) isValidDiet = true;
+                            if (targetData.diet.includes('all') && sourceData.type !== 'decomposer') isValidDiet = true;
+
+                            if (isValidDiet) {
+                                // Prevent cycles or redundant edges
+                                const edgeExists = state.sourceNode.edgesTo(targetNode).length > 0;
+                                const reverseEdge = targetNode.edgesTo(state.sourceNode).length > 0;
+                                
+                                if (!edgeExists && !reverseEdge) {
+                                    cy.add({
+                                        group: 'edges',
+                                        data: {
+                                            source: state.sourceNode.id(),
+                                            target: targetNode.id()
+                                        }
+                                    });
+                                    logTelemetry(`Energy flows: ${sourceData.name} ⟶ ${targetData.name}`, "text-emerald-400");
+                                    recalculateEnergy();
+                                } else {
+                                    logTelemetry(`Connection already exists.`, "text-amber-400");
+                                }
+                            } else {
+                                // Biological Error!
+                                logTelemetry(`Biological Error: ${targetData.name} does not eat ${sourceData.name}!`, "text-rose-500 animate-pulse");
+                            }
+                        }
+                    } else {
+                        logTelemetry(`Connection cancelled.`, "text-slate-400");
+                    }
+                    
+                    // Reset Ghost State
+                    state.sourceNode.removeClass('source-highlight');
+                    state.sourceNode = null;
+                    clearGhostEdge();
+                }
+            });
+        }
+
+        function clearGhostEdge() {
+            if(cy) cy.remove('#ghost-node');
+        }
+
+        // --- UI & INTERACTION LOGIC ---
+
+        function setupUI() {
+            ui.modeBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const mode = e.currentTarget.dataset.mode;
+                    setMode(mode);
+                });
+            });
+
+            ui.clearBtn.addEventListener('click', () => {
+                cy.elements().remove();
+                state.nodeCount = 0;
+                logTelemetry("Ecosystem Cleared", "text-slate-400");
+            });
+
+            ui.loadBtn.addEventListener('click', loadPresetEcosystem);
+            ui.autoLayoutBtn.addEventListener('click', autoLayoutEcosystem);
+
+            ui.energyToggle.addEventListener('change', (e) => {
+                state.showEnergy = e.target.checked;
+                if(state.showEnergy) {
+                    logTelemetry("Biomass Pyramid Active: 90% of energy is lost as heat between levels.", "text-amber-400");
+                } else {
+                    logTelemetry("Energy visualizer off. Standard view.", "text-cyan-400");
+                }
+                recalculateEnergy();
+            });
+        }
+
+        function logTelemetry(msg, colorClass) {
+            ui.telemetry.innerText = msg;
+            ui.telemetry.className = `text-[11px] font-mono font-bold transition-colors duration-300 ${colorClass}`;
+        }
+
+        function setMode(mode) {
+            state.mode = mode;
+            
+            if (state.sourceNode) {
+                state.sourceNode.removeClass('source-highlight');
+                state.sourceNode = null;
+                clearGhostEdge();
+            }
+
+            ui.modeBtns.forEach(b => b.classList.remove('active', 'active-danger'));
+            const activeBtn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+            
+            if (mode === 'extinct') {
+                activeBtn.classList.add('active-danger');
+                ui.modeHint.innerHTML = "<span class='text-rose-400'><i class='fa-solid fa-skull'></i> <strong>Click</strong> a species to simulate Extinction.</span>";
+                ui.modeHint.className = "text-[10px] mt-3 text-center h-10 flex items-center justify-center bg-rose-950/30 rounded border border-rose-900/50 p-2 leading-tight";
+                cy.autoungrabify(true); // Lock nodes
+            } else if (mode === 'connect') {
+                activeBtn.classList.add('active');
+                ui.modeHint.innerHTML = "<span class='text-amber-400'><i class='fa-solid fa-arrow-pointer'></i> <strong>Drag</strong> from Prey to Predator to link them.<br><em>Note: Predators only eat their natural diet!</em></span>";
+                ui.modeHint.className = "text-[10px] mt-3 text-center h-10 flex items-center justify-center bg-amber-950/30 rounded border border-amber-900/50 p-2 leading-tight";
+                cy.autoungrabify(true); // Lock nodes to ensure stable link dragging
+            } else {
+                activeBtn.classList.add('active');
+                ui.modeHint.innerHTML = "<span class='text-sky-400'><i class='fa-solid fa-hand'></i> <strong>Drag</strong> species from palette into canvas.</span>";
+                ui.modeHint.className = "text-[10px] mt-3 text-center h-10 flex items-center justify-center bg-sky-950/30 rounded border border-sky-900/50 p-2 leading-tight";
+                cy.autoungrabify(false); // Allow moving nodes freely
+            }
+        }
+
+        // --- DRAG AND DROP (HTML5 -> Cytoscape) ---
+        function setupDragAndDrop() {
+            ui.paletteItems.forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    if (state.mode !== 'move') setMode('move'); 
+                    
+                    e.dataTransfer.setData('type', item.dataset.type);
+                    e.dataTransfer.setData('name', item.dataset.name);
+                    e.dataTransfer.setData('emoji', item.dataset.emoji);
+                    e.dataTransfer.setData('species', item.dataset.species);
+                });
+            });
+
+            // Handle drop directly on the cytoscape container (fixes the old pointer-events blocking issue)
+            ui.container.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+
+            ui.container.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (state.mode !== 'move') return;
+
+                const type = e.dataTransfer.getData('type');
+                const name = e.dataTransfer.getData('name');
+                const emoji = e.dataTransfer.getData('emoji');
+                const species = e.dataTransfer.getData('species');
+
+                if (type && name && species) {
+                    const rect = ui.container.getBoundingClientRect();
+                    const x = (e.clientX - rect.left - cy.pan().x) / cy.zoom();
+                    const y = (e.clientY - rect.top - cy.pan().y) / cy.zoom();
+                    
+                    addSpeciesNode(type, name, emoji, species, x, y);
+                }
+            });
+        }
+
+        function addSpeciesNode(type, name, emoji, species, x, y) {
+            state.nodeCount++;
+            const id = 'n' + state.nodeCount;
+            const colors = NODE_COLORS[type];
+
+            cy.add({
+                group: 'nodes',
+                data: { 
+                    id: id, 
+                    label: name, 
+                    type: type, 
+                    emoji: emoji,
+                    species: species,
+                    bgColor: colors.bg,
+                    borderColor: colors.border,
+                    textColor: colors.textColor,
+                    energy: colors.energy, // Initial base energy
+                    size: 65, // Default visual size
+                    status: 'alive'
+                },
+                position: { x: x, y: y }
+            });
+            
+            recalculateEnergy();
+            logTelemetry(`Added ${name} to Ecosystem`, "text-cyan-400");
+        }
+
+        // --- ENERGY CALCULATION (10% RULE & BIOMASS PYRAMID) ---
+        function recalculateEnergy() {
+            // Reset all to 0
+            cy.nodes().data('energy', 0);
+            
+            // Producers always have 10,000 base
+            cy.nodes('[type = "producer"]').data('energy', 10000);
+
+            // Iterative propagation to handle multiple food sources cleanly
+            for (let iteration = 0; iteration < 6; iteration++) {
+                cy.nodes().forEach(node => {
+                    // Skip calculating incoming for producers and decomposers
+                    if (node.data('type') === 'producer' || node.data('type') === 'decomposer') return;
+                    
+                    let incomingEnergy = 0;
+                    
+                    node.incomers('edge').forEach(edge => {
+                        let prey = edge.source();
+                        if (prey.data('type') === 'decomposer') return;
+
+                        let preyEnergy = prey.data('energy') || 0;
+                        
+                        // How many predators is this prey feeding?
+                        let numPredators = prey.outgoers('node[type != "decomposer"]').length;
+                        
+                        if (numPredators > 0) {
+                            // Energy is split among predators, then 10% efficiency is applied
+                            incomingEnergy += (preyEnergy / numPredators) * 0.1;
+                        }
+                    });
+                    
+                    node.data('energy', incomingEnergy);
+                });
+            }
+
+            // Decomposers handle nutrient recycling, but get a flat 5000 energy from detritus so they can feed higher tiers if eaten
+            cy.nodes('[type = "decomposer"]').data('energy', 5000);
+            
+            // Format numbers and map to visual Biomass Sizing
+            cy.nodes().forEach(n => {
+                let e = n.data('energy');
+                let newSize = 65; // Base size
+
+                if (state.showEnergy) {
+                    if (typeof e === 'number') {
+                        // Logarithmic scaling for visual balance of the Biomass Pyramid
+                        if (e > 0) {
+                            newSize = Math.max(40, Math.min(100, 20 + Math.log10(e + 1) * 15));
+                        } else {
+                            newSize = 40; // Starving
+                        }
+                        n.data('energy', Math.round(e));
+                    }
+                } else {
+                    if (typeof e === 'number') n.data('energy', Math.round(e));
+                }
+
+                n.data('size', newSize);
+            });
+
+            // Toggle Edge 10% Labels
+            if (state.showEnergy) {
+                cy.edges().addClass('show-energy');
+            } else {
+                cy.edges().removeClass('show-energy');
+            }
+
+            // Force label/style update
+            cy.style().update();
+        }
+
+        // --- TROPHIC AUTO-LAYOUT ---
+        function autoLayoutEcosystem() {
+            if (cy.nodes().length === 0) return;
+
+            const w = ui.container.clientWidth;
+            const h = ui.container.clientHeight;
+
+            const tiers = {
+                'apex': { y: h * 0.15, nodes: [] },
+                'secondary': { y: h * 0.35, nodes: [] },
+                'primary': { y: h * 0.55, nodes: [] },
+                'producer': { y: h * 0.75, nodes: [] },
+                'decomposer': { y: h * 0.90, nodes: [] }
+            };
+
+            cy.nodes().forEach(n => {
+                const type = n.data('type');
+                if (tiers[type]) tiers[type].nodes.push(n);
+            });
+
+            cy.nodes().layout({
+                name: 'preset',
+                positions: function(node) {
+                    const type = node.data('type');
+                    const tier = tiers[type];
+                    const index = tier.nodes.indexOf(node);
+                    const count = tier.nodes.length;
+                    const spacing = w / (count + 1);
+                    return { x: spacing * (index + 1), y: tier.y };
+                },
+                animate: true,
+                animationDuration: 500,
+                animationEasing: 'ease-out-cubic'
+            }).run();
+
+            logTelemetry("Trophic Tiers Organized", "text-sky-400");
+        }
+
+        // --- TROPHIC CASCADE ALGORITHM ---
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        async function runTrophicCascade(originNode) {
+            setMode('extinct'); 
+            
+            logTelemetry(`CRITICAL: Extinction of ${originNode.data('label')} initiated!`, "text-rose-500 animate-pulse");
+
+            cy.elements().removeClass('node-overpopulated node-starving edge-stressed');
+
+            let queue = [{ node: originNode, event: 'die' }];
+            let deadSet = new Set();
+
+            while(queue.length > 0) {
+                let { node, event } = queue.shift();
+
+                if (deadSet.has(node.id())) continue;
+
+                if (event === 'die') {
+                    deadSet.add(node.id());
+                    node.addClass('node-dead');
+                    node.connectedEdges().addClass('edge-dead');
+                    logTelemetry(`${node.data('label')} goes Extinct.`, "text-rose-500");
+                    await sleep(600);
+
+                    // Top-Down Effect: Prey loses a predator -> Overpopulates
+                    node.incomers('node').forEach(prey => {
+                        if (!deadSet.has(prey.id())) queue.push({ node: prey, event: 'overpopulate' });
+                    });
+
+                    // Bottom-Up Effect: Predators lose a food source
+                    node.outgoers('node').forEach(predator => {
+                        if (!deadSet.has(predator.id())) queue.push({ node: predator, event: 'check_starve' });
+                    });
+                    
+                    recalculateEnergy(); // Live update falling energy values
+                } 
+                
+                else if (event === 'overpopulate') {
+                    node.addClass('node-overpopulated');
+                    logTelemetry(`${node.data('label')} overpopulates due to lack of predation!`, "text-emerald-400");
+                    await sleep(600);
+                    
+                    // Overpopulated species over-consume their prey
+                    node.incomers('node').forEach(prey => {
+                        if (!deadSet.has(prey.id())) queue.push({ node: prey, event: 'deplete' });
+                    });
+                }
+
+                else if (event === 'check_starve' || event === 'deplete') {
+                    // Check if it has any LIVING food sources left
+                    let aliveFoodEdges = node.incomers('edge').filter(e => !deadSet.has(e.source().id()));
+                    
+                    if (aliveFoodEdges.length === 0 && node.data('type') !== 'producer') {
+                        // Starves to death
+                        node.addClass('node-starving');
+                        logTelemetry(`${node.data('label')} is starving...`, "text-amber-500");
+                        await sleep(600);
+                        queue.push({ node: node, event: 'die' });
+                    } else {
+                        // Survives but is stressed
+                        node.addClass('node-starving');
+                        aliveFoodEdges.addClass('edge-stressed');
+                        logTelemetry(`${node.data('label')} population drops, but survives on alternate food.`, "text-amber-300");
+                        await sleep(400);
+                    }
+                }
+            }
+
+            await sleep(1000);
+            logTelemetry("Cascade Complete. Ecosystem severely altered.", "text-slate-400");
+            
+            // Clean up temporary warning classes, leave dead ones dead
+            setTimeout(() => {
+                cy.nodes().removeClass('node-overpopulated node-starving');
+                cy.edges().removeClass('edge-stressed');
+            }, 2000);
+        }
+
+        // --- PRESETS ---
+        function loadPresetEcosystem() {
+            cy.elements().remove();
+            state.nodeCount = 0;
+
+            const w = ui.container.clientWidth;
+            const h = ui.container.clientHeight;
+
+            // Tier 1 (Bottom)
+            addSpeciesNode('producer', 'Tree', '🌳', 'tree', w*0.2, h*0.75);
+            addSpeciesNode('producer', 'Grass', '🌿', 'grass', w*0.5, h*0.75);
+            addSpeciesNode('producer', 'Berry Bush', '🫐', 'berry', w*0.8, h*0.75);
+
+            // Tier 2
+            addSpeciesNode('primary', 'Deer', '🦌', 'deer', w*0.2, h*0.55);
+            addSpeciesNode('primary', 'Mouse', '🐭', 'mouse', w*0.5, h*0.55);
+            addSpeciesNode('primary', 'Hopper', '🦗', 'hopper', w*0.8, h*0.55);
+
+            // Tier 3
+            addSpeciesNode('secondary', 'Frog', '🐸', 'frog', w*0.35, h*0.35);
+            addSpeciesNode('secondary', 'Bird', '🐦', 'bird', w*0.65, h*0.35);
+
+            // Tier 4
+            addSpeciesNode('apex', 'Wolf', '🐺', 'wolf', w*0.35, h*0.15);
+            addSpeciesNode('apex', 'Hawk', '🦅', 'hawk', w*0.65, h*0.15);
+
+            // Connections (Prey -> Predator)
+            const edges = [
+                { s: 'n1', t: 'n4' }, // Tree -> Deer
+                { s: 'n2', t: 'n4' }, // Grass -> Deer
+                { s: 'n2', t: 'n5' }, // Grass -> Mouse
+                { s: 'n2', t: 'n6' }, // Grass -> Hopper
+                { s: 'n3', t: 'n5' }, // Berry -> Mouse
+                { s: 'n3', t: 'n8' }, // Berry -> Bird
+                
+                { s: 'n6', t: 'n7' }, // Hopper -> Frog
+                { s: 'n6', t: 'n8' }, // Hopper -> Bird
+                
+                { s: 'n4', t: 'n9' }, // Deer -> Wolf
+                { s: 'n5', t: 'n9' }, // Mouse -> Wolf
+                { s: 'n5', t: 'n10'}, // Mouse -> Hawk
+                { s: 'n7', t: 'n10'}, // Frog -> Hawk
+                { s: 'n8', t: 'n10'}  // Bird -> Hawk
+            ];
+
+            edges.forEach(e => {
+                cy.add({ group: 'edges', data: { source: e.s, target: e.t } });
+            });
+
+            recalculateEnergy();
+            logTelemetry("Forest Ecosystem Loaded Successfully", "text-emerald-400");
+            setMode('move');
+        }
+
+        // Boot
+        window.onload = init;
+
     </script>
 </body>
 </html>
