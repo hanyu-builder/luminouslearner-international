@@ -3,369 +3,833 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Immune Response Grapher - LuminousLearner International</title>
+    <meta name="description" content="Primary vs Secondary Immune Response - Interactive biology virtual lab plotting antibody concentration, clonal expansion, vaccines, and immunological memory over time.">
+    <title>Primary vs Secondary Immune Response | Biology Virtual Labs</title>
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Recharts -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <!-- D3.js for Real-time Graphing -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
-
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* Pulse Animation for Memory Cells */
-        .memory-pulse { animation: glow 2s infinite alternate; }
-        @keyframes glow {
-            from { box-shadow: 0 0 5px #a855f7; }
-            to { box-shadow: 0 0 15px #a855f7, 0 0 5px white; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Deep slate */
+            color: #F8FAFC;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+        .panel {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid #334155;
+            backdrop-filter: blur(12px);
         }
         
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        /* Custom UI Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748B; }
+
+        .lcd-text { font-family: 'JetBrains Mono', monospace; }
+
+        /* D3 Chart Styling */
+        .chart-axis text { fill: #94A3B8; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; }
+        .chart-axis path, .chart-axis line { stroke: #475569; }
+        .chart-grid line { stroke: #1E293B; stroke-dasharray: 4; }
         
-        .safe-area-bottom { padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+        .area-igm { fill: rgba(56, 189, 248, 0.25); stroke: #38BDF8; stroke-width: 3px; }
+        .area-igg { fill: rgba(244, 63, 94, 0.25); stroke: #F43F5E; stroke-width: 3px; }
+        
+        /* Interactive Button Pulse */
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .btn-ready { animation: pulseGlow 2s infinite; }
+
+        /* Cellular Animations */
+        .cell-node { transition: all 0.5s ease-out; opacity: 0.2; filter: grayscale(100%); transform: scale(0.9); }
+        .cell-node.active { opacity: 1; filter: grayscale(0%); transform: scale(1); }
+        .pathway-line { stroke-dasharray: 5; animation: dashFlow 2s linear infinite; opacity: 0.2; transition: opacity 0.5s; }
+        .pathway-line.active { opacity: 1; }
+        
+        @keyframes dashFlow {
+            from { stroke-dashoffset: 20; }
+            to { stroke-dashoffset: 0; }
+        }
     </style>
 </head>
-<body>
-    <div id="root"></div>
+<body class="h-screen w-screen flex flex-col items-center justify-center p-2 sm:p-4">
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
-        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label } = window.Recharts;
-        const { motion, AnimatePresence } = window.Motion;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- CONSTANTS ---
-        const MAX_DAYS = 60;
-        const DATA_INTERVAL = 100; // ms per day update
-
-        // --- MAIN APP ---
-        const App = () => {
-            const [data, setData] = useState([{ day: 0, antibody: 0 }]);
-            const [day, setDay] = useState(0);
-            const [isRunning, setIsRunning] = useState(false);
-            const [memoryCells, setMemoryCells] = useState(0); // 0 to 100 representation
-            const [phase, setPhase] = useState('idle'); // idle, primary_lag, primary_log, primary_decline, secondary_log...
-            const [events, setEvents] = useState([]); // Markers for chart
+    <!-- Main Container -->
+    <div class="w-full max-w-[1500px] h-full max-h-[950px] flex flex-col gap-4">
+        
+        <!-- Header -->
+        <header class="flex justify-between items-center bg-slate-800 rounded-xl p-4 shadow-lg border border-slate-700 shrink-0">
+            <div>
+                <h1 class="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-500">
+                    <i class="fa-solid fa-shield-virus text-emerald-400 mr-2"></i> Primary vs Secondary Immune Response
+                </h1>
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Biology Virtual Labs | Immunological Memory & Vaccines</p>
+            </div>
             
-            const [infoMessage, setInfoMessage] = useState("Ready to start. Inject vaccine to begin.");
-
-            // Simulation State Refs
-            const targetLevel = useRef(0);
-            const currentLevel = useRef(0);
-            const dayRef = useRef(0);
-            const exposureCount = useRef(0);
-
-            // Loop
-            useEffect(() => {
-                let interval;
-                if (isRunning) {
-                    interval = setInterval(() => {
-                        if (dayRef.current >= MAX_DAYS) {
-                            setIsRunning(false);
-                            return;
-                        }
-
-                        dayRef.current += 0.5; // Advance half day per tick for smoothness
-                        
-                        // Physiology Logic
-                        // 1. Natural Decay
-                        if (currentLevel.current > 0) {
-                            currentLevel.current *= 0.95; // Decay rate
-                        }
-
-                        // 2. Production based on Phase
-                        if (phase.includes('lag')) {
-                            // Do nothing, waiting for clonal selection
-                        } else if (phase === 'primary_rise') {
-                            currentLevel.current += (targetLevel.current - currentLevel.current) * 0.1;
-                            if (Math.abs(targetLevel.current - currentLevel.current) < 1) setPhase('primary_decline');
-                        } else if (phase === 'secondary_rise') {
-                            currentLevel.current += (targetLevel.current - currentLevel.current) * 0.3; // Faster rise!
-                            if (Math.abs(targetLevel.current - currentLevel.current) < 1) setPhase('secondary_decline');
-                        }
-
-                        // 3. Update State
-                        setDay(dayRef.current);
-                        setData(prev => [...prev, { day: parseFloat(dayRef.current.toFixed(1)), antibody: Math.max(0, currentLevel.current) }]);
-
-                    }, DATA_INTERVAL);
-                }
-                return () => clearInterval(interval);
-            }, [isRunning, phase]);
-
-            // Actions
-            const triggerPrimary = () => {
-                if (exposureCount.current > 0) return; // Only valid if first time
-                
-                setIsRunning(true);
-                exposureCount.current = 1;
-                setEvents(prev => [...prev, { x: dayRef.current, label: '1st Exposure (Vaccine)' }]);
-                setInfoMessage("Antigen detected. Macrophages presenting antigen. B-cells undergoing clonal selection (Lag Phase).");
-                
-                setPhase('primary_lag');
-                
-                // After Lag (e.g. 5 days)
-                setTimeout(() => {
-                    setPhase('primary_rise');
-                    targetLevel.current = 30; // Low peak
-                    setInfoMessage("Plasma cells producing antibodies. Memory cells forming.");
-                    setMemoryCells(30);
-                }, 2000);
-            };
-
-            const triggerSecondary = () => {
-                if (exposureCount.current !== 1) return; // Must have primary first
-                
-                setIsRunning(true);
-                exposureCount.current = 2;
-                setEvents(prev => [...prev, { x: dayRef.current, label: '2nd Exposure (Pathogen)' }]);
-                setInfoMessage("Memory cells recognize antigen immediately! Rapid differentiation into plasma cells.");
-
-                setPhase('secondary_rise'); // Almost no lag
-                targetLevel.current = 90; // High peak
-                setMemoryCells(100);
-            };
-
-            const reset = () => {
-                setIsRunning(false);
-                setData([{ day: 0, antibody: 0 }]);
-                setDay(0);
-                setMemoryCells(0);
-                setPhase('idle');
-                setEvents([]);
-                setInfoMessage("Ready to start. Inject vaccine to begin.");
-                dayRef.current = 0;
-                currentLevel.current = 0;
-                targetLevel.current = 0;
-                exposureCount.current = 0;
-            };
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="activity" className="text-pink-500" /> Immunity Grapher
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Vaccination Principle</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
-                            
-                            {/* Controls */}
-                            <div className="space-y-4">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest px-1">Exposure Events</label>
-                                
-                                <button 
-                                    onClick={triggerPrimary}
-                                    disabled={exposureCount.current !== 0}
-                                    className={`w-full p-4 rounded-xl border-2 transition-all flex items-center gap-3 group
-                                        ${exposureCount.current === 0 
-                                            ? 'bg-slate-800 border-blue-500 hover:bg-slate-700 cursor-pointer' 
-                                            : 'bg-slate-900 border-slate-700 opacity-50 cursor-not-allowed'}
-                                    `}
-                                >
-                                    <div className={`p-2 rounded-full ${exposureCount.current === 0 ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-500'}`}>
-                                        <Icon name="syringe" size={20}/>
-                                    </div>
-                                    <div className="text-left">
-                                        <div className="text-sm font-bold text-white">1. Vaccine</div>
-                                        <div className="text-[10px] text-slate-400">Primary Response</div>
-                                    </div>
-                                </button>
-
-                                <button 
-                                    onClick={triggerSecondary}
-                                    disabled={exposureCount.current !== 1}
-                                    className={`w-full p-4 rounded-xl border-2 transition-all flex items-center gap-3 group
-                                        ${exposureCount.current === 1 
-                                            ? 'bg-slate-800 border-purple-500 hover:bg-slate-700 cursor-pointer' 
-                                            : 'bg-slate-900 border-slate-700 opacity-50 cursor-not-allowed'}
-                                    `}
-                                >
-                                    <div className={`p-2 rounded-full ${exposureCount.current === 1 ? 'bg-purple-500 text-white' : 'bg-slate-700 text-slate-500'}`}>
-                                        <Icon name="biohazard" size={20}/>
-                                    </div>
-                                    <div className="text-left">
-                                        <div className="text-sm font-bold text-white">2. Pathogen</div>
-                                        <div className="text-[10px] text-slate-400">Secondary Response</div>
-                                    </div>
-                                </button>
-
-                                <button 
-                                    onClick={reset}
-                                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-xs font-bold text-slate-300"
-                                >
-                                    Reset Graph
-                                </button>
-                            </div>
-
-                            {/* Cellular View */}
-                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
-                                <div className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
-                                    <Icon name="microscope" size={14}/> Blood Cell Status
-                                </div>
-                                
-                                <div className="flex flex-col gap-4">
-                                    {/* Plasma Cells */}
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse"></div>
-                                            <span className="text-sm text-slate-300">Plasma Cells</span>
-                                        </div>
-                                        <span className="text-xs font-mono text-blue-400">{phase.includes('rise') ? 'Active' : 'Low'}</span>
-                                    </div>
-                                    
-                                    {/* Memory Cells */}
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <div className={`w-3 h-3 rounded-full bg-purple-500 transition-all duration-500 ${memoryCells > 0 ? 'memory-pulse' : 'opacity-30'}`}></div>
-                                            <span className="text-sm text-slate-300">Memory Cells</span>
-                                        </div>
-                                        <span className="text-xs font-mono text-purple-400">{memoryCells > 0 ? 'Present' : 'Absent'}</span>
-                                    </div>
-                                </div>
-                                
-                                <div className="mt-4 pt-4 border-t border-slate-700">
-                                    <p className="text-xs text-slate-400 italic leading-relaxed">
-                                        "{infoMessage}"
-                                    </p>
-                                </div>
-                            </div>
-
-                        </div>
+            <div class="flex gap-4 border-l border-slate-600 pl-4 bg-slate-900 px-5 py-2 rounded-xl shadow-inner border border-slate-700 items-center">
+                <div class="text-right">
+                    <div class="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Elapsed Time</div>
+                    <div class="text-3xl font-bold lcd-text tracking-widest min-w-[120px] text-right text-white">
+                        Day <span id="dayDisplay" class="text-emerald-400" style="text-shadow: 0 0 10px rgba(16, 185, 129, 0.4);">0.0</span>
                     </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
-                        
-                        {/* Graph Container */}
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden p-4 flex flex-col">
-                            
-                            <div className="flex justify-between items-center mb-4 px-4">
-                                <div className="flex items-center gap-2">
-                                    <Icon name="line-chart" className="text-slate-500"/>
-                                    <h3 className="font-bold text-slate-300">Antibody Concentration in Blood</h3>
-                                </div>
-                                <div className="text-xs font-mono text-slate-500">Time (Days): {day.toFixed(0)}</div>
-                            </div>
-
-                            <div className="flex-1 w-full min-h-0">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={data} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                        <defs>
-                                            <linearGradient id="colorAb" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#ec4899" stopOpacity={0.3}/>
-                                                <stop offset="95%" stopColor="#ec4899" stopOpacity={0}/>
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                                        <XAxis 
-                                            dataKey="day" 
-                                            stroke="#64748b" 
-                                            fontSize={12} 
-                                            type="number" 
-                                            domain={[0, MAX_DAYS]}
-                                            tickCount={10}
-                                            label={{ value: 'Time (Days)', position: 'insideBottom', offset: -5, fill: '#64748b', fontSize: 12 }}
-                                        />
-                                        <YAxis 
-                                            stroke="#64748b" 
-                                            fontSize={12} 
-                                            domain={[0, 100]} 
-                                            label={{ value: 'Antibody Level (a.u.)', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 12 }}
-                                        />
-                                        <Tooltip 
-                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }}
-                                            itemStyle={{ color: '#fff' }}
-                                            labelFormatter={(val) => `Day ${val}`}
-                                        />
-                                        
-                                        {/* Event Markers */}
-                                        {events.map((e, i) => (
-                                            <ReferenceLine key={i} x={e.x} stroke="#fbbf24" strokeDasharray="3 3">
-                                                <Label value={e.label} position="top" fill="#fbbf24" fontSize={12} />
-                                            </ReferenceLine>
-                                        ))}
-                                        
-                                        {/* Protective Level Threshold (Hypothetical) */}
-                                        <ReferenceLine y={40} stroke="#10b981" strokeDasharray="5 5" opacity={0.5}>
-                                            <Label value="Immunity Threshold" position="insideTopRight" fill="#10b981" fontSize={10} />
-                                        </ReferenceLine>
-
-                                        <Area 
-                                            type="monotone" 
-                                            dataKey="antibody" 
-                                            stroke="#ec4899" 
-                                            strokeWidth={3} 
-                                            fill="url(#colorAb)" 
-                                            animationDuration={0} // Controlled by state updates for smooth real-time feel
-                                            isAnimationActive={false}
-                                        />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            </div>
-
-                            {/* Legend */}
-                            <div className="flex justify-center gap-6 mt-2 text-xs text-slate-400">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-1 bg-pink-500"></div> Antibody Level
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-1 bg-yellow-400 border-b border-dashed"></div> Exposure Event
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-1 bg-emerald-500 border-b border-dashed"></div> Immunity Threshold
-                                </div>
-                            </div>
-
-                        </div>
-
-                    </div>
-
                 </div>
-            );
-        };
+            </div>
+        </header>
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+        <!-- Main Workspace -->
+        <div class="flex flex-col lg:flex-row flex-1 gap-4 min-h-0">
+            
+            <!-- Left Controls Panel -->
+            <aside class="w-full lg:w-[400px] flex flex-col gap-4 shrink-0 overflow-y-auto z-10 custom-scrollbar">
+                
+                <!-- Clinical Scenario Toggles (NEW PEDAGOGICAL UPGRADE) -->
+                <div class="panel rounded-xl p-4 shrink-0 flex flex-col border-t-4 border-t-emerald-500 shadow-xl">
+                    <h2 class="text-xs font-bold text-slate-400 border-b border-slate-600 pb-2 mb-3 uppercase tracking-widest flex items-center gap-2">
+                        <i class="fa-solid fa-user-doctor text-emerald-400"></i> Clinical Scenario
+                    </h2>
+                    <div class="grid grid-cols-2 gap-2 bg-slate-900 p-1 rounded-lg border border-slate-700">
+                        <button id="scenario-unvax" onclick="setScenario('unvaccinated')" class="py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all bg-rose-500 text-white shadow">
+                            Unvaccinated
+                        </button>
+                        <button id="scenario-vax" onclick="setScenario('vaccinated')" class="py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all text-slate-400 hover:text-white">
+                            Vaccinated
+                        </button>
+                    </div>
+                    <p id="scenario-desc" class="text-[10px] text-slate-400 mt-3 leading-relaxed">
+                        <strong>Natural Infection:</strong> The patient encounters the live, dangerous pathogen without prior immunity.
+                    </p>
+                </div>
+
+                <!-- Timeline Controls -->
+                <div class="panel rounded-xl p-5 shrink-0 flex flex-col gap-4 shadow-xl">
+                    
+                    <button id="primaryBtn" class="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all border border-emerald-500 shadow-lg flex justify-center items-center gap-2 btn-ready active:scale-95">
+                        <i class="fa-solid fa-virus" id="icon-primary"></i> <span id="label-primary">Initial Pathogen Exposure</span>
+                    </button>
+                    
+                    <button id="secondaryBtn" disabled class="w-full py-4 bg-slate-700 text-slate-500 rounded-xl font-bold transition-all border border-slate-600 flex justify-center items-center gap-2 cursor-not-allowed">
+                        <i class="fa-solid fa-hourglass-half"></i> Wait 30 days for Re-exposure...
+                    </button>
+
+                    <div class="flex gap-2 mt-1">
+                        <button id="pauseBtn" disabled class="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold transition-colors border border-slate-500 disabled:opacity-50">
+                            <i class="fa-solid fa-pause"></i> Pause
+                        </button>
+                        <button id="resetBtn" class="flex-1 py-3 bg-rose-900/50 hover:bg-rose-800/80 text-rose-300 rounded-lg font-bold transition-colors border border-rose-800">
+                            <i class="fa-solid fa-rotate-right"></i> Reset Patient
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Live Titer Readouts -->
+                <div class="panel rounded-xl p-5 flex-1 flex flex-col bg-slate-900/80 shadow-xl">
+                    <h3 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-600 pb-2 mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-vial text-sky-400"></i> Live Antibody Titer
+                    </h3>
+                    
+                    <div class="space-y-3 font-mono mb-4">
+                        <!-- IgM Stats -->
+                        <div class="bg-sky-950/30 p-3 rounded-xl border border-sky-900/50 shadow-inner">
+                            <div class="flex justify-between items-center text-sm mb-1">
+                                <span class="text-sky-400 font-bold">IgM</span>
+                                <span class="font-bold text-sky-200 lcd-text text-lg" id="igmDisplay">0 <span class="text-[10px]">AU</span></span>
+                            </div>
+                        </div>
+
+                        <!-- IgG Stats -->
+                        <div class="bg-rose-950/30 p-3 rounded-xl border border-rose-900/50 shadow-inner">
+                            <div class="flex justify-between items-center text-sm mb-1">
+                                <span class="text-rose-400 font-bold">IgG</span>
+                                <span class="font-bold text-rose-200 lcd-text text-lg" id="iggDisplay">0 <span class="text-[10px]">AU</span></span>
+                            </div>
+                        </div>
+
+                        <!-- Protection Status -->
+                        <div class="flex justify-between items-center text-[10px] font-sans font-bold pt-2 border-t border-slate-700">
+                            <span class="text-slate-400 uppercase">Protection Level</span>
+                            <span id="protection-status" class="text-rose-500 uppercase">Vulnerable</span>
+                        </div>
+                    </div>
+
+                    <!-- Clinical Status Alert -->
+                    <div id="clinicalStatus" class="mt-auto py-3 px-3 rounded-lg bg-slate-800 border border-slate-600 text-slate-300 font-bold text-center text-xs tracking-wide transition-all duration-300">
+                        Naive / Unexposed
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center Visual Area (Cells + D3 Chart) -->
+            <main class="flex-1 flex flex-col gap-4 min-h-0">
+                
+                <!-- Cellular Mechanism View -->
+                <div class="panel rounded-xl p-4 shrink-0 h-[35%] relative bg-[#020617] overflow-hidden flex flex-col">
+                    <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest z-10 mb-2">Cellular Dynamics (Clonal Selection)</h2>
+                    
+                    <div class="flex-1 relative w-full h-full flex justify-around items-center">
+                        
+                        <!-- Primary Response Pathway (Left) -->
+                        <div class="flex flex-col items-center justify-center w-1/2 h-full relative border-r border-slate-700/50">
+                            <h3 class="absolute top-0 text-[10px] font-bold text-slate-500 uppercase">Primary Response</h3>
+                            
+                            <svg class="absolute inset-0 w-full h-full pointer-events-none">
+                                <path id="path-primary-plasma" d="M 50% 30% L 30% 70%" stroke="#38BDF8" stroke-width="2" fill="none" class="pathway-line" />
+                                <path id="path-primary-memory" d="M 50% 30% L 70% 70%" stroke="#F43F5E" stroke-width="2" fill="none" class="pathway-line" />
+                            </svg>
+
+                            <!-- Naive B Cell -->
+                            <div id="cell-naive" class="cell-node absolute top-[15%] flex flex-col items-center gap-1">
+                                <div class="w-10 h-10 rounded-full bg-slate-600 border-2 border-slate-400 shadow-[0_0_15px_rgba(148,163,184,0.5)] flex items-center justify-center text-[10px] font-bold text-white">B</div>
+                                <span class="text-[9px] text-slate-400 font-bold">Naive B-Cell</span>
+                            </div>
+
+                            <!-- Plasma Cells (Primary) -->
+                            <div id="cell-plasma-1" class="cell-node absolute bottom-[15%] left-[20%] flex flex-col items-center gap-1">
+                                <div class="flex gap-1 mb-1">
+                                    <div class="w-6 h-6 rounded-full bg-sky-500 border-2 border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.6)]"></div>
+                                    <div class="w-6 h-6 rounded-full bg-sky-500 border-2 border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.6)]"></div>
+                                </div>
+                                <span class="text-[9px] text-sky-400 font-bold">Plasma Cells<br>(IgM & IgG)</span>
+                            </div>
+
+                            <!-- Memory Cells (Primary) -->
+                            <div id="cell-memory-1" class="cell-node absolute bottom-[15%] right-[20%] flex flex-col items-center gap-1">
+                                <div class="w-8 h-8 rounded-full bg-rose-600 border-2 border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
+                                    <i class="fa-solid fa-star text-white text-[10px]"></i>
+                                </div>
+                                <span class="text-[9px] text-rose-400 font-bold">Memory B-Cell</span>
+                            </div>
+                        </div>
+
+                        <!-- Secondary Response Pathway (Right) -->
+                        <div class="flex flex-col items-center justify-center w-1/2 h-full relative">
+                            <h3 class="absolute top-0 text-[10px] font-bold text-slate-500 uppercase">Secondary Response</h3>
+                            
+                            <svg class="absolute inset-0 w-full h-full pointer-events-none">
+                                <path id="path-sec-plasma" d="M 50% 30% L 30% 70%" stroke="#38BDF8" stroke-width="4" fill="none" class="pathway-line" />
+                                <path id="path-sec-memory" d="M 50% 30% L 70% 70%" stroke="#F43F5E" stroke-width="2" fill="none" class="pathway-line" />
+                            </svg>
+
+                            <!-- Memory B Cell (Reactivated) -->
+                            <div id="cell-memory-reactivated" class="cell-node absolute top-[15%] flex flex-col items-center gap-1">
+                                <div class="w-10 h-10 rounded-full bg-rose-600 border-2 border-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.6)] flex items-center justify-center">
+                                    <i class="fa-solid fa-star text-white text-xs"></i>
+                                </div>
+                                <span class="text-[9px] text-rose-400 font-bold">Memory B-Cell</span>
+                            </div>
+
+                            <!-- MASSIVE Plasma Cells (Secondary) -->
+                            <div id="cell-plasma-2" class="cell-node absolute bottom-[15%] left-[20%] flex flex-col items-center gap-1">
+                                <div class="grid grid-cols-3 gap-1 mb-1">
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                    <div class="w-5 h-5 rounded-full bg-sky-500 border border-sky-300 shadow-[0_0_10px_rgba(56,189,248,0.8)]"></div>
+                                </div>
+                                <span class="text-[9px] text-sky-400 font-bold text-center">Massive Proliferation<br>(IgG Surge)</span>
+                            </div>
+
+                            <!-- More Memory Cells (Secondary) -->
+                            <div id="cell-memory-2" class="cell-node absolute bottom-[15%] right-[20%] flex flex-col items-center gap-1">
+                                <div class="flex gap-1 mb-1">
+                                    <div class="w-6 h-6 rounded-full bg-rose-600 border border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center"><i class="fa-solid fa-star text-white text-[8px]"></i></div>
+                                    <div class="w-6 h-6 rounded-full bg-rose-600 border border-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center"><i class="fa-solid fa-star text-white text-[8px]"></i></div>
+                                </div>
+                                <span class="text-[9px] text-rose-400 font-bold text-center">Expanded Memory<br>Pool</span>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- D3 Chart Area -->
+                <div class="panel rounded-xl p-4 flex-1 relative bg-[#020617] overflow-hidden flex flex-col">
+                    <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest z-10 mb-2">Serum Antibody Kinetics</h2>
+                    
+                    <!-- D3.js Container -->
+                    <div id="d3-container" class="relative flex-1 w-full h-full cursor-crosshair"></div>
+                    
+                    <!-- Interactive Hover Tooltip -->
+                    <div id="chart-tooltip" class="absolute hidden bg-slate-800/90 border border-slate-600 p-3 rounded-lg shadow-xl backdrop-blur-sm pointer-events-none z-20 text-xs font-mono">
+                        <div class="text-white font-bold mb-1 border-b border-slate-600 pb-1">Day <span id="tt-day" class="text-emerald-400">0.0</span></div>
+                        <div class="flex items-center justify-between gap-4"><span class="text-sky-400">IgM:</span> <span id="tt-igm" class="text-sky-200">0</span></div>
+                        <div class="flex items-center justify-between gap-4"><span class="text-rose-400">IgG:</span> <span id="tt-igg" class="text-rose-200">0</span></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+<script>
+/**
+ * PRIMARY VS SECONDARY IMMUNE RESPONSE SIMULATOR
+ * Mathematics: Modified Gamma Distribution to model antibody kinetics.
+ * Features: Immunity Threshold & Clinical Scenarios (Vaccinated vs Unvaccinated).
+ */
+
+// --- Global State ---
+const MAX_DAYS = 100;
+const PROTECTIVE_THRESHOLD = 200; // Arbitrary units needed to prevent symptomatic illness
+
+const state = {
+    day: 0,
+    scenario: 'unvaccinated', // 'unvaccinated' or 'vaccinated'
+    primaryAt: null,
+    secondaryAt: null,
+    isPlaying: false,
+    data: [] // Holds theoretical curve data {day, igm, igg, total}
+};
+
+// --- DOM Elements ---
+const DOM = {
+    btnUnvax: document.getElementById('scenario-unvax'),
+    btnVax: document.getElementById('scenario-vax'),
+    scenarioDesc: document.getElementById('scenario-desc'),
+    
+    primaryBtn: document.getElementById('primaryBtn'),
+    secondaryBtn: document.getElementById('secondaryBtn'),
+    pauseBtn: document.getElementById('pauseBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    
+    iconPrimary: document.getElementById('icon-primary'),
+    labelPrimary: document.getElementById('label-primary'),
+    
+    dayDisplay: document.getElementById('dayDisplay'),
+    igmDisplay: document.getElementById('igmDisplay'),
+    iggDisplay: document.getElementById('iggDisplay'),
+    protectionStatus: document.getElementById('protection-status'),
+    clinicalStatus: document.getElementById('clinicalStatus'),
+    
+    // Cell Nodes
+    cellNaive: document.getElementById('cell-naive'),
+    cellPlasma1: document.getElementById('cell-plasma-1'),
+    cellMem1: document.getElementById('cell-memory-1'),
+    cellMemReact: document.getElementById('cell-memory-reactivated'),
+    cellPlasma2: document.getElementById('cell-plasma-2'),
+    cellMem2: document.getElementById('cell-memory-2'),
+    pathPriP: document.getElementById('path-primary-plasma'),
+    pathPriM: document.getElementById('path-primary-memory'),
+    pathSecP: document.getElementById('path-sec-plasma'),
+    pathSecM: document.getElementById('path-sec-memory'),
+
+    // Tooltip
+    tooltip: document.getElementById('chart-tooltip'),
+    ttDay: document.getElementById('tt-day'),
+    ttIgm: document.getElementById('tt-igm'),
+    ttIgg: document.getElementById('tt-igg')
+};
+
+// --- D3 Variables ---
+let svg, chartG, xScale, yScale, areaIgM, areaIgG, lineIgM, lineIgG;
+let pathIgM, pathIgG, outlineIgM, outlineIgG;
+let hoverLine, hoverRect;
+let injectionMarkersGroup, thresholdGroup;
+
+const margin = {top: 25, right: 20, bottom: 30, left: 40};
+
+// --- Scenario Management ---
+window.setScenario = function(scen) {
+    if (state.primaryAt !== null) return; // Lock if simulation started
+    
+    state.scenario = scen;
+    
+    if (scen === 'unvaccinated') {
+        DOM.btnUnvax.className = "py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all bg-rose-500 text-white shadow";
+        DOM.btnVax.className = "py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all text-slate-400 hover:text-white";
+        DOM.scenarioDesc.innerHTML = "<strong>Natural Infection:</strong> The patient encounters the live, dangerous pathogen without prior immunity.";
+        
+        DOM.iconPrimary.className = "fa-solid fa-virus";
+        DOM.labelPrimary.innerText = "Initial Pathogen Exposure";
+        DOM.secondaryBtn.innerHTML = "<i class='fa-solid fa-hourglass-half'></i> Wait 30 days for Re-exposure...";
+        
+    } else {
+        DOM.btnVax.className = "py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all bg-emerald-500 text-white shadow";
+        DOM.btnUnvax.className = "py-2 text-[10px] font-bold uppercase tracking-widest rounded transition-all text-slate-400 hover:text-white";
+        DOM.scenarioDesc.innerHTML = "<strong>Vaccination:</strong> A harmless antigen (vaccine) safely trains the immune system to create memory cells.";
+        
+        DOM.iconPrimary.className = "fa-solid fa-syringe";
+        DOM.labelPrimary.innerText = "Administer Vaccine";
+        DOM.secondaryBtn.innerHTML = "<i class='fa-solid fa-hourglass-half'></i> Wait 30 days for Pathogen Exposure...";
+    }
+}
+
+// --- Mathematical Model ---
+function calcAntibody(t, type, isSecondary) {
+    let start, peak, H, k, baseline;
+    
+    // Adjust parameters slightly so primary barely crosses threshold, secondary shatters it
+    if (!isSecondary) {
+        if (type === 'IgM') { start = 4; peak = 12; H = 150; k = 3; baseline = 0; }
+        if (type === 'IgG') { start = 7; peak = 18; H = 250; k = 3; baseline = 30; }
+    } else {
+        if (type === 'IgM') { start = 2; peak = 8;  H = 150; k = 3; baseline = 0; }
+        if (type === 'IgG') { start = 2; peak = 10; H = 900; k = 2.5; baseline = 300; }
+    }
+
+    if (t <= start) return 0;
+    
+    let x = t - start;
+    let p = peak - start;
+    
+    let val = H * Math.pow(x / p, k) * Math.exp(k * (1 - x / p));
+
+    let b = 0;
+    if (t > peak) {
+        b = baseline;
+    } else if (t > start) {
+        b = baseline * (x / p); 
+    }
+    
+    return Math.max(val, b);
+}
+
+function generateTheoreticalData() {
+    state.data = [];
+    for (let d = 0; d <= MAX_DAYS; d += 0.5) {
+        let igm = 0, igg = 0;
+        
+        if (state.primaryAt !== null && d >= state.primaryAt) {
+            let t = d - state.primaryAt;
+            igm += calcAntibody(t, 'IgM', false);
+            igg += calcAntibody(t, 'IgG', false);
+        }
+        
+        if (state.secondaryAt !== null && d >= state.secondaryAt) {
+            let t = d - state.secondaryAt;
+            igm += calcAntibody(t, 'IgM', true);
+            igg += calcAntibody(t, 'IgG', true);
+        }
+
+        state.data.push({ day: d, igm: igm, igg: igg, total: igm + igg });
+    }
+}
+
+// --- D3 Initialization ---
+function initD3() {
+    const container = document.getElementById('d3-container');
+    const width = container.clientWidth - margin.left - margin.right;
+    const height = container.clientHeight - margin.top - margin.bottom;
+
+    d3.select("#d3-container").selectAll("*").remove();
+
+    svg = d3.select("#d3-container")
+        .append("svg")
+        .attr("width", "100%")
+        .attr("height", "100%")
+        .attr("viewBox", `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`);
+
+    // Create a clip path for revealing the graph over time
+    svg.append("defs").append("clipPath")
+        .attr("id", "reveal-clip")
+        .append("rect")
+        .attr("x", 0)
+        .attr("y", 0)
+        .attr("width", 0) // Starts at 0
+        .attr("height", height);
+
+    chartG = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Scales
+    xScale = d3.scaleLinear().domain([0, MAX_DAYS]).range([0, width]);
+    yScale = d3.scaleLinear().domain([0, 1000]).range([height, 0]);
+
+    // Grid lines
+    chartG.append("g").attr("class", "chart-grid")
+        .call(d3.axisLeft(yScale).tickSize(-width).tickFormat(""));
+    chartG.append("g").attr("class", "chart-grid")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).tickSize(-height).tickFormat(""));
+
+    // Axes
+    chartG.append("g").attr("class", "chart-axis")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(xScale).ticks(10))
+        .append("text").attr("x", width/2).attr("y", 25).attr("fill", "#94A3B8").text("Time (Days)");
+
+    chartG.append("g").attr("class", "chart-axis")
+        .call(d3.axisLeft(yScale).ticks(5))
+        .append("text").attr("transform", "rotate(-90)").attr("y", -25).attr("x", -height/2).attr("text-anchor", "middle").attr("fill", "#94A3B8").text("Antibody Concentration");
+
+    // NEW PEDAGOGY: Protective Threshold Line
+    thresholdGroup = chartG.append("g");
+    thresholdGroup.append("line")
+        .attr("x1", 0).attr("x2", width)
+        .attr("y1", yScale(PROTECTIVE_THRESHOLD)).attr("y2", yScale(PROTECTIVE_THRESHOLD))
+        .attr("stroke", "#10B981").attr("stroke-width", 2).attr("stroke-dasharray", "5,5").attr("opacity", 0.7);
+    
+    thresholdGroup.append("rect")
+        .attr("x", 5).attr("y", yScale(PROTECTIVE_THRESHOLD) - 15)
+        .attr("width", 155).attr("height", 14).attr("fill", "rgba(16, 185, 129, 0.2)").attr("rx", 3);
+
+    thresholdGroup.append("text")
+        .attr("x", 10).attr("y", yScale(PROTECTIVE_THRESHOLD) - 5)
+        .attr("fill", "#10B981").style("font-size", "9px").style("font-weight", "bold").text("PROTECTIVE IMMUNITY THRESHOLD");
+
+    // Area & Line Generators
+    areaIgM = d3.area().x(d => xScale(d.day)).y0(yScale(0)).y1(d => yScale(d.igm)).curve(d3.curveBasis);
+    areaIgG = d3.area().x(d => xScale(d.day)).y0(yScale(0)).y1(d => yScale(d.igg)).curve(d3.curveBasis);
+    
+    lineIgM = d3.line().x(d => xScale(d.day)).y(d => yScale(d.igm)).curve(d3.curveBasis);
+    lineIgG = d3.line().x(d => xScale(d.day)).y(d => yScale(d.igg)).curve(d3.curveBasis);
+
+    // Group for paths, with clip-path applied
+    const pathGroup = chartG.append("g").attr("clip-path", "url(#reveal-clip)");
+
+    // Draw Areas
+    pathIgG = pathGroup.append("path").attr("class", "area-igg").attr("d", areaIgG(state.data));
+    pathIgM = pathGroup.append("path").attr("class", "area-igm").attr("d", areaIgM(state.data));
+    
+    // Draw Outlines
+    outlineIgG = pathGroup.append("path").attr("fill", "none").attr("stroke", "#F43F5E").attr("stroke-width", 3).attr("d", lineIgG(state.data));
+    outlineIgM = pathGroup.append("path").attr("fill", "none").attr("stroke", "#38BDF8").attr("stroke-width", 3).attr("d", lineIgM(state.data));
+
+    // Group for Injection Markers
+    injectionMarkersGroup = chartG.append("g");
+
+    // Hover Interaction Layer
+    hoverLine = chartG.append("line")
+        .attr("y1", 0).attr("y2", height)
+        .attr("stroke", "#FFFFFF").attr("stroke-width", 1).attr("stroke-dasharray", "4")
+        .style("opacity", 0);
+
+    hoverRect = svg.append("rect")
+        .attr("width", width).attr("height", height)
+        .attr("transform", `translate(${margin.left},${margin.top})`)
+        .attr("fill", "none").attr("pointer-events", "all")
+        .on("mousemove", onChartHover)
+        .on("mouseout", () => {
+            hoverLine.style("opacity", 0);
+            DOM.tooltip.classList.add("hidden");
+        });
+
+    // Legends
+    const legend = chartG.append("g").attr("transform", `translate(${width - 100}, -15)`);
+    legend.append("rect").attr("x", 0).attr("y", 0).attr("width", 12).attr("height", 12).attr("fill", "rgba(56, 189, 248, 0.5)").attr("stroke", "#38BDF8");
+    legend.append("text").attr("x", 20).attr("y", 10).attr("fill", "#F8FAFC").style("font-size", "10px").style("font-weight", "bold").text("IgM (Primary)");
+    
+    legend.append("rect").attr("x", 0).attr("y", 20).attr("width", 12).attr("height", 12).attr("fill", "rgba(244, 63, 94, 0.5)").attr("stroke", "#F43F5E");
+    legend.append("text").attr("x", 20).attr("y", 30).attr("fill", "#F8FAFC").style("font-size", "10px").style("font-weight", "bold").text("IgG (Memory)");
+}
+
+function onChartHover(event) {
+    if (state.data.length === 0) return;
+    
+    const [mouseX] = d3.pointer(event);
+    let hoverDay = xScale.invert(mouseX);
+    
+    // Clamp to visible graph
+    if (hoverDay > state.day) hoverDay = state.day;
+    if (hoverDay < 0) hoverDay = 0;
+
+    const dataPoint = state.data.find(d => d.day >= hoverDay);
+    if (!dataPoint) return;
+
+    // Update line
+    hoverLine.attr("x1", xScale(hoverDay)).attr("x2", xScale(hoverDay)).style("opacity", 0.5);
+
+    // Update Tooltip
+    DOM.tooltip.classList.remove("hidden");
+    DOM.ttDay.innerText = hoverDay.toFixed(1);
+    DOM.ttIgm.innerText = Math.round(dataPoint.igm);
+    DOM.ttIgg.innerText = Math.round(dataPoint.igg);
+
+    // Position tooltip
+    const bounds = document.getElementById('d3-container').getBoundingClientRect();
+    let left = event.clientX - bounds.left + 15;
+    if (left > bounds.width - 120) left -= 140; 
+    
+    DOM.tooltip.style.left = `${left}px`;
+    DOM.tooltip.style.top = `${event.clientY - bounds.top - 20}px`;
+}
+
+window.addEventListener('resize', () => {
+    if (state.data.length > 0) {
+        initD3();
+        updateChartPaths();
+        updateCursor();
+    }
+});
+
+// --- Dynamic Updates ---
+function updateChartPaths() {
+    pathIgG.attr("d", areaIgG(state.data));
+    pathIgM.attr("d", areaIgM(state.data));
+    outlineIgG.attr("d", lineIgG(state.data));
+    outlineIgM.attr("d", lineIgM(state.data));
+}
+
+function updateCursor() {
+    if (!xScale) return;
+    const xPos = xScale(state.day);
+    svg.select("#reveal-clip rect").attr("width", xPos);
+}
+
+function drawInjectionMarker(day, label, color) {
+    const xPos = xScale(day);
+    const yPos = yScale(0);
+    
+    injectionMarkersGroup.append("line")
+        .attr("x1", xPos).attr("x2", xPos)
+        .attr("y1", 0).attr("y2", yPos)
+        .attr("stroke", color).attr("stroke-width", 2).attr("stroke-dasharray", "2");
+        
+    injectionMarkersGroup.append("circle")
+        .attr("cx", xPos).attr("cy", yPos)
+        .attr("r", 4).attr("fill", color);
+        
+    injectionMarkersGroup.append("text")
+        .attr("x", xPos + 6).attr("y", 15)
+        .attr("fill", color).style("font-size", "10px").style("font-weight", "bold")
+        .text(label);
+}
+
+// --- Cellular Dynamics Sync ---
+function updateCellularVisuals(day) {
+    // Primary Response
+    if (state.primaryAt !== null) {
+        let tPri = day - state.primaryAt;
+        if (tPri >= 0) DOM.cellNaive.classList.add('active');
+        if (tPri >= 4) { // Clonal expansion begins
+            DOM.pathPriP.classList.add('active');
+            DOM.pathPriM.classList.add('active');
+            DOM.cellPlasma1.classList.add('active');
+            DOM.cellMem1.classList.add('active');
+        }
+        // Decline phase
+        if (tPri >= 25) {
+            DOM.cellPlasma1.classList.remove('active');
+            DOM.pathPriP.classList.remove('active');
+        }
+    }
+
+    // Secondary Response
+    if (state.secondaryAt !== null) {
+        let tSec = day - state.secondaryAt;
+        if (tSec >= 0) {
+            DOM.cellMemReact.classList.add('active');
+            DOM.pathPriM.classList.remove('active'); // Shift focus
+        }
+        if (tSec >= 2) { // Rapid clonal expansion
+            DOM.pathSecP.classList.add('active');
+            DOM.pathSecM.classList.add('active');
+            DOM.cellPlasma2.classList.add('active');
+            DOM.cellMem2.classList.add('active');
+        }
+    }
+}
+
+function resetCellularVisuals() {
+    document.querySelectorAll('.cell-node').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.pathway-line').forEach(el => el.classList.remove('active'));
+}
+
+// --- Animation Loop ---
+let lastTime = performance.now();
+
+function animate(currentTime) {
+    const dt = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+
+    if (state.isPlaying && state.day < MAX_DAYS) {
+        state.day += dt * 4; // Speed multiplier
+        if (state.day > MAX_DAYS) {
+            state.day = MAX_DAYS;
+            state.isPlaying = false;
+            DOM.pauseBtn.disabled = true;
+        }
+
+        updateCursor();
+
+        // DOM Readouts
+        DOM.dayDisplay.textContent = state.day.toFixed(1);
+        
+        let dataPoint = state.data.find(d => d.day >= state.day);
+        if (dataPoint) {
+            DOM.igmDisplay.innerHTML = `${Math.round(dataPoint.igm)} <span class="text-[10px]">AU</span>`;
+            DOM.iggDisplay.innerHTML = `${Math.round(dataPoint.igg)} <span class="text-[10px]">AU</span>`;
+            
+            // Protection UI update based on threshold
+            if (dataPoint.total > PROTECTIVE_THRESHOLD) {
+                DOM.protectionStatus.innerText = "Protected";
+                DOM.protectionStatus.className = "text-emerald-400 font-bold uppercase tracking-widest";
+            } else {
+                DOM.protectionStatus.innerText = "Vulnerable";
+                DOM.protectionStatus.className = "text-rose-500 font-bold uppercase tracking-widest";
+            }
+        }
+
+        // Timeline unlocks
+        if (state.secondaryAt === null && state.day >= 30) {
+            DOM.secondaryBtn.disabled = false;
+            DOM.secondaryBtn.className = "w-full py-4 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-all border border-sky-500 shadow-lg flex justify-center items-center gap-2 btn-ready active:scale-95";
+            DOM.secondaryBtn.innerHTML = state.scenario === 'unvaccinated' 
+                ? "<i class='fa-solid fa-virus'></i> Re-exposure (Pathogen)"
+                : "<i class='fa-solid fa-virus-covid'></i> Pathogen Exposure";
+        }
+
+        updateClinicalStatus(dataPoint);
+        updateCellularVisuals(state.day);
+    }
+
+    requestAnimationFrame(animate);
+}
+
+function updateClinicalStatus(dataPoint) {
+    const s = DOM.clinicalStatus;
+    const isProtected = dataPoint && dataPoint.total > PROTECTIVE_THRESHOLD;
+
+    if (state.secondaryAt !== null) {
+        // SECONDARY RESPONSE
+        if (isProtected) {
+            s.innerHTML = "<strong>Pathogen Encountered!</strong><br>Memory cells mount rapid response. Pathogen neutralized before symptoms appear.";
+            s.className = "mt-auto py-3 px-3 rounded-lg bg-emerald-900/50 border border-emerald-500/50 text-emerald-400 text-center text-xs tracking-wide transition-all duration-300";
+        } else {
+            s.innerHTML = "<strong>Secondary Exposure Active</strong><br>Rapid clonal expansion underway...";
+            s.className = "mt-auto py-3 px-3 rounded-lg bg-indigo-900/50 border border-indigo-500/50 text-indigo-400 text-center text-xs tracking-wide transition-all duration-300";
+        }
+    } else if (state.primaryAt !== null) {
+        // PRIMARY RESPONSE
+        if (state.scenario === 'unvaccinated') {
+            if (!isProtected && state.day > state.primaryAt + 4 && state.day < state.primaryAt + 18) {
+                s.innerHTML = "<strong>Natural Infection Active</strong><br>Severe symptoms. Body struggling to build immunity in time.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-rose-900/50 border border-rose-500/50 text-rose-400 text-center text-xs tracking-wide transition-all duration-300 animate-pulse";
+            } else if (isProtected) {
+                s.innerHTML = "<strong>Patient Recovering</strong><br>Antibodies finally cross protective threshold. Memory cells saved.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-emerald-900/50 border border-emerald-500/50 text-emerald-400 text-center text-xs tracking-wide transition-all duration-300";
+            } else {
+                s.innerHTML = "<strong>Lag Phase</strong><br>Pathogen multiplying. Immune system identifying antigen.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-slate-800 border border-slate-500 text-slate-300 text-center text-xs tracking-wide transition-all duration-300";
+            }
+        } else {
+            // Vaccinated
+            if (state.day > state.primaryAt + 14) {
+                s.innerHTML = "<strong>Vaccine Successful</strong><br>Primary response resolves safely. Memory cells established.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-emerald-900/50 border border-emerald-500/50 text-emerald-400 text-center text-xs tracking-wide transition-all duration-300";
+            } else if (state.day > state.primaryAt + 4) {
+                s.innerHTML = "<strong>Vaccine Active</strong><br>Harmless antigen safely triggers antibody production without symptoms.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-yellow-900/50 border border-yellow-500/50 text-yellow-400 text-center text-xs tracking-wide transition-all duration-300";
+            } else {
+                s.innerHTML = "<strong>Lag Phase</strong><br>Immune system identifying harmless vaccine antigen.";
+                s.className = "mt-auto py-3 px-3 rounded-lg bg-slate-800 border border-slate-500 text-slate-300 text-center text-xs tracking-wide transition-all duration-300";
+            }
+        }
+    }
+}
+
+// --- User Interactions ---
+DOM.primaryBtn.addEventListener('click', () => {
+    state.primaryAt = state.day; 
+    state.isPlaying = true;
+    
+    // Disable scenario toggle once simulation starts
+    DOM.btnUnvax.disabled = true;
+    DOM.btnVax.disabled = true;
+    DOM.btnUnvax.classList.add('cursor-not-allowed', 'opacity-50');
+    DOM.btnVax.classList.add('cursor-not-allowed', 'opacity-50');
+
+    DOM.primaryBtn.disabled = true;
+    DOM.primaryBtn.classList.remove('btn-ready', 'bg-emerald-600', 'hover:bg-emerald-500', 'active:scale-95');
+    DOM.primaryBtn.classList.add('bg-slate-700', 'text-slate-500', 'border-slate-600');
+    DOM.primaryBtn.innerHTML = "<i class='fa-solid fa-check'></i> Primary Administered";
+    
+    DOM.pauseBtn.disabled = false;
+    
+    generateTheoreticalData();
+    updateChartPaths();
+    drawInjectionMarker(state.primaryAt, state.scenario === 'vaccinated' ? "Vaccine (Ag)" : "Pathogen", "#10B981");
+    
+    lastTime = performance.now(); 
+});
+
+DOM.secondaryBtn.addEventListener('click', () => {
+    state.secondaryAt = state.day;
+    
+    DOM.secondaryBtn.disabled = true;
+    DOM.secondaryBtn.classList.remove('btn-ready', 'bg-sky-600', 'hover:bg-sky-500', 'active:scale-95');
+    DOM.secondaryBtn.classList.add('bg-slate-700', 'text-slate-500', 'border-slate-600');
+    DOM.secondaryBtn.innerHTML = "<i class='fa-solid fa-check-double'></i> Secondary Administered";
+    
+    generateTheoreticalData();
+    updateChartPaths();
+    drawInjectionMarker(state.secondaryAt, "Pathogen Exposure", "#38BDF8");
+});
+
+DOM.pauseBtn.addEventListener('click', () => {
+    state.isPlaying = !state.isPlaying;
+    if(state.isPlaying) {
+        DOM.pauseBtn.innerHTML = "<i class='fa-solid fa-pause'></i> Pause";
+        lastTime = performance.now();
+    } else {
+        DOM.pauseBtn.innerHTML = "<i class='fa-solid fa-play'></i> Resume";
+    }
+});
+
+DOM.resetBtn.addEventListener('click', () => {
+    state.day = 0;
+    state.primaryAt = null;
+    state.secondaryAt = null;
+    state.isPlaying = false;
+    
+    // Enable scenario toggle
+    DOM.btnUnvax.disabled = false;
+    DOM.btnVax.disabled = false;
+    DOM.btnUnvax.classList.remove('cursor-not-allowed', 'opacity-50');
+    DOM.btnVax.classList.remove('cursor-not-allowed', 'opacity-50');
+
+    // Reset Buttons
+    DOM.primaryBtn.disabled = false;
+    DOM.primaryBtn.className = "w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all border border-emerald-500 shadow-lg flex justify-center items-center gap-2 btn-ready active:scale-95";
+    
+    // Re-apply scenario text
+    setScenario(state.scenario);
+    
+    DOM.secondaryBtn.disabled = true;
+    DOM.secondaryBtn.className = "w-full py-4 bg-slate-700 text-slate-500 rounded-xl font-bold transition-all border border-slate-600 flex justify-center items-center gap-2 cursor-not-allowed";
+    
+    DOM.pauseBtn.disabled = true;
+    DOM.pauseBtn.innerHTML = "<i class='fa-solid fa-pause'></i> Pause";
+    
+    // Reset Displays
+    DOM.dayDisplay.textContent = "0.0";
+    DOM.igmDisplay.innerHTML = `0 <span class="text-[10px]">AU</span>`;
+    DOM.iggDisplay.innerHTML = `0 <span class="text-[10px]">AU</span>`;
+    
+    DOM.protectionStatus.innerText = "Vulnerable";
+    DOM.protectionStatus.className = "text-rose-500 uppercase tracking-widest font-bold";
+
+    DOM.clinicalStatus.textContent = "Naive / Unexposed";
+    DOM.clinicalStatus.className = "mt-auto py-3 px-3 rounded-lg bg-slate-800 border border-slate-600 text-slate-300 text-center text-xs tracking-wide transition-all duration-300 font-bold";
+    
+    // Reset Graph & Cells
+    resetCellularVisuals();
+    generateTheoreticalData();
+    initD3();
+    updateChartPaths();
+    updateCursor();
+});
+
+// --- Boot ---
+setScenario('unvaccinated'); // default
+generateTheoreticalData();
+initD3();
+requestAnimationFrame(animate);
+
+</script>
 </body>
 </html>
