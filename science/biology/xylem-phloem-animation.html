@@ -1,369 +1,537 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Xylem vs Phloem | LuminousLearner</title>
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Droplets, ArrowDownUp, Wind, Layers, Info, ArrowRightCircle } from 'lucide-react';
+
+/* SCIENTIFIC MODEL & CONCEPTS
+  ---------------------------
+  Topic: Vascular Tissue Transport (Xylem vs Phloem)
+  
+  1. Xylem (Cohesion-Tension Theory):
+     - Fluid: Water & dissolved minerals (Blue).
+     - Direction: Unidirectional (Roots -> Leaves).
+     - Mechanism: Transpiration pull creates negative pressure (tension) at the top. Water molecules stick 
+                  together (cohesion) and to the lignified walls (adhesion), pulling a continuous column upward.
+     - Structure: Dead cells forming continuous tubes with thick, lignin-reinforced walls.
+
+  2. Phloem (Pressure Flow Hypothesis / Mass Flow):
+     - Fluid: Sap (Water + Sucrose) (Blue + Orange).
+     - Direction: Bidirectional (Source -> Sink). Can be Leaves->Roots (summer) or Roots->Shoots (spring).
+     - Mechanism: Active transport loads sucrose into the sieve tube at the "Source". This lowers water potential, 
+                  causing water to flow in from the adjacent Xylem via osmosis. This creates high hydrostatic 
+                  pressure, pushing the sap toward the "Sink" where sucrose is unloaded and water returns to Xylem.
+     - Structure: Living cells, sieve plates (porous ends), companion cells (with nuclei).
+*/
+
+// --- Engine Constants ---
+const CANVAS_WIDTH = 800;
+const CANVAS_HEIGHT = 600;
+
+export default function App() {
+  // --- UI State ---
+  const [view, setView] = useState('longitudinal'); // 'longitudinal' | 'cross-section'
+  const [transpirationTension, setTranspirationTension] = useState(5); // 1 to 10
+  const [phloemGradient, setPhloemGradient] = useState(5); // -5 (Roots are Source) to 5 (Leaves are Source)
+  
+  // --- Canvas & Simulation State ---
+  const canvasRef = useRef(null);
+  const requestRef = useRef();
+  
+  // Mutable state for the particle physics engine
+  const simState = useRef({
+    waterParticles: [],
+    sapParticles: [],
+    osmosisParticles: [], // Water moving horizontally between vessels
+    lastTime: 0
+  });
+
+  // --- Particle Generators ---
+  const spawnWater = (tension) => {
+    // Spawn rate based on tension
+    if (Math.random() < tension * 0.1) {
+      simState.current.waterParticles.push({
+        id: Math.random(),
+        x: 220 + Math.random() * 100, // Inside Xylem bounds
+        y: CANVAS_HEIGHT + 10,
+        speed: (tension * 0.5) + (Math.random() * 0.5),
+        wobbleOffset: Math.random() * Math.PI * 2
+      });
+    }
+  };
+
+  const spawnSap = (gradient) => {
+    if (gradient === 0) return; // No flow if no gradient
+
+    const isLeavesSource = gradient > 0;
+    const absGradient = Math.abs(gradient);
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    // Spawn Sucrose + Water in Phloem
+    if (Math.random() < absGradient * 0.15) {
+      simState.current.sapParticles.push({
+        id: Math.random(),
+        type: Math.random() > 0.4 ? 'sucrose' : 'water',
+        x: 480 + Math.random() * 80, // Inside Phloem bounds
+        y: isLeavesSource ? -10 : CANVAS_HEIGHT + 10,
+        speed: (isLeavesSource ? 1 : -1) * (absGradient * 0.4 + Math.random() * 0.5)
+      });
+    }
+
+    // Spawn Osmosis Water jumping between Xylem and Phloem
+    // Frequency tied to active transport gradient
+    if (Math.random() < absGradient * 0.05) {
+      const sourceY = isLeavesSource ? Math.random() * 150 : CANVAS_HEIGHT - Math.random() * 150;
+      const sinkY = isLeavesSource ? CANVAS_HEIGHT - Math.random() * 150 : Math.random() * 150;
+      
+      // Xylem -> Phloem at Source (Water follows sucrose)
+      simState.current.osmosisParticles.push({ 
+        x: 350, y: sourceY, vx: 2, life: 100, type: 'source' 
+      });
+      // Phloem -> Xylem at Sink (Water recycled back to xylem)
+      simState.current.osmosisParticles.push({ 
+        x: 450, y: sinkY, vx: -2, life: 100, type: 'sink' 
+      });
+    }
+  };
+
+  // --- Main Render & Physics Loop ---
+  const render = useCallback((time) => {
+    if (!simState.current.lastTime) simState.current.lastTime = time;
+    const deltaTime = time - simState.current.lastTime;
+    simState.current.lastTime = time;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // Clear Canvas
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    if (view === 'cross-section') {
+      drawCrossSection(ctx);
+    } else {
+      drawLongitudinal(ctx, time);
+    }
+
+    requestRef.current = requestAnimationFrame(render);
+  }, [view, transpirationTension, phloemGradient]);
+
+  const drawLongitudinal = (ctx, time) => {
+    // --- 1. Draw Vessel Structures ---
     
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    // Xylem (Left) - Thick, lignified dead cells
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.5)'; // Slate 900 bg
+    ctx.fillRect(200, 0, 140, CANVAS_HEIGHT);
     
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#713f12'; // Yellow-900 (Lignin)
+    ctx.beginPath();
+    ctx.moveTo(200, 0); ctx.lineTo(200, CANVAS_HEIGHT);
+    ctx.moveTo(340, 0); ctx.lineTo(340, CANVAS_HEIGHT);
+    ctx.stroke();
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+    // Xylem internal lignin rings (spiral/annular thickening)
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(113, 63, 18, 0.4)';
+    for(let y = 0; y < CANVAS_HEIGHT; y += 40) {
+      ctx.beginPath();
+      ctx.ellipse(270, y, 70, 10, 0, 0, Math.PI);
+      ctx.stroke();
+    }
+
+    // Phloem (Right) - Thinner walls, living cells, sieve plates
+    ctx.fillStyle = 'rgba(20, 83, 45, 0.1)'; // Emerald bg
+    ctx.fillRect(460, 0, 120, CANVAS_HEIGHT);
+    
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#15803d'; // Green-700
+    ctx.beginPath();
+    ctx.moveTo(460, 0); ctx.lineTo(460, CANVAS_HEIGHT);
+    ctx.moveTo(580, 0); ctx.lineTo(580, CANVAS_HEIGHT);
+    ctx.stroke();
+
+    // Phloem Sieve Plates
+    ctx.strokeStyle = '#22c55e'; // Green-500
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 4]); // Pores in the plate
+    for(let y = 150; y < CANVAS_HEIGHT; y += 150) {
+      ctx.beginPath();
+      ctx.moveTo(460, y);
+      ctx.lineTo(580, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]); // reset
+
+    // Companion Cells (Attached to right of Phloem)
+    ctx.fillStyle = 'rgba(22, 101, 52, 0.2)';
+    ctx.strokeStyle = '#166534';
+    ctx.lineWidth = 2;
+    for(let y = 50; y < CANVAS_HEIGHT; y += 150) {
+      ctx.fillRect(580, y, 40, 100);
+      ctx.strokeRect(580, y, 40, 100);
+      // Nucleus
+      ctx.fillStyle = '#14532d';
+      ctx.beginPath(); ctx.arc(600, y + 50, 8, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(22, 101, 52, 0.2)'; // reset
+    }
+
+    // --- 2. Update & Draw Particles ---
+    
+    spawnWater(transpirationTension);
+    spawnSap(phloemGradient);
+
+    // Xylem Water Physics (Cohesion/Tension)
+    ctx.fillStyle = '#38bdf8'; // Sky-400
+    simState.current.waterParticles = simState.current.waterParticles.filter(p => {
+      p.y -= p.speed;
+      // Adhesion/Cohesion wobble
+      const wobble = Math.sin((time * 0.005) + p.wobbleOffset) * 1.5;
+      
+      ctx.beginPath();
+      ctx.arc(p.x + wobble, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      return p.y > -10; // Keep if on screen
+    });
+
+    // Phloem Sap Physics (Mass Flow)
+    simState.current.sapParticles = simState.current.sapParticles.filter(p => {
+      p.y += p.speed;
+      
+      // Sieve plate bottleneck effect (slow down slightly near plates)
+      const nearPlate = (p.y % 150 < 10) || (p.y % 150 > 140);
+      const renderX = nearPlate ? 520 + (p.x - 520) * 0.5 : p.x; // Constrict x towards center
+
+      ctx.fillStyle = p.type === 'sucrose' ? '#fbbf24' : '#38bdf8'; // Amber-400 or Sky-400
+      ctx.beginPath();
+      ctx.arc(renderX, p.y, p.type === 'sucrose' ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      return p.y > -20 && p.y < CANVAS_HEIGHT + 20;
+    });
+
+    // Osmosis Particles (Horizontal jump between Xylem and Phloem)
+    simState.current.osmosisParticles = simState.current.osmosisParticles.filter(p => {
+      p.x += p.vx;
+      p.life -= 1.5; // Fade out speed
+      
+      ctx.fillStyle = `rgba(56, 189, 248, ${p.life / 100})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      
+      return p.life > 0;
+    });
+
+    // --- 3. Draw Labels & Arrows ---
+    ctx.fillStyle = '#cbd5e1';
+    ctx.textAlign = 'center';
+    
+    // Xylem Label
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('XYLEM', 270, 30);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Unidirectional (Passive)', 270, 50);
+    
+    // Phloem Label
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('PHLOEM', 520, 30);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Bidirectional', 520, 50);
+
+    // Companion Cell Label
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#4ade80';
+    ctx.fillText('Companion', 645, 90);
+    ctx.fillText('Cell (Living)', 645, 105);
+
+    // Osmosis Label (between vessels)
+    if (phloemGradient !== 0) {
+       ctx.fillStyle = 'rgba(56, 189, 248, 0.6)';
+       ctx.font = 'italic 11px sans-serif';
+       const isLeavesSource = phloemGradient > 0;
+       ctx.fillText('Osmosis', 400, isLeavesSource ? 75 : CANVAS_HEIGHT - 75);
+       ctx.fillText('Osmosis', 400, isLeavesSource ? CANVAS_HEIGHT - 75 : 75);
+    }
+
+    // Source/Sink labels based on gradient
+    if (phloemGradient !== 0) {
+      const isLeavesSource = phloemGradient > 0;
+      
+      // Source
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('SOURCE (High Solute)', 705, isLeavesSource ? 30 : CANVAS_HEIGHT - 45);
+      // Highlight Active Transport
+      ctx.fillStyle = '#f87171'; // Red-400 for energy
+      ctx.font = '11px sans-serif';
+      ctx.fillText('Active Loading (Requires ATP)', 705, isLeavesSource ? 48 : CANVAS_HEIGHT - 27);
+      
+      // Sink
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('SINK (Low Solute)', 705, isLeavesSource ? CANVAS_HEIGHT - 45 : 30);
+      ctx.fillStyle = '#f87171';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('Active Unloading', 705, isLeavesSource ? CANVAS_HEIGHT - 27 : 48);
+      
+      // Draw Pressure Flow Arrow
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.3)';
+      ctx.lineWidth = 6;
+      drawArrow(ctx, 420, isLeavesSource ? 110 : CANVAS_HEIGHT - 110, 420, isLeavesSource ? CANVAS_HEIGHT - 110 : 110);
+    }
+  };
+
+  const drawCrossSection = (ctx) => {
+    // Stem Cross Section Anatomy
+    const cx = CANVAS_WIDTH / 2;
+    const cy = CANVAS_HEIGHT / 2;
+    
+    // Epidermis & Cortex
+    ctx.fillStyle = '#064e3b'; // Emerald-900
+    ctx.beginPath(); ctx.arc(cx, cy, 220, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0f172a'; // Slate-900
+    ctx.beginPath(); ctx.arc(cx, cy, 200, 0, Math.PI*2); ctx.fill();
+
+    // Pith (Center)
+    ctx.fillStyle = '#1e293b'; // Slate-800
+    ctx.beginPath(); ctx.arc(cx, cy, 80, 0, Math.PI*2); ctx.fill();
+
+    // Vascular Bundles (Dicot ring)
+    const numBundles = 8;
+    for (let i = 0; i < numBundles; i++) {
+      const angle = (i / numBundles) * Math.PI * 2;
+      const bx = cx + Math.cos(angle) * 140;
+      const by = cy + Math.sin(angle) * 140;
+
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(angle + Math.PI/2);
+
+      // Sclerenchyma Cap (Outer fibers)
+      ctx.fillStyle = '#475569';
+      ctx.beginPath(); ctx.ellipse(0, -40, 30, 15, 0, 0, Math.PI*2); ctx.fill();
+
+      // Phloem (Middle-Outer)
+      ctx.fillStyle = '#15803d'; // Green-700
+      ctx.beginPath(); ctx.ellipse(0, -15, 25, 20, 0, 0, Math.PI*2); ctx.fill();
+      
+      // Vascular Cambium
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(-25, 5, 50, 4);
+
+      // Xylem (Inner)
+      ctx.fillStyle = '#713f12'; // Yellow-900
+      ctx.beginPath();
+      ctx.moveTo(-20, 10);
+      ctx.lineTo(20, 10);
+      ctx.lineTo(10, 50);
+      ctx.lineTo(-10, 50);
+      ctx.fill();
+
+      // Draw large Xylem vessels (pores)
+      // Colored faint blue to connect conceptually with the water particles in longitudinal view
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.4)'; 
+      ctx.beginPath(); ctx.arc(0, 20, 8, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(-10, 35, 6, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(10, 35, 6, 0, Math.PI*2); ctx.fill();
+      // Vessel outlines
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 20, 8, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(-10, 35, 6, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(10, 35, 6, 0, Math.PI*2); ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // Interactive Labels
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'left';
+    
+    // Label Lines
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    
+    // Phloem Label
+    ctx.beginPath(); ctx.moveTo(cx + 125, cy - 65); ctx.lineTo(cx + 250, cy - 150); ctx.lineTo(cx + 270, cy - 150); ctx.stroke();
+    ctx.fillStyle = '#22c55e';
+    ctx.fillText('Phloem (Outer)', cx + 275, cy - 146);
+    
+    // Xylem Label
+    ctx.beginPath(); ctx.moveTo(cx + 90, cy - 40); ctx.lineTo(cx + 250, cy - 80); ctx.lineTo(cx + 270, cy - 80); ctx.stroke();
+    ctx.fillStyle = '#fbbf24'; // Using amber here just for distinction
+    ctx.fillText('Xylem (Inner)', cx + 275, cy - 76);
+
+    // Cambium Label
+    ctx.beginPath(); ctx.moveTo(cx + 110, cy - 50); ctx.lineTo(cx + 250, cy + 20); ctx.lineTo(cx + 270, cy + 20); ctx.stroke();
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Vascular Cambium', cx + 275, cy + 24);
+  };
+
+  // Helper for drawing arrows
+  const drawArrow = (ctx, fromX, fromY, toX, toY) => {
+    const headlen = 15;
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    ctx.beginPath();
+    ctx.moveTo(fromX, fromY);
+    ctx.lineTo(toX, toY);
+    ctx.lineTo(toX - headlen * Math.cos(angle - Math.PI / 6), toY - headlen * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(toX, toY);
+    ctx.lineTo(toX - headlen * Math.cos(angle + Math.PI / 6), toY - headlen * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  };
+
+  // Lifecycle
+  useEffect(() => {
+    requestRef.current = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [render]);
+
+  return (
+    <div className="flex flex-col h-screen max-h-[1000px] min-h-[750px] bg-slate-900 text-slate-100 font-sans overflow-hidden">
+      
+      {/* Header */}
+      <header className="flex items-center justify-between p-4 bg-slate-800 border-b border-slate-700 shadow-md z-10 shrink-0">
+        <div className="flex items-center gap-3">
+          <Droplets className="text-sky-400 w-8 h-8" />
+          <div>
+            <h1 className="text-xl md:text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-400 to-emerald-400">
+              Xylem vs Phloem Transport
+            </h1>
+            <p className="text-xs text-slate-400">Plant Anatomy & Fluid Dynamics</p>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col lg:flex-row relative overflow-hidden">
         
-        /* Flow Animations */
-        .flow-up { animation: flowUp 2s linear infinite; }
-        @keyframes flowUp {
-            from { transform: translateY(100%); opacity: 0; }
-            50% { opacity: 1; }
-            to { transform: translateY(-20%); opacity: 0; }
-        }
-        
-        .flow-down { animation: flowDown 3s linear infinite; }
-        @keyframes flowDown {
-            from { transform: translateY(-20%); opacity: 0; }
-            50% { opacity: 1; }
-            to { transform: translateY(100%); opacity: 0; }
-        }
+        {/* Left Sidebar: Controls & Legend */}
+        <aside className="w-full lg:w-[420px] p-6 bg-slate-800/50 border-r border-slate-700 overflow-y-auto flex flex-col gap-6 z-10 shrink-0">
+          
+          {/* View Toggle */}
+          <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-700">
+            <button
+              onClick={() => setView('longitudinal')}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${
+                view === 'longitudinal' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ArrowDownUp className="w-4 h-4" /> Longitudinal
+            </button>
+            <button
+              onClick={() => setView('cross-section')}
+              className={`flex-1 py-2 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${
+                view === 'cross-section' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-4 h-4" /> Cross-Section
+            </button>
+          </div>
 
-        .flow-bidirectional { animation: flowBi 4s linear infinite; }
-        @keyframes flowBi {
-            0% { transform: translateY(-10%); opacity: 0; }
-            20% { opacity: 1; }
-            80% { opacity: 1; }
-            100% { transform: translateY(110%); opacity: 0; }
-        }
+          {view === 'longitudinal' && (
+            <div className="animate-in fade-in duration-300 space-y-6">
+              
+              {/* Xylem Controls */}
+              <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-sky-500"></div>
+                <h2 className="text-md font-semibold mb-3 text-sky-400 flex items-center gap-2">
+                  <Wind className="w-4 h-4" />
+                  Xylem: Transpiration Pull
+                </h2>
+                <label className="flex justify-between text-xs mb-2 text-slate-300">
+                  <span>Tension / Evaporation Rate</span>
+                  <span className="font-mono">{transpirationTension * 10}%</span>
+                </label>
+                <input 
+                  type="range" min="1" max="10" step="1"
+                  value={transpirationTension}
+                  onChange={(e) => setTranspirationTension(parseInt(e.target.value))}
+                  className="w-full accent-sky-500 cursor-pointer mb-2"
+                />
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Water is pulled up through dead, lignified tubes due to the cohesive properties of water and negative pressure (tension) created by evaporation at the leaves.
+                </p>
+              </div>
 
-        /* Structure Hover */
-        .structure-part { transition: all 0.3s ease; cursor: help; }
-        .structure-part:hover { filter: brightness(1.2); stroke: #fbbf24; stroke-width: 2px; }
-        
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- DATA ---
-        const PARTS = {
-            xylem_vessel: {
-                name: 'Xylem Vessel',
-                desc: 'Dead hollow cells joined end-to-end. No end walls.',
-                func: 'Forms a continuous tube for water transport.',
-                type: 'xylem'
-            },
-            lignin: {
-                name: 'Lignin',
-                desc: 'Hard, waterproof substance in cell walls.',
-                func: 'Strengthens the vessel preventing collapse; Waterproofing.',
-                type: 'xylem'
-            },
-            sieve_tube: {
-                name: 'Sieve Tube Element',
-                desc: 'Living cells with reduced cytoplasm and no nucleus.',
-                func: 'Main channel for sugar transport.',
-                type: 'phloem'
-            },
-            sieve_plate: {
-                name: 'Sieve Plate',
-                desc: 'Perforated end walls between sieve tube cells.',
-                func: 'Allows sap to flow between cells.',
-                type: 'phloem'
-            },
-            companion_cell: {
-                name: 'Companion Cell',
-                desc: 'Linked to sieve tube by plasmodesmata. Has nucleus and many mitochondria.',
-                func: 'Provides metabolic support (ATP/Proteins) to sieve tube.',
-                type: 'phloem'
-            }
-        };
-
-        // --- CANVAS COMPONENT ---
-        const TransportCanvas = ({ mode, onSelect }) => {
-            
-            return (
-                <svg viewBox="0 0 600 500" className="w-full h-full drop-shadow-2xl bg-slate-900/50 rounded-xl border border-slate-700">
-                    <defs>
-                        <pattern id="waterFlow" width="20" height="20" patternUnits="userSpaceOnUse">
-                            <circle cx="10" cy="10" r="2" fill="#38bdf8" />
-                        </pattern>
-                        <pattern id="sugarFlow" width="20" height="20" patternUnits="userSpaceOnUse">
-                            <circle cx="10" cy="10" r="3" fill="#facc15" />
-                        </pattern>
-                    </defs>
-
-                    {/* --- LEFT: XYLEM --- */}
-                    <g transform="translate(100, 50)">
-                        <text x="50" y="-20" textAnchor="middle" fill="#38bdf8" fontSize="16" fontWeight="bold">XYLEM</text>
-                        
-                        {/* Vessel Walls */}
-                        <rect x="0" y="0" width="100" height="400" fill="#e2e8f0" opacity="0.1" />
-                        <line x1="0" y1="0" x2="0" y2="400" stroke="#94a3b8" strokeWidth="4" />
-                        <line x1="100" y1="0" x2="100" y2="400" stroke="#94a3b8" strokeWidth="4" />
-
-                        {/* Lignin Spirals */}
-                        <g className="structure-part" onClick={() => onSelect('lignin')}>
-                            {[...Array(10)].map((_, i) => (
-                                <path key={i} d={`M 0 ${i*40+10} Q 50 ${i*40+30} 100 ${i*40+10}`} stroke="#eab308" strokeWidth="4" fill="none" opacity="0.8" />
-                            ))}
-                        </g>
-
-                        {/* Empty Lumen Click Area */}
-                        <rect x="10" y="0" width="80" height="400" fill="transparent" className="structure-part" onClick={() => onSelect('xylem_vessel')} />
-
-                        {/* Water Flow Animation */}
-                        <foreignObject x="10" y="0" width="80" height="400" style={{pointerEvents:'none'}}>
-                            <div className="w-full h-full overflow-hidden relative">
-                                <div className="absolute inset-0 flow-up flex flex-col justify-around items-center">
-                                    {[...Array(8)].map((_, i) => (
-                                        <div key={i} className="flex gap-4">
-                                            <div className="w-3 h-3 rounded-full bg-blue-400 shadow-[0_0_5px_#38bdf8]"></div>
-                                            <div className="w-3 h-3 rounded-full bg-blue-400 shadow-[0_0_5px_#38bdf8]"></div>
-                                        </div>
-                                    ))}
-                                </div>
-                                {/* Minerals */}
-                                <div className="absolute inset-0 flow-up flex flex-col justify-around items-center" style={{animationDelay: '0.5s'}}>
-                                    <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                                </div>
-                            </div>
-                        </foreignObject>
-                        
-                        <text x="50" y="430" textAnchor="middle" fill="#94a3b8" fontSize="12">One-way flow</text>
-                    </g>
-
-
-                    {/* --- RIGHT: PHLOEM --- */}
-                    <g transform="translate(350, 50)">
-                        <text x="50" y="-20" textAnchor="middle" fill="#facc15" fontSize="16" fontWeight="bold">PHLOEM</text>
-
-                        {/* Companion Cells (Left Side) */}
-                        <g transform="translate(-40, 0)">
-                            {[...Array(4)].map((_, i) => (
-                                <g key={i} transform={`translate(0, ${i*100})`} className="structure-part" onClick={() => onSelect('companion_cell')}>
-                                    <rect width="35" height="95" rx="5" fill="#fcd34d" stroke="#d97706" strokeWidth="2" />
-                                    <circle cx="18" cy="48" r="6" fill="#78350f" /> {/* Nucleus */}
-                                    <circle cx="10" cy="20" r="2" fill="#b45309" /> {/* Mito */}
-                                    <circle cx="25" cy="70" r="2" fill="#b45309" />
-                                </g>
-                            ))}
-                        </g>
-
-                        {/* Sieve Tube */}
-                        <rect x="0" y="0" width="100" height="400" fill="#fffbeb" opacity="0.1" />
-                        <line x1="0" y1="0" x2="0" y2="400" stroke="#16a34a" strokeWidth="4" />
-                        <line x1="100" y1="0" x2="100" y2="400" stroke="#16a34a" strokeWidth="4" />
-
-                        {/* Sieve Plates */}
-                        {[1, 2, 3].map(i => (
-                            <g key={i} transform={`translate(0, ${i*100})`} className="structure-part" onClick={() => onSelect('sieve_plate')}>
-                                <line x1="0" y1="0" x2="100" y2="0" stroke="#15803d" strokeWidth="6" />
-                                {/* Pores */}
-                                <circle cx="20" cy="0" r="4" fill="#0f172a" />
-                                <circle cx="50" cy="0" r="4" fill="#0f172a" />
-                                <circle cx="80" cy="0" r="4" fill="#0f172a" />
-                            </g>
-                        ))}
-
-                        {/* Tube Click Area */}
-                        <rect x="10" y="0" width="80" height="400" fill="transparent" className="structure-part" onClick={() => onSelect('sieve_tube')} />
-
-                        {/* Sap Flow Animation */}
-                        <foreignObject x="10" y="0" width="80" height="400" style={{pointerEvents:'none'}}>
-                            <div className="w-full h-full overflow-hidden relative">
-                                <div className={`absolute inset-0 ${mode === 'source_up' ? 'flow-up' : 'flow-down'} flex flex-col justify-around items-center`}>
-                                    {[...Array(6)].map((_, i) => (
-                                        <div key={i} className="w-4 h-4 rotate-45 bg-yellow-400 shadow-[0_0_5px_#facc15]"></div> // Sugar
-                                    ))}
-                                </div>
-                            </div>
-                        </foreignObject>
-
-                        <text x="50" y="430" textAnchor="middle" fill="#94a3b8" fontSize="12">Two-way flow</text>
-                    </g>
-
-                </svg>
-            );
-        };
-
-        // --- MAIN APP ---
-        const App = () => {
-            const [selectedPart, setSelectedPart] = useState(null);
-            const [flowMode, setFlowMode] = useState('source_down'); // 'source_down' (Leaves to Roots), 'source_up' (Storage to Growth)
-
-            const handleSelect = (id) => {
-                setSelectedPart(id);
-            };
-
-            const currentInfo = selectedPart ? PARTS[selectedPart] : null;
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="arrow-up-down" className="text-emerald-400" /> Transport Sim
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Xylem & Phloem Comparison</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
-                            
-                            {/* Comparison Table */}
-                            <div className="space-y-4">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Quick Compare</label>
-                                
-                                <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 space-y-3">
-                                    <div className="flex justify-between items-center pb-2 border-b border-slate-700">
-                                        <span className="text-blue-400 font-bold text-sm">Xylem</span>
-                                        <span className="text-yellow-400 font-bold text-sm">Phloem</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs">
-                                        <span>Water/Minerals</span>
-                                        <span>Sugar/Amino Acids</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs">
-                                        <span>Dead Cells</span>
-                                        <span>Living Cells</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs">
-                                        <span>One way ⬆</span>
-                                        <span>Two ways ⬆⬇</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Flow Control */}
-                            <div className="space-y-3">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Season / Source</label>
-                                <button 
-                                    onClick={() => setFlowMode('source_down')}
-                                    className={`w-full p-3 rounded-xl border transition-all flex items-center gap-3
-                                        ${flowMode === 'source_down' ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-400'}
-                                    `}
-                                >
-                                    <Icon name="sun" size={18}/> Summer (Leaves &rarr; Roots)
-                                </button>
-                                <button 
-                                    onClick={() => setFlowMode('source_up')}
-                                    className={`w-full p-3 rounded-xl border transition-all flex items-center gap-3
-                                        ${flowMode === 'source_up' ? 'bg-yellow-600 border-yellow-500 text-white shadow-lg' : 'bg-slate-800 border-slate-700 text-slate-400'}
-                                    `}
-                                >
-                                    <Icon name="sprout" size={18}/> Spring (Roots &rarr; Shoots)
-                                </button>
-                                <p className="text-[10px] text-slate-500 italic mt-1">
-                                    Note: Xylem flow is always upwards due to transpiration pull.
-                                </p>
-                            </div>
-
-                            {/* Legend */}
-                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 space-y-2 text-xs text-slate-300">
-                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-400 shadow-[0_0_5px_#38bdf8]"></div> Water</div>
-                                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> Minerals</div>
-                                <div className="flex items-center gap-2"><div className="w-3 h-3 rotate-45 bg-yellow-400 shadow-[0_0_5px_#facc15]"></div> Sugar (Sucrose)</div>
-                            </div>
-
-                        </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
-                        
-                        <div className="flex-1 flex flex-col items-center justify-center relative">
-                            <TransportCanvas mode={flowMode} onSelect={handleSelect} />
-
-                            {/* Info Panel Overlay */}
-                            {currentInfo && (
-                                <div className="absolute bottom-8 left-8 right-8 md:left-auto md:right-8 md:w-80 bg-slate-800/90 backdrop-blur p-5 rounded-2xl border border-slate-600 shadow-2xl animate-in slide-in-from-bottom-4">
-                                    <div className="flex justify-between items-start mb-3">
-                                        <h2 className={`text-lg font-bold ${currentInfo.type === 'xylem' ? 'text-blue-400' : 'text-yellow-400'}`}>
-                                            {currentInfo.name}
-                                        </h2>
-                                        <button onClick={() => setSelectedPart(null)} className="text-slate-400 hover:text-white"><Icon name="x" size={18}/></button>
-                                    </div>
-                                    <div className="space-y-3 text-sm">
-                                        <div>
-                                            <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Structure</span>
-                                            <p className="text-slate-300 leading-snug">{currentInfo.desc}</p>
-                                        </div>
-                                        <div>
-                                            <span className="text-xs font-bold text-slate-500 uppercase block mb-1">Function</span>
-                                            <p className="text-white bg-slate-700/50 p-2 rounded border border-slate-600/50 leading-snug">
-                                                {currentInfo.func}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                    </div>
-
+              {/* Phloem Controls */}
+              <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
+                <h2 className="text-md font-semibold mb-3 text-emerald-400 flex items-center gap-2">
+                  <ArrowRightCircle className="w-4 h-4" />
+                  Phloem: Pressure Flow
+                </h2>
+                <label className="flex justify-between text-xs mb-2 text-slate-300">
+                  <span>Sucrose Concentration Gradient</span>
+                  <span className="font-mono">
+                    {phloemGradient > 0 ? `Leaves +${phloemGradient}` : phloemGradient < 0 ? `Roots +${Math.abs(phloemGradient)}` : 'Equilibrium'}
+                  </span>
+                </label>
+                <input 
+                  type="range" min="-5" max="5" step="1"
+                  value={phloemGradient}
+                  onChange={(e) => setPhloemGradient(parseInt(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer mb-3"
+                />
+                
+                <div className="grid grid-cols-3 gap-1 text-center text-xs text-slate-400 mb-3">
+                  <div className={phloemGradient < 0 ? 'text-amber-400 font-bold' : ''}>Roots to Shoots</div>
+                  <div className={phloemGradient === 0 ? 'text-slate-200 font-bold' : ''}>Zero Flow</div>
+                  <div className={phloemGradient > 0 ? 'text-emerald-400 font-bold' : ''}>Leaves to Roots</div>
                 </div>
-            );
-        };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  <strong>Active transport (requires ATP)</strong> loads sucrose at the "Source", drawing water from the xylem via osmosis. This increases hydrostatic pressure, pushing sap to the "Sink".
+                </p>
+              </div>
+
+            </div>
+          )}
+
+          {view === 'cross-section' && (
+             <div className="animate-in fade-in duration-300 bg-slate-900 p-5 rounded-xl border border-slate-700">
+               <h2 className="text-md font-semibold mb-3 text-slate-200 flex items-center gap-2">
+                  <Info className="w-5 h-5 text-indigo-400" />
+                  Anatomy Notes (Dicot Stem)
+               </h2>
+               <ul className="text-sm text-slate-400 space-y-3 list-disc pl-4">
+                 <li><strong className="text-slate-200">Vascular Bundles</strong> are arranged in a ring around the central pith.</li>
+                 <li><strong className="text-yellow-500">Xylem</strong> is always located on the inner side of the bundle to provide structural support.</li>
+                 <li><strong className="text-emerald-400">Phloem</strong> is located on the outer side.</li>
+                 <li>The <strong className="text-indigo-300">Vascular Cambium</strong> is a layer of meristematic cells between them, responsible for secondary growth (thickening of the stem).</li>
+               </ul>
+             </div>
+          )}
+
+          {/* Legend */}
+          <div className="mt-auto">
+             <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-wrap gap-x-4 gap-y-2 text-xs">
+                <span className="font-semibold text-slate-300 w-full mb-1">Visual Legend:</span>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-sky-400"></div> Water (H₂O)</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-amber-400"></div> Sucrose</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-1 bg-yellow-900"></div> Lignin Wall</div>
+                <div className="flex items-center gap-1.5"><div className="w-3 h-1 border-t-2 border-dashed border-green-500"></div> Sieve Plate</div>
+             </div>
+          </div>
+        </aside>
+
+        {/* Right Area: Interactive Animation Canvas */}
+        <div className="flex-1 relative p-4 flex flex-col justify-center items-center bg-slate-950">
+          
+          {/* Container for aspect-ratio locked canvas */}
+          <div className="w-full max-w-[800px] aspect-[4/3] bg-[#0f172a] rounded-xl border-2 border-slate-700 overflow-hidden relative shadow-2xl">
+            <canvas 
+              ref={canvasRef} 
+              width={CANVAS_WIDTH} 
+              height={CANVAS_HEIGHT} 
+              className="absolute top-0 left-0 w-full h-full object-contain"
+            />
+          </div>
+
+        </div>
+      </main>
+    </div>
+  );
+}
