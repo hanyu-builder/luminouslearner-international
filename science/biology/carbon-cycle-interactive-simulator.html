@@ -1,632 +1,709 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Factory, TreePine, Waves, Cloud, Flame, AlertTriangle, Activity, DownloadCloud } from 'lucide-react';
-
-/**
- * EDUCATIONAL WEB SIMULATOR
- * Topic: The Global Carbon Cycle
- * Target: P4 to S3 Students
- */
-
-// Initial Constants
-const START_YEAR = 2025;
-const START_ATM = 880;     // GtC (approx 413 ppm)
-const START_OCEAN = 38000; // GtC
-const START_BIO = 2000;    // GtC
-const START_FOSSIL = 4000; // GtC
-
-export default function App() {
-  // --- STATE MANAGEMENT ---
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [year, setYear] = useState(START_YEAR);
-  
-  // Carbon Reservoirs (Sinks) measured in GtC
-  const [carbonState, setCarbonState] = useState({
-    atm: START_ATM,
-    ocean: START_OCEAN,
-    bio: START_BIO,
-    fossil: START_FOSSIL,
-  });
-
-  // History for the Keeling Curve Graph
-  const [history, setHistory] = useState([{ year: START_YEAR, ppm: START_ATM / 2.13 }]);
-
-  // Human Controls
-  const [emissions, setEmissions] = useState(10); // Fossil fuel emissions (GtC/year)
-  const [deforestation, setDeforestation] = useState(0); // 0 to 100%
-  const [carbonCapture, setCarbonCapture] = useState(0); // Geoengineering (GtC/year)
-  
-  const [alertLevel, setAlertLevel] = useState('safe');
-
-  // Refs for animation loop (prevents stale closures in requestAnimationFrame)
-  const canvasRef = useRef(null);
-  const particlesRef = useRef([]);
-  const stateRef = useRef(carbonState);
-  const controlsRef = useRef({ emissions, deforestation, carbonCapture, isPlaying });
-  
-  // --- SCIENTIFIC MODEL ---
-  const currentPpm = carbonState.atm / 2.13;
-  // Temp anomaly roughly scales logarithmically with CO2 (Climate Sensitivity)
-  const tempAnomaly = Math.max(0, 3.0 * Math.log2(currentPpm / 280));
-
-  useEffect(() => {
-    stateRef.current = carbonState;
-    controlsRef.current = { emissions, deforestation, carbonCapture, isPlaying };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Carbon Cycle Simulator - Interactive Earth Systems simulation demonstrating carbon fluxes, anthropogenic forcing, and climate feedback loops.">
+    <title>Carbon Cycle Simulator | Virtual Labs</title>
     
-    if (tempAnomaly > 2.5) setAlertLevel('danger');
-    else if (tempAnomaly > 1.2) setAlertLevel('warning');
-    else setAlertLevel('safe');
-  }, [carbonState, emissions, deforestation, carbonCapture, isPlaying, tempAnomaly]);
-
-  // Calculate detailed fluxes based on current state
-  const calculateFluxes = (state, em, deforestPct, capture, tempAnom) => {
-    // 1. Photosynthesis: Increases slightly with more CO2 (Fertilization limit)
-    const basePhoto = 120;
-    const co2Fertilization = Math.max(0, (state.atm - 596) * 0.05); // 596 GtC = 280ppm (Pre-industrial)
-    const forestCapacity = (100 - deforestPct) / 100;
-    const photosynthesis = (basePhoto + co2Fertilization) * forestCapacity;
-
-    // 2. Respiration & Decay: Base + extra decay from deforested land
-    const baseResp = 120;
-    const deforestDecay = (deforestPct / 100) * 15; // Deforestation causes rapid release of stored soil/wood carbon
+    <!-- Tailwind CSS for UI Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;700;900&display=swap" rel="stylesheet">
     
-    // Positive Feedback Loop: Extreme warming melts permafrost, releasing stored carbon natively
-    const permafrostRelease = tempAnom > 2.5 ? (tempAnom - 2.5) * 20 : 0; 
-    const respiration = baseResp + deforestDecay + permafrostRelease;
+    <!-- FontAwesome for Icons (Replaces Lucide-React for standalone HTML) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-    // 3. Ocean Exchange (Diffusion depends on partial pressure gradient)
-    const baseOcean = 90;
-    const oceanAbsorb = baseOcean + Math.max(0, (state.atm - 596) * 0.025);
-    const oceanRelease = baseOcean;
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel for in-browser JSX compiling -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    // 4. Combustion (Human activity) - Mathematically bounded by available reserves
-    const combustion = Math.min(em, state.fossil); 
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; 
+            color: #F8FAFC;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
 
-    // 5. Geoengineering (Direct Air Capture)
-    const captureFlux = Math.min(capture, state.atm - (280 * 2.13)); // Can't capture below pre-industrial levels
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748B; }
 
-    return { photosynthesis, respiration, combustion, oceanAbsorb, oceanRelease, captureFlux, permafrostRelease };
-  };
+        /* Custom Range Sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type=range]:active::-webkit-slider-thumb { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #1E293B;
+            border-radius: 2px;
+        }
+        input[type=range]:focus { outline: none; }
+        
+        /* Slider specific thumb colors via class */
+        .slider-rose::-webkit-slider-thumb { background: #F43F5E; }
+        .slider-amber::-webkit-slider-thumb { background: #F59E0B; }
+        .slider-purple::-webkit-slider-thumb { background: #A855F7; }
+    </style>
+</head>
+<body class="h-screen w-screen flex items-center justify-center">
 
-  // --- MACRO SIMULATION TICK ---
-  useEffect(() => {
-    let interval;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setYear(y => {
-          const newYear = y + 1;
-          
-          setCarbonState(prev => {
-            const f = calculateFluxes(prev, emissions, deforestation, carbonCapture, tempAnomaly);
+    <!-- React Mount Point -->
+    <div id="root" class="w-full h-full max-w-[1500px] max-h-[1000px]"></div>
+
+    <!-- React Application Logic -->
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Initial Constants
+        const START_YEAR = 2025;
+        const START_ATM = 880;     // GtC (approx 413 ppm)
+        const START_OCEAN = 38000; // GtC
+        const START_BIO = 2000;    // GtC
+        const START_FOSSIL = 4000; // GtC
+
+        function App() {
+            // --- STATE MANAGEMENT ---
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [year, setYear] = useState(START_YEAR);
             
-            // Mass Balance Equations
-            const atmChange = f.respiration + f.combustion + f.oceanRelease - f.photosynthesis - f.oceanAbsorb - f.captureFlux;
-            const newAtm = Math.max(280 * 2.13, prev.atm + atmChange); // Don't let it drop below pre-industrial randomly
-            
-            setHistory(h => {
-              const newHist = [...h, { year: newYear, ppm: newAtm / 2.13 }];
-              if (newHist.length > 50) newHist.shift(); // Keep last 50 years for graph
-              return newHist;
+            // Carbon Reservoirs (Sinks) measured in GtC
+            const [carbonState, setCarbonState] = useState({
+                atm: START_ATM,
+                ocean: START_OCEAN,
+                bio: START_BIO,
+                fossil: START_FOSSIL,
             });
 
-            return {
-              atm: newAtm,
-              ocean: prev.ocean + (f.oceanAbsorb - f.oceanRelease),
-              bio: Math.max(0, prev.bio + (f.photosynthesis - f.respiration)),
-              fossil: Math.max(0, prev.fossil - f.combustion + f.captureFlux) // Captured carbon pumped back into Lithosphere
-            };
-          });
-          
-          return newYear;
-        });
-      }, 400); // 1 year = 0.4 seconds
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying, emissions, deforestation, carbonCapture, tempAnomaly]);
+            // History for the Keeling Curve Graph
+            const [history, setHistory] = useState([{ year: START_YEAR, ppm: START_ATM / 2.13 }]);
 
-  // --- CANVAS PARTICLE ENGINE (Directed Bezier Flow) ---
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-
-    const resizeCanvas = () => {
-      const parent = canvas.parentElement;
-      canvas.width = parent.clientWidth;
-      canvas.height = parent.clientHeight;
-    };
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
-    class FluxToken {
-      constructor(type, w, h) {
-        this.type = type;
-        this.t = 0; // Progress along curve (0 to 1)
-        this.speed = 0.004 + Math.random() * 0.001; // Constant speed for clean chain
-        this.size = 4 + Math.random() * 2; // Smaller, simple circles
-        
-        // Define logical zones relative to canvas size
-        const atmY = h * 0.2;
-        const groundY = h * 0.6;
-        const bioX = w * 0.3;
-        const factoryX = w * 0.45;
-        const oceanX = w * 0.8;
-
-        // Clean, straight vertical paths for organized "chain" flow
-        const paths = {
-          combustion: {
-            p0: { x: factoryX + 20, y: groundY - 140 }, // Top of smokestack
-            cp: { x: factoryX + 20, y: atmY },
-            p2: { x: factoryX + 20, y: atmY - 30 }
-          },
-          capture: {
-            p0: { x: factoryX + 85, y: atmY - 10 },
-            cp: { x: factoryX + 85, y: atmY + 50 },
-            p2: { x: factoryX + 85, y: groundY - 20 }
-          },
-          photosynthesis: {
-            p0: { x: bioX - 25, y: atmY - 10 },
-            cp: { x: bioX - 25, y: atmY + 50 },
-            p2: { x: bioX - 25, y: groundY - 20 }
-          },
-          respiration: {
-            p0: { x: bioX + 25, y: groundY - 10 },
-            cp: { x: bioX + 25, y: atmY + 50 },
-            p2: { x: bioX + 25, y: atmY - 10 }
-          },
-          permafrost: {
-            p0: { x: bioX - 80, y: groundY - 10 },
-            cp: { x: bioX - 80, y: atmY + 50 },
-            p2: { x: bioX - 80, y: atmY - 10 }
-          },
-          oceanAbsorb: {
-            p0: { x: oceanX - 25, y: atmY - 10 },
-            cp: { x: oceanX - 25, y: groundY - 20 },
-            p2: { x: oceanX - 25, y: groundY + 50 }
-          },
-          oceanRelease: {
-            p0: { x: oceanX + 25, y: groundY + 50 },
-            cp: { x: oceanX + 25, y: groundY - 20 },
-            p2: { x: oceanX + 25, y: atmY - 10 }
-          }
-        };
-
-        const colors = {
-          combustion: '#EF4444',
-          capture: '#C084FC',
-          photosynthesis: '#10B981',
-          respiration: '#94A3B8',
-          permafrost: '#F59E0B',
-          oceanAbsorb: '#38BDF8',
-          oceanRelease: '#BAE6FD'
-        };
-
-        this.path = paths[type];
-        this.color = colors[type];
-      }
-
-      update() {
-        this.t += this.speed;
-      }
-
-      draw(ctx) {
-        if (this.t > 1) return;
-
-        // Quadratic Bezier interpolation
-        const invT = 1 - this.t;
-        const x = invT * invT * this.path.p0.x + 2 * invT * this.t * this.path.cp.x + this.t * this.t * this.path.p2.x;
-        const y = invT * invT * this.path.p0.y + 2 * invT * this.t * this.path.cp.y + this.t * this.t * this.path.p2.y;
-
-        // Smooth Fade In/Out
-        let opacity = 1;
-        if (this.t < 0.1) opacity = this.t / 0.1;
-        else if (this.t > 0.9) opacity = (1 - this.t) / 0.1;
-
-        // Draw Simplistic Circle Particle
-        ctx.beginPath();
-        ctx.arc(x, y, this.size, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
-        ctx.globalAlpha = opacity;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-      }
-    }
-
-    const renderLoop = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const cRef = controlsRef.current;
-      const sRef = stateRef.current;
-      
-      const currentPpmRender = sRef.atm / 2.13;
-      const tempAnomRender = Math.max(0, 3.0 * Math.log2(currentPpmRender / 280));
-      const f = calculateFluxes(sRef, cRef.emissions, cRef.deforestation, cRef.carbonCapture, tempAnomRender);
-
-      if (cRef.isPlaying) {
-        // Spawn multiplier
-        const spawnMult = 0.012; // Lowered to create distinct, clean chains
-        
-        // Intensify visual combustion drastically as an educational cue
-        const combustionVisual = f.combustion * (1 + f.combustion/5); 
-
-        if (Math.random() < combustionVisual * spawnMult) particlesRef.current.push(new FluxToken('combustion', canvas.width, canvas.height));
-        if (Math.random() < f.photosynthesis * spawnMult) particlesRef.current.push(new FluxToken('photosynthesis', canvas.width, canvas.height));
-        if (Math.random() < f.respiration * spawnMult) particlesRef.current.push(new FluxToken('respiration', canvas.width, canvas.height));
-        if (Math.random() < f.oceanAbsorb * spawnMult) particlesRef.current.push(new FluxToken('oceanAbsorb', canvas.width, canvas.height));
-        if (Math.random() < f.oceanRelease * spawnMult) particlesRef.current.push(new FluxToken('oceanRelease', canvas.width, canvas.height));
-        if (Math.random() < f.captureFlux * spawnMult) particlesRef.current.push(new FluxToken('capture', canvas.width, canvas.height));
-        if (Math.random() < f.permafrostRelease * spawnMult) particlesRef.current.push(new FluxToken('permafrost', canvas.width, canvas.height));
-      }
-
-      // Update and Draw
-      particlesRef.current = particlesRef.current.filter(p => {
-        p.update();
-        p.draw(ctx);
-        return p.t <= 1.0;
-      });
-
-      animationFrameId = requestAnimationFrame(renderLoop);
-    };
-
-    renderLoop();
-
-    return () => {
-      window.removeEventListener('resize', resizeCanvas);
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, []);
-
-  const handleReset = () => {
-    setIsPlaying(false);
-    setYear(START_YEAR);
-    setCarbonState({ atm: START_ATM, ocean: START_OCEAN, bio: START_BIO, fossil: START_FOSSIL });
-    setHistory([{ year: START_YEAR, ppm: START_ATM / 2.13 }]);
-    setEmissions(10);
-    setDeforestation(0);
-    setCarbonCapture(0);
-    particlesRef.current = [];
-  };
-
-  // --- SVG GENERATORS ---
-  
-  // Render Trees based on deforestation slider
-  const renderTrees = () => {
-    const totalTrees = 8;
-    const visibleTrees = Math.floor(totalTrees * ((100 - deforestation) / 100));
-    const trees = [];
-    
-    for (let i = 0; i < totalTrees; i++) {
-      const isVisible = i < visibleTrees;
-      const xPos = 5 + i * 6; // Spaced across the biosphere
-      const height = 40 + (i % 3) * 15;
-      
-      trees.push(
-        <svg key={i} x={`${xPos}%`} y="60%" overflow="visible" className="transition-all duration-1000">
-          {isVisible ? (
-            <g className="opacity-100">
-              <rect x="-3" y={`-${height}`} width="6" height={height} fill="#78350f" /> {/* Trunk */}
-              <circle cx="0" cy={`-${height + 10}`} r="18" fill="#10B981" /> {/* Leaves */}
-              <circle cx="-10" cy={`-${height}`} r="14" fill="#059669" />
-              <circle cx="10" cy={`-${height}`} r="14" fill="#047857" />
-            </g>
-          ) : (
-            <g className="opacity-100">
-              {/* Deforested Stump */}
-              <rect x="-4" y="-12" width="8" height="12" fill="#451a03" />
-              <polygon points="-4,-12 0,-15 4,-12" fill="#78350f" />
-            </g>
-          )}
-        </svg>
-      );
-    }
-    return trees;
-  };
-
-  // Render Keeling Curve Mini-Graph
-  const renderGraph = () => {
-    if (history.length < 2) return null;
-    const w = 300; const h = 100;
-    const minPpm = 250; 
-    const maxPpm = Math.max(500, ...history.map(d => d.ppm));
-    
-    const points = history.map((d, i) => {
-      const x = (i / (history.length - 1)) * w;
-      const y = h - ((d.ppm - minPpm) / (maxPpm - minPpm)) * h;
-      return `${x},${y}`;
-    }).join(' ');
-
-    return (
-      <div className="w-full mt-4 bg-slate-950 p-3 rounded-lg border border-slate-800">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest flex items-center gap-1">
-            <Activity size={12}/> Atmospheric CO₂ Trend
-          </span>
-          <span className="text-[10px] text-cyan-500 font-mono">Max: {Math.round(maxPpm)} ppm</span>
-        </div>
-        <svg width="100%" height="100" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
-          {/* Danger Zone background */}
-          <rect x="0" y="0" width={w} height={h - ((450 - minPpm)/(maxPpm - minPpm))*h} fill="#ef4444" opacity="0.1" />
-          <line x1="0" y1={h - ((450 - minPpm)/(maxPpm - minPpm))*h} x2={w} y2={h - ((450 - minPpm)/(maxPpm - minPpm))*h} stroke="#ef4444" strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />
-          
-          <polyline points={points} fill="none" stroke="#22d3ee" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-    );
-  };
-
-  // Determine dynamic colors
-  const themeColor = alertLevel === 'danger' ? 'rose' : alertLevel === 'warning' ? 'amber' : 'emerald';
-
-  return (
-    <div className="bg-[#0F172A] min-h-screen w-full text-slate-200 flex flex-col md:flex-row p-2 md:p-4 gap-4 font-sans overflow-hidden">
-      
-      {/* LEFT SIDEBAR: CONTROLS & DASHBOARD */}
-      <aside className={`w-full md:w-[420px] flex flex-col gap-4 shrink-0 bg-slate-800/80 backdrop-blur-xl border border-slate-700/80 p-5 rounded-2xl shadow-2xl transition-all duration-700 border-t-4 border-t-${themeColor}-500 overflow-y-auto`}>
-        
-        {/* Title & Header */}
-        <div className="flex justify-between items-start">
-          <div>
-            <h1 className="text-2xl font-black text-white tracking-wide leading-tight flex items-center gap-2">
-              <Cloud className="text-sky-400" /> Carbon Cycle
-            </h1>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">Earth Systems Simulator</p>
-          </div>
-          <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 flex flex-col items-end shadow-inner">
-             <span className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">Current Year</span>
-             <span className="text-cyan-400 font-mono text-xl font-black leading-none">{year}</span>
-          </div>
-        </div>
-
-        {/* Global Telemetry */}
-        <div className={`bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-inner relative overflow-hidden`}>
-          <div className={`absolute top-0 left-0 w-1 h-full bg-${themeColor}-500 transition-colors duration-500`}></div>
-          
-          <div className="flex justify-between items-center mb-3 ml-2">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Global Climate Status</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest
-              ${alertLevel === 'danger' ? 'bg-rose-950/50 text-rose-400 border-rose-500/50' : 
-                alertLevel === 'warning' ? 'bg-amber-950/50 text-amber-400 border-amber-500/50' : 
-                'bg-emerald-950/50 text-emerald-400 border-emerald-500/50'}`}>
-              {alertLevel === 'danger' ? 'Critical' : alertLevel === 'warning' ? 'Elevated' : 'Stable'}
-            </span>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 ml-2">
-            <div>
-              <span className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Atmospheric CO₂</span>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-3xl font-black font-mono ${alertLevel === 'danger' ? 'text-rose-400' : 'text-cyan-400'}`}>{Math.round(currentPpm)}</span>
-                <span className="text-xs font-bold text-slate-500">ppm</span>
-              </div>
-            </div>
-            <div>
-              <span className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Temp Anomaly</span>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-3xl font-black font-mono ${alertLevel === 'danger' ? 'text-rose-400' : alertLevel === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                  {tempAnomaly > 0 ? '+' : ''}{tempAnomaly.toFixed(1)}
-                </span>
-                <span className="text-xs font-bold text-slate-500">°C</span>
-              </div>
-            </div>
-          </div>
-          
-          {/* Permafrost Thawing Alert */}
-          {tempAnomaly > 2.5 && (
-            <div className="mt-3 p-2 bg-amber-950/50 border border-amber-500/50 rounded flex items-center gap-2 text-[10px] text-amber-400 font-bold animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.2)] ml-2">
-              <AlertTriangle size={14} className="shrink-0" /> Warning: Permafrost thawing! Runaway natural emissions triggered.
-            </div>
-          )}
-
-          {/* Keeling Curve Graph */}
-          {renderGraph()}
-        </div>
-
-        {/* Human Intervention Controls */}
-        <div className="space-y-4 flex-grow">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-700 pb-1 block">Anthropogenic Forcing (Controls)</label>
-          
-          {/* Fossil Fuels */}
-          <div className={`bg-slate-900/50 p-4 rounded-xl border transition-colors ${carbonState.fossil <= 0 ? 'border-rose-500/50 opacity-80' : 'border-slate-800'}`}>
-            <div className="flex justify-between items-center mb-3">
-              <label className="text-sm font-bold text-rose-400 flex items-center gap-2">
-                <Factory size={16} /> Fossil Fuel Emissions
-              </label>
-              <span className={`text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono ${carbonState.fossil <= 0 ? 'text-rose-500 border-rose-500/50 animate-pulse' : ''}`}>
-                {carbonState.fossil <= 0 ? 'DEPLETED' : (emissions === 0 ? '0' : emissions + ' GtC/yr')}
-              </span>
-            </div>
-            <input 
-              type="range" min="0" max="25" step="1"
-              value={carbonState.fossil <= 0 ? 0 : emissions} 
-              onChange={(e) => setEmissions(parseFloat(e.target.value))}
-              disabled={carbonState.fossil <= 0}
-              className={`w-full h-2 bg-slate-800 rounded-lg appearance-none accent-rose-500 ${carbonState.fossil <= 0 ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-            />
-            <p className="text-[9px] text-slate-500 mt-2 leading-tight">
-              {carbonState.fossil <= 0 ? <strong className="text-rose-400">All available fossil fuel reserves have been exhausted.</strong> : "Extracts carbon locked in the Lithosphere and combusts it directly into the Atmosphere."}
-            </p>
-          </div>
-
-          {/* Deforestation */}
-          <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800">
-            <div className="flex justify-between items-center mb-3">
-              <label className="text-sm font-bold text-amber-500 flex items-center gap-2">
-                <Flame size={16} /> Deforestation Level
-              </label>
-              <span className="text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono">{deforestation}%</span>
-            </div>
-            <input 
-              type="range" min="0" max="100" step="5"
-              value={deforestation} onChange={(e) => setDeforestation(parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
-            <p className="text-[9px] text-slate-500 mt-2 leading-tight">Destroys photosynthetic capacity and accelerates biological decay, releasing stored carbon.</p>
-          </div>
-          
-          {/* Geoengineering */}
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-700 pb-1 block mt-4">Future Tech (Mitigation)</label>
-          
-          <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800">
-            <div className="flex justify-between items-center mb-3">
-              <label className="text-sm font-bold text-purple-400 flex items-center gap-2">
-                <DownloadCloud size={16} /> Direct Air Capture (DAC)
-              </label>
-              <span className="text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono">{carbonCapture === 0 ? 'Off' : carbonCapture + ' GtC/yr'}</span>
-            </div>
-            <input 
-              type="range" min="0" max="25" step="1"
-              value={carbonCapture} onChange={(e) => setCarbonCapture(parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-            />
-            <p className="text-[9px] text-slate-500 mt-2 leading-tight">Artificial technology that scrubs CO₂ from the atmosphere and stores it deep underground.</p>
-          </div>
-        </div>
-
-        {/* Play Controls */}
-        <div className="flex gap-3 mt-auto shrink-0 pt-2">
-          <button 
-            onClick={() => setIsPlaying(!isPlaying)}
-            className={`flex-1 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 ${
-              isPlaying ? 'bg-amber-600 hover:bg-amber-500 text-white border border-amber-500' 
-                        : 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500'
-            }`}
-          >
-            {isPlaying ? <><Pause size={18}/> Pause Time</> : <><Play size={18}/> Run Earth</>}
-          </button>
-          <button 
-            onClick={handleReset} 
-            className="px-5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors border border-slate-600 active:scale-95 flex items-center justify-center gap-2"
-          >
-            <RotateCcw size={16}/> Reset
-          </button>
-        </div>
-
-      </aside>
-
-      {/* RIGHT MAIN AREA: VISUAL LANDSCAPE */}
-      <main className="flex-1 relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col min-h-[400px]">
-        
-        {/* Dynamic Legend */}
-        <div className="absolute top-4 right-4 z-20 bg-slate-900/80 backdrop-blur-sm p-3 rounded-xl border border-slate-700/80 shadow-lg pointer-events-none">
-          <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-700 pb-1">Carbon Fluxes</h4>
-          <ul className="space-y-2 text-[10px] font-bold text-slate-300 uppercase tracking-wider">
-            <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10B981]"></span> Photosynthesis</li>
-            <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 shadow-[0_0_8px_#94A3B8]"></span> Respiration / Decay</li>
-            <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_#EF4444]"></span> Combustion</li>
-            <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_8px_#38BDF8]"></span> Ocean Diffusion</li>
-            <li className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-700/50"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 shadow-[0_0_8px_#C084FC]"></span> Carbon Capture</li>
-            <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_#F59E0B]"></span> Permafrost Thaw</li>
-          </ul>
-        </div>
-
-        {/* SVG Background Layer (Static/State-driven visuals) */}
-        <div className="absolute inset-0 z-0 pointer-events-none">
-          <svg className="w-full h-full preserve-3d" preserveAspectRatio="none">
+            // Human Controls
+            const [emissions, setEmissions] = useState(10); // Fossil fuel emissions (GtC/year)
+            const [deforestation, setDeforestation] = useState(0); // 0 to 100%
+            const [carbonCapture, setCarbonCapture] = useState(0); // Geoengineering (GtC/year)
             
-            {/* Sky gradient adapting to CO2 concentration */}
-            <defs>
-              <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor={alertLevel === 'danger' ? "#94a3b8" : alertLevel === 'warning' ? "#bae6fd" : "#7dd3fc"} className="transition-colors duration-1000"/>
-                <stop offset="100%" stopColor={alertLevel === 'danger' ? "#64748b" : alertLevel === 'warning' ? "#e0f2fe" : "#bae6fd"} className="transition-colors duration-1000"/>
-              </linearGradient>
-              <linearGradient id="oceanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#0284c7" />
-                <stop offset="100%" stopColor="#1e3a8a" />
-              </linearGradient>
-              <linearGradient id="smogGrad" x1="0%" y1="100%" x2="0%" y2="0%">
-                <stop offset="0%" stopColor="rgba(120,113,108, 0.6)" />
-                <stop offset="100%" stopColor="rgba(120,113,108, 0)" />
-              </linearGradient>
-            </defs>
+            const [alertLevel, setAlertLevel] = useState('safe');
 
-            {/* Sky / Atmosphere Reservoir */}
-            <rect x="0" y="0" width="100%" height="100%" fill="url(#skyGrad)" />
-            <text x="50%" y="12%" textAnchor="middle" fill="#FFFFFF" fontSize="28" fontWeight="900" opacity="0.85" className="tracking-widest">ATMOSPHERE</text>
-            <text x="50%" y="17%" textAnchor="middle" fill="#FFFFFF" fontSize="16" fontWeight="bold" opacity="0.85">{Math.round(carbonState.atm).toLocaleString()} GtC</text>
+            // Refs for animation loop (prevents stale closures in requestAnimationFrame)
+            const canvasRef = useRef(null);
+            const particlesRef = useRef([]);
+            const stateRef = useRef(carbonState);
+            const controlsRef = useRef({ emissions, deforestation, carbonCapture, isPlaying });
+            
+            // --- SCIENTIFIC MODEL ---
+            const currentPpm = carbonState.atm / 2.13;
+            // Temp anomaly roughly scales logarithmically with CO2 (Climate Sensitivity)
+            const tempAnomaly = Math.max(0, 3.0 * Math.log2(currentPpm / 280));
 
-            {/* Smog Overlay (appears at high CO2) */}
-            <rect x="0" y="0" width="100%" height="60%" fill="url(#smogGrad)" opacity={Math.min(1, (currentPpm - 400) / 400)} className="transition-opacity duration-1000"/>
-
-            {/* Ocean Reservoir */}
-            <rect x="60%" y="60%" width="40%" height="40%" fill="url(#oceanGrad)" />
-            <path d="M 60% 60% Q 70% 58% 80% 60% T 100% 60% L 100% 100% L 60% 100% Z" fill="rgba(255,255,255,0.1)" />
-            <text x="80%" y="75%" textAnchor="middle" fill="#FFFFFF" fontSize="24" fontWeight="900" opacity="0.85" className="tracking-widest">HYDROSPHERE</text>
-            <text x="80%" y="80%" textAnchor="middle" fill="#FFFFFF" fontSize="14" fontWeight="bold" opacity="0.85">{Math.round(carbonState.ocean).toLocaleString()} GtC</text>
-
-            {/* Lithosphere/Ground */}
-            <rect x="0" y="60%" width="60%" height="40%" fill={deforestation > 50 ? "#78350f" : "#451a03"} className="transition-colors duration-1000"/>
-            <text x="30%" y="75%" textAnchor="middle" fill="#FFFFFF" fontSize="24" fontWeight="900" opacity="0.85" className="tracking-widest">LITHOSPHERE</text>
-
-            {/* Fossil Fuel Deposit */}
-            <rect x="35%" y="82%" width="20%" height="10%" fill="#0f172a" rx="8" />
-            <text x="45%" y="87%" textAnchor="middle" fill="#FFFFFF" fontSize="10" fontWeight="bold" className="tracking-widest" opacity="0.85">FOSSIL FUELS</text>
-            <text x="45%" y="90%" textAnchor="middle" fill="#FFFFFF" fontSize="10" opacity="0.85">{Math.round(carbonState.fossil).toLocaleString()} GtC</text>
-
-            {/* Biosphere Grass Layer (Turns brown if deforested) */}
-            <rect x="0" y="58%" width="60%" height="2%" fill={deforestation > 70 ? "#a16207" : "#10b981"} className="transition-colors duration-1000" />
-            <text x="20%" y="65%" textAnchor="middle" fill="#FFFFFF" fontSize="16" fontWeight="bold" opacity="0.85" className="tracking-widest">BIOSPHERE ({Math.round(carbonState.bio).toLocaleString()} GtC)</text>
-
-            {/* Trees */}
-            {renderTrees()}
-
-            {/* Factory/Power Plant with Pipe to Fossil Fuels */}
-            <svg x="45%" y="60%" overflow="visible" className={`transition-all duration-500 ${carbonState.fossil > 0 && emissions > 0 ? 'opacity-100' : 'opacity-40 grayscale'}`}>
-              <g>
-                {/* Pipe descending to Lithosphere */}
-                <rect x="15" y="0" width="10" height="250" fill="#1e293b" />
+            useEffect(() => {
+                stateRef.current = carbonState;
+                controlsRef.current = { emissions, deforestation, carbonCapture, isPlaying };
                 
-                {/* Main Building */}
-                <rect x="-10" y="-80" width="60" height="80" fill="#475569" rx="4"/>
+                if (tempAnomaly > 2.5) setAlertLevel('danger');
+                else if (tempAnomaly > 1.2) setAlertLevel('warning');
+                else setAlertLevel('safe');
+            }, [carbonState, emissions, deforestation, carbonCapture, isPlaying, tempAnomaly]);
+
+            // Calculate detailed fluxes based on current state
+            const calculateFluxes = (state, em, deforestPct, capture, tempAnom) => {
+                // 1. Photosynthesis: Increases slightly with more CO2 (Fertilization limit)
+                const basePhoto = 120;
+                const co2Fertilization = Math.max(0, (state.atm - 596) * 0.05); // 596 GtC = 280ppm (Pre-industrial)
+                const forestCapacity = (100 - deforestPct) / 100;
+                const photosynthesis = (basePhoto + co2Fertilization) * forestCapacity;
+
+                // 2. Respiration & Decay: Base + extra decay from deforested land
+                const baseResp = 120;
+                const deforestDecay = (deforestPct / 100) * 15; // Deforestation causes rapid release of stored soil/wood carbon
                 
-                {/* Pulsing Lights */}
-                <rect x="0" y="-40" width="12" height="20" fill="#fcd34d" className={carbonState.fossil > 0 && emissions > 0 ? "animate-pulse" : ""} />
-                <rect x="28" y="-40" width="12" height="20" fill="#fcd34d" className={carbonState.fossil > 0 && emissions > 0 ? "animate-pulse" : ""} />
+                // Positive Feedback Loop: Extreme warming melts permafrost, releasing stored carbon natively
+                const permafrostRelease = tempAnom > 2.5 ? (tempAnom - 2.5) * 20 : 0; 
+                const respiration = baseResp + deforestDecay + permafrostRelease;
+
+                // 3. Ocean Exchange (Diffusion depends on partial pressure gradient)
+                const baseOcean = 90;
+                const oceanAbsorb = baseOcean + Math.max(0, (state.atm - 596) * 0.025);
+                const oceanRelease = baseOcean;
+
+                // 4. Combustion (Human activity) - Mathematically bounded by available reserves
+                const combustion = Math.min(em, state.fossil); 
+
+                // 5. Geoengineering (Direct Air Capture)
+                const captureFlux = Math.min(capture, state.atm - (280 * 2.13)); // Can't capture below pre-industrial levels
+
+                return { photosynthesis, respiration, combustion, oceanAbsorb, oceanRelease, captureFlux, permafrostRelease };
+            };
+
+            // --- MACRO SIMULATION TICK ---
+            useEffect(() => {
+                let interval;
+                if (isPlaying) {
+                    interval = setInterval(() => {
+                        setYear(y => {
+                            const newYear = y + 1;
+                            
+                            setCarbonState(prev => {
+                                const f = calculateFluxes(prev, emissions, deforestation, carbonCapture, tempAnomaly);
+                                
+                                // Mass Balance Equations
+                                const atmChange = f.respiration + f.combustion + f.oceanRelease - f.photosynthesis - f.oceanAbsorb - f.captureFlux;
+                                const newAtm = Math.max(280 * 2.13, prev.atm + atmChange); // Don't let it drop below pre-industrial randomly
+                                
+                                setHistory(h => {
+                                    const newHist = [...h, { year: newYear, ppm: newAtm / 2.13 }];
+                                    if (newHist.length > 50) newHist.shift(); // Keep last 50 years for graph
+                                    return newHist;
+                                });
+
+                                return {
+                                    atm: newAtm,
+                                    ocean: prev.ocean + (f.oceanAbsorb - f.oceanRelease),
+                                    bio: Math.max(0, prev.bio + (f.photosynthesis - f.respiration)),
+                                    fossil: Math.max(0, prev.fossil - f.combustion + f.captureFlux) // Captured carbon pumped back into Lithosphere
+                                };
+                            });
+                            
+                            return newYear;
+                        });
+                    }, 400); // 1 year = 0.4 seconds
+                }
+                return () => clearInterval(interval);
+            }, [isPlaying, emissions, deforestation, carbonCapture, tempAnomaly]);
+
+            // --- CANVAS PARTICLE ENGINE (Directed Bezier Flow) ---
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationFrameId;
+
+                const resizeCanvas = () => {
+                    const parent = canvas.parentElement;
+                    canvas.width = parent.clientWidth;
+                    canvas.height = parent.clientHeight;
+                };
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+
+                class FluxToken {
+                    constructor(type, w, h) {
+                        this.type = type;
+                        this.t = 0; // Progress along curve (0 to 1)
+                        this.speed = 0.004 + Math.random() * 0.001; // Constant speed for clean chain
+                        this.size = 4 + Math.random() * 2; // Smaller, simple circles
+                        
+                        // Define logical zones relative to canvas size
+                        const atmY = h * 0.2;
+                        const groundY = h * 0.6;
+                        const bioX = w * 0.3;
+                        const factoryX = w * 0.45;
+                        const oceanX = w * 0.8;
+
+                        // Clean, straight vertical paths for organized "chain" flow
+                        const paths = {
+                            combustion: {
+                                p0: { x: factoryX + 20, y: groundY - 140 }, // Top of smokestack
+                                cp: { x: factoryX + 20, y: atmY },
+                                p2: { x: factoryX + 20, y: atmY - 30 }
+                            },
+                            capture: {
+                                p0: { x: factoryX + 85, y: atmY - 10 },
+                                cp: { x: factoryX + 85, y: atmY + 50 },
+                                p2: { x: factoryX + 85, y: groundY - 20 }
+                            },
+                            photosynthesis: {
+                                p0: { x: bioX - 25, y: atmY - 10 },
+                                cp: { x: bioX - 25, y: atmY + 50 },
+                                p2: { x: bioX - 25, y: groundY - 20 }
+                            },
+                            respiration: {
+                                p0: { x: bioX + 25, y: groundY - 10 },
+                                cp: { x: bioX + 25, y: atmY + 50 },
+                                p2: { x: bioX + 25, y: atmY - 10 }
+                            },
+                            permafrost: {
+                                p0: { x: bioX - 80, y: groundY - 10 },
+                                cp: { x: bioX - 80, y: atmY + 50 },
+                                p2: { x: bioX - 80, y: atmY - 10 }
+                            },
+                            oceanAbsorb: {
+                                p0: { x: oceanX - 25, y: atmY - 10 },
+                                cp: { x: oceanX - 25, y: groundY - 20 },
+                                p2: { x: oceanX - 25, y: groundY + 50 }
+                            },
+                            oceanRelease: {
+                                p0: { x: oceanX + 25, y: groundY + 50 },
+                                cp: { x: oceanX + 25, y: groundY - 20 },
+                                p2: { x: oceanX + 25, y: atmY - 10 }
+                            }
+                        };
+
+                        const colors = {
+                            combustion: '#EF4444',
+                            capture: '#C084FC',
+                            photosynthesis: '#10B981',
+                            respiration: '#94A3B8',
+                            permafrost: '#F59E0B',
+                            oceanAbsorb: '#38BDF8',
+                            oceanRelease: '#BAE6FD'
+                        };
+
+                        this.path = paths[type];
+                        this.color = colors[type];
+                    }
+
+                    update() {
+                        this.t += this.speed;
+                    }
+
+                    draw(ctx) {
+                        if (this.t > 1) return;
+
+                        // Quadratic Bezier interpolation
+                        const invT = 1 - this.t;
+                        const x = invT * invT * this.path.p0.x + 2 * invT * this.t * this.path.cp.x + this.t * this.t * this.path.p2.x;
+                        const y = invT * invT * this.path.p0.y + 2 * invT * this.t * this.path.cp.y + this.t * this.t * this.path.p2.y;
+
+                        // Smooth Fade In/Out
+                        let opacity = 1;
+                        if (this.t < 0.1) opacity = this.t / 0.1;
+                        else if (this.t > 0.9) opacity = (1 - this.t) / 0.1;
+
+                        // Draw Simplistic Circle Particle
+                        ctx.beginPath();
+                        ctx.arc(x, y, this.size, 0, Math.PI * 2);
+                        ctx.fillStyle = this.color;
+                        ctx.globalAlpha = opacity;
+                        ctx.fill();
+                        ctx.globalAlpha = 1.0;
+                    }
+                }
+
+                const renderLoop = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const cRef = controlsRef.current;
+                    const sRef = stateRef.current;
+                    
+                    const currentPpmRender = sRef.atm / 2.13;
+                    const tempAnomRender = Math.max(0, 3.0 * Math.log2(currentPpmRender / 280));
+                    const f = calculateFluxes(sRef, cRef.emissions, cRef.deforestation, cRef.carbonCapture, tempAnomRender);
+
+                    if (cRef.isPlaying) {
+                        // Spawn multiplier
+                        const spawnMult = 0.012; // Lowered to create distinct, clean chains
+                        
+                        // Intensify visual combustion drastically as an educational cue
+                        const combustionVisual = f.combustion * (1 + f.combustion/5); 
+
+                        if (Math.random() < combustionVisual * spawnMult) particlesRef.current.push(new FluxToken('combustion', canvas.width, canvas.height));
+                        if (Math.random() < f.photosynthesis * spawnMult) particlesRef.current.push(new FluxToken('photosynthesis', canvas.width, canvas.height));
+                        if (Math.random() < f.respiration * spawnMult) particlesRef.current.push(new FluxToken('respiration', canvas.width, canvas.height));
+                        if (Math.random() < f.oceanAbsorb * spawnMult) particlesRef.current.push(new FluxToken('oceanAbsorb', canvas.width, canvas.height));
+                        if (Math.random() < f.oceanRelease * spawnMult) particlesRef.current.push(new FluxToken('oceanRelease', canvas.width, canvas.height));
+                        if (Math.random() < f.captureFlux * spawnMult) particlesRef.current.push(new FluxToken('capture', canvas.width, canvas.height));
+                        if (Math.random() < f.permafrostRelease * spawnMult) particlesRef.current.push(new FluxToken('permafrost', canvas.width, canvas.height));
+                    }
+
+                    // Update and Draw
+                    particlesRef.current = particlesRef.current.filter(p => {
+                        p.update();
+                        p.draw(ctx);
+                        return p.t <= 1.0;
+                    });
+
+                    animationFrameId = requestAnimationFrame(renderLoop);
+                };
+
+                renderLoop();
+
+                return () => {
+                    window.removeEventListener('resize', resizeCanvas);
+                    cancelAnimationFrame(animationFrameId);
+                };
+            }, []);
+
+            const handleReset = () => {
+                setIsPlaying(false);
+                setYear(START_YEAR);
+                setCarbonState({ atm: START_ATM, ocean: START_OCEAN, bio: START_BIO, fossil: START_FOSSIL });
+                setHistory([{ year: START_YEAR, ppm: START_ATM / 2.13 }]);
+                setEmissions(10);
+                setDeforestation(0);
+                setCarbonCapture(0);
+                particlesRef.current = [];
+            };
+
+            // --- SVG GENERATORS ---
+            
+            // Render Trees based on deforestation slider
+            const renderTrees = () => {
+                const totalTrees = 8;
+                const visibleTrees = Math.floor(totalTrees * ((100 - deforestation) / 100));
+                const trees = [];
                 
-                {/* Smokestack */}
-                <rect x="10" y="-140" width="20" height="60" fill="#1e293b" />
-                <polygon points="-10,-80 50,-80 20,-100" fill="#334155" />
+                for (let i = 0; i < totalTrees; i++) {
+                    const isVisible = i < visibleTrees;
+                    const xPos = 5 + i * 6; // Spaced across the biosphere
+                    const height = 40 + (i % 3) * 15;
+                    
+                    trees.push(
+                        <svg key={i} x={`${xPos}%`} y="60%" overflow="visible" className="transition-all duration-1000">
+                            {isVisible ? (
+                                <g className="opacity-100">
+                                    <rect x="-3" y={`-${height}`} width="6" height={height} fill="#78350f" /> {/* Trunk */}
+                                    <circle cx="0" cy={`-${height + 10}`} r="18" fill="#10B981" /> {/* Leaves */}
+                                    <circle cx="-10" cy={`-${height}`} r="14" fill="#059669" />
+                                    <circle cx="10" cy={`-${height}`} r="14" fill="#047857" />
+                                </g>
+                            ) : (
+                                <g className="opacity-100">
+                                    {/* Deforested Stump */}
+                                    <rect x="-4" y="-12" width="8" height="12" fill="#451a03" />
+                                    <polygon points="-4,-12 0,-15 4,-12" fill="#78350f" />
+                                </g>
+                            )}
+                        </svg>
+                    );
+                }
+                return trees;
+            };
 
-                {/* Animated Smoke Puffs */}
-                {carbonState.fossil > 0 && emissions > 0 && (
-                  <g className="animate-pulse" opacity="0.8">
-                    <circle cx="20" cy="-160" r="15" fill="#334155" />
-                    <circle cx="35" cy="-175" r="20" fill="#475569" />
-                    <circle cx="10" cy="-185" r="25" fill="#1e293b" />
-                    <circle cx="25" cy="-205" r="30" fill="#334155" />
-                  </g>
-                )}
-              </g>
-            </svg>
+            // Render Keeling Curve Mini-Graph
+            const renderGraph = () => {
+                if (history.length < 2) return null;
+                const w = 300; const h = 100;
+                const minPpm = 250; 
+                const maxPpm = Math.max(500, ...history.map(d => d.ppm));
+                
+                const points = history.map((d, i) => {
+                    const x = (i / (history.length - 1)) * w;
+                    const y = h - ((d.ppm - minPpm) / (maxPpm - minPpm)) * h;
+                    return `${x},${y}`;
+                }).join(' ');
 
-            {/* DAC Plant (Direct Air Capture) */}
-            <svg x="60%" y="60%" overflow="visible" className={`transition-all duration-500 ${carbonCapture > 0 ? 'opacity-100' : 'opacity-30 grayscale'}`}>
-              <g>
-                {/* Pipe descending to Lithosphere */}
-                <rect x="0" y="0" width="10" height="250" fill="#3b0764" />
-                <rect x="-15" y="-40" width="40" height="40" fill="#581c87" rx="4"/>
-                {/* Spinning fan representing air intake */}
-                <circle cx="5" cy="-20" r="12" fill="#a855f7" className={carbonCapture > 0 ? "animate-spin" : ""} style={{ transformOrigin: "5px -20px" }}/>
-              </g>
-            </svg>
+                return (
+                    <div className="w-full mt-4 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest flex items-center gap-1">
+                                <i className="fa-solid fa-chart-line text-[12px]"></i> Atmospheric CO₂ Trend
+                            </span>
+                            <span className="text-[10px] text-cyan-500 font-mono">Max: {Math.round(maxPpm)} ppm</span>
+                        </div>
+                        <svg width="100%" height="100" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
+                            {/* Danger Zone background */}
+                            <rect x="0" y="0" width={w} height={Math.max(0, h - ((450 - minPpm)/(maxPpm - minPpm))*h)} fill="#ef4444" opacity="0.1" />
+                            <line x1="0" y1={h - ((450 - minPpm)/(maxPpm - minPpm))*h} x2={w} y2={h - ((450 - minPpm)/(maxPpm - minPpm))*h} stroke="#ef4444" strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />
+                            
+                            <polyline points={points} fill="none" stroke="#22d3ee" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    </div>
+                );
+            };
 
-          </svg>
-        </div>
+            // Determine dynamic colors
+            const themeColor = alertLevel === 'danger' ? 'rose' : alertLevel === 'warning' ? 'amber' : 'emerald';
 
-        {/* Canvas Particle Overlay (Z-index above SVG) */}
-        <canvas 
-          ref={canvasRef} 
-          className="absolute inset-0 z-10 w-full h-full pointer-events-none"
-        />
+            return (
+                <div className="bg-[#0F172A] h-screen max-h-[1000px] w-full text-slate-200 flex flex-col md:flex-row p-2 md:p-4 gap-4 font-sans overflow-hidden">
+                    
+                    {/* LEFT SIDEBAR: CONTROLS & DASHBOARD */}
+                    <aside className={`w-full md:w-[420px] flex flex-col gap-4 shrink-0 bg-slate-800/80 backdrop-blur-xl border border-slate-700/80 p-5 rounded-2xl shadow-2xl transition-all duration-700 border-t-4 border-t-${themeColor}-500 overflow-y-auto`}>
+                        
+                        {/* Title & Header */}
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <h1 className="text-2xl font-black text-white tracking-wide leading-tight flex items-center gap-2">
+                                    <i className="fa-solid fa-cloud text-sky-400"></i> Carbon Cycle
+                                </h1>
+                                <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">Earth Systems Simulator</p>
+                            </div>
+                            <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 flex flex-col items-end shadow-inner">
+                                <span className="text-slate-500 text-[9px] font-bold uppercase tracking-widest">Current Year</span>
+                                <span className="text-cyan-400 font-mono text-xl font-black leading-none">{year}</span>
+                            </div>
+                        </div>
 
-        {/* Educational Prompt */}
-        {!isPlaying && year === START_YEAR && (
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 bg-slate-900/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] border border-slate-700 max-w-md text-center animate-bounce">
-            <h3 className="text-lg font-bold text-white mb-2">Welcome to Earth</h3>
-            <p className="text-sm text-slate-300 leading-relaxed mb-4">
-              Click <strong className="text-emerald-400">Run Earth</strong> to start the clock. Watch how the colored carbon particles flow between reservoirs, and monitor the Keeling Curve graph to see if humanity survives!
-            </p>
-          </div>
-        )}
+                        {/* Global Telemetry */}
+                        <div className={`bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-inner relative overflow-hidden shrink-0`}>
+                            <div className={`absolute top-0 left-0 w-1 h-full bg-${themeColor}-500 transition-colors duration-500`}></div>
+                            
+                            <div className="flex justify-between items-center mb-3 ml-2">
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Global Climate Status</span>
+                                <span className={`text-[10px] px-2 py-0.5 rounded border font-bold uppercase tracking-widest
+                                    ${alertLevel === 'danger' ? 'bg-rose-950/50 text-rose-400 border-rose-500/50' : 
+                                    alertLevel === 'warning' ? 'bg-amber-950/50 text-amber-400 border-amber-500/50' : 
+                                    'bg-emerald-950/50 text-emerald-400 border-emerald-500/50'}`}>
+                                    {alertLevel === 'danger' ? 'Critical' : alertLevel === 'warning' ? 'Elevated' : 'Stable'}
+                                </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4 ml-2">
+                                <div>
+                                    <span className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Atmospheric CO₂</span>
+                                    <div className="flex items-baseline gap-1">
+                                        <span className={`text-3xl font-black font-mono ${alertLevel === 'danger' ? 'text-rose-400' : 'text-cyan-400'}`}>{Math.round(currentPpm)}</span>
+                                        <span className="text-xs font-bold text-slate-500">ppm</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <span className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Temp Anomaly</span>
+                                    <div className="flex items-baseline gap-1">
+                                        <span className={`text-3xl font-black font-mono ${alertLevel === 'danger' ? 'text-rose-400' : alertLevel === 'warning' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                            {tempAnomaly > 0 ? '+' : ''}{tempAnomaly.toFixed(1)}
+                                        </span>
+                                        <span className="text-xs font-bold text-slate-500">°C</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Permafrost Thawing Alert */}
+                            {tempAnomaly > 2.5 && (
+                                <div className="mt-3 p-2 bg-amber-950/50 border border-amber-500/50 rounded flex items-center gap-2 text-[10px] text-amber-400 font-bold animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.2)] ml-2">
+                                    <i className="fa-solid fa-triangle-exclamation text-xs shrink-0"></i> Warning: Permafrost thawing! Runaway natural emissions triggered.
+                                </div>
+                            )}
 
-      </main>
-    </div>
-  );
-}
+                            {/* Keeling Curve Graph */}
+                            {renderGraph()}
+                        </div>
+
+                        {/* Human Intervention Controls */}
+                        <div className="space-y-4 flex-grow overflow-y-auto pr-2 custom-scrollbar">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-700 pb-1 block">Anthropogenic Forcing (Controls)</label>
+                            
+                            {/* Fossil Fuels */}
+                            <div className={`bg-slate-900/50 p-4 rounded-xl border transition-colors ${carbonState.fossil <= 0 ? 'border-rose-500/50 opacity-80' : 'border-slate-800'}`}>
+                                <div className="flex justify-between items-center mb-3">
+                                    <label className="text-sm font-bold text-rose-400 flex items-center gap-2">
+                                        <i className="fa-solid fa-industry text-base"></i> Fossil Fuel Emissions
+                                    </label>
+                                    <span className={`text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono ${carbonState.fossil <= 0 ? 'text-rose-500 border-rose-500/50 animate-pulse' : ''}`}>
+                                        {carbonState.fossil <= 0 ? 'DEPLETED' : (emissions === 0 ? '0' : emissions + ' GtC/yr')}
+                                    </span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="25" step="1"
+                                    value={carbonState.fossil <= 0 ? 0 : emissions} 
+                                    onChange={(e) => setEmissions(parseFloat(e.target.value))}
+                                    disabled={carbonState.fossil <= 0}
+                                    className={`slider-rose w-full h-2 rounded-lg appearance-none ${carbonState.fossil <= 0 ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                                />
+                                <p className="text-[9px] text-slate-500 mt-2 leading-tight">
+                                    {carbonState.fossil <= 0 ? <strong className="text-rose-400">All available fossil fuel reserves have been exhausted.</strong> : "Extracts carbon locked in the Lithosphere and combusts it directly into the Atmosphere."}
+                                </p>
+                            </div>
+
+                            {/* Deforestation */}
+                            <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800">
+                                <div className="flex justify-between items-center mb-3">
+                                    <label className="text-sm font-bold text-amber-500 flex items-center gap-2">
+                                        <i className="fa-solid fa-fire text-base"></i> Deforestation Level
+                                    </label>
+                                    <span className="text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono">{deforestation}%</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="100" step="5"
+                                    value={deforestation} onChange={(e) => setDeforestation(parseFloat(e.target.value))}
+                                    className="slider-amber w-full h-2 rounded-lg appearance-none cursor-pointer"
+                                />
+                                <p className="text-[9px] text-slate-500 mt-2 leading-tight">Destroys photosynthetic capacity and accelerates biological decay, releasing stored carbon.</p>
+                            </div>
+                            
+                            {/* Geoengineering */}
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-700 pb-1 block mt-4">Future Tech (Mitigation)</label>
+                            
+                            <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800">
+                                <div className="flex justify-between items-center mb-3">
+                                    <label className="text-sm font-bold text-purple-400 flex items-center gap-2">
+                                        <i className="fa-solid fa-cloud-arrow-down text-base"></i> Direct Air Capture (DAC)
+                                    </label>
+                                    <span className="text-xs font-bold text-white bg-slate-950 px-2 py-1 rounded border border-slate-700 font-mono">{carbonCapture === 0 ? 'Off' : carbonCapture + ' GtC/yr'}</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="25" step="1"
+                                    value={carbonCapture} onChange={(e) => setCarbonCapture(parseFloat(e.target.value))}
+                                    className="slider-purple w-full h-2 rounded-lg appearance-none cursor-pointer"
+                                />
+                                <p className="text-[9px] text-slate-500 mt-2 leading-tight">Artificial technology that scrubs CO₂ from the atmosphere and stores it deep underground.</p>
+                            </div>
+                        </div>
+
+                        {/* Play Controls */}
+                        <div className="flex gap-3 mt-auto shrink-0 pt-2">
+                            <button 
+                                onClick={() => setIsPlaying(!isPlaying)}
+                                className={`flex-1 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 ${
+                                    isPlaying ? 'bg-amber-600 hover:bg-amber-500 text-white border border-amber-500' 
+                                            : 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500'
+                                }`}
+                            >
+                                {isPlaying ? <><i className="fa-solid fa-pause text-lg"></i> Pause Time</> : <><i className="fa-solid fa-play text-lg"></i> Run Earth</>}
+                            </button>
+                            <button 
+                                onClick={handleReset} 
+                                className="px-5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors border border-slate-600 active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                <i className="fa-solid fa-rotate-left text-base"></i> Reset
+                            </button>
+                        </div>
+
+                    </aside>
+
+                    {/* RIGHT MAIN AREA: VISUAL LANDSCAPE */}
+                    <main className="flex-1 relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col min-h-[400px]">
+                        
+                        {/* Dynamic Legend */}
+                        <div className="absolute top-4 right-4 z-20 bg-slate-900/80 backdrop-blur-sm p-3 rounded-xl border border-slate-700/80 shadow-lg pointer-events-none">
+                            <h4 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-700 pb-1">Carbon Fluxes</h4>
+                            <ul className="space-y-2 text-[10px] font-bold text-slate-300 uppercase tracking-wider">
+                                <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10B981]"></span> Photosynthesis</li>
+                                <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 shadow-[0_0_8px_#94A3B8]"></span> Respiration / Decay</li>
+                                <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_#EF4444]"></span> Combustion</li>
+                                <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_8px_#38BDF8]"></span> Ocean Diffusion</li>
+                                <li className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-700/50"><span className="w-2.5 h-2.5 rounded-full bg-purple-500 shadow-[0_0_8px_#C084FC]"></span> Carbon Capture</li>
+                                <li className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_#F59E0B]"></span> Permafrost Thaw</li>
+                            </ul>
+                        </div>
+
+                        {/* SVG Background Layer (Static/State-driven visuals) */}
+                        <div className="absolute inset-0 z-0 pointer-events-none">
+                            <svg className="w-full h-full preserve-3d" preserveAspectRatio="none">
+                                
+                                {/* Sky gradient adapting to CO2 concentration */}
+                                <defs>
+                                    <linearGradient id="skyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                        <stop offset="0%" stopColor={alertLevel === 'danger' ? "#94a3b8" : alertLevel === 'warning' ? "#bae6fd" : "#7dd3fc"} className="transition-colors duration-1000"/>
+                                        <stop offset="100%" stopColor={alertLevel === 'danger' ? "#64748b" : alertLevel === 'warning' ? "#e0f2fe" : "#bae6fd"} className="transition-colors duration-1000"/>
+                                    </linearGradient>
+                                    <linearGradient id="oceanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                                        <stop offset="0%" stopColor="#0284c7" />
+                                        <stop offset="100%" stopColor="#1e3a8a" />
+                                    </linearGradient>
+                                    <linearGradient id="smogGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+                                        <stop offset="0%" stopColor="rgba(120,113,108, 0.6)" />
+                                        <stop offset="100%" stopColor="rgba(120,113,108, 0)" />
+                                    </linearGradient>
+                                </defs>
+
+                                {/* Sky / Atmosphere Reservoir */}
+                                <rect x="0" y="0" width="100%" height="100%" fill="url(#skyGrad)" />
+                                <text x="50%" y="12%" textAnchor="middle" fill="#FFFFFF" fontSize="28" fontWeight="900" opacity="0.85" className="tracking-widest">ATMOSPHERE</text>
+                                <text x="50%" y="17%" textAnchor="middle" fill="#FFFFFF" fontSize="16" fontWeight="bold" opacity="0.85">{Math.round(carbonState.atm).toLocaleString()} GtC</text>
+
+                                {/* Smog Overlay (appears at high CO2) */}
+                                <rect x="0" y="0" width="100%" height="60%" fill="url(#smogGrad)" opacity={Math.min(1, (currentPpm - 400) / 400)} className="transition-opacity duration-1000"/>
+
+                                {/* Ocean Reservoir */}
+                                <rect x="60%" y="60%" width="40%" height="40%" fill="url(#oceanGrad)" />
+                                <path d="M 60% 60% Q 70% 58% 80% 60% T 100% 60% L 100% 100% L 60% 100% Z" fill="rgba(255,255,255,0.1)" />
+                                <text x="80%" y="75%" textAnchor="middle" fill="#FFFFFF" fontSize="24" fontWeight="900" opacity="0.85" className="tracking-widest">HYDROSPHERE</text>
+                                <text x="80%" y="80%" textAnchor="middle" fill="#FFFFFF" fontSize="14" fontWeight="bold" opacity="0.85">{Math.round(carbonState.ocean).toLocaleString()} GtC</text>
+
+                                {/* Lithosphere/Ground */}
+                                <rect x="0" y="60%" width="60%" height="40%" fill={deforestation > 50 ? "#78350f" : "#451a03"} className="transition-colors duration-1000"/>
+                                <text x="30%" y="75%" textAnchor="middle" fill="#FFFFFF" fontSize="24" fontWeight="900" opacity="0.85" className="tracking-widest">LITHOSPHERE</text>
+
+                                {/* Fossil Fuel Deposit */}
+                                <rect x="35%" y="82%" width="20%" height="10%" fill="#0f172a" rx="8" />
+                                <text x="45%" y="87%" textAnchor="middle" fill="#FFFFFF" fontSize="10" fontWeight="bold" className="tracking-widest" opacity="0.85">FOSSIL FUELS</text>
+                                <text x="45%" y="90%" textAnchor="middle" fill="#FFFFFF" fontSize="10" opacity="0.85">{Math.round(carbonState.fossil).toLocaleString()} GtC</text>
+
+                                {/* Biosphere Grass Layer (Turns brown if deforested) */}
+                                <rect x="0" y="58%" width="60%" height="2%" fill={deforestation > 70 ? "#a16207" : "#10b981"} className="transition-colors duration-1000" />
+                                <text x="20%" y="65%" textAnchor="middle" fill="#FFFFFF" fontSize="16" fontWeight="bold" opacity="0.85" className="tracking-widest">BIOSPHERE ({Math.round(carbonState.bio).toLocaleString()} GtC)</text>
+
+                                {/* Trees */}
+                                {renderTrees()}
+
+                                {/* Factory/Power Plant with Pipe to Fossil Fuels */}
+                                <svg x="45%" y="60%" overflow="visible" className={`transition-all duration-500 ${carbonState.fossil > 0 && emissions > 0 ? 'opacity-100' : 'opacity-40 grayscale'}`}>
+                                    <g>
+                                        {/* Pipe descending to Lithosphere */}
+                                        <rect x="15" y="0" width="10" height="250" fill="#1e293b" />
+                                        
+                                        {/* Main Building */}
+                                        <rect x="-10" y="-80" width="60" height="80" fill="#475569" rx="4"/>
+                                        
+                                        {/* Pulsing Lights */}
+                                        <rect x="0" y="-40" width="12" height="20" fill="#fcd34d" className={carbonState.fossil > 0 && emissions > 0 ? "animate-pulse" : ""} />
+                                        <rect x="28" y="-40" width="12" height="20" fill="#fcd34d" className={carbonState.fossil > 0 && emissions > 0 ? "animate-pulse" : ""} />
+                                        
+                                        {/* Smokestack */}
+                                        <rect x="10" y="-140" width="20" height="60" fill="#1e293b" />
+                                        <polygon points="-10,-80 50,-80 20,-100" fill="#334155" />
+
+                                        {/* Animated Smoke Puffs */}
+                                        {carbonState.fossil > 0 && emissions > 0 && (
+                                            <g className="animate-pulse" opacity="0.8">
+                                                <circle cx="20" cy="-160" r="15" fill="#334155" />
+                                                <circle cx="35" cy="-175" r="20" fill="#475569" />
+                                                <circle cx="10" cy="-185" r="25" fill="#1e293b" />
+                                                <circle cx="25" cy="-205" r="30" fill="#334155" />
+                                            </g>
+                                        )}
+                                    </g>
+                                </svg>
+
+                                {/* DAC Plant (Direct Air Capture) */}
+                                <svg x="60%" y="60%" overflow="visible" className={`transition-all duration-500 ${carbonCapture > 0 ? 'opacity-100' : 'opacity-30 grayscale'}`}>
+                                    <g>
+                                        {/* Pipe descending to Lithosphere */}
+                                        <rect x="0" y="0" width="10" height="250" fill="#3b0764" />
+                                        <rect x="-15" y="-40" width="40" height="40" fill="#581c87" rx="4"/>
+                                        {/* Spinning fan representing air intake */}
+                                        <circle cx="5" cy="-20" r="12" fill="#a855f7" className={carbonCapture > 0 ? "animate-spin" : ""} style={{ transformOrigin: "5px -20px" }}/>
+                                    </g>
+                                </svg>
+
+                            </svg>
+                        </div>
+
+                        {/* Canvas Particle Overlay (Z-index above SVG) */}
+                        <canvas 
+                            ref={canvasRef} 
+                            className="absolute inset-0 z-10 w-full h-full pointer-events-none"
+                        />
+
+                        {/* Educational Prompt */}
+                        {!isPlaying && year === START_YEAR && (
+                            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 bg-slate-900/90 backdrop-blur-md px-6 py-4 rounded-2xl shadow-[0_0_30px_rgba(0,0,0,0.5)] border border-slate-700 max-w-md text-center animate-bounce">
+                                <h3 className="text-lg font-bold text-white mb-2">Welcome to Earth</h3>
+                                <p className="text-sm text-slate-300 leading-relaxed mb-4">
+                                    Click <strong className="text-emerald-400">Run Earth</strong> to start the clock. Watch how the colored carbon particles flow between reservoirs, and monitor the Keeling Curve graph to see if humanity survives!
+                                </p>
+                            </div>
+                        )}
+
+                    </main>
+                </div>
+            );
+        }
+
+        // Render Application
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
