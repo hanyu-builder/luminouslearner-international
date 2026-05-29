@@ -3,7 +3,7 @@ import { Map, Ruler, Calculator, Eye, RefreshCw, BarChart2, Target, Sprout, Info
 
 /* SCIENTIFIC MODEL & CONCEPTS
   ---------------------------
-  Topic: Transect Sampling (Belt Transect Method)
+  Topic: Transect Sampling & Zonation Analysis
   
   Math & Formulas:
   1. Area of one Belt Transect = Length * Width
@@ -13,7 +13,7 @@ import { Map, Ruler, Calculator, Eye, RefreshCw, BarChart2, Target, Sprout, Info
   Ecological Distributions:
   - Random: Uniformly scattered.
   - Clustered: Grouped due to seed dispersal or localized resources.
-  - Gradient (Ecotone): Distribution strongly skewed by a changing abiotic factor (Light/Shade).
+  - Gradient (Zonation): Distribution strongly skewed by a changing abiotic factor.
 */
 
 // --- Engine & Field Constants ---
@@ -35,13 +35,24 @@ const HABITAT_PROFILES = {
   },
   gradient: {
     id: 'gradient',
-    name: 'Forest to Meadow Gradient',
+    name: 'Forest/Meadow Ecotone',
     desc: 'An Ecotone. A dense, shady forest on the left transitions into a sunny meadow on the right.',
-    bg: 'gradient', // Custom drawn in canvas
+    bg: 'gradient', 
     species: {
       A: { id: 'A', name: 'Shade Fern', emoji: '🌿', distribution: 'skew_left', trueCount: 450, size: 1.5 },
       B: { id: 'B', name: 'Edge Shrub', emoji: '🌳', distribution: 'center', trueCount: 120, size: 2.0 },
       C: { id: 'C', name: 'Sun Daisy', emoji: '🌻', distribution: 'skew_right', trueCount: 500, size: 1.2 }
+    }
+  },
+  intertidal: {
+    id: 'intertidal',
+    name: 'Rocky Shore Intertidal',
+    desc: 'Marine Zonation. Dry rocks on the left transition into deep tidal waters on the right.',
+    bg: 'marine_gradient', 
+    species: {
+      A: { id: 'A', name: 'Barnacles', emoji: '🐚', distribution: 'skew_left', trueCount: 700, size: 1.0 },
+      B: { id: 'B', name: 'Mussels', emoji: '🦪', distribution: 'center_cluster', trueCount: 350, size: 1.3 },
+      C: { id: 'C', name: 'Sea Kelp', emoji: '🌿', distribution: 'skew_right', trueCount: 200, size: 1.8 }
     }
   }
 };
@@ -83,25 +94,30 @@ export default function App() {
           px = Math.random() * FIELD_SIZE_M;
         } else if (sp.distribution === 'clustered') {
           const numClusters = 6;
-          // Seed the clusters deterministically based on species ID to keep them somewhat grouped
           const clusterId = i % numClusters;
           const cx = ((clusterId * 17 + 43) % 80) + 10;
           const cy = ((clusterId * 31 + 17) % 80) + 10;
-          
           const offsetX = (Math.random() + Math.random() + Math.random() - 1.5) * 10;
           const offsetY = (Math.random() + Math.random() + Math.random() - 1.5) * 10;
           px = Math.max(0, Math.min(FIELD_SIZE_M, cx + offsetX));
           py = Math.max(0, Math.min(FIELD_SIZE_M, cy + offsetY));
+        } else if (sp.distribution === 'center_cluster') {
+          // Clustered heavily in the middle of the X gradient (Mid-Tide zone)
+          const numClusters = 8;
+          const clusterId = i % numClusters;
+          const cx = (FIELD_SIZE_M / 2) + (Math.random() * 20 - 10); // tightly bound to center X
+          const cy = ((clusterId * 23 + 11) % 90) + 5; // spread along Y
+          const offsetX = (Math.random() + Math.random() - 1.0) * 8;
+          const offsetY = (Math.random() + Math.random() - 1.0) * 8;
+          px = Math.max(0, Math.min(FIELD_SIZE_M, cx + offsetX));
+          py = Math.max(0, Math.min(FIELD_SIZE_M, cy + offsetY));
         } else if (sp.distribution === 'skew_left') {
-          // Cubed random pushes values heavily towards 0 (Left/Shade)
           const val = Math.random() * Math.random() * Math.random();
           px = val * FIELD_SIZE_M;
         } else if (sp.distribution === 'skew_right') {
-          // Inverse cubed pushes values heavily towards 1 (Right/Sun)
           const val = 1.0 - (Math.random() * Math.random() * Math.random());
           px = val * FIELD_SIZE_M;
         } else if (sp.distribution === 'center') {
-          // Central Limit Theorem approximation pushes values towards 0.5 (Middle/Edge)
           const val = (Math.random() + Math.random() + Math.random() + Math.random()) / 4;
           px = val * FIELD_SIZE_M;
         }
@@ -139,7 +155,7 @@ export default function App() {
       
       const isOverlapping = newTransects.some(t => Math.abs(t.startY - startY) < TRANSECT_WIDTH_M);
       if (!isOverlapping) {
-        newTransects.push({ startX, startY, length: transectLength, width: TRANSECT_WIDTH_M });
+        newTransects.push({ id: newTransects.length + 1, startX, startY, length: transectLength, width: TRANSECT_WIDTH_M });
       }
     }
     
@@ -158,14 +174,26 @@ export default function App() {
     const totalAreaSampled = currentTransects.reduce((sum, t) => sum + (t.length * t.width), 0);
     const profile = HABITAT_PROFILES[activeHabitat];
     
+    // Aggregate Counts
+    const counts = {};
+    Object.keys(profile.species).forEach(k => counts[k] = 0);
+    
+    // Per-Transect Breakdown Data
+    const transectDetails = currentTransects.map(t => {
+      const tCounts = {};
+      Object.keys(profile.species).forEach(k => tCounts[k] = 0);
+      return { ...t, counts: tCounts };
+    });
+
     // Count plants inside the transects
-    const counts = { A: 0, B: 0, C: 0 };
     plants.forEach(plant => {
-      const inTransect = currentTransects.some(t => 
-        plant.x >= t.startX && plant.x <= t.startX + t.length &&
-        plant.y >= t.startY && plant.y <= t.startY + t.width
-      );
-      if (inTransect) counts[plant.speciesId]++;
+      currentTransects.forEach((t, index) => {
+        if (plant.x >= t.startX && plant.x <= t.startX + t.length &&
+            plant.y >= t.startY && plant.y <= t.startY + t.width) {
+          counts[plant.speciesId]++;
+          transectDetails[index].counts[plant.speciesId]++;
+        }
+      });
     });
 
     const newResults = {};
@@ -187,12 +215,13 @@ export default function App() {
     setResults({
       ...newResults,
       totalAreaSampled,
-      percentSampled: (totalAreaSampled / FIELD_AREA) * 100
+      percentSampled: (totalAreaSampled / FIELD_AREA) * 100,
+      transectDetails // Attach the individual belt data
     });
     setSampled(true);
   };
 
-  // --- Manual Drag Handlers ---
+  // --- Manual Drag Handlers (Omnidirectional) ---
   const handleMouseDown = (e) => {
     if (!isManualMode) return;
     const rect = canvasRef.current.getBoundingClientRect();
@@ -215,13 +244,29 @@ export default function App() {
   const handleMouseUp = () => {
     if (!dragStart || !dragCurrent || !isManualMode) return;
     
-    const startX = Math.min(dragStart.x, dragCurrent.x);
-    const length = Math.abs(dragCurrent.x - dragStart.x);
-    const startY = Math.max(0, dragStart.y - TRANSECT_WIDTH_M / 2); 
+    const dx = dragCurrent.x - dragStart.x;
+    const dy = dragCurrent.y - dragStart.y;
+    
+    let startX, startY, length, width;
+
+    // Determine if drag was mostly horizontal or vertical
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal Drag
+      length = Math.abs(dx); 
+      width = TRANSECT_WIDTH_M; 
+      startX = Math.min(dragStart.x, dragCurrent.x);
+      startY = Math.max(0, dragStart.y - TRANSECT_WIDTH_M / 2);
+    } else {
+      // Vertical Drag (Top to Bottom)
+      length = TRANSECT_WIDTH_M; 
+      width = Math.abs(dy); 
+      startX = Math.max(0, dragStart.x - TRANSECT_WIDTH_M / 2);
+      startY = Math.min(dragStart.y, dragCurrent.y);
+    }
     
     // Only accept if they dragged a reasonable distance (>1 meter)
-    if (length > 1) {
-      const newTransects = [...transects, { startX, startY, length, width: TRANSECT_WIDTH_M }];
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > 1) {
+      const newTransects = [...transects, { id: transects.length + 1, startX, startY, length, width }];
       setTransects(newTransects);
       calculateResults(newTransects);
     }
@@ -253,6 +298,13 @@ export default function App() {
       grad.addColorStop(0.4, '#064E3B'); // Mid Forest
       grad.addColorStop(0.7, '#65A30D'); // Light Edge
       grad.addColorStop(1, '#84CC16'); // Bright Meadow
+      ctx.fillStyle = grad;
+    } else if (profile.bg === 'marine_gradient') {
+      const grad = ctx.createLinearGradient(0, 0, width, 0);
+      grad.addColorStop(0, '#A8A29E'); // Dry Rock 
+      grad.addColorStop(0.3, '#57534E'); // Wet Rock 
+      grad.addColorStop(0.6, '#0284C7'); // Shallow Water 
+      grad.addColorStop(1, '#1E3A8A'); // Deep Water 
       ctx.fillStyle = grad;
     } else {
       ctx.fillStyle = profile.bg;
@@ -291,20 +343,17 @@ export default function App() {
       
       if (sampled && transects.length > 0) {
         if (isCounted) {
-          // Highlight counted plants with a white glow
           ctx.shadowColor = '#FFFFFF';
           ctx.shadowBlur = 15;
           ctx.globalAlpha = 1.0;
           ctx.fillText(p.emoji, px, py);
-          ctx.shadowBlur = 0; // reset
+          ctx.shadowBlur = 0; 
         } else {
-          // Fade out uncounted plants deeply
           ctx.globalAlpha = 0.15;
           ctx.fillText(p.emoji, px, py);
           ctx.globalAlpha = 1.0;
         }
       } else {
-        // Normal rendering
         ctx.globalAlpha = 1.0;
         ctx.fillText(p.emoji, px, py);
       }
@@ -321,21 +370,39 @@ export default function App() {
       ctx.rect(t.startX * scale, t.startY * scale, t.length * scale, t.width * scale);
       ctx.fill();
       ctx.stroke();
+      
+      // Draw Label
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 12px Inter';
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = '#000000';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Belt ${t.id}`, t.startX * scale + 5, t.startY * scale + 15);
+      ctx.shadowBlur = 0;
     });
     ctx.setLineDash([]); 
 
     // 4. Draw Ghost Transect during Drag
     if (dragStart && dragCurrent) {
-      const startX = Math.min(dragStart.x, dragCurrent.x);
-      const length = Math.abs(dragCurrent.x - dragStart.x);
-      const startY = dragStart.y - TRANSECT_WIDTH_M / 2;
+      const dx = dragCurrent.x - dragStart.x;
+      const dy = dragCurrent.y - dragStart.y;
+      
+      let sx, sy, l, w;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        l = Math.abs(dx); w = TRANSECT_WIDTH_M;
+        sx = Math.min(dragStart.x, dragCurrent.x); sy = dragStart.y - TRANSECT_WIDTH_M / 2;
+      } else {
+        l = TRANSECT_WIDTH_M; w = Math.abs(dy);
+        sx = dragStart.x - TRANSECT_WIDTH_M / 2; sy = Math.min(dragStart.y, dragCurrent.y);
+      }
       
       ctx.fillStyle = 'rgba(250, 204, 21, 0.3)'; // Yellow highlight
       ctx.strokeStyle = '#FACC15';
       ctx.lineWidth = 2;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      ctx.rect(startX * scale, startY * scale, length * scale, TRANSECT_WIDTH_M * scale);
+      ctx.rect(sx * scale, sy * scale, l * scale, w * scale);
       ctx.fill();
       ctx.stroke();
       ctx.setLineDash([]);
@@ -382,12 +449,15 @@ export default function App() {
             {/* Habitat & Mode Toggles */}
             <div className="space-y-3">
               <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block border-b border-slate-700 pb-1">Environment Profile</label>
-              <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shadow-inner">
-                <button onClick={() => setActiveHabitat('uniform')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'uniform' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
-                   Uniform Field
+              <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shadow-inner overflow-hidden">
+                <button onClick={() => setActiveHabitat('uniform')} className={`flex-1 py-2 rounded text-[9px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'uniform' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   Uniform
                 </button>
-                <button onClick={() => setActiveHabitat('gradient')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'gradient' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
-                   Forest/Meadow Ecotone
+                <button onClick={() => setActiveHabitat('gradient')} className={`flex-1 py-2 rounded text-[9px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'gradient' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   Ecotone
+                </button>
+                <button onClick={() => setActiveHabitat('intertidal')} className={`flex-1 py-2 rounded text-[9px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'intertidal' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   Intertidal
                 </button>
               </div>
               <p className="text-[10px] text-slate-400 leading-tight bg-slate-900/50 p-2 rounded border border-slate-800 border-l-2 border-l-emerald-500">{activeProfile.desc}</p>
@@ -397,7 +467,7 @@ export default function App() {
             <div className="space-y-3 pt-2">
               <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block border-b border-slate-700 pb-1">Interaction Method</label>
               <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shadow-inner">
-                <button onClick={() => { setIsManualMode(false); clearManualTransects(); }} className={`flex-1 py-2 flex items-center justify-center gap-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${!isManualMode ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                <button onClick={() => { setIsManualMode(false); clearManualTransects(); }} className={`flex-1 py-2 flex items-center justify-center gap-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${!isManualMode ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
                    <Calculator className="w-3 h-3"/> Auto-Generate
                 </button>
                 <button onClick={() => { setIsManualMode(true); clearManualTransects(); }} className={`flex-1 py-2 flex items-center justify-center gap-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${isManualMode ? 'bg-amber-500 text-slate-900 shadow' : 'text-slate-400 hover:text-white'}`}>
@@ -412,32 +482,32 @@ export default function App() {
                 <div>
                   <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
                     <span>Belt Length (L)</span>
-                    <span className="font-mono text-sky-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectLength} m</span>
+                    <span className="font-mono text-indigo-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectLength} m</span>
                   </label>
                   <input 
                     type="range" min="10" max="100" step="10"
                     value={transectLength}
                     onChange={(e) => { setTransectLength(parseInt(e.target.value)); setSampled(false); }}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                   />
                 </div>
 
                 <div>
                   <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
                     <span>Number of Transects (N)</span>
-                    <span className="font-mono text-sky-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectCount}</span>
+                    <span className="font-mono text-indigo-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectCount}</span>
                   </label>
                   <input 
                     type="range" min="1" max="20" step="1"
                     value={transectCount}
                     onChange={(e) => { setTransectCount(parseInt(e.target.value)); setSampled(false); }}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                   />
                 </div>
                 
                 <button 
                   onClick={conductAutoSampling}
-                  className="w-full py-3 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white font-bold rounded-lg transition-all flex justify-center items-center gap-2 shadow-lg shadow-sky-900/50 border border-sky-400"
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold rounded-lg transition-all flex justify-center items-center gap-2 shadow-lg shadow-indigo-900/50 border border-indigo-500"
                 >
                   <Calculator className="w-4 h-4" /> Scatter Random Belts
                 </button>
@@ -446,7 +516,7 @@ export default function App() {
               <div className="bg-amber-950/20 p-4 rounded-xl border border-amber-900/40 text-sm text-slate-300">
                   <h3 className="font-bold text-amber-400 mb-2 flex items-center gap-2"><MousePointer2 className="w-4 h-4"/> Custom Survey Mode</h3>
                   <p className="text-[11px] leading-relaxed mb-4">
-                    <strong>Click and drag horizontally</strong> across the field on the right to lay down your own 2m-wide belt transects. Investigate specific zones!
+                    <strong>Click and drag</strong> to draw your own 2m-wide belt transects. Drag horizontally to sample across the gradient, or drag vertically (top-to-bottom) to isolate specific habitats like the deep shade or sunny meadow!
                   </p>
                   <button 
                     onClick={clearManualTransects}
@@ -459,7 +529,7 @@ export default function App() {
 
             {/* Results Dashboard */}
             {sampled && transects.length > 0 && (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 flex-grow flex flex-col">
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 flex-grow flex flex-col pt-2">
                 <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
                   <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
                     <BarChart2 className="w-4 h-4 text-emerald-400" />
@@ -476,10 +546,10 @@ export default function App() {
                   </button>
                 </div>
                 
-                {isManualMode && activeHabitat === 'gradient' && (
-                  <div className="mb-3 p-2 bg-rose-950/30 border border-rose-900/50 rounded flex items-start gap-2 text-[9px] text-rose-300 font-bold">
+                {isManualMode && (activeHabitat === 'gradient' || activeHabitat === 'intertidal') && (
+                  <div className="mb-3 p-2 bg-amber-950/30 border border-amber-900/50 rounded flex items-start gap-2 text-[9px] text-amber-300 font-bold">
                     <Info className="w-3 h-3 shrink-0 mt-0.5"/>
-                    Warning: Extrapolating targeted manual samples across a changing habitat (Ecotone) will produce extreme Sampling Bias!
+                    Warning: Extrapolating targeted manual samples across an environmental gradient will produce extreme Sampling Bias! Look at the individual belt breakdown below to see Zonation.
                   </div>
                 )}
 
@@ -489,11 +559,12 @@ export default function App() {
                   <div className="p-3 bg-slate-950 border-b border-slate-800 flex flex-col items-center justify-center text-center">
                     <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-1">Total Sampled Area: {results.totalAreaSampled.toLocaleString()} m²</span>
                     <div className="text-[11px] font-mono text-slate-300">
-                      Estimate = <span className="text-cyan-400">(Count / Area)</span> × 10,000 m²
+                      Estimate = <span className="text-emerald-400">(Count / Area)</span> × 10,000 m²
                     </div>
                   </div>
                   
-                  <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar">
+                  {/* Overall Estimates */}
+                  <div className="p-4 space-y-4">
                     {Object.values(activeProfile.species).map(sp => {
                       const res = results[sp.id];
                       return (
@@ -515,7 +586,7 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             <div className="bg-slate-800 p-2 rounded-lg border border-slate-700 flex flex-col">
                               <span className="text-[9px] text-slate-400 uppercase font-bold mb-0.5">Sampled Count</span>
-                              <span className="text-lg font-mono text-cyan-400 font-bold">{res.sampledCount}</span>
+                              <span className="text-lg font-mono text-emerald-400 font-bold">{res.sampledCount}</span>
                             </div>
                             <div className="bg-slate-800 p-2 rounded-lg border border-slate-700 flex flex-col">
                               <span className="text-[9px] text-slate-400 uppercase font-bold mb-0.5">Estimated Pop.</span>
@@ -534,6 +605,32 @@ export default function App() {
                       );
                     })}
                   </div>
+
+                  {/* Individual Belt Breakdown (ZONATION DATA) */}
+                  {results.transectDetails && results.transectDetails.length > 0 && (
+                    <div className="border-t border-slate-700 bg-slate-900/50 p-4 flex-1">
+                      <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Map className="w-3 h-3"/> Individual Belt Breakdown</h3>
+                      <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                        {results.transectDetails.map(t => (
+                          <div key={t.id} className="bg-slate-800/80 p-2.5 rounded-lg border border-slate-700 text-xs shadow-sm">
+                            <div className="flex justify-between items-center mb-1.5">
+                                <span className="font-bold text-slate-200">Belt {t.id}</span>
+                                <span className="text-[9px] text-slate-400 font-mono">X:{Math.round(t.startX)}m, Y:{Math.round(t.startY)}m</span>
+                            </div>
+                            <div className="flex flex-wrap gap-3">
+                                {Object.keys(t.counts).map(spId => (
+                                  <div key={spId} className="flex items-center gap-1 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700/50">
+                                      <span className="text-[10px] drop-shadow-sm">{activeProfile.species[spId].emoji}</span>
+                                      <span className="font-bold font-mono text-slate-300 text-[10px]">{t.counts[spId]}</span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               </div>
             )}
@@ -600,7 +697,7 @@ export default function App() {
                       <p className="text-xs text-slate-300 leading-relaxed">
                         {isManualMode 
                           ? "Click and drag your mouse across the field to manually lay down belt transects." 
-                          : <>Adjust parameters on the left and click <strong className="text-sky-400">Scatter Random Belts</strong>.</>}
+                          : <>Adjust parameters on the left and click <strong className="text-indigo-400">Scatter Random Belts</strong>.</>}
                       </p>
                    </div>
                 </div>
