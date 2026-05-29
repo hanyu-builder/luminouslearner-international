@@ -1,571 +1,629 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Waves, Wind, Beaker, Activity, Droplets, Info, Play, Pause, RotateCcw, AlertTriangle } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wastewater Treatment Simulator</title>
+    <meta name="description" content="Interactive Wastewater Treatment Simulator based on the Activated Sludge Model.">
 
-/* SCIENTIFIC MODEL & CONCEPTS
-  ---------------------------
-  Models a standard wastewater treatment facility based on the Activated Sludge Model.
-  
-  1. Primary Clarifier: Gravity settling of heavy suspended solids.
-  2. Aeration Basin: Aerobic microbial digestion. Organics (BOD) + Bacteria + O2 -> More Bacteria (Floc).
-  3. Secondary Clarifier: Settling of the biological floc.
-  4. RAS Loop: Sunk bacteria are pumped back to the aeration basin to maintain the population.
-  5. Tertiary Treatment: UV radiation breaks down pathogen DNA.
-*/
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
 
-// --- Engine Constants ---
-const CANVAS_WIDTH = 1000;
-const CANVAS_HEIGHT = 550;
-const WATER_LEVEL = 150;
-const TANK_BOTTOM = 420;
-const PIPE_BOTTOM = 500;
-
-// Tank Geometries
-const ZONES = {
-  INLET: { x: 0, w: 50 },
-  PRIMARY: { x: 80, w: 180, name: "Primary Settling", hopper: true },
-  AERATION: { x: 300, w: 260, name: "Aeration Basin (Bioreactor)", hopper: false },
-  SECONDARY: { x: 600, w: 180, name: "Secondary Clarifier", hopper: true },
-  TERTIARY: { x: 820, w: 120, name: "UV Disinfection", hopper: false },
-  OUTLET: { x: 970, w: 30 }
-};
-
-// Particle Types & Biology
-const TYPES = {
-  SOLID: { color: '#78350F', radius: 4.5, label: 'Heavy Solids' },       // Amber-900
-  ORGANIC: { color: '#84CC16', radius: 3.5, label: 'Organics (BOD)' },   // Lime-500
-  BACTERIA: { color: '#F97316', radius: 3.5, label: 'Bacteria (Biomass)'}, // Orange-500
-  PATHOGEN: { color: '#EF4444', radius: 2.5, label: 'Pathogens' },       // Red-500
-  CLEAN: { color: '#38BDF8', radius: 2.5, label: 'Water' }               // Sky-400
-};
-
-export default function App() {
-  // --- UI State ---
-  const [flowRate, setFlowRate] = useState(2); // 1 to 5
-  const [aerationOn, setAerationOn] = useState(true);
-  const [isRunning, setIsRunning] = useState(true);
-  
-  // Metrics for UI Readout
-  const [metrics, setMetrics] = useState({
-    efficiency: 100,
-    effluentBOD: 0,
-    effluentTSS: 0,
-    effluentPathogens: 0,
-    activeBiomass: 0
-  });
-
-  // --- Canvas & Simulation State ---
-  const canvasRef = useRef(null);
-  const requestRef = useRef();
-  
-  // Physics State (Mutable for 60fps performance)
-  const simState = useRef({
-    particles: [],
-    bubbles: [],
-    stats: { outTotal: 0, outBOD: 0, outTSS: 0, outPath: 0, currentBiomass: 0 },
-    lastSpawnTime: 0,
-    time: 0
-  });
-
-  // --- Main Render Loop ---
-  const render = useCallback((timestamp) => {
-    if (!isRunning) {
-      requestRef.current = requestAnimationFrame(render);
-      return;
-    }
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const state = simState.current;
-    state.time += 1;
-
-    // 1. Clear & Draw Background
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    // Background
-    ctx.fillStyle = '#0F172A'; 
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    
-    // Draw Water
-    const waterGrad = ctx.createLinearGradient(0, WATER_LEVEL, 0, TANK_BOTTOM);
-    waterGrad.addColorStop(0, 'rgba(14, 165, 233, 0.15)'); 
-    waterGrad.addColorStop(1, 'rgba(30, 58, 138, 0.4)'); 
-    ctx.fillStyle = waterGrad;
-    ctx.fillRect(0, WATER_LEVEL, CANVAS_WIDTH, TANK_BOTTOM - WATER_LEVEL);
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    // Draw Tanks
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#334155'; // Slate 700
-    ctx.fillStyle = '#1E293B'; // Slate 800
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    // RAS Pipe (Return Activated Sludge) - Drawn behind tanks
-    ctx.fillStyle = 'rgba(30, 41, 59, 0.5)';
-    ctx.fillRect(ZONES.AERATION.x + 20, TANK_BOTTOM, ZONES.SECONDARY.x + ZONES.SECONDARY.w/2 - ZONES.AERATION.x - 20, PIPE_BOTTOM - TANK_BOTTOM);
-    ctx.strokeStyle = '#475569';
-    ctx.beginPath();
-    ctx.moveTo(ZONES.AERATION.x + 20, TANK_BOTTOM);
-    ctx.lineTo(ZONES.AERATION.x + 20, PIPE_BOTTOM);
-    ctx.lineTo(ZONES.SECONDARY.x + ZONES.SECONDARY.w/2, PIPE_BOTTOM);
-    ctx.lineTo(ZONES.SECONDARY.x + ZONES.SECONDARY.w/2, TANK_BOTTOM);
-    ctx.stroke();
-
-    Object.values(ZONES).forEach(zone => {
-      if (zone.name) {
-        ctx.strokeStyle = '#64748B';
-        ctx.beginPath();
-        ctx.moveTo(zone.x, WATER_LEVEL - 20);
-        ctx.lineTo(zone.x, TANK_BOTTOM);
-        
-        if (zone.hopper) {
-          // Draw Sloped Bottom for Clarifiers
-          ctx.lineTo(zone.x + zone.w/2 - 20, TANK_BOTTOM + 30);
-          ctx.lineTo(zone.x + zone.w/2 + 20, TANK_BOTTOM + 30);
-          ctx.lineTo(zone.x + zone.w, TANK_BOTTOM);
-        } else {
-          ctx.lineTo(zone.x + zone.w, TANK_BOTTOM);
+    <style>
+        body {
+            margin: 0;
+            background-color: #020617; /* Slate 950 */
         }
         
-        ctx.lineTo(zone.x + zone.w, WATER_LEVEL - 20);
-        ctx.stroke();
-
-        // Zone Labels
-        ctx.fillStyle = '#94A3B8';
-        ctx.font = 'bold 12px Inter, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(zone.name.toUpperCase(), zone.x + zone.w / 2, WATER_LEVEL - 30);
-      }
-    });
-
-    // UV Lights in Tertiary
-    ctx.fillStyle = `rgba(168, 85, 247, ${0.1 + Math.sin(state.time * 0.1) * 0.05})`; // Pulsing Purple
-    ctx.fillRect(ZONES.TERTIARY.x, WATER_LEVEL, ZONES.TERTIARY.w, TANK_BOTTOM - WATER_LEVEL);
-    ctx.fillStyle = '#D8B4FE';
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = '#A855F7';
-    for(let i=1; i<4; i++) {
-      ctx.fillRect(ZONES.TERTIARY.x + (ZONES.TERTIARY.w/4)*i - 2, WATER_LEVEL, 4, TANK_BOTTOM - WATER_LEVEL);
-    }
-    ctx.shadowBlur = 0;
-
-    // Connective Pipes (Surface Level)
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(ZONES.INLET.x, WATER_LEVEL + 20, ZONES.PRIMARY.x - ZONES.INLET.x, 20);
-    ctx.fillRect(ZONES.PRIMARY.x + ZONES.PRIMARY.w, WATER_LEVEL + 30, ZONES.AERATION.x - (ZONES.PRIMARY.x + ZONES.PRIMARY.w), 20);
-    ctx.fillRect(ZONES.AERATION.x + ZONES.AERATION.w, WATER_LEVEL + 30, ZONES.SECONDARY.x - (ZONES.AERATION.x + ZONES.AERATION.w), 20);
-    ctx.fillRect(ZONES.SECONDARY.x + ZONES.SECONDARY.w, WATER_LEVEL + 30, ZONES.TERTIARY.x - (ZONES.SECONDARY.x + ZONES.SECONDARY.w), 20);
-    ctx.fillRect(ZONES.TERTIARY.x + ZONES.TERTIARY.w, WATER_LEVEL + 20, CANVAS_WIDTH - (ZONES.TERTIARY.x + ZONES.TERTIARY.w), 20);
-
-    // 2. Spawn Particles based on Flow Rate
-    // Flow rate 1 = slow spawn. Flow rate 5 = fast spawn.
-    if (state.time - state.lastSpawnTime > (60 / flowRate)) {
-      const rand = Math.random();
-      let type = TYPES.CLEAN;
-      if (rand < 0.25) type = TYPES.SOLID;
-      else if (rand < 0.65) type = TYPES.ORGANIC;
-      else if (rand < 0.85) type = TYPES.PATHOGEN;
-
-      state.particles.push({
-        id: Math.random(),
-        type: type,
-        x: 0,
-        y: WATER_LEVEL + 30 + Math.random() * 10,
-        vx: flowRate * 0.4,
-        vy: 0,
-        state: 'flow' // flow, settled, ras
-      });
-      state.lastSpawnTime = state.time;
-    }
-
-    // Ensure we have some base bacteria to start
-    if (state.time < 100 && state.time % 10 === 0) {
-      state.particles.push({
-        id: Math.random(), type: TYPES.BACTERIA,
-        x: ZONES.AERATION.x + 50, y: TANK_BOTTOM - 50,
-        vx: 0, vy: 0, state: 'flow'
-      });
-    }
-
-    // 3. Spawn Bubbles in Aeration Tank (if ON)
-    if (aerationOn) {
-      for(let i=0; i<3; i++) {
-        if(Math.random() < 0.5) {
-          state.bubbles.push({
-            x: ZONES.AERATION.x + 10 + Math.random() * (ZONES.AERATION.w - 20),
-            y: TANK_BOTTOM - 5,
-            r: Math.random() * 3 + 1,
-            vy: -1 - Math.random() * 3
-          });
-        }
-      }
-    }
-
-    // 4. Update & Draw Bubbles
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    state.bubbles = state.bubbles.filter(b => b.y > WATER_LEVEL);
-    state.bubbles.forEach(b => {
-      b.y += b.vy;
-      b.x += Math.sin(b.y * 0.05) * 1; 
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // 5. Update & Draw Particles (Core Physics Engine)
-    let activeParticles = [];
-    let currentBacteriaCount = 0;
-    
-    // Pre-calculate bacteria in aeration for digestion logic
-    let bacteriaInAeration = state.particles.filter(p => 
-      p.type === TYPES.BACTERIA && p.x > ZONES.AERATION.x && p.x < ZONES.AERATION.x + ZONES.AERATION.w
-    ).length;
-
-    for (let p of state.particles) {
-      if (p.type === TYPES.BACTERIA) currentBacteriaCount++;
-
-      if (p.state === 'flow') {
-        // Base horizontal flow (Hydraulic pushing)
-        // Water flows slower in wide tanks
-        let localFlow = flowRate * 0.4;
-        if ((p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w) || 
-            (p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w)) {
-            localFlow *= 0.5; // Clarifiers slow down flow
-        }
-        p.vx = localFlow;
-        
-        // --- ZONE LOGIC ---
-        
-        // 1. Primary Settling
-        if (p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w) {
-          if (p.type === TYPES.SOLID) {
-            p.vy = 1.0; // Stokes Law
-            p.vx *= 0.2; 
-          }
-        }
-        
-        // 2. Aeration Basin (Bioreactor)
-        else if (p.x > ZONES.AERATION.x && p.x < ZONES.AERATION.x + ZONES.AERATION.w) {
-          if (aerationOn) {
-            p.vy += (Math.random() - 0.5) * 0.5; // Strong turbulence
-            
-            // Keep suspended
-            if (p.y > TANK_BOTTOM - 20) p.vy -= 0.5;
-            if (p.y < WATER_LEVEL + 20) p.vy += 0.5;
-
-            // Biological Digestion: Organics consumed by bacteria -> Become Bacteria
-            if (p.type === TYPES.ORGANIC) {
-              // Digestion chance depends on retention time (flow rate inverse), aeration, and existing bacteria
-              let digestionChance = 0.002 * (bacteriaInAeration / 20); 
-              if (Math.random() < digestionChance) {
-                p.type = TYPES.BACTERIA; // Reproduces!
-              }
-            }
-          } else {
-            p.vy = 0; // Stagnant if no air
-          }
-        }
-        
-        // 3. Secondary Clarifier (Biomass Settling)
-        else if (p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w) {
-          if (p.type === TYPES.BACTERIA) {
-            p.vy = 0.8; // Floc settles out
-            p.vx *= 0.3;
-          } else if (p.type === TYPES.ORGANIC || p.type === TYPES.SOLID) {
-            // Unprocessed waste mostly passes through, some slight settling
-            p.vy = 0.2;
-          }
-        }
-        
-        // 4. UV Disinfection
-        else if (p.x > ZONES.TERTIARY.x && p.x < ZONES.TERTIARY.x + ZONES.TERTIARY.w) {
-          p.vy = 0;
-          if (p.type === TYPES.PATHOGEN) {
-            // High flow rate = less UV exposure time = higher chance to survive
-            let killChance = 0.05 / (flowRate * 0.5); 
-            if (Math.random() < killChance) {
-              p.type = TYPES.CLEAN; 
-            }
-          }
-        } 
-        
-        // Pipes
-        else {
-          p.vy = 0;
-          if (p.y > WATER_LEVEL + 40) p.y -= 1;
-          if (p.y < WATER_LEVEL + 30) p.y += 1;
-        }
-
-        // Apply Velocity
-        p.x += p.vx;
-        p.y += p.vy;
-
-        // --- Settling / Floor Collision ---
-        if (p.y >= TANK_BOTTOM) {
-          if (p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w) {
-             p.state = 'waste'; // Primary sludge is wasted
-          } else if (p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w) {
-             // Secondary sludge goes to RAS
-             p.state = 'ras';
-             p.y = TANK_BOTTOM + 5;
-          } else {
-             p.y = TANK_BOTTOM;
-             p.vy = 0;
-          }
-        }
-
-      } 
-      // RAS Logic (Return Activated Sludge Pump)
-      else if (p.state === 'ras') {
-        p.y = PIPE_BOTTOM - 10 + (Math.random() * 5);
-        p.x -= 3; // Pump fast backward
-        if (p.x < ZONES.AERATION.x + 30) {
-          // Shoot back up into aeration basin
-          p.state = 'flow';
-          p.y = TANK_BOTTOM - 20;
-          p.vy = -3;
-        }
-      }
-
-      // Draw Particle
-      if (p.state !== 'waste') {
-        ctx.fillStyle = p.type.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.type.radius, 0, Math.PI * 2);
-        ctx.fill();
-        
-        // Exiting the plant
-        if (p.x >= CANVAS_WIDTH) {
-          state.stats.outTotal++;
-          if (p.type === TYPES.SOLID) state.stats.outTSS++;
-          if (p.type === TYPES.ORGANIC) state.stats.outBOD++;
-          if (p.type === TYPES.PATHOGEN) state.stats.outPath++;
-          if (p.type === TYPES.BACTERIA) state.stats.outTSS++; // Escaped bacteria count as suspended solids
-        } else {
-          activeParticles.push(p);
-        }
-      }
-    }
-    
-    state.particles = activeParticles;
-    state.stats.currentBiomass = currentBacteriaCount;
-
-    requestRef.current = requestAnimationFrame(render);
-  }, [flowRate, aerationOn, isRunning]);
-
-  // Handle Simulation Loop Lifecycle
-  useEffect(() => {
-    requestRef.current = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(requestRef.current);
-  }, [render]);
-
-  // Sync React State for UI Readout (Throttle for readability)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const s = simState.current.stats;
-      const totalBad = s.outBOD + s.outTSS + s.outPath;
-      
-      const eff = s.outTotal === 0 ? 100 : Math.max(0, 100 - (totalBad / s.outTotal) * 100);
-      
-      setMetrics({
-        efficiency: eff,
-        effluentBOD: s.outBOD,
-        effluentTSS: s.outTSS,
-        effluentPathogens: s.outPath,
-        activeBiomass: s.currentBiomass
-      });
-    }, 500);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleReset = () => {
-    simState.current = {
-      particles: [], bubbles: [],
-      stats: { outTotal: 0, outBOD: 0, outTSS: 0, outPath: 0, currentBiomass: 0 },
-      lastSpawnTime: 0, time: 0
-    };
-    setMetrics({ efficiency: 100, effluentBOD: 0, effluentTSS: 0, effluentPathogens: 0, activeBiomass: 0 });
-  };
-
-  return (
-    <div className="flex flex-col h-screen max-h-[1000px] min-h-[700px] bg-[#020617] text-slate-100 font-sans overflow-hidden p-2 md:p-4">
-      
-      {/* Main Container */}
-      <div className="w-full h-full max-w-7xl mx-auto flex flex-col gap-4 border border-slate-700 bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
-        
-        {/* Header */}
-        <header className="flex flex-wrap items-center justify-between p-4 bg-slate-800 border-b border-slate-700 shadow-md z-10 gap-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <Droplets className="text-cyan-400 w-8 h-8" />
-            <div>
-              <h1 className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 tracking-wide">
-                Wastewater Treatment Simulator
-              </h1>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Activated Sludge Model & Biological Digestion</p>
-            </div>
-          </div>
-          
-          {/* Global Controls */}
-          <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700 shadow-inner">
-            <button 
-              onClick={() => setIsRunning(!isRunning)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-bold transition-all text-sm uppercase tracking-wider ${
-                isRunning ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/50' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/50'
-              }`}
-            >
-              {isRunning ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Run</>}
-            </button>
-            <button 
-              onClick={handleReset}
-              className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-700 border border-transparent hover:border-slate-600 rounded-lg transition-colors"
-              title="Reset Simulation"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
-          </div>
-        </header>
-
-        {/* Main Workspace */}
-        <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-          
-          {/* Left Sidebar: Controls & Analytics */}
-          <aside className="w-full lg:w-[380px] p-5 bg-[#0F172A] border-r border-slate-700 overflow-y-auto custom-scrollbar flex flex-col gap-5 shrink-0 z-10">
-            
-            {/* Engineering Controls */}
-            <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 shadow-lg">
-              <h2 className="text-xs font-bold uppercase tracking-widest mb-4 text-slate-400 flex items-center gap-2 border-b border-slate-700 pb-2">
-                <Activity className="w-4 h-4 text-indigo-400" /> Plant Engineering Controls
-              </h2>
-              
-              {/* Flow Rate Slider */}
-              <div className="mb-5">
-                <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
-                  <span className="flex items-center gap-2"><Waves className="w-4 h-4 text-cyan-500"/> Inlet Flow Rate</span>
-                  <span className="font-mono text-cyan-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">{flowRate.toFixed(1)}x</span>
-                </label>
-                <input 
-                  type="range" min="1" max="5" step="0.5"
-                  value={flowRate}
-                  onChange={(e) => setFlowRate(parseFloat(e.target.value))}
-                  className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                />
-                <p className="text-[10px] text-slate-500 mt-2 leading-tight">Controls Hydraulic Retention Time (HRT). High flow gives bacteria less time to digest organics.</p>
-              </div>
-
-              {/* Aeration Toggle */}
-              <div className="pt-2 border-t border-slate-700/50">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                    <Wind className={`w-4 h-4 ${aerationOn ? 'text-blue-400' : 'text-slate-500'}`}/> 
-                    Aeration Blowers (O₂)
-                  </span>
-                  <button 
-                    onClick={() => setAerationOn(!aerationOn)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none shadow-inner border border-slate-900 ${aerationOn ? 'bg-blue-500' : 'bg-slate-700'}`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${aerationOn ? 'translate-x-6' : 'translate-x-1'}`} />
-                  </button>
-                </div>
-                <p className="text-[10px] text-slate-500 leading-tight">Provides dissolved oxygen so aerobic bacteria can break down Biological Oxygen Demand (BOD).</p>
-              </div>
-            </div>
-
-            {/* Effluent Quality Dashboard */}
-            <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 shadow-lg flex-1 flex flex-col">
-              <h2 className="text-xs font-bold uppercase tracking-widest mb-4 text-slate-400 flex items-center gap-2 border-b border-slate-700 pb-2">
-                <Beaker className="w-4 h-4 text-emerald-400" /> Effluent Discharge Analysis
-              </h2>
-              
-              <div className="bg-[#020617] rounded-xl p-4 border border-slate-700 mb-4 shadow-inner">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-500">Overall Plant Efficiency</span>
-                  <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase tracking-widest border
-                    ${metrics.efficiency > 95 ? 'bg-emerald-900/50 text-emerald-400 border-emerald-500/50' : 
-                      metrics.efficiency > 75 ? 'bg-amber-900/50 text-amber-400 border-amber-500/50' : 
-                      'bg-rose-900/50 text-rose-400 border-rose-500/50'}`}>
-                    {metrics.efficiency > 95 ? 'Pass' : metrics.efficiency > 75 ? 'Warning' : 'Violation'}
-                  </span>
-                </div>
-                <div className={`font-mono text-4xl font-black drop-shadow-md
-                  ${metrics.efficiency > 95 ? 'text-emerald-400' : metrics.efficiency > 75 ? 'text-amber-400' : 'text-rose-400'}`}>
-                  {metrics.efficiency.toFixed(1)}<span className="text-xl">%</span>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <h3 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Escaped Pollutants (Violations)</h3>
-                
-                <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
-                  <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#84CC16]"></div> Untreated BOD
-                  </span>
-                  <span className={`font-mono text-sm font-bold ${metrics.effluentBOD > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentBOD}</span>
-                </div>
-                
-                <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
-                  <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#78350F]"></div> Suspended Solids
-                  </span>
-                  <span className={`font-mono text-sm font-bold ${metrics.effluentTSS > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentTSS}</span>
-                </div>
-                
-                <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
-                  <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#EF4444]"></div> Live Pathogens
-                  </span>
-                  <span className={`font-mono text-sm font-bold ${metrics.effluentPathogens > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentPathogens}</span>
-                </div>
-              </div>
-              
-              {/* Biological Telemetry */}
-              <div className="mt-auto pt-4">
-                <div className="bg-orange-950/20 p-3 rounded-lg border border-orange-900/30 flex justify-between items-center">
-                  <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest">Active Biomass Count</span>
-                  <span className="font-mono text-orange-300 font-bold">{metrics.activeBiomass}</span>
-                </div>
-              </div>
-
-            </div>
-          </aside>
-
-          {/* Right Area: Interactive Canvas */}
-          <main className="flex-1 relative flex flex-col p-4 bg-[#070B14]">
-            
-            {/* Educational Legend */}
-            <div className="flex flex-wrap gap-4 mb-4 bg-slate-800/80 p-3 rounded-xl border border-slate-700 text-xs text-slate-300 items-center justify-center shadow-md">
-              <span className="font-bold text-white uppercase tracking-wider text-[10px] mr-2"><Info className="inline w-4 h-4 mb-0.5 text-blue-400 mr-1"/> Particle Key:</span>
-              {Object.values(TYPES).map(type => (
-                <div key={type.label} className="flex items-center gap-1.5 font-medium">
-                  <div className="w-3 h-3 rounded-full shadow-[0_0_5px_rgba(0,0,0,0.5)] border border-slate-900" style={{ backgroundColor: type.color }}></div>
-                  {type.label}
-                </div>
-              ))}
-            </div>
-
-            {/* Container for aspect-ratio locked canvas */}
-            <div className="flex-1 w-full bg-[#0F172A] rounded-xl border border-slate-600 overflow-hidden relative shadow-2xl">
-              {/* Educational Overlay / Pipe Labels */}
-              <div className="absolute bottom-2 left-[50%] transform -translate-x-1/2 text-[10px] font-bold text-slate-400 uppercase tracking-widest z-20 flex flex-col items-center pointer-events-none">
-                 <span className="text-orange-400">⟵ Return Activated Sludge (RAS) ⟵</span>
-                 <span className="text-[8px] mt-0.5">Recycles biomass to sustain bioreactor</span>
-              </div>
-
-              {/* The Canvas element scales to fit the container via CSS while maintaining its internal resolution */}
-              <canvas 
-                ref={canvasRef} 
-                width={CANVAS_WIDTH} 
-                height={CANVAS_HEIGHT} 
-                className="absolute top-0 left-0 w-full h-full object-contain"
-              />
-            </div>
-          </main>
-        </div>
-      </div>
-
-      {/* Global CSS for scrollbars specific to this component if needed, though handled by standard tailwind classes usually */}
-      <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-      `}} />
-    </div>
-  );
-}
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // --- ICON WRAPPER COMPONENT ---
+        // Maps the requested Lucide icons from the CDN so they work in standalone React
+        const Icon = ({ name, className = "" }) => {
+            const [svgHtml, setSvgHtml] = useState('');
+            useEffect(() => {
+                if (window.lucide && window.lucide.icons) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        const svgElement = window.lucide.createElement(iconNode);
+                        svgElement.setAttribute('class', className);
+                        setSvgHtml(svgElement.outerHTML);
+                    }
+                }
+            }, [name, className]);
+            
+            if (!svgHtml) return <span className={className}></span>;
+            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
+        };
+
+        /* SCIENTIFIC MODEL & CONCEPTS
+          ---------------------------
+          Models a standard wastewater treatment facility based on the Activated Sludge Model.
+          
+          1. Primary Clarifier: Gravity settling of heavy suspended solids.
+          2. Aeration Basin: Aerobic microbial digestion. Organics (BOD) + Bacteria + O2 -> More Bacteria (Floc).
+          3. Secondary Clarifier: Settling of the biological floc.
+          4. RAS Loop: Sunk bacteria are pumped back to the aeration basin to maintain the population.
+          5. Tertiary Treatment: UV radiation breaks down pathogen DNA.
+        */
+
+        // --- Engine Constants ---
+        const CANVAS_WIDTH = 1000;
+        const CANVAS_HEIGHT = 550;
+        const WATER_LEVEL = 150;
+        const TANK_BOTTOM = 420;
+        const PIPE_BOTTOM = 500;
+
+        // Tank Geometries
+        const ZONES = {
+          INLET: { x: 0, w: 50 },
+          PRIMARY: { x: 80, w: 180, name: "Primary Settling", hopper: true },
+          AERATION: { x: 300, w: 260, name: "Aeration Basin (Bioreactor)", hopper: false },
+          SECONDARY: { x: 600, w: 180, name: "Secondary Clarifier", hopper: true },
+          TERTIARY: { x: 820, w: 120, name: "UV Disinfection", hopper: false },
+          OUTLET: { x: 970, w: 30 }
+        };
+
+        // Particle Types & Biology
+        const TYPES = {
+          SOLID: { color: '#78350F', radius: 4.5, label: 'Heavy Solids' },       // Amber-900
+          ORGANIC: { color: '#84CC16', radius: 3.5, label: 'Organics (BOD)' },   // Lime-500
+          BACTERIA: { color: '#F97316', radius: 3.5, label: 'Bacteria (Biomass)'}, // Orange-500
+          PATHOGEN: { color: '#EF4444', radius: 2.5, label: 'Pathogens' },       // Red-500
+          CLEAN: { color: '#38BDF8', radius: 2.5, label: 'Water' }               // Sky-400
+        };
+
+        const App = () => {
+          // --- UI State ---
+          const [flowRate, setFlowRate] = useState(2); // 1 to 5
+          const [aerationOn, setAerationOn] = useState(true);
+          const [isRunning, setIsRunning] = useState(true);
+          
+          // Metrics for UI Readout
+          const [metrics, setMetrics] = useState({
+            efficiency: 100,
+            effluentBOD: 0,
+            effluentTSS: 0,
+            effluentPathogens: 0,
+            activeBiomass: 0
+          });
+
+          // --- Canvas & Simulation State ---
+          const canvasRef = useRef(null);
+          const requestRef = useRef();
+          
+          // Physics State (Mutable for 60fps performance)
+          const simState = useRef({
+            particles: [],
+            bubbles: [],
+            stats: { outTotal: 0, outBOD: 0, outTSS: 0, outPath: 0, currentBiomass: 0 },
+            lastSpawnTime: 0,
+            time: 0
+          });
+
+          // --- Main Render Loop ---
+          const render = useCallback((timestamp) => {
+            if (!isRunning) {
+              requestRef.current = requestAnimationFrame(render);
+              return;
+            }
+
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const state = simState.current;
+            state.time += 1;
+
+            // 1. Clear & Draw Background
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Background
+            ctx.fillStyle = '#0F172A'; 
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw Water
+            const waterGrad = ctx.createLinearGradient(0, WATER_LEVEL, 0, TANK_BOTTOM);
+            waterGrad.addColorStop(0, 'rgba(14, 165, 233, 0.15)'); 
+            waterGrad.addColorStop(1, 'rgba(30, 58, 138, 0.4)'); 
+            ctx.fillStyle = waterGrad;
+            ctx.fillRect(0, WATER_LEVEL, CANVAS_WIDTH, TANK_BOTTOM - WATER_LEVEL);
+
+            // Draw Tanks
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#334155'; // Slate 700
+            ctx.fillStyle = '#1E293B'; // Slate 800
+
+            // RAS Pipe (Return Activated Sludge) - Drawn behind tanks
+            ctx.fillStyle = 'rgba(30, 41, 59, 0.5)';
+            ctx.fillRect(ZONES.AERATION.x + 20, TANK_BOTTOM, ZONES.SECONDARY.x + ZONES.SECONDARY.w/2 - ZONES.AERATION.x - 20, PIPE_BOTTOM - TANK_BOTTOM);
+            ctx.strokeStyle = '#475569';
+            ctx.beginPath();
+            ctx.moveTo(ZONES.AERATION.x + 20, TANK_BOTTOM);
+            ctx.lineTo(ZONES.AERATION.x + 20, PIPE_BOTTOM);
+            ctx.lineTo(ZONES.SECONDARY.x + ZONES.SECONDARY.w/2, PIPE_BOTTOM);
+            ctx.lineTo(ZONES.SECONDARY.x + ZONES.SECONDARY.w/2, TANK_BOTTOM + 30); // Connect to hopper bottom
+            ctx.stroke();
+
+            Object.values(ZONES).forEach(zone => {
+              if (zone.name) {
+                ctx.strokeStyle = '#64748B';
+                ctx.beginPath();
+                ctx.moveTo(zone.x, WATER_LEVEL - 20);
+                ctx.lineTo(zone.x, TANK_BOTTOM);
+                
+                if (zone.hopper) {
+                  // Draw Sloped Bottom for Clarifiers
+                  ctx.lineTo(zone.x + zone.w/2 - 20, TANK_BOTTOM + 30);
+                  ctx.lineTo(zone.x + zone.w/2 + 20, TANK_BOTTOM + 30);
+                  ctx.lineTo(zone.x + zone.w, TANK_BOTTOM);
+                } else {
+                  ctx.lineTo(zone.x + zone.w, TANK_BOTTOM);
+                }
+                
+                ctx.lineTo(zone.x + zone.w, WATER_LEVEL - 20);
+                ctx.stroke();
+
+                // Zone Labels
+                ctx.fillStyle = '#94A3B8';
+                ctx.font = 'bold 12px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(zone.name.toUpperCase(), zone.x + zone.w / 2, WATER_LEVEL - 30);
+              }
+            });
+
+            // UV Lights in Tertiary
+            ctx.fillStyle = `rgba(168, 85, 247, ${0.1 + Math.sin(state.time * 0.1) * 0.05})`; // Pulsing Purple
+            ctx.fillRect(ZONES.TERTIARY.x, WATER_LEVEL, ZONES.TERTIARY.w, TANK_BOTTOM - WATER_LEVEL);
+            ctx.fillStyle = '#D8B4FE';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#A855F7';
+            for(let i=1; i<4; i++) {
+              ctx.fillRect(ZONES.TERTIARY.x + (ZONES.TERTIARY.w/4)*i - 2, WATER_LEVEL, 4, TANK_BOTTOM - WATER_LEVEL);
+            }
+            ctx.shadowBlur = 0;
+
+            // Connective Pipes (Surface Level)
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(ZONES.INLET.x, WATER_LEVEL + 20, ZONES.PRIMARY.x - ZONES.INLET.x, 20);
+            ctx.fillRect(ZONES.PRIMARY.x + ZONES.PRIMARY.w, WATER_LEVEL + 30, ZONES.AERATION.x - (ZONES.PRIMARY.x + ZONES.PRIMARY.w), 20);
+            ctx.fillRect(ZONES.AERATION.x + ZONES.AERATION.w, WATER_LEVEL + 30, ZONES.SECONDARY.x - (ZONES.AERATION.x + ZONES.AERATION.w), 20);
+            ctx.fillRect(ZONES.SECONDARY.x + ZONES.SECONDARY.w, WATER_LEVEL + 30, ZONES.TERTIARY.x - (ZONES.SECONDARY.x + ZONES.SECONDARY.w), 20);
+            ctx.fillRect(ZONES.TERTIARY.x + ZONES.TERTIARY.w, WATER_LEVEL + 20, CANVAS_WIDTH - (ZONES.TERTIARY.x + ZONES.TERTIARY.w), 20);
+
+            // 2. Spawn Particles based on Flow Rate
+            if (state.time - state.lastSpawnTime > (45 / flowRate)) {
+              const rand = Math.random();
+              let type = TYPES.CLEAN;
+              if (rand < 0.12) type = TYPES.SOLID;        // 12% Solids
+              else if (rand < 0.35) type = TYPES.ORGANIC; // 23% Organics
+              else if (rand < 0.50) type = TYPES.PATHOGEN;// 15% Pathogens
+              // 0.50 to 1.00 is CLEAN                      // 50% Water
+
+              state.particles.push({
+                id: Math.random(),
+                type: type,
+                x: 0,
+                y: WATER_LEVEL + 25 + Math.random() * 15,
+                vx: flowRate * 0.4,
+                vy: 0,
+                state: 'flow' // flow, waste, ras
+              });
+              state.lastSpawnTime = state.time;
+            }
+
+            // Ensure we have some base bacteria to start
+            if (state.time < 100 && state.time % 10 === 0) {
+              state.particles.push({
+                id: Math.random(), type: TYPES.BACTERIA,
+                x: ZONES.AERATION.x + 50, y: TANK_BOTTOM - 50,
+                vx: 0, vy: 0, state: 'flow'
+              });
+            }
+
+            // 3. Spawn Bubbles in Aeration Tank (if ON)
+            if (aerationOn) {
+              for(let i=0; i<3; i++) {
+                if(Math.random() < 0.5) {
+                  state.bubbles.push({
+                    x: ZONES.AERATION.x + 10 + Math.random() * (ZONES.AERATION.w - 20),
+                    y: TANK_BOTTOM - 5,
+                    r: Math.random() * 3 + 1,
+                    vy: -1 - Math.random() * 3
+                  });
+                }
+              }
+            }
+
+            // 4. Update & Draw Bubbles
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            state.bubbles = state.bubbles.filter(b => b.y > WATER_LEVEL);
+            state.bubbles.forEach(b => {
+              b.y += b.vy;
+              b.x += Math.sin(b.y * 0.05) * 1; 
+              ctx.beginPath();
+              ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+              ctx.fill();
+            });
+
+            // 5. Update & Draw Particles (Core Physics Engine)
+            let activeParticles = [];
+            let currentBacteriaCount = 0;
+            
+            let bacteriaInAeration = state.particles.filter(p => 
+              p.type === TYPES.BACTERIA && p.x > ZONES.AERATION.x && p.x < ZONES.AERATION.x + ZONES.AERATION.w
+            ).length;
+
+            for (let p of state.particles) {
+              if (p.type === TYPES.BACTERIA) currentBacteriaCount++;
+
+              if (p.state === 'flow') {
+                let localFlow = flowRate * 0.4;
+                if ((p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w) || 
+                    (p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w)) {
+                    localFlow *= 0.5; // Clarifiers slow down flow
+                }
+                p.vx = localFlow;
+                
+                // --- ZONE LOGIC ---
+                
+                // 1. Primary Settling
+                if (p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w) {
+                  if (p.type === TYPES.SOLID) {
+                    p.vy = 1.0; 
+                    p.vx *= 0.2; 
+                  } else {
+                    p.vy = 0.1; 
+                  }
+                }
+                
+                // 2. Aeration Basin (Bioreactor)
+                else if (p.x > ZONES.AERATION.x && p.x < ZONES.AERATION.x + ZONES.AERATION.w) {
+                  if (aerationOn) {
+                    p.vy += (Math.random() - 0.5) * 0.8; 
+                    if (p.y > TANK_BOTTOM - 15) p.vy -= 1.0; 
+                    if (p.y < WATER_LEVEL + 20) p.vy += 0.5;
+
+                    // Biological Digestion
+                    if (p.type === TYPES.ORGANIC) {
+                      let digestionChance = 0.003 * (bacteriaInAeration / 15); 
+                      if (Math.random() < digestionChance) p.type = TYPES.BACTERIA; 
+                    }
+                  } else {
+                    p.vy += 0.2; 
+                  }
+                }
+                
+                // 3. Secondary Clarifier
+                else if (p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w) {
+                  if (p.type === TYPES.BACTERIA) {
+                    p.vy = 1.8; 
+                    p.vx *= 0.1; 
+                  } else if (p.type === TYPES.ORGANIC || p.type === TYPES.SOLID) {
+                    p.vy = 0.3; 
+                    p.vx *= 0.5;
+                  }
+                }
+                
+                // 4. UV Disinfection
+                else if (p.x > ZONES.TERTIARY.x && p.x < ZONES.TERTIARY.x + ZONES.TERTIARY.w) {
+                  p.vy = 0;
+                  if (p.type === TYPES.PATHOGEN) {
+                    let killChance = 0.15 / (flowRate * 0.5); 
+                    if (Math.random() < killChance) p.type = TYPES.CLEAN; 
+                  }
+                } 
+                
+                // Pipes
+                else {
+                  p.vy = 0;
+                  if (p.y > WATER_LEVEL + 40) p.y -= 1;
+                  if (p.y < WATER_LEVEL + 30) p.y += 1;
+                }
+
+                // Apply Velocity
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Settling / Floor & Hopper Collision
+                if (p.y >= TANK_BOTTOM) {
+                  let inPrimary = p.x > ZONES.PRIMARY.x && p.x < ZONES.PRIMARY.x + ZONES.PRIMARY.w;
+                  let inSecondary = p.x > ZONES.SECONDARY.x && p.x < ZONES.SECONDARY.x + ZONES.SECONDARY.w;
+                  
+                  if (inPrimary || inSecondary) {
+                    let zone = inPrimary ? ZONES.PRIMARY : ZONES.SECONDARY;
+                    let centerX = zone.x + zone.w/2;
+                    
+                    if (p.y < TANK_BOTTOM + 25) {
+                      p.vy = 1.0; 
+                      p.vx = p.x < centerX ? 1.0 : -1.0; 
+                    } else {
+                      if (inPrimary) {
+                        p.state = 'waste';
+                      } else {
+                        p.state = 'ras';
+                        p.y = TANK_BOTTOM + 30;
+                      }
+                    }
+                  } else {
+                    p.y = TANK_BOTTOM;
+                    if (p.vy > 0) p.vy = 0;
+                    if (!aerationOn && p.x > ZONES.AERATION.x && p.x < ZONES.AERATION.x + ZONES.AERATION.w) {
+                      p.vx *= 0.5; 
+                    }
+                  }
+                }
+
+              } 
+              // RAS Logic (Return Activated Sludge Pump)
+              else if (p.state === 'ras') {
+                p.y = PIPE_BOTTOM - 10 + (Math.random() * 5);
+                p.x -= 4; 
+                if (p.x < ZONES.AERATION.x + 20) {
+                  p.state = 'flow';
+                  p.y = TANK_BOTTOM - 5;
+                  p.vy = -4; 
+                  p.vx = 1 + Math.random() * 2; 
+                }
+              }
+
+              // Draw Particle
+              if (p.state !== 'waste') {
+                ctx.fillStyle = p.type.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.type.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Exiting the plant
+                if (p.x >= CANVAS_WIDTH) {
+                  state.stats.outTotal++;
+                  if (p.type === TYPES.SOLID) state.stats.outTSS++;
+                  if (p.type === TYPES.ORGANIC) state.stats.outBOD++;
+                  if (p.type === TYPES.PATHOGEN) state.stats.outPath++;
+                  if (p.type === TYPES.BACTERIA) state.stats.outTSS++; 
+                } else {
+                  activeParticles.push(p);
+                }
+              }
+            }
+            
+            state.particles = activeParticles;
+            state.stats.currentBiomass = currentBacteriaCount;
+
+            requestRef.current = requestAnimationFrame(render);
+          }, [flowRate, aerationOn, isRunning]);
+
+          // Handle Simulation Loop Lifecycle
+          useEffect(() => {
+            requestRef.current = requestAnimationFrame(render);
+            return () => cancelAnimationFrame(requestRef.current);
+          }, [render]);
+
+          // Sync React State for UI Readout 
+          useEffect(() => {
+            const interval = setInterval(() => {
+              const s = simState.current.stats;
+              const totalBad = s.outBOD + s.outTSS + s.outPath;
+              
+              const eff = s.outTotal === 0 ? 100 : Math.max(0, 100 - (totalBad / s.outTotal) * 100);
+              
+              setMetrics({
+                efficiency: eff,
+                effluentBOD: s.outBOD,
+                effluentTSS: s.outTSS,
+                effluentPathogens: s.outPath,
+                activeBiomass: s.currentBiomass
+              });
+            }, 500);
+            return () => clearInterval(interval);
+          }, []);
+
+          const handleReset = () => {
+            simState.current = {
+              particles: [], bubbles: [],
+              stats: { outTotal: 0, outBOD: 0, outTSS: 0, outPath: 0, currentBiomass: 0 },
+              lastSpawnTime: 0, time: 0
+            };
+            setMetrics({ efficiency: 100, effluentBOD: 0, effluentTSS: 0, effluentPathogens: 0, activeBiomass: 0 });
+          };
+
+          return (
+            <div className="flex flex-col h-screen max-h-[1000px] min-h-[700px] bg-[#020617] text-slate-100 font-sans overflow-hidden p-2 md:p-4">
+              
+              {/* Main Container */}
+              <div className="w-full h-full max-w-7xl mx-auto flex flex-col gap-4 border border-slate-700 bg-slate-900 rounded-2xl overflow-hidden shadow-2xl">
+                
+                {/* Header */}
+                <header className="flex flex-wrap items-center justify-between p-4 bg-slate-800 border-b border-slate-700 shadow-md z-10 gap-4 shrink-0">
+                  <div className="flex items-center gap-3">
+                    <Icon name="Droplets" className="text-cyan-400 w-8 h-8" />
+                    <div>
+                      <h1 className="text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 tracking-wide">
+                        Wastewater Treatment Simulator
+                      </h1>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Activated Sludge Model & Biological Digestion</p>
+                    </div>
+                  </div>
+                  
+                  {/* Global Controls */}
+                  <div className="flex items-center gap-3 bg-slate-900 p-2 rounded-xl border border-slate-700 shadow-inner">
+                    <button 
+                      onClick={() => setIsRunning(!isRunning)}
+                      className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-bold transition-all text-sm uppercase tracking-wider ${
+                        isRunning ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/50' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/50'
+                      }`}
+                    >
+                      {isRunning ? <><Icon name="Pause" className="w-4 h-4" /> Pause</> : <><Icon name="Play" className="w-4 h-4" /> Run</>}
+                    </button>
+                    <button 
+                      onClick={handleReset}
+                      className="p-2.5 text-slate-400 hover:text-white hover:bg-slate-700 border border-transparent hover:border-slate-600 rounded-lg transition-colors"
+                      title="Reset Simulation"
+                    >
+                      <Icon name="RotateCcw" className="w-5 h-5" />
+                    </button>
+                  </div>
+                </header>
+
+                {/* Main Workspace */}
+                <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+                  
+                  {/* Left Sidebar: Controls & Analytics */}
+                  <aside className="w-full lg:w-[380px] p-5 bg-[#0F172A] border-r border-slate-700 overflow-y-auto custom-scrollbar flex flex-col gap-5 shrink-0 z-10">
+                    
+                    {/* Engineering Controls */}
+                    <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 shadow-lg">
+                      <h2 className="text-xs font-bold uppercase tracking-widest mb-4 text-slate-400 flex items-center gap-2 border-b border-slate-700 pb-2">
+                        <Icon name="Activity" className="w-4 h-4 text-indigo-400" /> Plant Engineering Controls
+                      </h2>
+                      
+                      {/* Flow Rate Slider */}
+                      <div className="mb-5">
+                        <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
+                          <span className="flex items-center gap-2"><Icon name="Waves" className="w-4 h-4 text-cyan-500"/> Inlet Flow Rate</span>
+                          <span className="font-mono text-cyan-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">{flowRate.toFixed(1)}x</span>
+                        </label>
+                        <input 
+                          type="range" min="1" max="5" step="0.5"
+                          value={flowRate}
+                          onChange={(e) => setFlowRate(parseFloat(e.target.value))}
+                          className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <p className="text-[10px] text-slate-500 mt-2 leading-tight">Controls Hydraulic Retention Time (HRT). High flow gives bacteria less time to digest organics.</p>
+                      </div>
+
+                      {/* Aeration Toggle */}
+                      <div className="pt-2 border-t border-slate-700/50">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                            <Icon name="Wind" className={`w-4 h-4 ${aerationOn ? 'text-blue-400' : 'text-slate-500'}`}/> 
+                            Aeration Blowers (O₂)
+                          </span>
+                          <button 
+                            onClick={() => setAerationOn(!aerationOn)}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none shadow-inner border border-slate-900 ${aerationOn ? 'bg-blue-500' : 'bg-slate-700'}`}
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${aerationOn ? 'translate-x-6' : 'translate-x-1'}`} />
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-500 leading-tight">Provides dissolved oxygen so aerobic bacteria can break down Biological Oxygen Demand (BOD).</p>
+                      </div>
+                    </div>
+
+                    {/* Effluent Quality Dashboard */}
+                    <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 shadow-lg flex-1 flex flex-col">
+                      <h2 className="text-xs font-bold uppercase tracking-widest mb-4 text-slate-400 flex items-center gap-2 border-b border-slate-700 pb-2">
+                        <Icon name="Beaker" className="w-4 h-4 text-emerald-400" /> Effluent Discharge Analysis
+                      </h2>
+                      
+                      <div className="bg-[#020617] rounded-xl p-4 border border-slate-700 mb-4 shadow-inner">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-500">Overall Plant Efficiency</span>
+                          <span className={`text-xs px-2 py-0.5 rounded font-bold uppercase tracking-widest border
+                            ${metrics.efficiency > 95 ? 'bg-emerald-900/50 text-emerald-400 border-emerald-500/50' : 
+                              metrics.efficiency > 75 ? 'bg-amber-900/50 text-amber-400 border-amber-500/50' : 
+                              'bg-rose-900/50 text-rose-400 border-rose-500/50'}`}>
+                            {metrics.efficiency > 95 ? 'Pass' : metrics.efficiency > 75 ? 'Warning' : 'Violation'}
+                          </span>
+                        </div>
+                        <div className={`font-mono text-4xl font-black drop-shadow-md
+                          ${metrics.efficiency > 95 ? 'text-emerald-400' : metrics.efficiency > 75 ? 'text-amber-400' : 'text-rose-400'}`}>
+                          {metrics.efficiency.toFixed(1)}<span className="text-xl">%</span>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <h3 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Escaped Pollutants (Violations)</h3>
+                        
+                        <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                          <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                            <div className="w-2.5 h-2.5 rounded-full bg-[#84CC16]"></div> Untreated BOD
+                          </span>
+                          <span className={`font-mono text-sm font-bold ${metrics.effluentBOD > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentBOD}</span>
+                        </div>
+                        
+                        <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                          <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                            <div className="w-2.5 h-2.5 rounded-full bg-[#78350F]"></div> Suspended Solids
+                          </span>
+                          <span className={`font-mono text-sm font-bold ${metrics.effluentTSS > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentTSS}</span>
+                        </div>
+                        
+                        <div className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                          <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                            <div className="w-2.5 h-2.5 rounded-full bg-[#EF4444]"></div> Live Pathogens
+                          </span>
+                          <span className={`font-mono text-sm font-bold ${metrics.effluentPathogens > 0 ? 'text-rose-400' : 'text-slate-400'}`}>{metrics.effluentPathogens}</span>
+                        </div>
+                      </div>
+                      
+                      {/* Biological Telemetry */}
+                      <div className="mt-auto pt-4">
+                        <div className="bg-orange-950/20 p-3 rounded-lg border border-orange-900/30 flex justify-between items-center">
+                          <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest">Active Biomass Count</span>
+                          <span className="font-mono text-orange-300 font-bold">{metrics.activeBiomass}</span>
+                        </div>
+                      </div>
+
+                    </div>
+                  </aside>
+
+                  {/* Right Area: Interactive Canvas */}
+                  <main className="flex-1 relative flex flex-col p-4 bg-[#070B14]">
+                    
+                    {/* Educational Legend */}
+                    <div className="flex flex-wrap gap-4 mb-4 bg-slate-800/80 p-3 rounded-xl border border-slate-700 text-xs text-slate-300 items-center justify-center shadow-md z-10">
+                      <span className="font-bold text-white uppercase tracking-wider text-[10px] mr-2"><Icon name="Info" className="inline w-4 h-4 mb-0.5 text-blue-400 mr-1"/> Particle Key:</span>
+                      {Object.values(TYPES).map(type => (
+                        <div key={type.label} className="flex items-center gap-1.5 font-medium">
+                          <div className="w-3 h-3 rounded-full shadow-[0_0_5px_rgba(0,0,0,0.5)] border border-slate-900" style={{ backgroundColor: type.color }}></div>
+                          {type.label}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Container for aspect-ratio locked canvas */}
+                    <div className="flex-1 w-full bg-[#0F172A] rounded-xl border-2 border-slate-700 overflow-hidden relative shadow-2xl shadow-cyan-900/20">
+                      {/* Educational Overlay / Pipe Labels */}
+                      <div className="absolute bottom-2 left-[50%] transform -translate-x-1/2 text-[10px] font-bold text-slate-400 uppercase tracking-widest z-20 flex flex-col items-center pointer-events-none">
+                         <span className="text-orange-400">⟵ Return Activated Sludge (RAS) ⟵</span>
+                         <span className="text-[8px] mt-0.5">Recycles biomass to sustain bioreactor</span>
+                      </div>
+
+                      <canvas 
+                        ref={canvasRef} 
+                        width={CANVAS_WIDTH} 
+                        height={CANVAS_HEIGHT} 
+                        className="absolute top-0 left-0 w-full h-full object-contain"
+                      />
+                    </div>
+                  </main>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
