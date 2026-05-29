@@ -1,420 +1,621 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transect Sampling Simulator | LuminousLearner</title>
-    
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Recharts -->
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Map, Ruler, Calculator, Eye, RefreshCw, BarChart2, Target, Sprout, Info, EyeOff, Trees, MousePointer2 } from 'lucide-react';
 
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+/* SCIENTIFIC MODEL & CONCEPTS
+  ---------------------------
+  Topic: Transect Sampling (Belt Transect Method)
+  
+  Math & Formulas:
+  1. Area of one Belt Transect = Length * Width
+  2. Species Density = Total Count Sampled / Total Area Sampled
+  3. Estimated Total Population = Species Density * Total Field Area
+  
+  Ecological Distributions:
+  - Random: Uniformly scattered.
+  - Clustered: Grouped due to seed dispersal or localized resources.
+  - Gradient (Ecotone): Distribution strongly skewed by a changing abiotic factor (Light/Shade).
+*/
+
+// --- Engine & Field Constants ---
+const FIELD_SIZE_M = 100; // 100m x 100m field
+const FIELD_AREA = FIELD_SIZE_M * FIELD_SIZE_M; // 10,000 m^2
+const TRANSECT_WIDTH_M = 2; // 2 meter wide belt transect
+
+const HABITAT_PROFILES = {
+  uniform: {
+    id: 'uniform',
+    name: 'Uniform Field',
+    desc: 'A flat, homogeneous environment. Best for studying Random vs. Clustered dispersion.',
+    bg: '#064E3B', // Solid Emerald 900
+    species: {
+      A: { id: 'A', name: 'Dandelion', emoji: '🌼', distribution: 'random', trueCount: 600, size: 1.2 },
+      B: { id: 'B', name: 'Wild Thistle', emoji: '🪻', distribution: 'clustered', trueCount: 250, size: 1.4 },
+      C: { id: 'C', name: 'Rare Orchid', emoji: '🌸', distribution: 'random', trueCount: 30, size: 1.1 }
+    }
+  },
+  gradient: {
+    id: 'gradient',
+    name: 'Forest to Meadow Gradient',
+    desc: 'An Ecotone. A dense, shady forest on the left transitions into a sunny meadow on the right.',
+    bg: 'gradient', // Custom drawn in canvas
+    species: {
+      A: { id: 'A', name: 'Shade Fern', emoji: '🌿', distribution: 'skew_left', trueCount: 450, size: 1.5 },
+      B: { id: 'B', name: 'Edge Shrub', emoji: '🌳', distribution: 'center', trueCount: 120, size: 2.0 },
+      C: { id: 'C', name: 'Sun Daisy', emoji: '🌻', distribution: 'skew_right', trueCount: 500, size: 1.2 }
+    }
+  }
+};
+
+export default function App() {
+  // --- UI & Sampling State ---
+  const [activeHabitat, setActiveHabitat] = useState('uniform');
+  const [isManualMode, setIsManualMode] = useState(false);
+  
+  const [transectLength, setTransectLength] = useState(20); 
+  const [transectCount, setTransectCount] = useState(5); 
+  
+  const [showTruePop, setShowTruePop] = useState(false); 
+  const [sampled, setSampled] = useState(false);
+  
+  // --- Simulation State ---
+  const [plants, setPlants] = useState([]);
+  const [transects, setTransects] = useState([]);
+  const [results, setResults] = useState({});
+  
+  // --- Manual Drag State ---
+  const [dragStart, setDragStart] = useState(null);
+  const [dragCurrent, setDragCurrent] = useState(null);
+
+  const canvasRef = useRef(null);
+
+  // --- Field Generation (Ecology Model) ---
+  const generateField = useCallback(() => {
+    const newPlants = [];
+    const profile = HABITAT_PROFILES[activeHabitat];
     
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
+    Object.values(profile.species).forEach(sp => {
+      for (let i = 0; i < sp.trueCount; i++) {
+        let px = 0;
+        let py = Math.random() * FIELD_SIZE_M;
+
+        // Apply Probability Density Functions
+        if (sp.distribution === 'random') {
+          px = Math.random() * FIELD_SIZE_M;
+        } else if (sp.distribution === 'clustered') {
+          const numClusters = 6;
+          // Seed the clusters deterministically based on species ID to keep them somewhat grouped
+          const clusterId = i % numClusters;
+          const cx = ((clusterId * 17 + 43) % 80) + 10;
+          const cy = ((clusterId * 31 + 17) % 80) + 10;
+          
+          const offsetX = (Math.random() + Math.random() + Math.random() - 1.5) * 10;
+          const offsetY = (Math.random() + Math.random() + Math.random() - 1.5) * 10;
+          px = Math.max(0, Math.min(FIELD_SIZE_M, cx + offsetX));
+          py = Math.max(0, Math.min(FIELD_SIZE_M, cy + offsetY));
+        } else if (sp.distribution === 'skew_left') {
+          // Cubed random pushes values heavily towards 0 (Left/Shade)
+          const val = Math.random() * Math.random() * Math.random();
+          px = val * FIELD_SIZE_M;
+        } else if (sp.distribution === 'skew_right') {
+          // Inverse cubed pushes values heavily towards 1 (Right/Sun)
+          const val = 1.0 - (Math.random() * Math.random() * Math.random());
+          px = val * FIELD_SIZE_M;
+        } else if (sp.distribution === 'center') {
+          // Central Limit Theorem approximation pushes values towards 0.5 (Middle/Edge)
+          const val = (Math.random() + Math.random() + Math.random() + Math.random()) / 4;
+          px = val * FIELD_SIZE_M;
         }
-    </script>
-
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
         
-        /* Gradient Background for Field */
-        .field-gradient {
-            background: linear-gradient(to right, #064e3b, #10b981, #facc15, #d97706);
-            /* Dark Green (Wet) -> Green -> Yellow -> Orange (Dry) */
-        }
+        newPlants.push({
+          x: px, y: py,
+          speciesId: sp.id,
+          emoji: sp.emoji,
+          size: sp.size
+        });
+      }
+    });
+    
+    setPlants(newPlants);
+    setTransects([]);
+    setSampled(false);
+    setShowTruePop(false);
+    setResults({});
+  }, [activeHabitat]);
 
-        /* Tape Measure Tick */
-        .tape-tick {
-            border-left: 2px solid #94a3b8;
-            height: 10px;
+  // Initialize field on load or habitat change
+  useEffect(() => {
+    generateField();
+  }, [generateField]);
+
+  // --- Auto-Sampling Logic ---
+  const conductAutoSampling = () => {
+    const newTransects = [];
+    let attempts = 0;
+    
+    while (newTransects.length < transectCount && attempts < 1000) {
+      attempts++;
+      const startX = Math.random() * (FIELD_SIZE_M - transectLength);
+      const startY = Math.random() * (FIELD_SIZE_M - TRANSECT_WIDTH_M);
+      
+      const isOverlapping = newTransects.some(t => Math.abs(t.startY - startY) < TRANSECT_WIDTH_M);
+      if (!isOverlapping) {
+        newTransects.push({ startX, startY, length: transectLength, width: TRANSECT_WIDTH_M });
+      }
+    }
+    
+    setTransects(newTransects);
+    calculateResults(newTransects);
+  };
+
+  // --- Math & Extrapolation Engine ---
+  const calculateResults = (currentTransects) => {
+    if (currentTransects.length === 0) {
+      setSampled(false);
+      setResults({});
+      return;
+    }
+
+    const totalAreaSampled = currentTransects.reduce((sum, t) => sum + (t.length * t.width), 0);
+    const profile = HABITAT_PROFILES[activeHabitat];
+    
+    // Count plants inside the transects
+    const counts = { A: 0, B: 0, C: 0 };
+    plants.forEach(plant => {
+      const inTransect = currentTransects.some(t => 
+        plant.x >= t.startX && plant.x <= t.startX + t.length &&
+        plant.y >= t.startY && plant.y <= t.startY + t.width
+      );
+      if (inTransect) counts[plant.speciesId]++;
+    });
+
+    const newResults = {};
+    Object.keys(profile.species).forEach(key => {
+      const sp = profile.species[key];
+      const density = counts[key] / totalAreaSampled;
+      const estimate = Math.round(density * FIELD_AREA);
+      const actual = sp.trueCount;
+      const error = Math.abs(estimate - actual) / actual * 100;
+      
+      newResults[key] = {
+        sampledCount: counts[key],
+        estimate: estimate,
+        actual: actual,
+        error: error
+      };
+    });
+    
+    setResults({
+      ...newResults,
+      totalAreaSampled,
+      percentSampled: (totalAreaSampled / FIELD_AREA) * 100
+    });
+    setSampled(true);
+  };
+
+  // --- Manual Drag Handlers ---
+  const handleMouseDown = (e) => {
+    if (!isManualMode) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scale = FIELD_SIZE_M / rect.width;
+    const x = (e.clientX - rect.left) * scale;
+    const y = (e.clientY - rect.top) * scale;
+    setDragStart({ x, y });
+    setDragCurrent({ x, y });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!dragStart || !isManualMode) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scale = FIELD_SIZE_M / rect.width;
+    const x = Math.max(0, Math.min(FIELD_SIZE_M, (e.clientX - rect.left) * scale));
+    const y = Math.max(0, Math.min(FIELD_SIZE_M, (e.clientY - rect.top) * scale));
+    setDragCurrent({ x, y });
+  };
+
+  const handleMouseUp = () => {
+    if (!dragStart || !dragCurrent || !isManualMode) return;
+    
+    const startX = Math.min(dragStart.x, dragCurrent.x);
+    const length = Math.abs(dragCurrent.x - dragStart.x);
+    const startY = Math.max(0, dragStart.y - TRANSECT_WIDTH_M / 2); 
+    
+    // Only accept if they dragged a reasonable distance (>1 meter)
+    if (length > 1) {
+      const newTransects = [...transects, { startX, startY, length, width: TRANSECT_WIDTH_M }];
+      setTransects(newTransects);
+      calculateResults(newTransects);
+    }
+    
+    setDragStart(null);
+    setDragCurrent(null);
+  };
+
+  const clearManualTransects = () => {
+    setTransects([]);
+    calculateResults([]);
+  };
+
+  // --- Canvas Rendering ---
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    const scale = width / FIELD_SIZE_M; 
+    const profile = HABITAT_PROFILES[activeHabitat];
+
+    // 1. Draw Field Background
+    if (profile.bg === 'gradient') {
+      const grad = ctx.createLinearGradient(0, 0, width, 0);
+      grad.addColorStop(0, '#022C22'); // Dark Shade
+      grad.addColorStop(0.4, '#064E3B'); // Mid Forest
+      grad.addColorStop(0.7, '#65A30D'); // Light Edge
+      grad.addColorStop(1, '#84CC16'); // Bright Meadow
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = profile.bg;
+    }
+    ctx.fillRect(0, 0, width, height);
+    
+    // Grid lines for scale (every 10m)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'; 
+    ctx.lineWidth = 1;
+    for(let i = 0; i <= FIELD_SIZE_M; i += 10) {
+      ctx.beginPath();
+      ctx.moveTo(i * scale, 0); ctx.lineTo(i * scale, height);
+      ctx.moveTo(0, i * scale); ctx.lineTo(width, i * scale);
+      ctx.stroke();
+    }
+
+    // 2. Draw Plants (Emojis)
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    plants.forEach(p => {
+      // Determine if "caught" in a transect
+      let isCounted = false;
+      if (transects.length > 0) {
+        isCounted = transects.some(t => 
+          p.x >= t.startX && p.x <= t.startX + t.length &&
+          p.y >= t.startY && p.y <= t.startY + t.width
+        );
+      }
+
+      const px = p.x * scale;
+      const py = p.y * scale;
+      const fontSize = p.size * scale * 2;
+
+      ctx.font = `${fontSize}px Inter`;
+      
+      if (sampled && transects.length > 0) {
+        if (isCounted) {
+          // Highlight counted plants with a white glow
+          ctx.shadowColor = '#FFFFFF';
+          ctx.shadowBlur = 15;
+          ctx.globalAlpha = 1.0;
+          ctx.fillText(p.emoji, px, py);
+          ctx.shadowBlur = 0; // reset
+        } else {
+          // Fade out uncounted plants deeply
+          ctx.globalAlpha = 0.15;
+          ctx.fillText(p.emoji, px, py);
+          ctx.globalAlpha = 1.0;
         }
+      } else {
+        // Normal rendering
+        ctx.globalAlpha = 1.0;
+        ctx.fillText(p.emoji, px, py);
+      }
+    });
+
+    // 3. Draw Completed Transects
+    transects.forEach(t => {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      
+      ctx.beginPath();
+      ctx.rect(t.startX * scale, t.startY * scale, t.length * scale, t.width * scale);
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.setLineDash([]); 
+
+    // 4. Draw Ghost Transect during Drag
+    if (dragStart && dragCurrent) {
+      const startX = Math.min(dragStart.x, dragCurrent.x);
+      const length = Math.abs(dragCurrent.x - dragStart.x);
+      const startY = dragStart.y - TRANSECT_WIDTH_M / 2;
+      
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.3)'; // Yellow highlight
+      ctx.strokeStyle = '#FACC15';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.rect(startX * scale, startY * scale, length * scale, TRANSECT_WIDTH_M * scale);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+  }, [plants, transects, sampled, dragStart, dragCurrent, activeHabitat]);
+
+  const activeProfile = HABITAT_PROFILES[activeHabitat];
+
+  return (
+    <div className="flex flex-col h-screen max-h-[1000px] min-h-[750px] bg-[#020617] text-slate-100 font-sans overflow-hidden p-2 md:p-4">
+      
+      {/* Main Container */}
+      <div className="w-full h-full max-w-[1400px] mx-auto flex flex-col gap-4 border border-slate-700 bg-[#0F172A] rounded-2xl overflow-hidden shadow-2xl">
         
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+        {/* Header */}
+        <header className="flex items-center justify-between p-4 bg-slate-800 border-b border-slate-700 shadow-md z-10 shrink-0">
+          <div className="flex items-center gap-3">
+            <Map className="text-emerald-400 w-8 h-8" />
+            <div>
+              <h1 className="text-xl md:text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-teal-500 tracking-wide">
+                Transect Sampling Simulator
+              </h1>
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-0.5">Ecology & Population Statistics</p>
+            </div>
+          </div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
-        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, LineChart, Line, Legend } = window.Recharts;
-        const { motion, AnimatePresence } = window.Motion;
+          <div className="flex items-center bg-slate-900 px-4 py-2 rounded-xl border border-slate-700 shadow-inner">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider text-right mr-3 hidden sm:block">
+              Total Field<br/>Area
+            </div>
+            <div className="text-2xl font-black font-mono text-emerald-300 drop-shadow-md">
+              10,000 <span className="text-sm">m²</span>
+            </div>
+          </div>
+        </header>
 
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
-
-        // --- CONSTANTS ---
-        const FIELD_LENGTH = 20; // meters
-        const FIELD_WIDTH_PX = 800;
-        const QUADRAT_SIZE_PX = 40; // Equivalent to 1m visually
-
-        const SPECIES = {
-            fern: { id: 'fern', name: 'Fern', color: '#34d399', icon: 'sprout', pref: { min: 0, max: 8, peak: 2 } },
-            grass: { id: 'grass', name: 'Grass', color: '#facc15', icon: 'leaf', pref: { min: 4, max: 16, peak: 10 } },
-            cactus: { id: 'cactus', name: 'Cactus', color: '#fb923c', icon: 'sun', pref: { min: 12, max: 20, peak: 18 } }
-        };
-
-        // --- COMPONENT: TRANSECT FIELD ---
-        const TransectField = ({ quadratPos, onRecord, plants }) => {
+        {/* Main Content Area */}
+        <main className="flex-1 flex flex-col lg:flex-row relative min-h-0">
+          
+          {/* Left Sidebar: Controls & Data */}
+          <aside className="w-full lg:w-[400px] p-5 bg-slate-800/40 border-r border-slate-700 overflow-y-auto flex flex-col gap-5 z-10 shrink-0 custom-scrollbar">
             
-            // Calculate counts in current quadrat
-            const currentCounts = useMemo(() => {
-                // Quadrat Range (in meters)
-                const qStart = quadratPos;
-                const qEnd = quadratPos + 1;
-                
-                const counts = { fern: 0, grass: 0, cactus: 0 };
-                plants.forEach(p => {
-                    if (p.x >= qStart && p.x < qEnd) {
-                        // Also check Y to be inside "belt" (simplified: entire strip width)
-                        // Or just assume quadrat covers a sample strip
-                        counts[p.type]++;
-                    }
-                });
-                return counts;
-            }, [quadratPos, plants]);
+            {/* Habitat & Mode Toggles */}
+            <div className="space-y-3">
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block border-b border-slate-700 pb-1">Environment Profile</label>
+              <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shadow-inner">
+                <button onClick={() => setActiveHabitat('uniform')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'uniform' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   Uniform Field
+                </button>
+                <button onClick={() => setActiveHabitat('gradient')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${activeHabitat === 'gradient' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   Forest/Meadow Ecotone
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-tight bg-slate-900/50 p-2 rounded border border-slate-800 border-l-2 border-l-emerald-500">{activeProfile.desc}</p>
+            </div>
 
-            // Environmental Readings at current pos
-            const moisture = Math.max(0, 100 - (quadratPos * 5)); // 100 -> 0
-            const light = Math.min(100, quadratPos * 5); // 0 -> 100
-
-            return (
-                <div className="relative w-full h-full flex flex-col">
-                    {/* 1. The Field Visual */}
-                    <div className="relative flex-1 field-gradient rounded-xl overflow-hidden border border-slate-700 shadow-inner mx-4 mt-4">
-                        
-                        {/* Ruler / Tape Measure */}
-                        <div className="absolute top-0 left-0 right-0 h-8 bg-yellow-400/90 flex items-end border-b border-yellow-600 z-10">
-                            {Array.from({ length: 21 }).map((_, i) => (
-                                <div key={i} className="flex-1 flex flex-col items-start h-full justify-end relative">
-                                    <div className="h-3 w-px bg-black/50"></div>
-                                    <span className="text-[8px] text-black font-bold absolute -bottom-4 -left-1">{i}m</span>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Plants */}
-                        <div className="absolute inset-0 top-8 overflow-hidden">
-                            {plants.map((p) => (
-                                <div 
-                                    key={p.id}
-                                    className="absolute transition-opacity duration-500"
-                                    style={{ 
-                                        left: `${(p.x / FIELD_LENGTH) * 100}%`, 
-                                        top: `${p.y}%`,
-                                        color: SPECIES[p.type].color 
-                                    }}
-                                >
-                                    <Icon name={SPECIES[p.type].icon} size={p.size} />
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* The Quadrat (Draggable Visual) */}
-                        <div 
-                            className="absolute top-8 bottom-0 border-4 border-white/80 bg-white/10 backdrop-blur-[1px] transition-all duration-300 shadow-[0_0_15px_rgba(255,255,255,0.3)]"
-                            style={{ 
-                                left: `${(quadratPos / FIELD_LENGTH) * 100}%`, 
-                                width: `${(1 / FIELD_LENGTH) * 100}%` 
-                            }}
-                        >
-                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-white text-black text-[10px] font-bold px-2 py-0.5 rounded-t">
-                                {quadratPos}m
-                            </div>
-                        </div>
-
-                    </div>
-
-                    {/* 2. Controls & Current Reading */}
-                    <div className="h-32 bg-slate-900 border-t border-slate-800 p-4 flex items-center justify-between gap-8">
-                        
-                        {/* Slider */}
-                        <div className="flex-1">
-                            <div className="flex justify-between text-xs font-bold text-slate-400 mb-2">
-                                <span>Position: {quadratPos}m</span>
-                                <span>Drag to move quadrat</span>
-                            </div>
-                            <input 
-                                type="range" min="0" max="19" step="1"
-                                value={quadratPos}
-                                onChange={(e) => onRecord(parseInt(e.target.value), false)} // Move only
-                                className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg cursor-pointer"
-                            />
-                            <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                <span>Wet / Shady</span>
-                                <span>Dry / Sunny</span>
-                            </div>
-                        </div>
-
-                        {/* Live Stats Box */}
-                        <div className="bg-slate-800 border border-slate-700 p-3 rounded-xl min-w-[200px]">
-                            <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Current Quadrat ({quadratPos}-{quadratPos+1}m)</div>
-                            <div className="grid grid-cols-3 gap-2 text-center mb-2">
-                                <div className="flex flex-col items-center">
-                                    <span className="text-lg font-bold text-emerald-400">{currentCounts.fern}</span>
-                                    <Icon name="sprout" size={12} className="text-emerald-400"/>
-                                </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-lg font-bold text-yellow-400">{currentCounts.grass}</span>
-                                    <Icon name="leaf" size={12} className="text-yellow-400"/>
-                                </div>
-                                <div className="flex flex-col items-center">
-                                    <span className="text-lg font-bold text-orange-400">{currentCounts.cactus}</span>
-                                    <Icon name="sun" size={12} className="text-orange-400"/>
-                                </div>
-                            </div>
-                            <div className="flex gap-2 justify-center text-[10px] text-slate-400 border-t border-slate-700 pt-1">
-                                <span className="flex items-center gap-1"><Icon name="droplets" size={10}/> {moisture}%</span>
-                                <span className="flex items-center gap-1"><Icon name="sun" size={10}/> {light}%</span>
-                            </div>
-                        </div>
-
-                        {/* Record Button */}
-                        <button 
-                            onClick={() => onRecord(quadratPos, true)} // Record
-                            className="h-16 w-16 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg flex flex-col items-center justify-center gap-1 transition-transform active:scale-95 border-4 border-slate-900"
-                        >
-                            <Icon name="clipboard-check" size={24}/>
-                            <span className="text-[10px] font-bold">Record</span>
-                        </button>
-
-                    </div>
+            {/* Interaction Mode */}
+            <div className="space-y-3 pt-2">
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block border-b border-slate-700 pb-1">Interaction Method</label>
+              <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shadow-inner">
+                <button onClick={() => { setIsManualMode(false); clearManualTransects(); }} className={`flex-1 py-2 flex items-center justify-center gap-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${!isManualMode ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+                   <Calculator className="w-3 h-3"/> Auto-Generate
+                </button>
+                <button onClick={() => { setIsManualMode(true); clearManualTransects(); }} className={`flex-1 py-2 flex items-center justify-center gap-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors ${isManualMode ? 'bg-amber-500 text-slate-900 shadow' : 'text-slate-400 hover:text-white'}`}>
+                   <MousePointer2 className="w-3 h-3"/> Manual Draw
+                </button>
+              </div>
+            </div>
+            
+            {/* Auto Mode Controls */}
+            {!isManualMode ? (
+              <div className="space-y-5 bg-slate-900/80 p-4 rounded-xl border border-slate-700 shadow-inner">
+                <div>
+                  <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
+                    <span>Belt Length (L)</span>
+                    <span className="font-mono text-sky-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectLength} m</span>
+                  </label>
+                  <input 
+                    type="range" min="10" max="100" step="10"
+                    value={transectLength}
+                    onChange={(e) => { setTransectLength(parseInt(e.target.value)); setSampled(false); }}
+                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                  />
                 </div>
-            );
-        };
 
-        // --- MAIN APP ---
-        const App = () => {
-            const [quadratPos, setQuadratPos] = useState(0);
-            const [records, setRecords] = useState([]); // Array of { pos, fern, grass, cactus, moisture, light }
-            const [plants, setPlants] = useState([]);
-
-            // Generate Ecosystem
-            useEffect(() => {
-                const newPlants = [];
-                // Generate ~300 plants based on preferences
-                for(let i=0; i<300; i++) {
-                    // Random position
-                    const x = Math.random() * FIELD_LENGTH;
-                    
-                    // Determine likelihood of species based on x
-                    let type = null;
-                    
-                    // Probability Distribution (Gaussian-ish)
-                    const probFern = Math.exp(-Math.pow(x - SPECIES.fern.pref.peak, 2) / 10);
-                    const probGrass = Math.exp(-Math.pow(x - SPECIES.grass.pref.peak, 2) / 20);
-                    const probCactus = Math.exp(-Math.pow(x - SPECIES.cactus.pref.peak, 2) / 10);
-                    
-                    const rand = Math.random();
-                    const totalProb = probFern + probGrass + probCactus;
-                    const normFern = probFern / totalProb;
-                    const normGrass = probGrass / totalProb;
-                    
-                    if (rand < normFern) type = 'fern';
-                    else if (rand < normFern + normGrass) type = 'grass';
-                    else type = 'cactus';
-
-                    newPlants.push({
-                        id: i,
-                        type,
-                        x,
-                        y: Math.random() * 100, // 0-100% height
-                        size: 12 + Math.random() * 8
-                    });
-                }
-                setPlants(newPlants);
-            }, []);
-
-            // Handle interactions
-            const handleRecord = (pos, shouldSave) => {
-                setQuadratPos(pos);
+                <div>
+                  <label className="flex justify-between text-sm mb-2 text-slate-200 font-semibold">
+                    <span>Number of Transects (N)</span>
+                    <span className="font-mono text-sky-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">{transectCount}</span>
+                  </label>
+                  <input 
+                    type="range" min="1" max="20" step="1"
+                    value={transectCount}
+                    onChange={(e) => { setTransectCount(parseInt(e.target.value)); setSampled(false); }}
+                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                  />
+                </div>
                 
-                if (shouldSave) {
-                    // Check if already recorded
-                    if (records.some(r => r.pos === pos)) return;
+                <button 
+                  onClick={conductAutoSampling}
+                  className="w-full py-3 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white font-bold rounded-lg transition-all flex justify-center items-center gap-2 shadow-lg shadow-sky-900/50 border border-sky-400"
+                >
+                  <Calculator className="w-4 h-4" /> Scatter Random Belts
+                </button>
+              </div>
+            ) : (
+              <div className="bg-amber-950/20 p-4 rounded-xl border border-amber-900/40 text-sm text-slate-300">
+                  <h3 className="font-bold text-amber-400 mb-2 flex items-center gap-2"><MousePointer2 className="w-4 h-4"/> Custom Survey Mode</h3>
+                  <p className="text-[11px] leading-relaxed mb-4">
+                    <strong>Click and drag horizontally</strong> across the field on the right to lay down your own 2m-wide belt transects. Investigate specific zones!
+                  </p>
+                  <button 
+                    onClick={clearManualTransects}
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-lg transition-all border border-slate-600 text-xs"
+                  >
+                    Clear Placed Belts
+                  </button>
+              </div>
+            )}
 
-                    // Calculate data
-                    const qStart = pos;
-                    const qEnd = pos + 1;
-                    const counts = { fern: 0, grass: 0, cactus: 0 };
-                    plants.forEach(p => {
-                        if (p.x >= qStart && p.x < qEnd) counts[p.type]++;
-                    });
-                    
-                    const newRecord = {
-                        pos,
-                        fern: counts.fern,
-                        grass: counts.grass,
-                        cactus: counts.cactus,
-                        moisture: Math.max(0, 100 - (pos * 5)),
-                        light: Math.min(100, pos * 5)
-                    };
+            {/* Results Dashboard */}
+            {sampled && transects.length > 0 && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 flex-grow flex flex-col">
+                <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
+                  <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4 text-emerald-400" />
+                    Data Analysis
+                  </h2>
+                  
+                  {/* God Mode Toggle */}
+                  <button 
+                    onClick={() => setShowTruePop(!showTruePop)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[9px] font-bold uppercase tracking-wider transition-colors border ${showTruePop ? 'bg-rose-500/20 text-rose-400 border-rose-500/50 shadow-[0_0_10px_rgba(244,63,94,0.3)]' : 'bg-slate-800 text-slate-400 border-slate-600 hover:bg-slate-700 hover:text-white'}`}
+                  >
+                    {showTruePop ? <EyeOff className="w-3 h-3"/> : <Eye className="w-3 h-3"/>}
+                    {showTruePop ? 'Hide Actual' : 'Reveal True Population'}
+                  </button>
+                </div>
+                
+                {isManualMode && activeHabitat === 'gradient' && (
+                  <div className="mb-3 p-2 bg-rose-950/30 border border-rose-900/50 rounded flex items-start gap-2 text-[9px] text-rose-300 font-bold">
+                    <Info className="w-3 h-3 shrink-0 mt-0.5"/>
+                    Warning: Extrapolating targeted manual samples across a changing habitat (Ecotone) will produce extreme Sampling Bias!
+                  </div>
+                )}
 
-                    setRecords(prev => [...prev, newRecord].sort((a, b) => a.pos - b.pos));
-                }
-            };
-
-            const resetData = () => setRecords([]);
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-96 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="ruler" className="text-blue-400" /> Transect Lab
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Environmental Gradient Study</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
+                <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden shadow-inner flex-grow flex flex-col">
+                  
+                  {/* Mathematical Formula Banner */}
+                  <div className="p-3 bg-slate-950 border-b border-slate-800 flex flex-col items-center justify-center text-center">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-1">Total Sampled Area: {results.totalAreaSampled.toLocaleString()} m²</span>
+                    <div className="text-[11px] font-mono text-slate-300">
+                      Estimate = <span className="text-cyan-400">(Count / Area)</span> × 10,000 m²
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar">
+                    {Object.values(activeProfile.species).map(sp => {
+                      const res = results[sp.id];
+                      return (
+                        <div key={sp.id} className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-bold flex items-center gap-2 text-slate-200">
+                              <span className="text-lg drop-shadow-md">{sp.emoji}</span>
+                              {sp.name}
+                            </span>
                             
-                            {/* Instructions */}
-                            <div className="bg-blue-900/20 p-4 rounded-xl border border-blue-500/30 text-xs text-slate-300">
-                                <div className="font-bold text-blue-400 uppercase mb-2 flex items-center gap-2"><Icon name="info" size={14}/> Methodology</div>
-                                <p>This is a <strong>Belt Transect</strong>.</p>
-                                <ol className="list-decimal pl-4 mt-1 space-y-1">
-                                    <li>Place quadrats at regular intervals along the environmental gradient.</li>
-                                    <li>Count species abundance.</li>
-                                    <li>Analyze how abiotic factors affect distribution.</li>
-                                </ol>
-                            </div>
+                            {/* Only show error if God Mode is on */}
+                            {showTruePop && (
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${res.error < 15 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : res.error < 40 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'}`}>
+                                {res.error.toFixed(1)}% Error
+                              </span>
+                            )}
+                          </div>
 
-                            {/* Data Table */}
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center">
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Recorded Data</label>
-                                    <button onClick={resetData} className="text-[10px] text-red-400 hover:text-red-300">Clear All</button>
-                                </div>
-                                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                                    <div className="grid grid-cols-4 bg-slate-900 p-2 text-[10px] font-bold text-slate-400 border-b border-slate-700">
-                                        <div>Dist.</div>
-                                        <div className="text-emerald-400">Fern</div>
-                                        <div className="text-yellow-400">Grass</div>
-                                        <div className="text-orange-400">Cactus</div>
-                                    </div>
-                                    <div className="max-h-48 overflow-y-auto">
-                                        {records.length === 0 ? (
-                                            <div className="p-4 text-center text-xs text-slate-600 italic">No data recorded yet.</div>
-                                        ) : (
-                                            records.map((r) => (
-                                                <div key={r.pos} className="grid grid-cols-4 p-2 text-xs text-slate-300 border-b border-slate-700/50 last:border-0 hover:bg-slate-700/50">
-                                                    <div className="font-mono font-bold">{r.pos}m</div>
-                                                    <div>{r.fern}</div>
-                                                    <div>{r.grass}</div>
-                                                    <div>{r.cactus}</div>
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-slate-800 p-2 rounded-lg border border-slate-700 flex flex-col">
+                              <span className="text-[9px] text-slate-400 uppercase font-bold mb-0.5">Sampled Count</span>
+                              <span className="text-lg font-mono text-cyan-400 font-bold">{res.sampledCount}</span>
                             </div>
-
-                            {/* Chart: Species Distribution */}
-                            <div className="h-40 bg-slate-800 rounded-xl border border-slate-700 p-2 relative">
-                                <div className="absolute top-2 left-3 text-[10px] font-bold text-slate-500 uppercase">Abundance</div>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={records}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                        <XAxis dataKey="pos" stroke="#64748b" fontSize={10} tickCount={5} />
-                                        <YAxis stroke="#64748b" fontSize={10} width={20} />
-                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
-                                        <Area type="monotone" dataKey="fern" stroke="#34d399" fill="#34d399" fillOpacity={0.3} name="Fern" />
-                                        <Area type="monotone" dataKey="grass" stroke="#facc15" fill="#facc15" fillOpacity={0.3} name="Grass" />
-                                        <Area type="monotone" dataKey="cactus" stroke="#fb923c" fill="#fb923c" fillOpacity={0.3} name="Cactus" />
-                                    </AreaChart>
-                                </ResponsiveContainer>
+                            <div className="bg-slate-800 p-2 rounded-lg border border-slate-700 flex flex-col">
+                              <span className="text-[9px] text-slate-400 uppercase font-bold mb-0.5">Estimated Pop.</span>
+                              <span className="text-lg font-mono text-white font-bold">{res.estimate.toLocaleString()}</span>
                             </div>
-
-                             {/* Chart: Environment */}
-                             <div className="h-32 bg-slate-800 rounded-xl border border-slate-700 p-2 relative">
-                                <div className="absolute top-2 left-3 text-[10px] font-bold text-slate-500 uppercase">Abiotic Factors</div>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={records}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                        <XAxis dataKey="pos" stroke="#64748b" fontSize={10} />
-                                        <YAxis stroke="#64748b" fontSize={10} domain={[0, 100]} width={20} />
-                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#475569', fontSize: '12px' }} />
-                                        <Line type="monotone" dataKey="moisture" stroke="#60a5fa" strokeWidth={2} dot={false} name="Moisture %" />
-                                        <Line type="monotone" dataKey="light" stroke="#fcd34d" strokeWidth={2} dot={false} name="Light %" />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                          </div>
+                          
+                          {/* Only show actual pop if God Mode is on */}
+                          {showTruePop && (
+                            <div className="bg-slate-950 p-2 rounded-lg border border-slate-800 flex justify-between items-center animate-in fade-in">
+                              <span className="text-[10px] text-slate-500 uppercase font-bold">True Population</span>
+                              <span className="font-mono text-slate-300 font-bold">{res.actual.toLocaleString()}</span>
                             </div>
-
+                          )}
                         </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden">
-                        
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col">
-                            <TransectField 
-                                quadratPos={quadratPos} 
-                                onRecord={handleRecord}
-                                plants={plants}
-                            />
-                        </div>
-
-                    </div>
-
+                      );
+                    })}
+                  </div>
                 </div>
-            );
-        };
+              </div>
+            )}
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+          </aside>
+
+          {/* Right Area: Interactive Field Canvas */}
+          <div className="flex-1 relative flex flex-col p-4 bg-[#070B14]">
+            
+            <div className="flex justify-between items-center mb-3">
+              {/* Educational Legend */}
+              <div className="flex flex-wrap items-center gap-3 sm:gap-5 bg-slate-800/50 backdrop-blur-md px-4 py-2 rounded-xl border border-slate-700/50 text-slate-300 shadow-sm">
+                <span className="font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-widest text-[9px]">
+                  <Trees className="w-3.5 h-3.5 text-emerald-500/80"/> Legend
+                </span>
+                <div className="hidden sm:block w-px h-3 bg-slate-700/80"></div> {/* Divider */}
+                {Object.values(activeProfile.species).map(sp => (
+                  <div key={sp.id} className="flex items-center gap-1.5 font-medium text-[11px]" title={`${sp.distribution} distribution`}>
+                    <span className="text-sm drop-shadow-sm">{sp.emoji}</span>
+                    <span className="text-slate-200">{sp.name}</span> 
+                  </div>
+                ))}
+              </div>
+
+              <button 
+                onClick={generateField}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 backdrop-blur-md hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white rounded-xl transition-all text-[10px] uppercase tracking-wider font-bold border border-slate-700/50 shadow-sm"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Scatter Populations</span><span className="sm:hidden">Scatter</span>
+              </button>
+            </div>
+
+            {/* Container for aspect-ratio locked canvas */}
+            <div 
+              className="flex-1 w-full bg-slate-900 rounded-xl border-2 border-slate-700 overflow-hidden relative shadow-2xl shadow-emerald-900/10 flex items-center justify-center touch-none"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onTouchStart={(e) => {
+                const touch = e.touches[0];
+                handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+              }}
+              onTouchMove={(e) => {
+                const touch = e.touches[0];
+                handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+              }}
+              onTouchEnd={handleMouseUp}
+            >
+              {/* Internal resolution maps perfectly to scaling logic */}
+              <canvas 
+                ref={canvasRef} 
+                width={800} 
+                height={800} 
+                className={`max-h-full max-w-full aspect-square object-contain shadow-[inset_0_0_50px_rgba(0,0,0,0.8)] ${isManualMode ? 'cursor-crosshair' : ''}`}
+              />
+              
+              {/* Empty State Overlay */}
+              {(!sampled || transects.length === 0) && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-slate-950/50 backdrop-blur-sm">
+                   <div className="bg-slate-800/90 p-6 rounded-2xl border border-slate-600 shadow-2xl flex flex-col items-center max-w-sm text-center">
+                      <Target className="w-12 h-12 text-indigo-400 mb-3 animate-pulse" />
+                      <h3 className="text-white font-black text-xl mb-2 tracking-wide">Field Ready for Sampling</h3>
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        {isManualMode 
+                          ? "Click and drag your mouse across the field to manually lay down belt transects." 
+                          : <>Adjust parameters on the left and click <strong className="text-sky-400">Scatter Random Belts</strong>.</>}
+                      </p>
+                   </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </main>
+      </div>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+      `}} />
+    </div>
+  );
+}
