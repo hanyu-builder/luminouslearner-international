@@ -97,6 +97,14 @@
             fill: #ffffff;
         }
 
+        /* SVG Canvas Grab Cursor */
+        .d3-svg-canvas {
+            cursor: grab;
+        }
+        .d3-svg-canvas:active {
+            cursor: grabbing;
+        }
+
         /* Animations */
         @keyframes fadeIn { 
             from { opacity: 0; transform: translateY(10px); } 
@@ -238,6 +246,9 @@
             const height = 800;
             const margin = { top: 40, right: 180, bottom: 40, left: 100 };
 
+            const svgRef = useRef(null);
+            const gRef = useRef(null);
+
             const { nodes, links } = useMemo(() => {
                 const root = d3.hierarchy(data);
                 const treeLayout = d3.tree().size([height - margin.top - margin.bottom, width - margin.left - margin.right]);
@@ -249,63 +260,124 @@
             const isNodeActive = (id) => currentNodeId === id;
             const isLinkActive = (sourceId, targetId) => isNodeInHistory(sourceId) && (isNodeInHistory(targetId) || isNodeActive(targetId));
 
+            // Implement D3 Zoom & Pan Behavior
+            useEffect(() => {
+                if (!svgRef.current || !gRef.current) return;
+                
+                const svg = d3.select(svgRef.current);
+                const g = d3.select(gRef.current);
+
+                const zoom = d3.zoom()
+                    .scaleExtent([0.2, 3]) // Limit zoom in/out scales
+                    .on("zoom", (event) => {
+                        g.attr("transform", event.transform);
+                    });
+
+                svg.call(zoom);
+                
+                // Initialize the default transform (Reset view) when Kingdom changes
+                svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(margin.left, margin.top));
+                
+                // Expose zoom object to the ref so buttons can trigger it
+                svgRef.current.__zoomObj = zoom;
+            }, [data]);
+
+            const handleZoomIn = () => {
+                if (svgRef.current && svgRef.current.__zoomObj) {
+                    d3.select(svgRef.current).transition().duration(300).call(svgRef.current.__zoomObj.scaleBy, 1.3);
+                }
+            };
+
+            const handleZoomOut = () => {
+                if (svgRef.current && svgRef.current.__zoomObj) {
+                    d3.select(svgRef.current).transition().duration(300).call(svgRef.current.__zoomObj.scaleBy, 0.7);
+                }
+            };
+
+            const handleResetZoom = () => {
+                if (svgRef.current && svgRef.current.__zoomObj) {
+                    d3.select(svgRef.current).transition().duration(500).call(svgRef.current.__zoomObj.transform, d3.zoomIdentity.translate(margin.left, margin.top));
+                }
+            };
+
             return (
-                <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full min-h-[500px]">
-                    <g transform={`translate(${margin.left},${margin.top})`}>
-                        {/* Links */}
-                        {links.map((link, i) => {
-                            const pathData = d3.linkHorizontal().x(d => d.y).y(d => d.x)(link);
-                            const active = isLinkActive(link.source.data.id, link.target.data.id);
-                            
-                            return (
-                                <g key={`link-${i}`}>
-                                    <path d={pathData} className={`link ${active ? 'active-path' : ''}`} />
-                                    <text
-                                        x={(link.source.y + link.target.y) / 2}
-                                        y={(link.source.x + link.target.x) / 2 - 10}
-                                        textAnchor="middle"
-                                        fill={active ? "#34d399" : "#64748b"}
-                                        fontSize="12px"
-                                        fontWeight="bold"
-                                        style={{ textShadow: "0 2px 4px rgba(0,0,0,0.9)" }}
-                                    >
-                                        {link.target.data.trait}
-                                    </text>
-                                </g>
-                            );
-                        })}
+                <React.Fragment>
+                    <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full min-h-[500px] d3-svg-canvas">
+                        <g ref={gRef}>
+                            {/* Links */}
+                            {links.map((link, i) => {
+                                const pathData = d3.linkHorizontal().x(d => d.y).y(d => d.x)(link);
+                                const active = isLinkActive(link.source.data.id, link.target.data.id);
+                                
+                                return (
+                                    <g key={`link-${i}`}>
+                                        <path d={pathData} className={`link ${active ? 'active-path' : ''}`} />
+                                        <text
+                                            x={(link.source.y + link.target.y) / 2}
+                                            y={(link.source.x + link.target.x) / 2 - 10}
+                                            textAnchor="middle"
+                                            fill={active ? "#34d399" : "#64748b"}
+                                            fontSize="12px"
+                                            fontWeight="bold"
+                                            style={{ textShadow: "0 2px 4px rgba(0,0,0,0.9)" }}
+                                        >
+                                            {link.target.data.trait}
+                                        </text>
+                                    </g>
+                                );
+                            })}
 
-                        {/* Nodes */}
-                        {nodes.map((node, i) => {
-                            const id = node.data.id;
-                            const isHistory = isNodeInHistory(id);
-                            const isActive = isNodeActive(id);
-                            const isLeaf = !node.children;
-                            
-                            let nodeClass = "node";
-                            if (isActive) nodeClass += " active-node";
-                            else if (isHistory) nodeClass += " history-node";
-                            if (isLeaf) nodeClass += " leaf-node"; // Apply special leaf class
+                            {/* Nodes */}
+                            {nodes.map((node, i) => {
+                                const id = node.data.id;
+                                const isHistory = isNodeInHistory(id);
+                                const isActive = isNodeActive(id);
+                                const isLeaf = !node.children;
+                                
+                                let nodeClass = "node";
+                                if (isActive) nodeClass += " active-node";
+                                else if (isHistory) nodeClass += " history-node";
+                                if (isLeaf) nodeClass += " leaf-node"; // Apply special leaf class
 
-                            return (
-                                <g key={`node-${id}`} className={nodeClass} transform={`translate(${node.y},${node.x})`}>
-                                    {isLeaf ? (
-                                        <rect x={isActive ? -14 : -10} y={isActive ? -14 : -10} width={isActive ? 28 : 20} height={isActive ? 28 : 20} rx="4" />
-                                    ) : (
-                                        <circle r={isActive ? 16 : 10} />
-                                    )}
-                                    <text 
-                                        dy={isLeaf ? "5" : "-18"} 
-                                        x={isLeaf ? 22 : 0} 
-                                        textAnchor={isLeaf ? "start" : "middle"}
-                                    >
-                                        {node.data.label}
-                                    </text>
-                                </g>
-                            );
-                        })}
-                    </g>
-                </svg>
+                                return (
+                                    <g key={`node-${id}`} className={nodeClass} transform={`translate(${node.y},${node.x})`}>
+                                        {isLeaf ? (
+                                            <rect x={isActive ? -14 : -10} y={isActive ? -14 : -10} width={isActive ? 28 : 20} height={isActive ? 28 : 20} rx="4" />
+                                        ) : (
+                                            <circle r={isActive ? 16 : 10} />
+                                        )}
+                                        <text 
+                                            dy={isLeaf ? "5" : "-18"} 
+                                            x={isLeaf ? 22 : 0} 
+                                            textAnchor={isLeaf ? "start" : "middle"}
+                                        >
+                                            {node.data.label}
+                                        </text>
+                                    </g>
+                                );
+                            })}
+                        </g>
+                    </svg>
+
+                    {/* Google Maps style Zoom Controls */}
+                    <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+                        <button onClick={handleZoomIn} className="w-8 h-8 bg-slate-800 border border-slate-600 rounded-lg text-white hover:bg-slate-700 flex items-center justify-center shadow-lg transition-colors" title="Zoom In">
+                            <i className="fa-solid fa-plus"></i>
+                        </button>
+                        <button onClick={handleZoomOut} className="w-8 h-8 bg-slate-800 border border-slate-600 rounded-lg text-white hover:bg-slate-700 flex items-center justify-center shadow-lg transition-colors" title="Zoom Out">
+                            <i className="fa-solid fa-minus"></i>
+                        </button>
+                        <button onClick={handleResetZoom} className="w-8 h-8 bg-slate-800 border border-slate-600 rounded-lg text-slate-300 hover:text-white hover:bg-slate-700 flex items-center justify-center shadow-lg transition-colors mt-2" title="Reset View">
+                            <i className="fa-solid fa-compress"></i>
+                        </button>
+                    </div>
+
+                    {/* Navigation Hint */}
+                    <div className="absolute top-4 left-6 z-20 pointer-events-none bg-slate-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-700 shadow-lg flex items-center gap-2 hidden sm:flex">
+                        <i className="fa-solid fa-hand text-cyan-400"></i>
+                        <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Scroll to Zoom, Drag to Pan</span>
+                    </div>
+                </React.Fragment>
             );
         };
 
