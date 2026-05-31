@@ -24,7 +24,7 @@
         /**
          * EXPERT EDUCATIONAL WEB DEVELOPER - PHOTOTROPISM SIMULATOR
          * Target: P4 to S3 Students (Ages 9-15)
-         * Core Concept: Auxin distribution algorithm causing differential growth and light-tracking.
+         * Core Concept: Auxin redistribution algorithm causing differential growth and light-tracking.
          * Primary SEO Keyword: Phototropism
          */
 
@@ -33,6 +33,7 @@
           const [isPlaying, setIsPlaying] = useState(true);
           const [time, setTime] = useState(50); // 0 to 100 (Growth Stage)
           const [showHeatmap, setShowHeatmap] = useState(false);
+          const [experiment, setExperiment] = useState('normal'); // New experimental setup state
           
           // Metrics for UI Dashboard
           const [metrics, setMetrics] = useState({
@@ -119,8 +120,7 @@
                 });
               }
 
-              // Read state (React state closure is okay here because we only use it for values,
-              // but reading via a ref is better if it changes rapidly. 'time' updates in React state).
+              // Read state
               const t = time;
 
               ctx.clearRect(0, 0, W, H);
@@ -139,6 +139,7 @@
 
               // 3. Mathematical Plant Growth Algorithm (Iterative Kinematics)
               const segments = 40;
+              const micaIndex = segments - 8; // Position where mica is inserted
               const baseX = W / 2;
               const baseY = H - 60;
               
@@ -167,21 +168,31 @@
                 while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
                 // Auxin Distribution: Shifts AWAY from light
-                // If angleDiff > 0 (Sun is to the right), light hits right side, auxin moves to left side.
                 const auxinGradient = Math.sin(angleDiff); 
                 
-                const a_L = 0.5 + auxinGradient * 0.45; // 0.05 to 0.95
-                const a_R = 0.5 - auxinGradient * 0.45;
+                let a_L_tip = 0.5 + auxinGradient * 0.45; // 0.05 to 0.95
+                let a_R_tip = 0.5 - auxinGradient * 0.45;
+
+                // Override Auxin production based on cap / tip removal
+                if (experiment === 'tip-removed') { a_L_tip = 0.1; a_R_tip = 0.1; }
+                if (experiment === 'opaque-cap') { a_L_tip = 0.5; a_R_tip = 0.5; }
+
+                let a_L = a_L_tip;
+                let a_R = a_R_tip;
+
+                // Simulate Mica blocking downward flow
+                if (i < micaIndex) {
+                    if (experiment === 'mica-left') a_L = 0.1; // Blocked on left
+                    if (experiment === 'mica-right') a_R = 0.1; // Blocked on right
+                }
 
                 // Differential Growth (Bending)
-                // Proportional to auxin difference, growth stage (t), and segment position
-                // The bend is distributed along the growing stem
                 const bendAmount = (a_L - a_R) * 0.04 * (t / 100);
                 
                 currentAngle += bendAmount;
 
-                // Segment Elongation
-                const segLength = 1 + (t * 0.12);
+                // Segment Elongation (No tip = almost no elongation)
+                const segLength = (experiment === 'tip-removed') ? 1.0 : 1 + (t * 0.12);
                 totalLength += segLength;
 
                 currentX += Math.sin(currentAngle) * segLength;
@@ -189,8 +200,8 @@
 
                 pts.push({ x: currentX, y: currentY, angle: currentAngle, al: a_L, ar: a_R });
 
-                // Capture tip concentrations for UI
-                if (i === segments) {
+                // Capture stem concentrations for UI (Sample middle of stem to show mica effects)
+                if (i === Math.floor(segments / 2)) {
                   tipAuxinL = a_L;
                   tipAuxinR = a_R;
                 }
@@ -255,8 +266,14 @@
                   else ctx.lineTo(edgeX, edgeY);
                 }
                 
-                // Cap
-                ctx.arc(pts[pts.length-1].x, pts[pts.length-1].y, 2, Math.PI + pts[pts.length-1].angle, pts[pts.length-1].angle);
+                const tipP = pts[pts.length-1];
+                if (experiment !== 'tip-removed') {
+                    // Cap
+                    ctx.arc(tipP.x, tipP.y, 2, Math.PI + tipP.angle, tipP.angle);
+                } else {
+                    // Flat cut
+                    ctx.lineTo(tipP.x + Math.cos(tipP.angle)*(2), tipP.y + Math.sin(tipP.angle)*(2));
+                }
 
                 for (let i = pts.length - 1; i >= 0; i--) {
                   const p = pts[i];
@@ -277,7 +294,7 @@
                 ctx.fill();
 
                 // Draw simple leaves at tip
-                if (t > 10) {
+                if (t > 10 && experiment !== 'tip-removed') {
                   const tipAngle = pts[pts.length-1].angle;
                   ctx.save();
                   ctx.translate(tipX, tipY);
@@ -323,6 +340,41 @@
                 }
               }
 
+              // Draw Caps & Mica (Overlays for both Normal and Heatmap modes)
+              const tipP = pts[pts.length - 1];
+              if (experiment === 'opaque-cap' || experiment === 'transparent-cap') {
+                  ctx.save();
+                  ctx.translate(tipP.x, tipP.y);
+                  ctx.rotate(tipP.angle);
+                  ctx.fillStyle = experiment === 'opaque-cap' ? '#334155' : 'rgba(255,255,255,0.6)';
+                  ctx.strokeStyle = experiment === 'opaque-cap' ? '#1e293b' : 'rgba(255,255,255,0.9)';
+                  ctx.lineWidth = 2;
+                  ctx.beginPath();
+                  ctx.rect(-12, -22, 24, 25);
+                  ctx.fill();
+                  ctx.stroke();
+                  ctx.restore();
+              }
+
+              if (experiment === 'mica-left' || experiment === 'mica-right') {
+                  const micaP = pts[micaIndex];
+                  ctx.save();
+                  ctx.translate(micaP.x, micaP.y);
+                  ctx.rotate(micaP.angle);
+                  ctx.strokeStyle = '#000000';
+                  ctx.lineWidth = 4;
+                  ctx.beginPath();
+                  if (experiment === 'mica-left') {
+                      ctx.moveTo(0, 0);
+                      ctx.lineTo(-20, 0);
+                  } else {
+                      ctx.moveTo(0, 0);
+                      ctx.lineTo(20, 0);
+                  }
+                  ctx.stroke();
+                  ctx.restore();
+              }
+
               animRef.current = requestAnimationFrame(render);
             };
 
@@ -335,7 +387,17 @@
               window.removeEventListener('pointerup', handlePointerUp);
               cancelAnimationFrame(animRef.current);
             };
-          }, [isPlaying, showHeatmap, time]); // Rerender bindings if toggle changes
+          }, [isPlaying, showHeatmap, time, experiment]); // Added experiment dependency
+
+          // --- DYNAMIC INSIGHT TEXTS ---
+          const insights = {
+            'normal': "Drag the Sun! Notice how the plant bends towards the light. Auxin moves away from the light source, accumulating on the shaded side. This causes cells there to elongate faster, forcing the stem to bend.",
+            'tip-removed': "With the apex (tip) cut off, there is no source of Auxin. Without Auxin, the stem cells cannot elongate, and the plant neither grows nor bends towards the light. This proves the tip produces the hormone!",
+            'opaque-cap': "The tip is covered, so it cannot detect the light direction. Auxin is produced but travels straight down evenly (50/50). The plant grows straight up, proving the tip is the photoreceptor.",
+            'transparent-cap': "The transparent cap allows light to reach the tip. The plant bends normally! This acts as a 'control' to prove the cap's physical weight isn't what stops the bending in the opaque experiment.",
+            'mica-left': "Mica is an impermeable barrier. Inserted on the left, it stops Auxin from traveling down that side. If the sun is on the right, Auxin tries to go left but is blocked—so the plant won't bend!",
+            'mica-right': "Inserted on the right, Mica blocks downward Auxin flow on that side. Try moving the sun! If the sun is on the left, Auxin goes to the shaded right side but gets blocked. No bending occurs!"
+          };
 
           // --- UI RENDERING ---
           const customCSS = `
@@ -390,6 +452,23 @@
                       <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
                       Simulation Controls
                     </h2>
+
+                    {/* Experiment Setup Dropdown */}
+                    <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700">
+                      <label className="text-sm font-semibold text-emerald-400 mb-2 block">Experimental Setup</label>
+                      <select 
+                          value={experiment} 
+                          onChange={(e) => { setExperiment(e.target.value); setTime(0); setIsPlaying(true); }}
+                          className="w-full bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block p-2.5 outline-none font-medium"
+                      >
+                          <option value="normal"> Normal Shoot</option>
+                          <option value="tip-removed"> Tip Removed</option>
+                          <option value="opaque-cap"> Opaque Cap</option>
+                          <option value="transparent-cap"> Transparent Cap</option>
+                          <option value="mica-left"> Mica on Left Side</option>
+                          <option value="mica-right"> Mica on Right Side</option>
+                      </select>
+                    </div>
 
                     {/* Heatmap Toggle */}
                     <div className={`p-4 rounded-xl border transition-all duration-300 ${showHeatmap ? 'bg-indigo-900/30 border-indigo-500/50' : 'bg-slate-900/50 border-slate-700'}`}>
@@ -492,14 +571,13 @@
                   </div>
 
                   {/* Educational Insight Banner */}
-                  <div className="absolute top-6 left-6 max-w-sm bg-slate-800/85 backdrop-blur-md border border-slate-600 p-5 rounded-xl shadow-xl pointer-events-none">
+                  <div className="absolute top-6 left-6 max-w-sm bg-slate-800/85 backdrop-blur-md border border-slate-600 p-5 rounded-xl shadow-xl pointer-events-none transition-all duration-300">
                     <h4 className="text-yellow-400 text-xs font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                       Teacher's Insight
                     </h4>
                     <p className="text-xs text-slate-200 leading-relaxed">
-                      <strong>Drag the Sun!</strong> Notice how the plant bends <em>towards</em> the light.<br/><br/>
-                      This happens because the hormone <strong className="text-emerald-400">Auxin</strong> is destroyed by light, forcing it to accumulate on the <em>shaded</em> side of the stem. Auxin causes plant cells to stretch and elongate. Because the shaded side grows longer than the lit side, the stem physically bows towards the light source.
+                      {insights[experiment]}
                     </p>
                   </div>
 
