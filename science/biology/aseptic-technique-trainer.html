@@ -1,494 +1,444 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aseptic Technique Trainer | LuminousLearner</title>
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+/**
+ * EXPERT EDUCATIONAL WEB DEVELOPER - ASEPTIC TECHNIQUE TRAINER
+ * Target: P4 to S3 Students (Ages 9-15)
+ * Core Concept: Gamified state machine tracking the strict chronological sequence of sterilization.
+ * Primary SEO Keyword: Aseptic Technique
+ */
+
+// --- SEQUENCE STATE MACHINE ---
+const STEPS = [
+  { id: 0, title: 'Ignite Bunsen Burner', desc: 'Click the burner to create a sterile updraft zone.' },
+  { id: 1, title: 'Sterilize Loop', desc: 'Hold the loop in the hot blue flame until it glows red.' },
+  { id: 2, title: 'Cool the Loop', desc: 'Wait 3 seconds. Do NOT dip a red-hot loop into the culture!' },
+  { id: 3, title: 'Obtain Culture', desc: 'Open the tube and dip the sterile loop into the broth.' },
+  { id: 4, title: 'Streak the Plate', desc: 'Open the Petri dish and drag the loop across the agar to inoculate it.' },
+  { id: 5, title: 'Re-sterilize Loop', desc: 'Kill any remaining bacteria on the loop before finishing.' },
+  { id: 6, title: 'Protocol Complete', desc: 'Excellent aseptic technique!' }
+];
+
+export default function App() {
+  // --- STATE ---
+  const [step, setStep] = useState(0);
+  const [mistakes, setMistakes] = useState(0);
+  const [feedback, setFeedback] = useState({ show: false, text: '', type: 'error' });
+
+  // Environment State
+  const [flameOn, setFlameOn] = useState(false);
+  const [tubeOpen, setTubeOpen] = useState(false);
+  const [dishOpen, setDishOpen] = useState(false);
+  
+  // Tool State (Inoculating Loop)
+  const [loopPos, setLoopPos] = useState({ x: 400, y: 300 });
+  const [loopHeat, setLoopHeat] = useState(0); // 0 (cool) to 100 (red hot)
+  const [loopStatus, setLoopStatus] = useState('dirty'); // 'dirty', 'sterile', 'loaded', 'used'
+  const [isCooling, setIsCooling] = useState(false);
+
+  // Interaction Trackers
+  const [streakPath, setStreakPath] = useState('');
+  const [isStreaking, setIsStreaking] = useState(false);
+  const [heatTimer, setHeatTimer] = useState(0);
+  
+  const labRef = useRef(null);
+
+  // --- HITBOXES (Based on SVG Coordinates) ---
+  const hitboxes = {
+    flame: { x: 400, y: 250, r: 40 },
+    tube: { x: 200, y: 350, r: 25 },
+    dish: { x: 650, y: 350, r: 70 }
+  };
+
+  // --- HELPER: Trigger Feedback ---
+  const showFeedback = (text, type = 'error') => {
+    setFeedback({ show: true, text, type });
+    if (type === 'error') setMistakes(m => m + 1);
+    setTimeout(() => setFeedback(prev => ({ ...prev, show: false })), 3000);
+  };
+
+  // --- INTERACTION LOGIC ---
+
+  // 1. Mouse/Touch Movement (Custom Cursor)
+  const handlePointerMove = useCallback((e) => {
+    if (!labRef.current) return;
+    const rect = labRef.current.getBoundingClientRect();
+    // Constrain within lab bench
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
     
-    <!-- React & Tailwind -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    setLoopPos({ x, y });
+
+    // Streaking Logic
+    if (isStreaking && dishOpen && step === 4) {
+      const distToDish = Math.hypot(x - hitboxes.dish.x, y - hitboxes.dish.y);
+      if (distToDish < hitboxes.dish.r) {
+        setStreakPath(prev => prev + ` L ${x} ${y}`);
+        // If streak is long enough, advance step
+        if (streakPath.length > 300) {
+          setStep(5);
+          setLoopStatus('used');
+          showFeedback('Plate inoculated successfully!', 'success');
+        }
+      }
+    }
+  }, [isStreaking, dishOpen, step, streakPath]);
+
+  // Handle Streaking Start/Stop
+  const handlePointerDown = () => {
+    if (step === 4 && loopStatus === 'loaded' && dishOpen) {
+      const distToDish = Math.hypot(loopPos.x - hitboxes.dish.x, loopPos.y - hitboxes.dish.y);
+      if (distToDish < hitboxes.dish.r) {
+         setIsStreaking(true);
+         if (!streakPath) setStreakPath(`M ${loopPos.x} ${loopPos.y}`);
+      }
+    }
+  };
+  const handlePointerUp = () => setIsStreaking(false);
+
+  // 2. Click Interactions (Objects on Bench)
+  const handleBurnerClick = () => {
+    if (step === 0) {
+      setFlameOn(true);
+      setStep(1);
+      showFeedback('Burner ignited. Sterile zone established.', 'success');
+    } else {
+      showFeedback('Leave the burner on for the entire procedure to maintain the sterile zone!');
+    }
+  };
+
+  const handleTubeClick = () => {
+    if (!flameOn) {
+      showFeedback('Contamination! Never open cultures without the Bunsen burner sterile updraft.');
+      return;
+    }
+    setTubeOpen(!tubeOpen);
+  };
+
+  const handleDishClick = () => {
+    if (!flameOn) {
+      showFeedback('Contamination! Opening a Petri dish without a sterile zone invites mold spores.');
+      return;
+    }
+    setDishOpen(!dishOpen);
+  };
+
+
+  // --- GAME LOOP (State Machine Tracking) ---
+  useEffect(() => {
+    let animationFrame;
     
-    <!-- Framer Motion -->
-    <script src="https://unpkg.com/framer-motion@10.12.16/dist/framer-motion.js"></script>
+    const gameLoop = () => {
+      // Distance from loop tip to flame
+      const distToFlame = Math.hypot(loopPos.x - hitboxes.flame.x, loopPos.y - hitboxes.flame.y);
+      const inFlame = distToFlame < hitboxes.flame.r;
 
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+      // 1. Heating Logic
+      if (inFlame && flameOn) {
+        setLoopHeat(h => Math.min(100, h + 2)); // Heat up
+        if (loopHeat >= 98 && (loopStatus === 'dirty' || loopStatus === 'used')) {
+          setLoopStatus('sterile');
+          if (step === 1) {
+            setStep(2);
+            showFeedback('Loop sterilized!', 'success');
+            setIsCooling(true);
+            setHeatTimer(100); // 100 frames of cooling
+          }
+          if (step === 5) {
+            setStep(6);
+            showFeedback('Final sterilization complete. Well done!', 'success');
+          }
+        }
+      } else {
+        // Cooling Logic
+        setLoopHeat(h => Math.max(0, h - 0.5)); // Cool down
+        
+        if (isCooling && loopHeat < 10) {
+          setIsCooling(false);
+          if (step === 2) {
+            setStep(3);
+            showFeedback('Loop is cool and ready to use.', 'success');
+          }
+        }
+      }
+
+      // 3. Dipping Logic (Step 3)
+      if (step === 3 && tubeOpen) {
+        const distToTube = Math.hypot(loopPos.x - hitboxes.tube.x, loopPos.y - hitboxes.tube.y);
+        if (distToTube < hitboxes.tube.r) {
+          if (loopHeat > 20) {
+             showFeedback('SIZZLE! You just killed the bacteria with a hot loop! Wait for it to cool.');
+             // Reset to cooling step
+             setStep(2);
+             setIsCooling(true);
+             setLoopStatus('sterile');
+          } else if (loopStatus === 'sterile') {
+             setLoopStatus('loaded');
+             setStep(4);
+             showFeedback('Culture obtained!', 'success');
+          }
+        }
+      }
+
+      animationFrame = requestAnimationFrame(gameLoop);
+    };
+
+    animationFrame = requestAnimationFrame(gameLoop);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [loopPos, flameOn, loopHeat, loopStatus, step, isCooling, tubeOpen]);
+
+  // --- RESET HANDLER ---
+  const handleReset = () => {
+    setStep(0);
+    setMistakes(0);
+    setFlameOn(false);
+    setTubeOpen(false);
+    setDishOpen(false);
+    setLoopHeat(0);
+    setLoopStatus('dirty');
+    setIsCooling(false);
+    setStreakPath('');
+    setFeedback({ show: false, text: '', type: 'error' });
+  };
+
+  // --- UI RENDERING ---
+  const customCSS = `
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        slate: {
-                            850: '#1e293b', 
-                            950: '#0F172A', // LuminousLearner Dark Mode Background
-                        },
-                        emerald: {
-                            450: '#10b981',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
+    .cursor-none { cursor: none; }
+    
+    @keyframes flicker {
+      0% { transform: scale(1) rotate(-1deg); opacity: 0.9; }
+      50% { transform: scale(1.05) rotate(1deg); opacity: 1; }
+      100% { transform: scale(0.95) rotate(0deg); opacity: 0.8; }
+    }
+    .flame-anim { animation: flicker 0.1s infinite alternate; transform-origin: center bottom; }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 0.1; }
+    }
+    .sterile-zone { animation: pulse 3s infinite; }
+  `;
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+  // Compute loop color based on heat (Silver -> Orange -> Red)
+  const getLoopColor = () => {
+    if (loopHeat < 20) return '#cbd5e1'; // Silver
+    if (loopHeat < 60) return '#f97316'; // Orange
+    return '#ef4444'; // Red Hot
+  };
+
+  return (
+    <div className="bg-[#0F172A] min-h-screen max-h-[950px] w-full text-slate-200 flex flex-col font-sans overflow-hidden select-none">
+      <style>{customCSS}</style>
+
+      {/* HEADER */}
+      <header className="h-16 border-b border-slate-700/50 flex items-center justify-between px-6 bg-slate-800/30 shrink-0 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-rose-500/20 flex items-center justify-center border border-rose-400/50 shadow-lg">
+            <svg className="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-white tracking-wide">Aseptic Technique <span className="text-rose-400 font-light">Trainer</span></h1>
+        </div>
         
-        /* Draggable Card Styles */
-        .draggable-item { cursor: grab; user-select: none; }
-        .draggable-item:active { cursor: grabbing; }
+        <button 
+          onClick={handleReset}
+          className="px-6 py-2 rounded-full text-sm font-bold bg-slate-800 text-slate-300 border border-slate-600 hover:bg-slate-700 transition-all flex items-center gap-2"
+        >
+          Restart Protocol
+        </button>
+      </header>
+
+      {/* MAIN CONTENT */}
+      <main className="flex-1 flex gap-6 p-6 overflow-hidden relative">
         
-        /* Flame Animation */
-        .flame {
-            animation: flicker 0.1s infinite alternate;
-            transform-origin: center bottom;
-        }
-        @keyframes flicker {
-            0% { transform: scaleY(1) skewX(-2deg); opacity: 0.9; }
-            100% { transform: scaleY(1.1) skewX(2deg); opacity: 1; }
-        }
+        {/* LEFT PANEL: STATE MACHINE & INSTRUCTIONS */}
+        <aside className="w-[380px] flex flex-col gap-5 shrink-0 overflow-y-auto custom-scrollbar pr-2 z-10 pointer-events-none">
+          
+          {/* Mistakes Counter */}
+          <div className="bg-slate-800/80 backdrop-blur p-4 rounded-2xl border border-slate-700/50 shadow-lg flex justify-between items-center pointer-events-auto">
+            <span className="text-sm font-bold text-slate-300 uppercase tracking-wider">Contamination Errors</span>
+            <span className={`text-2xl font-black font-mono ${mistakes > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {mistakes}
+            </span>
+          </div>
 
-        /* Hot Loop Glow */
-        .hot-loop {
-            animation: glow-red 1s infinite alternate;
-        }
-        @keyframes glow-red {
-            from { stroke: #ef4444; filter: drop-shadow(0 0 2px red); }
-            to { stroke: #fca5a5; filter: drop-shadow(0 0 8px red); }
-        }
-        
-        /* Dust Particles */
-        .dust {
-            animation: fall 3s linear infinite;
-        }
-        @keyframes fall {
-            0% { transform: translateY(0); opacity: 0; }
-            50% { opacity: 0.5; }
-            100% { transform: translateY(50px); opacity: 0; }
-        }
-        
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+          {/* Current Step Active Card */}
+          <div className="bg-indigo-900/40 p-5 rounded-2xl border border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.15)] backdrop-blur pointer-events-auto">
+             <div className="flex justify-between items-center mb-3">
+               <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest bg-indigo-950 px-2 py-1 rounded">Current Task</span>
+               <span className="text-xs font-bold text-slate-400">Step {step + 1} of {STEPS.length}</span>
+             </div>
+             <h2 className="text-xl font-black text-white mb-2">{STEPS[step].title}</h2>
+             <p className="text-sm text-indigo-200 leading-relaxed">{STEPS[step].desc}</p>
+             
+             {/* Progress Bar */}
+             <div className="w-full bg-slate-900 h-1.5 rounded-full mt-4 overflow-hidden">
+               <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${(step / (STEPS.length - 1)) * 100}%` }}></div>
+             </div>
+          </div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-        const { motion, Reorder, AnimatePresence } = window.Motion;
+          {/* Step History (Checklist) */}
+          <div className="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/50 shadow-lg flex-1 flex flex-col gap-3 pointer-events-auto">
+             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider px-2">Protocol Checklist</h3>
+             {STEPS.map((s) => (
+               <div key={s.id} className={`flex items-center gap-3 px-2 transition-opacity ${step > s.id ? 'opacity-50' : step === s.id ? 'opacity-100' : 'opacity-30'}`}>
+                 <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0 border ${
+                   step > s.id ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 
+                   step === s.id ? 'bg-indigo-500 border-indigo-400 text-white shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 
+                   'bg-slate-800 border-slate-600 text-slate-500'
+                 }`}>
+                   {step > s.id ? '✓' : s.id + 1}
+                 </div>
+                 <span className={`text-sm font-semibold ${step === s.id ? 'text-white' : 'text-slate-400'}`}>{s.title}</span>
+               </div>
+             ))}
+          </div>
 
-        const Icon = ({ name, className = "", size = 20 }) => {
-            const [svgHtml, setSvgHtml] = useState('');
-            useEffect(() => {
-                if (window.lucide && window.lucide.icons) {
-                    const pascalName = name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('');
-                    const iconData = window.lucide.icons[pascalName];
-                    if (iconData && typeof window.lucide.createElement === 'function') {
-                        const svgElement = window.lucide.createElement(iconData);
-                        svgElement.setAttribute('class', className);
-                        svgElement.setAttribute('width', size);
-                        svgElement.setAttribute('height', size);
-                        setSvgHtml(svgElement.outerHTML);
-                    }
-                }
-            }, [name, className, size]);
-            if (!svgHtml) return <span className={className} style={{ width: size, height: size, display: 'inline-block' }}></span>;
-            return <span dangerouslySetInnerHTML={{ __html: svgHtml }} className="flex items-center justify-center" />;
-        };
+          {/* Teacher's Insight */}
+          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700/50 text-xs text-slate-400 leading-relaxed shadow-lg pointer-events-auto">
+            <strong className="text-rose-400 block mb-1">Teacher's Insight:</strong>
+            Aseptic technique is about preventing contamination. The Bunsen burner creates an invisible convection current (updraft) that pushes airborne microbes away from your work area. Always open tubes and dishes near the flame!
+          </div>
 
-        // --- DATA ---
-        const STEPS = [
-            { id: '1', text: 'Clean bench & wash hands', icon: 'hand-metal' },
-            { id: '2', text: 'Light Bunsen burner (Blue flame)', icon: 'flame' },
-            { id: '3', text: 'Flame loop until red hot', icon: 'zap' },
-            { id: '4', text: 'Open culture tube (Hold cap)', icon: 'test-tube-2' },
-            { id: '5', text: 'Flame tube neck', icon: 'flame' },
-            { id: '6', text: 'Dip cool loop to sample', icon: 'pipette' },
-            { id: '7', text: 'Flame tube neck & Close', icon: 'x-circle' },
-            { id: '8', text: 'Streak plate / Inoculate', icon: 'edit-3' },
-            { id: '9', text: 'Flame loop again', icon: 'zap' }
-        ];
+        </aside>
 
-        const ERROR_INFO = {
-            0: { // bench_cap
-                title: "Contamination Risk!",
-                error: "Placing cap on bench",
-                explanation: "The bench surface is never sterile. Placing the cap down picks up dust/microbes. Always hold the cap in your little finger!"
-            },
-            1: { // hot_loop
-                title: "Bacteria Killed!",
-                error: "Using red-hot loop",
-                explanation: "Intense heat kills bacteria instantly (HISS!). You must let the loop cool near the flame before touching the colony."
-            },
-            2: { // far_flame
-                title: "Outside Sterile Zone!",
-                error: "Working too far from flame",
-                explanation: "The updraft from the Bunsen burner creates a sterile zone (~10-15cm radius). Working too far away exposes samples to falling dust."
-            },
-            3: { // open_lid
-                title: "Air Contamination!",
-                error: "Tube held vertically open",
-                explanation: "Holding a tube vertically allows dust to fall straight in. Always hold tubes at an angle and keep them open for the minimum time possible."
-            }
-        };
-
-        // Shuffle helper
-        const shuffle = (array) => {
-            let currentIndex = array.length, randomIndex;
-            let newArr = [...array];
-            while (currentIndex != 0) {
-                randomIndex = Math.floor(Math.random() * currentIndex);
-                currentIndex--;
-                [newArr[currentIndex], newArr[randomIndex]] = [newArr[randomIndex], newArr[currentIndex]];
-            }
-            return newArr;
-        };
-
-        // --- COMPONENTS ---
-
-        // 1. Bunsen Burner Visual
-        const BunsenBurner = ({ isOn, isBlue }) => (
-            <div className="relative w-20 h-40 flex flex-col items-center justify-end">
-                {/* Updraft arrows visual (Sterile zone hint) */}
-                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-40 h-40 border-2 border-blue-500/20 rounded-full pointer-events-none flex items-center justify-center">
-                    <span className="text-[10px] text-blue-500/50 font-bold -mt-20">Sterile Zone</span>
-                </div>
-                
-                {/* Flame */}
-                {isOn && (
-                    <div className={`flame absolute bottom-[60px] w-8 h-24 rounded-full filter blur-sm
-                        ${isBlue ? 'bg-blue-500 shadow-[0_0_20px_#3b82f6]' : 'bg-orange-500 shadow-[0_0_20px_#f97316]'}
-                    `}>
-                        <div className={`absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-16 rounded-full opacity-80 ${isBlue ? 'bg-white' : 'bg-yellow-200'}`}></div>
-                    </div>
-                )}
-                <div className="w-4 h-24 bg-slate-400 rounded-t-sm border-x border-slate-500 relative z-10"></div>
-                <div className="w-16 h-4 bg-slate-500 rounded-t-md relative z-10"></div>
-                <div className="w-20 h-2 bg-slate-600 rounded-full relative z-10"></div>
+        {/* RIGHT/CENTER PANEL: THE LAB BENCH (INTERACTIVE SVG CANVAS) */}
+        <section 
+          ref={labRef}
+          onPointerMove={handlePointerMove}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          className="flex-1 bg-slate-900 rounded-3xl border-4 border-slate-800 relative shadow-2xl overflow-hidden cursor-none"
+        >
+          
+          {/* Dynamic Feedback Overlay */}
+          {feedback.show && (
+            <div className={`absolute top-10 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-full font-black text-lg shadow-2xl flex items-center gap-2 border-2 transition-all animate-bounce pointer-events-none ${
+              feedback.type === 'error' ? 'bg-red-950/90 border-red-500 text-red-400' : 'bg-emerald-950/90 border-emerald-500 text-emerald-400'
+            }`}>
+              {feedback.type === 'error' ? '⚠️' : '✅'} {feedback.text}
             </div>
-        );
+          )}
 
-        // 2. Loop Visual
-        const InoculatingLoop = ({ isHot, hasBacteria }) => (
-            <div className="relative w-40 h-4 flex items-center">
-                <div className="w-24 h-2 bg-slate-600 rounded-l-full"></div>
-                <div className={`w-16 h-0.5 ${isHot ? 'bg-red-500 hot-loop' : 'bg-slate-300'}`}></div>
-                <div className={`w-3 h-3 rounded-full border-2 absolute right-0 ${isHot ? 'border-red-500 hot-loop' : 'border-slate-300'} flex items-center justify-center`}>
-                    {hasBacteria && <div className="w-1.5 h-1.5 bg-yellow-200 rounded-full"></div>}
-                </div>
-            </div>
-        );
+          <svg viewBox="0 0 1000 600" className="w-full h-full pointer-events-auto">
+            <defs>
+              <filter id="glow-flame" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="8" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+              <filter id="glow-sterile" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="30" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            </defs>
 
-        // 3. Error Spotting Scenes
-        const ErrorScene = ({ errorType, onCorrect }) => {
-            return (
-                <div className="w-full h-full flex flex-col items-center justify-center relative bg-slate-800 rounded-xl overflow-hidden p-8">
-                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 absolute top-4 left-4">Identify the Error (Click it)</h3>
-                    
-                    {/* Scenario 0: Bench Cap */}
-                    {errorType === 0 && (
-                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
-                            <div className="relative">
-                                <div className="w-48 h-2 bg-slate-500 rounded"></div>
-                                {/* ERROR: Cap on bench */}
-                                <div className="absolute bottom-2 left-10 w-6 h-6 bg-red-500 rounded-t-md flex items-center justify-center group-hover:scale-110 transition-transform border-2 border-white/20">
-                                    <Icon name="alert-circle" size={12} className="text-white animate-bounce"/>
-                                </div>
-                                <div className="absolute bottom-10 right-0 rotate-45">
-                                    <div className="w-4 h-16 bg-blue-200/30 border border-blue-300 rounded-b-lg"></div>
-                                </div>
-                            </div>
-                            <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Cap on bench?</p>
-                        </div>
-                    )}
+            {/* --- BENCH BACKGROUND --- */}
+            <rect x="0" y="300" width="1000" height="300" fill="#1e293b" />
+            <line x1="0" y1="300" x2="1000" y2="300" stroke="#334155" strokeWidth="4" />
 
-                    {/* Scenario 1: Hot Loop */}
-                    {errorType === 1 && (
-                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
-                            <div className="flex items-center gap-2">
-                                <InoculatingLoop isHot={true} hasBacteria={false} />
-                                {/* ERROR: Touching culture with hot loop */}
-                                <div className="w-16 h-16 bg-blue-200/20 rounded-full border border-blue-300 relative flex items-center justify-center group-hover:border-red-400 transition-colors">
-                                    <span className="text-[8px] text-white">Culture</span>
-                                    <div className="absolute -top-4 right-0 text-red-500 font-bold text-xs animate-ping">HISS!</div>
-                                </div>
-                            </div>
-                             <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Is it cool?</p>
-                        </div>
-                    )}
+            {/* --- STERILE ZONE INDICATOR --- */}
+            {flameOn && (
+              <g className="sterile-zone pointer-events-none">
+                <circle cx="400" cy="300" r="250" fill="rgba(56, 189, 248, 0.05)" filter="url(#glow-sterile)" />
+                <circle cx="400" cy="300" r="250" fill="none" stroke="rgba(56, 189, 248, 0.2)" strokeWidth="2" strokeDasharray="10 10" />
+                <text x="400" y="100" textAnchor="middle" fill="rgba(56, 189, 248, 0.4)" fontSize="14" fontWeight="bold" letterSpacing="2">STERILE UPDRAFT ZONE</text>
+              </g>
+            )}
 
-                    {/* Scenario 2: Far from Flame */}
-                    {errorType === 2 && (
-                        <div className="flex items-center gap-12 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
-                            <div className="opacity-50 grayscale">
-                                <BunsenBurner isOn={true} isBlue={true} />
-                            </div>
-                            {/* ERROR: Working way too far right */}
-                            <div className="relative">
-                                <div className="w-px h-20 bg-red-500/50 absolute -left-6 top-0 border-l-2 border-dashed border-red-400"></div>
-                                <span className="absolute -left-12 top-8 text-[10px] text-red-400 rotate-90 font-bold">Too Far</span>
-                                <div className="rotate-45">
-                                    <div className="w-4 h-16 bg-blue-200/30 border border-blue-300 rounded-b-lg"></div>
-                                </div>
-                                <InoculatingLoop isHot={false} hasBacteria={false} />
-                                {/* Falling dust */}
-                                <div className="absolute -top-10 left-4 w-1 h-1 bg-slate-400 rounded-full dust"></div>
-                                <div className="absolute -top-12 left-2 w-1 h-1 bg-slate-400 rounded-full dust" style={{animationDelay:'0.5s'}}></div>
-                            </div>
-                            <p className="absolute bottom-4 text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Outside sterile zone!</p>
-                        </div>
-                    )}
+            {/* --- BUNSEN BURNER --- */}
+            <g transform="translate(400, 300)" onClick={handleBurnerClick} className="cursor-pointer">
+              {/* Base */}
+              <path d="M -30 100 L 30 100 L 20 80 L -20 80 Z" fill="#64748b" />
+              <rect x="-10" y="20" width="20" height="60" fill="#94a3b8" />
+              <rect x="-15" y="65" width="30" height="10" fill="#cbd5e1" />
+              
+              {/* Gas Tube */}
+              <path d="M 10 70 Q 50 80 100 150" fill="none" stroke="#dc2626" strokeWidth="8" />
 
-                    {/* Scenario 3: Open Lid Vertical */}
-                    {errorType === 3 && (
-                        <div className="flex flex-col items-center gap-4 cursor-pointer hover:bg-slate-700/50 p-4 rounded-xl transition-all group" onClick={onCorrect}>
-                            <div className="relative">
-                                {/* ERROR: Tube held vertically straight up */}
-                                <div className="w-6 h-24 bg-blue-200/30 border border-blue-300 rounded-b-lg border-t-0 relative">
-                                    <div className="absolute top-0 left-0 w-full h-2 bg-blue-300/50 rounded-full"></div> {/* Open top */}
-                                    {/* Falling dust into tube */}
-                                    <div className="absolute -top-8 left-1/2 w-1 h-1 bg-red-400 rounded-full dust"></div>
-                                    <div className="absolute -top-12 left-1/2 w-1 h-1 bg-red-400 rounded-full dust" style={{animationDelay:'1s'}}></div>
-                                </div>
-                            </div>
-                            <p className="text-xs text-red-300 mt-2 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Don't hold vertical!</p>
-                        </div>
-                    )}
-                </div>
-            );
-        };
+              {/* Flame */}
+              {flameOn && (
+                <g className="flame-anim" filter="url(#glow-flame)">
+                  {/* Outer cooling flame */}
+                  <path d="M -15 20 Q 0 -60 15 20 Q 0 30 -15 20 Z" fill="rgba(56, 189, 248, 0.6)" />
+                  {/* Inner hot cone */}
+                  <path d="M -8 20 Q 0 -20 8 20 Q 0 25 -8 20 Z" fill="#0ea5e9" />
+                  {/* Hottest point (Target for sterilization) */}
+                  <circle cx="0" cy="-5" r="4" fill="#bae6fd" />
+                </g>
+              )}
+            </g>
 
-        // --- MAIN APP ---
-        const App = () => {
-            const [mode, setMode] = useState('sort');
-            const [items, setItems] = useState(shuffle(STEPS));
-            const [isCorrect, setIsCorrect] = useState(false);
-            const [feedback, setFeedback] = useState("");
-            
-            const [errorLevel, setErrorLevel] = useState(0); // 0 to 3
-            const [showExplanation, setShowExplanation] = useState(null);
+            {/* --- CULTURE TUBE --- */}
+            <g transform="translate(200, 350)" onClick={handleTubeClick} className="cursor-pointer">
+              {/* Rack */}
+              <rect x="-30" y="80" width="60" height="20" fill="#475569" rx="5" />
+              
+              {/* Tube Body */}
+              <rect x="-15" y="0" width="30" height="90" rx="10" fill="rgba(255, 255, 255, 0.1)" stroke="#cbd5e1" strokeWidth="2" />
+              {/* Broth */}
+              <path d="M -13 30 L 13 30 L 13 80 Q 13 88 0 88 Q -13 88 -13 80 Z" fill="rgba(253, 224, 71, 0.7)" />
+              <text x="0" y="60" textAnchor="middle" fill="#854d0e" fontSize="10" fontWeight="bold" opacity="0.6">E. coli</text>
 
-            const checkOrder = () => {
-                const currentOrder = items.map(i => i.id).join(',');
-                const correctOrder = STEPS.map(s => s.id).join(',');
-                if (currentOrder === correctOrder) {
-                    setIsCorrect(true);
-                    setFeedback("Correct! Perfect aseptic chain.");
-                } else {
-                    setIsCorrect(false);
-                    setFeedback("Incorrect order. Think about creating a sterile zone first.");
-                }
-            };
+              {/* Cap (Removable) */}
+              <g transform={tubeOpen ? "translate(-40, 90) rotate(-45)" : "translate(0, 0)"} className="transition-all duration-300">
+                <rect x="-16" y="-15" width="32" height="20" fill="#334155" rx="3" />
+                <rect x="-18" y="-5" width="36" height="5" fill="#475569" />
+              </g>
+            </g>
 
-            const resetSort = () => {
-                setItems(shuffle(STEPS));
-                setIsCorrect(false);
-                setFeedback("");
-            };
+            {/* --- PETRI DISH --- */}
+            <g transform="translate(650, 400)" onClick={handleDishClick} className="cursor-pointer">
+              {/* Bottom Dish (Agar) */}
+              <ellipse cx="0" cy="0" rx="80" ry="40" fill="rgba(254, 240, 138, 0.8)" stroke="#cbd5e1" strokeWidth="2" />
+              
+              {/* Streak Path Canvas */}
+              {streakPath && (
+                <path 
+                  d={streakPath} 
+                  fill="none" 
+                  stroke="rgba(255,255,255,0.8)" 
+                  strokeWidth="4" 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  transform="translate(-650, -400)" // Un-translate since streak coordinates are global
+                />
+              )}
 
-            const handleErrorFound = () => {
-                setShowExplanation(ERROR_INFO[errorLevel]);
-            };
+              {/* Lid (Removable) */}
+              <g transform={dishOpen ? "translate(30, -60) rotate(15)" : "translate(0, -10)"} className="transition-all duration-500">
+                <ellipse cx="0" cy="0" rx="82" ry="42" fill="rgba(255, 255, 255, 0.2)" stroke="#94a3b8" strokeWidth="3" />
+              </g>
+            </g>
 
-            const nextErrorLevel = () => {
-                setShowExplanation(null);
-                setErrorLevel(prev => (prev + 1) % 4); // Cycle 4 levels
-            };
+            {/* --- INOCULATING LOOP (CUSTOM CURSOR) --- */}
+            {/* We render this last so it stays on top */}
+            <g transform={`translate(${loopPos.x}, ${loopPos.y})`} className="pointer-events-none">
+              {/* Handle */}
+              <rect x="50" y="50" width="100" height="10" rx="5" fill="#1e293b" stroke="#475569" strokeWidth="2" transform="rotate(-45 50 50)" />
+              {/* Wire */}
+              <line x1="0" y1="0" x2="50" y2="50" stroke="#cbd5e1" strokeWidth="3" />
+              {/* Loop Tip */}
+              <circle cx="-5" cy="-5" r="7" fill="none" stroke={getLoopColor()} strokeWidth="3" className="transition-colors duration-100" />
+              
+              {/* Status Indicators */}
+              {loopStatus === 'dirty' && <circle cx="-5" cy="-5" r="4" fill="#475569" opacity="0.6" />}
+              {loopStatus === 'loaded' && <circle cx="-5" cy="-5" r="5" fill="rgba(253, 224, 71, 0.9)" />}
+              
+              {/* Tooltip near cursor */}
+              <text x="20" y="-10" fill="#fff" fontSize="12" fontWeight="bold" filter="drop-shadow(0px 2px 2px rgba(0,0,0,0.8))">
+                {loopHeat > 50 ? '🔥 HOT' : loopStatus.toUpperCase()}
+              </text>
+            </g>
 
-            // DnD Handlers
-            const handleDragStart = (e, index) => {
-                e.dataTransfer.setData("index", index);
-            };
+          </svg>
+        </section>
 
-            const handleDragOver = (e) => {
-                e.preventDefault();
-            };
-
-            const handleDrop = (e, index) => {
-                const draggedIndex = e.dataTransfer.getData("index");
-                const newItems = [...items];
-                const draggedItem = newItems.splice(draggedIndex, 1)[0];
-                newItems.splice(index, 0, draggedItem);
-                setItems(newItems);
-            };
-
-            return (
-                <div className="min-h-screen bg-[#0F172A] text-white flex flex-col md:flex-row overflow-hidden font-sans">
-                    
-                    {/* Sidebar */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-xl h-screen shrink-0">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-xl font-bold flex items-center gap-2">
-                                <Icon name="flask-conical" className="text-emerald-400" /> Aseptic Trainer
-                            </h1>
-                            <p className="text-xs text-slate-400 mt-1">Microbiology Lab Skills</p>
-                        </div>
-
-                        <div className="p-6 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
-                            
-                            {/* Mode Switch */}
-                            <div className="flex bg-slate-800 p-1 rounded-xl">
-                                <button 
-                                    onClick={() => { setMode('sort'); setFeedback(""); setShowExplanation(null); }}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${mode === 'sort' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    <Icon name="list-ordered" size={14}/> Sequence
-                                </button>
-                                <button 
-                                    onClick={() => { setMode('error'); setFeedback(""); setShowExplanation(null); }}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${mode === 'error' ? 'bg-red-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    <Icon name="alert-triangle" size={14}/> Debug
-                                </button>
-                            </div>
-
-                            {/* Instructions */}
-                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-xs text-slate-300">
-                                <div className="font-bold text-emerald-400 uppercase mb-2 flex items-center gap-2"><Icon name="info" size={14}/> Mission</div>
-                                {mode === 'sort' ? (
-                                    <p>Drag and drop the steps to form the correct aseptic procedure for sub-culturing bacteria.</p>
-                                ) : (
-                                    <p>Watch the scene and click on the unsafe practice that could cause contamination. ({errorLevel + 1}/4)</p>
-                                )}
-                            </div>
-
-                            {/* Feedback (Sort Mode) */}
-                            <AnimatePresence>
-                                {feedback && mode === 'sort' && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                                        className={`p-4 rounded-xl border text-sm font-bold flex items-start gap-3
-                                            ${feedback.includes('Correct') ? 'bg-emerald-900/20 border-emerald-500/50 text-emerald-300' : 'bg-red-900/20 border-red-500/50 text-red-300'}
-                                        `}
-                                    >
-                                        <Icon name={feedback.includes('Correct') ? "check-circle" : "x-circle"} size={20} className="shrink-0 mt-0.5"/>
-                                        {feedback}
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-
-                            {mode === 'sort' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={checkOrder} className="py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold shadow-lg">Check</button>
-                                    <button onClick={resetSort} className="py-3 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300">Reset</button>
-                                </div>
-                            )}
-
-                        </div>
-                    </div>
-
-                    {/* Main Stage */}
-                    <div className="flex-1 bg-[#020617] relative flex flex-col p-6 overflow-hidden gap-6">
-                        
-                        {/* Simulation Area */}
-                        <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden flex flex-col p-4">
-                            
-                            {mode === 'sort' ? (
-                                <div className="h-full overflow-y-auto custom-scrollbar p-2">
-                                    <ul className="space-y-2 max-w-xl mx-auto">
-                                        {items.map((item, index) => (
-                                            <li 
-                                                key={item.id}
-                                                draggable
-                                                onDragStart={(e) => handleDragStart(e, index)}
-                                                onDragOver={handleDragOver}
-                                                onDrop={(e) => handleDrop(e, index)}
-                                                className={`p-4 rounded-xl border-2 flex items-center gap-4 cursor-grab active:cursor-grabbing hover:bg-slate-800/50 transition-all
-                                                    ${isCorrect ? 'border-emerald-500/50 bg-emerald-900/10' : 'border-slate-700 bg-slate-800'}
-                                                `}
-                                            >
-                                                <div className="text-slate-500 font-mono font-bold w-6 text-right">{index + 1}.</div>
-                                                <div className="p-2 bg-slate-900 rounded-lg text-blue-400">
-                                                    <Icon name={item.icon} size={20}/>
-                                                </div>
-                                                <span className="text-sm font-bold text-slate-200">{item.text}</span>
-                                                <Icon name="grip-vertical" className="ml-auto text-slate-600" size={16}/>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            ) : (
-                                <div className="relative w-full h-full">
-                                    <ErrorScene 
-                                        errorType={errorLevel} 
-                                        onCorrect={handleErrorFound}
-                                    />
-                                    
-                                    {/* Explanation Overlay */}
-                                    <AnimatePresence>
-                                        {showExplanation && (
-                                            <motion.div 
-                                                initial={{ opacity: 0, scale: 0.9 }} 
-                                                animate={{ opacity: 1, scale: 1 }} 
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8 z-10"
-                                            >
-                                                <div className="bg-slate-900 border border-slate-600 p-6 rounded-2xl shadow-2xl max-w-md w-full">
-                                                    <div className="flex items-center gap-3 mb-4 text-red-400">
-                                                        <Icon name="alert-octagon" size={32}/>
-                                                        <h2 className="text-xl font-bold">{showExplanation.title}</h2>
-                                                    </div>
-                                                    
-                                                    <div className="space-y-4">
-                                                        <div className="bg-red-900/20 p-3 rounded-lg border border-red-500/30">
-                                                            <div className="text-xs font-bold text-red-300 uppercase mb-1">Error Identified</div>
-                                                            <p className="text-sm text-white">{showExplanation.error}</p>
-                                                        </div>
-                                                        
-                                                        <div className="bg-slate-800 p-4 rounded-lg">
-                                                            <div className="text-xs font-bold text-blue-400 uppercase mb-2 flex items-center gap-2">
-                                                                <Icon name="book-open" size={14}/> Biological Explanation
-                                                            </div>
-                                                            <p className="text-sm text-slate-300 leading-relaxed">
-                                                                {showExplanation.explanation}
-                                                            </p>
-                                                        </div>
-
-                                                        <button 
-                                                            onClick={nextErrorLevel}
-                                                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg"
-                                                        >
-                                                            Next Scenario <Icon name="arrow-right" size={18}/>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </motion.div>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
-                            )}
-
-                        </div>
-
-                        {/* Visual Context (Decoration) */}
-                        <div className="h-24 bg-slate-900 rounded-2xl border border-slate-800 p-4 flex items-center justify-around shrink-0 opacity-50 pointer-events-none">
-                             <BunsenBurner isOn={true} isBlue={true} />
-                             <div className="w-px h-12 bg-slate-700"></div>
-                             <InoculatingLoop isHot={false} hasBacteria={true} />
-                        </div>
-
-                    </div>
-
-                </div>
-            );
-        };
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+      </main>
+    </div>
+  );
+}
