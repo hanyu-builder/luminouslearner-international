@@ -35,6 +35,15 @@
           const [showHeatmap, setShowHeatmap] = useState(false);
           const [experiment, setExperiment] = useState('normal'); // New experimental setup state
           
+          // --- REFS FOR CANVAS ENGINE ---
+          // Decouple the 60fps canvas loop from React's render cycle for performance
+          const timeRef = useRef(50);
+          const stateRef = useRef({ isPlaying, showHeatmap, experiment });
+          
+          useEffect(() => {
+              stateRef.current = { isPlaying, showHeatmap, experiment };
+          }, [isPlaying, showHeatmap, experiment]);
+          
           // Metrics for UI Dashboard
           const [metrics, setMetrics] = useState({
             auxinLeft: 50,
@@ -66,6 +75,7 @@
             }
             // Automatically restart the growth to see the new light effect
             setTime(0);
+            timeRef.current = 0;
             setIsPlaying(true);
           }, []);
 
@@ -126,21 +136,30 @@
               return `hsl(${hue}, 100%, 50%)`;
             };
 
+            let frameCounter = 0;
+
             // --- RENDER LOOP ---
             const render = () => {
               const W = canvas.width;
               const H = canvas.height;
               
-              // 1. Update Time if Playing
+              // Read state safely without triggering React re-renders
+              const { isPlaying, showHeatmap, experiment } = stateRef.current;
+              
+              // 1. Update Time
               if (isPlaying) {
-                setTime(prev => {
-                  if (prev >= 100) { setIsPlaying(false); return 100; }
-                  return prev + 0.2;
-                });
+                timeRef.current += 0.2;
+                if (timeRef.current >= 100) {
+                    timeRef.current = 100;
+                    setIsPlaying(false);
+                } else {
+                    // Sync UI slider every 10 frames to avoid lag
+                    frameCounter++;
+                    if (frameCounter % 10 === 0) setTime(Math.round(timeRef.current));
+                }
               }
 
-              // Read state
-              const t = time;
+              const t = timeRef.current;
 
               ctx.clearRect(0, 0, W, H);
 
@@ -251,29 +270,41 @@
               ctx.fillStyle = 'rgba(253, 224, 71, 0.15)'; // Yellow transparent
               ctx.fill();
 
-              // 5. Draw Sun (Animated Geometric Sun instead of text emoji for perfect visibility)
+              // 5. Draw Sun (Bulletproof rendering without shadowBlur to fix browser glitches)
               const sx = sunRef.current.x;
               const sy = sunRef.current.y;
               
+              // Glow using radial gradient (Safe on all devices)
+              const glow = ctx.createRadialGradient(sx, sy, 10, sx, sy, 50);
+              glow.addColorStop(0, 'rgba(253, 224, 71, 1)'); // Core yellow
+              glow.addColorStop(0.5, 'rgba(253, 224, 71, 0.4)');
+              glow.addColorStop(1, 'rgba(253, 224, 71, 0)');
+              
               ctx.beginPath();
-              ctx.arc(sx, sy, 30, 0, Math.PI * 2);
-              ctx.fillStyle = '#fef08a';
-              ctx.shadowColor = '#facc15';
-              ctx.shadowBlur = 40;
+              ctx.arc(sx, sy, 50, 0, Math.PI * 2);
+              ctx.fillStyle = glow;
               ctx.fill();
-              ctx.shadowBlur = 0;
+              
+              // Solid Sun Core
+              ctx.beginPath();
+              ctx.arc(sx, sy, 20, 0, Math.PI * 2);
+              ctx.fillStyle = '#fef08a';
+              ctx.fill();
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = '#eab308';
+              ctx.stroke();
               
               // Animated Sun Rays
-              ctx.strokeStyle = '#facc15';
+              ctx.strokeStyle = '#fde047';
               ctx.lineWidth = 4;
               ctx.lineCap = 'round';
-              const rayCount = 8;
-              const timeOffset = Date.now() / 1000; // Slow rotation
+              const rayCount = 12;
+              const timeOffset = Date.now() / 1500; // Slow rotation
               for (let i = 0; i < rayCount; i++) {
                   const angle = (Math.PI * 2 / rayCount) * i + timeOffset;
                   ctx.beginPath();
-                  ctx.moveTo(sx + Math.cos(angle) * 40, sy + Math.sin(angle) * 40);
-                  ctx.lineTo(sx + Math.cos(angle) * 55, sy + Math.sin(angle) * 55);
+                  ctx.moveTo(sx + Math.cos(angle) * 28, sy + Math.sin(angle) * 28);
+                  ctx.lineTo(sx + Math.cos(angle) * 45, sy + Math.sin(angle) * 45);
                   ctx.stroke();
               }
 
@@ -416,7 +447,7 @@
               window.removeEventListener('pointerup', handlePointerUp);
               cancelAnimationFrame(animRef.current);
             };
-          }, [isPlaying, showHeatmap, time, experiment]); // Added experiment dependency
+          }, []); // EMPTY DEPENDENCY ARRAY - Fixes the infinite resizing loop!
 
           // --- DYNAMIC INSIGHT TEXTS ---
           const insights = {
@@ -452,7 +483,7 @@
                 
                 <div className="flex items-center gap-4">
                   <button 
-                    onClick={() => { setTime(0); setIsPlaying(true); }}
+                    onClick={() => { setTime(0); timeRef.current = 0; setIsPlaying(true); }}
                     className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-semibold transition-colors border border-slate-600"
                   >
                     Reset Growth
@@ -489,9 +520,9 @@
                         Sunlight Direction
                       </label>
                       <div className="grid grid-cols-3 gap-2">
-                        <button onClick={() => moveSun('left')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">⬅️ Left</button>
-                        <button onClick={() => moveSun('center')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">⬇️ Center</button>
-                        <button onClick={() => moveSun('right')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">➡️ Right</button>
+                        <button onClick={() => moveSun('left')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">← Left</button>
+                        <button onClick={() => moveSun('center')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">↓ Center</button>
+                        <button onClick={() => moveSun('right')} className="py-2 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-600 text-xs font-bold text-slate-300 transition-colors">→ Right</button>
                       </div>
                       <p className="text-[10px] text-slate-400 mt-2 text-center">You can also freely drag the sun!</p>
                     </div>
@@ -549,7 +580,12 @@
                       <input 
                         type="range" min="0" max="100" step="1"
                         value={time} 
-                        onChange={(e) => { setTime(parseFloat(e.target.value)); setIsPlaying(false); }}
+                        onChange={(e) => { 
+                          const v = parseFloat(e.target.value);
+                          setTime(v); 
+                          timeRef.current = v;
+                          setIsPlaying(false); 
+                        }}
                         className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                       />
                     </div>
