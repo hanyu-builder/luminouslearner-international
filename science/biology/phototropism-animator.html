@@ -62,16 +62,18 @@
           // Sunlight controls
           const moveSun = useCallback((direction) => {
             const canvas = canvasRef.current;
-            if (!canvas) return;
+            if (!canvas || !canvas.parentElement) return;
+            const W = canvas.parentElement.clientWidth;
+            const H = canvas.parentElement.clientHeight;
             if (direction === 'left') {
-              sunRef.current.x = canvas.width * 0.15;
-              sunRef.current.y = canvas.height * 0.2;
+              sunRef.current.x = W * 0.15;
+              sunRef.current.y = H * 0.2;
             } else if (direction === 'center') {
-              sunRef.current.x = canvas.width * 0.5;
-              sunRef.current.y = canvas.height * 0.1;
+              sunRef.current.x = W * 0.5;
+              sunRef.current.y = H * 0.1;
             } else if (direction === 'right') {
-              sunRef.current.x = canvas.width * 0.85;
-              sunRef.current.y = canvas.height * 0.2;
+              sunRef.current.x = W * 0.85;
+              sunRef.current.y = H * 0.2;
             }
             // Automatically restart the growth to see the new light effect
             setTime(0);
@@ -85,18 +87,11 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             
-            const resizeCanvas = () => {
-              const parent = canvas.parentElement;
-              canvas.width = parent.clientWidth;
-              canvas.height = parent.clientHeight;
-              // Initialize sun position relative to canvas size on first load
-              if (sunRef.current.x === 600) {
-                 sunRef.current.x = canvas.width * 0.75;
-                 sunRef.current.y = canvas.height * 0.2;
-              }
-            };
-            resizeCanvas();
-            window.addEventListener('resize', resizeCanvas);
+            // Initialize sun position relative to canvas size on first load
+            if (sunRef.current.x === 600 && canvas.parentElement) {
+               sunRef.current.x = canvas.parentElement.clientWidth * 0.75;
+               sunRef.current.y = canvas.parentElement.clientHeight * 0.2;
+            }
 
             // Dragging Handlers attached natively for performance
             const handlePointerDown = (e) => {
@@ -115,8 +110,10 @@
             const handlePointerMove = (e) => {
               if (!sunRef.current.isDragging) return;
               const rect = canvas.getBoundingClientRect();
-              sunRef.current.x = Math.max(50, Math.min(canvas.width - 50, e.clientX - rect.left));
-              sunRef.current.y = Math.max(50, Math.min(canvas.height - 100, e.clientY - rect.top));
+              const logicalW = canvas.parentElement.clientWidth;
+              const logicalH = canvas.parentElement.clientHeight;
+              sunRef.current.x = Math.max(50, Math.min(logicalW - 50, e.clientX - rect.left));
+              sunRef.current.y = Math.max(50, Math.min(logicalH - 100, e.clientY - rect.top));
             };
 
             const handlePointerUp = () => {
@@ -140,9 +137,25 @@
 
             // --- RENDER LOOP ---
             const render = () => {
-              const W = canvas.width;
-              const H = canvas.height;
+              const parent = canvas.parentElement;
+              if (!parent) return;
               
+              const logicalW = parent.clientWidth;
+              const logicalH = parent.clientHeight;
+              const dpr = window.devicePixelRatio || 1;
+
+              // Sync physical canvas size with logical CSS size to prevent stretching/distortion
+              if (canvas.width !== Math.floor(logicalW * dpr) || canvas.height !== Math.floor(logicalH * dpr)) {
+                  canvas.width = Math.floor(logicalW * dpr);
+                  canvas.height = Math.floor(logicalH * dpr);
+              }
+
+              const W = logicalW;
+              const H = logicalH;
+              
+              ctx.save();
+              ctx.scale(dpr, dpr);
+
               // Read state safely without triggering React re-renders
               const { isPlaying, showHeatmap, experiment } = stateRef.current;
               
@@ -435,13 +448,14 @@
                   ctx.restore();
               }
 
+              ctx.restore(); // Restore DPR scaling
+
               animRef.current = requestAnimationFrame(render);
             };
 
             animRef.current = requestAnimationFrame(render);
 
             return () => {
-              window.removeEventListener('resize', resizeCanvas);
               canvas.removeEventListener('pointerdown', handlePointerDown);
               window.removeEventListener('pointermove', handlePointerMove);
               window.removeEventListener('pointerup', handlePointerUp);
