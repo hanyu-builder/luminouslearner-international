@@ -132,7 +132,8 @@
             
             // Management Controls
             const [quota, setQuota] = useState(150); // Target catch in tons
-            const [meshSize, setMeshSize] = useState('large'); // 'large' or 'small'
+            const [meshSize, setMeshSize] = useState('large'); // 'large', 'medium', or 'small'
+            const [moratorium, setMoratorium] = useState(false); // Complete fishing ban
 
             // --- DETERMINISTIC BEVERTON-HOLT MODEL ---
             // Pre-calculate the entire 20-year timeline whenever inputs change.
@@ -141,6 +142,7 @@
                 // Initial Population (Tons)
                 let currAdults = 600; 
                 let currJuv = 200;
+                let cumulativeRev = 0;
 
                 data.push({
                     year: 0,
@@ -148,6 +150,8 @@
                     juv: currJuv,
                     totalBiomass: currAdults + currJuv,
                     catch: 0,
+                    revenue: 0,
+                    cumulativeRevenue: 0,
                     status: 'Healthy',
                     warning: null
                 });
@@ -158,23 +162,41 @@
                     let warning = null;
 
                     // 1. Harvesting Logic
-                    if (meshSize === 'large') {
-                        // Large mesh allows juveniles to escape. Only adults are caught.
-                        catchAdults = Math.min(quota, currAdults);
+                    if (moratorium) {
+                        warning = 'Moratorium Active: Fishing suspended to allow stock recovery.';
                     } else {
-                        // Small mesh catches both indiscriminately based on their proportion in the water.
-                        const totalFish = currAdults + currJuv;
-                        if (totalFish > 0) {
-                            const actualCatch = Math.min(quota, totalFish);
-                            catchAdults = actualCatch * (currAdults / totalFish);
-                            catchJuv = actualCatch * (currJuv / totalFish);
-                            if (actualCatch > 50) warning = 'Growth Overfishing (Juveniles Killed)';
+                        if (meshSize === 'large') {
+                            // Large mesh (>10cm) allows juveniles to escape. Only adults are caught.
+                            catchAdults = Math.min(quota, currAdults);
+                        } else if (meshSize === 'medium') {
+                            // Medium mesh (5-10cm) catches all adults, but 50% of juveniles escape.
+                            const catchableJuv = currJuv * 0.5;
+                            const totalCatchable = currAdults + catchableJuv;
+                            if (totalCatchable > 0) {
+                                const actualCatch = Math.min(quota, totalCatchable);
+                                catchAdults = actualCatch * (currAdults / totalCatchable);
+                                catchJuv = actualCatch * (catchableJuv / totalCatchable);
+                            }
+                        } else {
+                            // Small mesh (<5cm) catches both indiscriminately based on their proportion in the water.
+                            const totalFish = currAdults + currJuv;
+                            if (totalFish > 0) {
+                                const actualCatch = Math.min(quota, totalFish);
+                                catchAdults = actualCatch * (currAdults / totalFish);
+                                catchJuv = actualCatch * (currJuv / totalFish);
+                                if (actualCatch > 50) warning = 'Growth Overfishing (Juveniles Killed)';
+                            }
                         }
                     }
 
                     // Apply Catch
                     let survAdults = Math.max(0, currAdults - catchAdults);
                     let survJuv = Math.max(0, currJuv - catchJuv);
+
+                    // Calculate Economics
+                    // Adults: $8,000/ton | Juveniles: $1,000/ton
+                    const revenue = (catchAdults * 8000) + (catchJuv * 1000);
+                    cumulativeRev += revenue;
 
                     // 2. Population Dynamics (Survival & Maturation)
                     // Natural Mortality: 70% of adults survive. 85% of surviving juveniles become adults.
@@ -200,10 +222,10 @@
                     let status = 'Sustainable';
                     if (totalBiomass === 0) {
                         status = 'Collapsed';
-                        warning = 'Complete Ecosystem Collapse';
+                        if (!moratorium) warning = 'Complete Ecosystem Collapse';
                     } else if (totalBiomass < 300) {
                         status = 'Critically Low';
-                        if (!warning) warning = 'Recruitment Overfishing (Breeding Stock Depleted)';
+                        if (!warning && !moratorium) warning = 'Recruitment Overfishing (Breeding Stock Depleted)';
                     } else if (totalBiomass < 600) {
                         status = 'Declining';
                     }
@@ -214,12 +236,14 @@
                         juv: currJuv,
                         totalBiomass: totalBiomass,
                         catch: catchAdults + catchJuv,
+                        revenue: revenue,
+                        cumulativeRevenue: cumulativeRev,
                         status: status,
                         warning: warning
                     });
                 }
                 return data;
-            }, [quota, meshSize]);
+            }, [quota, meshSize, moratorium]);
 
             const currentState = timeline[year];
 
@@ -350,10 +374,11 @@
 
                                 {/* Floating Tooltip */}
                                 <g transform={`translate(${currX < width/2 ? currX + 15 : currX - 110}, ${padY})`}>
-                                    <rect x="0" y="0" width="95" height="45" rx="4" fill="rgba(15, 23, 42, 0.9)" stroke="#475569" strokeWidth="1" />
+                                    <rect x="0" y="0" width="95" height="58" rx="4" fill="rgba(15, 23, 42, 0.9)" stroke="#475569" strokeWidth="1" />
                                     <text x="8" y="15" fill="#fff" fontSize="10" fontWeight="bold">Year {year}</text>
                                     <text x="8" y="28" fill="#38bdf8" fontSize="9">Bio: {Math.round(currentState.totalBiomass)}t</text>
                                     <text x="8" y="39" fill="#fbbf24" fontSize="9">Catch: {Math.round(currentState.catch)}t</text>
+                                    <text x="8" y="50" fill="#10b981" fontSize="9">Value: ${(currentState.revenue / 1000).toFixed(1)}k</text>
                                 </g>
                             </svg>
                         </div>
@@ -409,7 +434,7 @@
                     <main className="flex-1 flex flex-col lg:flex-row relative z-0 overflow-hidden">
                         
                         {/* LEFT PANEL: CONTROLS & DIAGNOSTICS */}
-                        <aside className="w-full lg:w-[420px] flex flex-col gap-5 shrink-0 bg-slate-800/30 border-r border-slate-700/80 p-5 overflow-y-auto custom-scrollbar z-10">
+                        <aside className="w-full lg:w-[420px] flex flex-col gap-5 shrink-0 bg-slate-800/30 border-r border-slate-700/80 p-5 overflow-y-auto custom-scrollbar z-10 pb-12">
                             
                             {/* Policy Controls */}
                             <div className="glass-panel p-5 rounded-2xl border border-slate-700 shadow-lg flex flex-col gap-6">
@@ -417,8 +442,22 @@
                                     <Icon name="Settings2" className="text-amber-400" size={18}/> Fishery Policies
                                 </h2>
 
+                                {/* Moratorium Toggle */}
+                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 shadow-inner flex justify-between items-center">
+                                    <div>
+                                        <label className="text-sm font-black text-emerald-400 block mb-1">Fishing Moratorium</label>
+                                        <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest">(Complete Ban on Fishing)</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => { setMoratorium(!moratorium); setIsPlaying(false); }}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${moratorium ? 'bg-emerald-500' : 'bg-slate-600'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${moratorium ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+
                                 {/* Quota Slider */}
-                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 shadow-inner">
+                                <div className={`bg-slate-900/50 p-4 rounded-xl border border-slate-700 shadow-inner transition-opacity ${moratorium ? 'opacity-40 pointer-events-none' : ''}`}>
                                     <div className="flex justify-between items-end mb-3">
                                         <div>
                                             <label className="text-sm font-black text-amber-400 block">Harvest Quota</label>
@@ -437,34 +476,42 @@
                                 </div>
 
                                 {/* Mesh Size Toggle */}
-                                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 shadow-inner">
+                                <div className={`bg-slate-900/50 p-4 rounded-xl border border-slate-700 shadow-inner transition-opacity ${moratorium ? 'opacity-40 pointer-events-none' : ''}`}>
                                     <label className="text-sm font-black text-sky-400 block mb-1">Net Mesh Size</label>
                                     <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest block mb-3">(Regulatory Gear)</span>
                                     
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col gap-2">
                                         <button 
                                             onClick={() => { setMeshSize('large'); setIsPlaying(false); }}
-                                            className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all border flex flex-col items-center gap-1 ${
+                                            className={`w-full py-2 text-xs font-bold rounded-lg transition-all border flex items-center gap-3 px-4 ${
                                                 meshSize === 'large' ? 'bg-sky-600 border-sky-400 text-white shadow-[0_0_15px_rgba(2,132,199,0.3)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
                                             }`}
                                         >
-                                            <Icon name="Maximize" size={16}/>
-                                            Large (Adults Only)
+                                            <Icon name="Maximize" size={16}/> Large (&gt; 10cm) - Adults Only
+                                        </button>
+                                        <button 
+                                            onClick={() => { setMeshSize('medium'); setIsPlaying(false); }}
+                                            className={`w-full py-2 text-xs font-bold rounded-lg transition-all border flex items-center gap-3 px-4 ${
+                                                meshSize === 'medium' ? 'bg-indigo-600 border-indigo-400 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            }`}
+                                        >
+                                            <Icon name="Square" size={16}/> Medium (5-10cm) - Mixed Age
                                         </button>
                                         <button 
                                             onClick={() => { setMeshSize('small'); setIsPlaying(false); }}
-                                            className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all border flex flex-col items-center gap-1 ${
+                                            className={`w-full py-2 text-xs font-bold rounded-lg transition-all border flex items-center gap-3 px-4 ${
                                                 meshSize === 'small' ? 'bg-rose-600 border-rose-400 text-white shadow-[0_0_15px_rgba(225,29,72,0.3)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
                                             }`}
                                         >
-                                            <Icon name="Minimize" size={16}/>
-                                            Small (All Ages)
+                                            <Icon name="Minimize" size={16}/> Small (&lt; 5cm) - Indiscriminate
                                         </button>
                                     </div>
                                     
                                     <div className="mt-3 p-2 bg-slate-950/50 border border-slate-800 rounded text-[10px] text-slate-400 leading-relaxed font-medium">
                                         {meshSize === 'large' 
-                                            ? <span className="text-emerald-400"><i className="fa-solid fa-check-circle mr-1"></i> Sustainable Practice: Allows juveniles to escape and reach reproductive maturity before being caught.</span>
+                                            ? <span className="text-emerald-400"><i className="fa-solid fa-check-circle mr-1"></i> Sustainable Practice: Allows juveniles to escape and reach reproductive maturity.</span>
+                                            : meshSize === 'medium'
+                                            ? <span className="text-amber-400"><i className="fa-solid fa-exclamation-circle mr-1"></i> Moderate Risk: Catches all adults, but allows about 50% of juveniles to slip through.</span>
                                             : <span className="text-rose-400"><i className="fa-solid fa-triangle-exclamation mr-1"></i> High Risk Practice: Indiscriminate. Catches young fish before they can breed.</span>
                                         }
                                     </div>
@@ -480,30 +527,25 @@
 
                                 {/* Ecological Warning Banner (Very important pedagogy) */}
                                 {currentState.warning && (
-                                    <div className="mb-4 bg-rose-950/40 border border-rose-500/50 p-3 rounded-xl flex items-start gap-3 animate-fade-in shadow-[0_0_15px_rgba(225,29,72,0.1)]">
-                                        <Icon name="AlertTriangle" className="text-rose-500 shrink-0 mt-0.5" size={16} />
+                                    <div className={`mb-4 border p-3 rounded-xl flex items-start gap-3 animate-fade-in shadow-lg ${moratorium ? 'bg-emerald-950/40 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-rose-950/40 border-rose-500/50 shadow-[0_0_15px_rgba(225,29,72,0.1)]'}`}>
+                                        <Icon name={moratorium ? "ShieldCheck" : "AlertTriangle"} className={`${moratorium ? 'text-emerald-500' : 'text-rose-500'} shrink-0 mt-0.5`} size={16} />
                                         <div>
-                                            <h4 className="text-xs font-black text-rose-400 uppercase tracking-widest mb-1">Ecological Warning</h4>
-                                            <p className="text-[11px] text-rose-300/80 font-medium leading-tight">{currentState.warning}</p>
+                                            <h4 className={`text-xs font-black uppercase tracking-widest mb-1 ${moratorium ? 'text-emerald-400' : 'text-rose-400'}`}>{moratorium ? 'Conservation Active' : 'Ecological Warning'}</h4>
+                                            <p className={`text-[11px] font-medium leading-tight ${moratorium ? 'text-emerald-300/80' : 'text-rose-300/80'}`}>{currentState.warning}</p>
                                         </div>
                                     </div>
                                 )}
 
-                                {/* Stock Status Indicator */}
-                                <div className={`p-4 rounded-xl border flex items-center justify-between transition-colors duration-500 shadow-inner mb-4 ${
-                                    currentState.status === 'Sustainable' ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-400' :
-                                    currentState.status === 'Declining' ? 'bg-amber-950/30 border-amber-500/40 text-amber-400' :
-                                    currentState.status === 'Critically Low' ? 'bg-orange-950/30 border-orange-500/40 text-orange-400' :
-                                    'bg-red-950/40 border-red-500/50 text-red-400 animate-pulse'
-                                }`}>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Stock Viability</span>
-                                        <span className="text-xl font-black uppercase tracking-wider">{currentState.status}</span>
+                                {/* Economic Diagnostics (NEW PEDAGOGY) */}
+                                <div className="bg-emerald-950/20 p-3 rounded-xl border border-emerald-800/30 text-center shadow-inner mb-4 flex flex-col justify-center">
+                                    <span className="block text-[9px] font-bold text-emerald-500 uppercase tracking-widest mb-1">Annual Economic Value</span>
+                                    <span className="text-2xl font-black text-emerald-400 font-mono">${(currentState.revenue / 1000).toFixed(1)}<span className="text-xs text-emerald-600 ml-1">k</span></span>
+                                    <span className="text-[9px] text-slate-400 mt-1">Adults: $8k/ton | Juv: $1k/ton</span>
+                                    
+                                    <div className="flex justify-between border-t border-emerald-800/30 pt-2 mt-2 px-2">
+                                        <span className="text-[9px] font-bold text-slate-400 uppercase">20-Yr Accumulated:</span>
+                                        <span className="text-[10px] font-black text-emerald-500 font-mono">${(currentState.cumulativeRevenue / 1000).toFixed(1)}k</span>
                                     </div>
-                                    {currentState.status === 'Sustainable' && <Icon name="TrendingUp" size={28}/>}
-                                    {currentState.status === 'Declining' && <Icon name="TrendingDown" size={28}/>}
-                                    {currentState.status === 'Critically Low' && <Icon name="AlertCircle" size={28}/>}
-                                    {currentState.status === 'Collapsed' && <Icon name="Skull" size={28}/>}
                                 </div>
 
                                 {/* Numbers Breakdown */}
@@ -553,13 +595,16 @@
                                             <pattern id="netLarge" width="60" height="60" patternUnits="userSpaceOnUse">
                                                 <path d="M 0 0 L 60 60 M 60 0 L 0 60" fill="none" stroke="#cbd5e1" strokeWidth="2" />
                                             </pattern>
+                                            <pattern id="netMedium" width="35" height="35" patternUnits="userSpaceOnUse">
+                                                <path d="M 0 0 L 35 35 M 35 0 L 0 35" fill="none" stroke="#cbd5e1" strokeWidth="1.5" />
+                                            </pattern>
                                             <pattern id="netSmall" width="20" height="20" patternUnits="userSpaceOnUse">
                                                 <path d="M 0 0 L 20 20 M 20 0 L 0 20" fill="none" stroke="#cbd5e1" strokeWidth="1.5" />
                                             </pattern>
                                         </defs>
                                         <path 
                                             d="M 10% 0 C 10% 40%, 30% 90%, 50% 90% C 70% 90%, 90% 40%, 90% 0 Z" 
-                                            fill={`url(#${meshSize === 'large' ? 'netLarge' : 'netSmall'})`} 
+                                            fill={`url(#${meshSize === 'large' ? 'netLarge' : meshSize === 'medium' ? 'netMedium' : 'netSmall'})`} 
                                             stroke="#94a3b8" 
                                             strokeWidth="4" 
                                         />
