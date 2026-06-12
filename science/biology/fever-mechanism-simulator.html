@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fever: Enzyme Kinetics & Immunity</title>
+    
+    <!-- Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            background-color: #0F172A; /* Deep Slate */
+            color: white;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+            overflow-y: auto; /* Allow scrolling for smaller screens */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Custom Thermometer Slider */
+        .temp-slider-container {
+            position: relative;
+            width: 100%;
+            padding: 10px 0;
+        }
+        input[type=range].thermometer {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+            position: relative;
+            z-index: 10;
+        }
+        input[type=range].thermometer:focus {
+            outline: none;
+        }
+        /* Track */
+        input[type=range].thermometer::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 12px;
+            cursor: pointer;
+            background: linear-gradient(to right, #3B82F6 0%, #10B981 30%, #F59E0B 70%, #EF4444 100%);
+            border-radius: 6px;
+            border: 1px solid #334155;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+        }
+        /* Thumb */
+        input[type=range].thermometer::-webkit-slider-thumb {
+            height: 28px;
+            width: 28px;
+            border-radius: 50%;
+            background: #FFFFFF;
+            border: 3px solid #0F172A;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -9px;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+            transition: transform 0.1s;
+        }
+        input[type=range].thermometer::-webkit-slider-thumb:active {
+            transform: scale(1.2);
+        }
+
+        /* Status Glows */
+        .glow-normal { text-shadow: 0 0 10px rgba(59, 130, 246, 0.8); color: #60A5FA; }
+        .glow-fever { text-shadow: 0 0 15px rgba(239, 68, 68, 0.9); color: #F87171; }
+        .glow-virus { text-shadow: 0 0 10px rgba(16, 185, 129, 0.8); color: #34D399; }
+    </style>
+</head>
+<body class="min-h-screen w-full flex flex-col p-2 md:p-6">
+
+    <!-- Header -->
+    <header class="w-full max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center mb-4 shrink-0 gap-4">
+        <div>
+            <h1 class="text-2xl md:text-3xl font-bold text-orange-400 drop-shadow-md">
+                Fever: Enzyme Kinetics & Immunity
+            </h1>
+            <p class="text-sm md:text-base text-slate-300 mt-1">
+                Adjust body temperature to observe the effect on viral protein conformation and macrophage phagocytosis.
+            </p>
+        </div>
+        
+        <!-- Live Telemetry -->
+        <div class="bg-slate-800 border border-slate-600 p-3 rounded-lg shadow-lg flex items-center gap-4 min-w-[280px]">
+            <div class="flex flex-col items-center">
+                <span class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Body Temp</span>
+                <span class="text-2xl font-mono font-bold glow-normal transition-colors duration-300" id="temp-display">37.0 °C</span>
+            </div>
+            <div class="w-px h-10 bg-slate-600"></div>
+            <div class="flex flex-col items-center w-24">
+                <span class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Viral Load</span>
+                <span class="text-2xl font-mono font-bold glow-virus" id="virus-count">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Simulator Area -->
+    <main class="w-full max-w-7xl mx-auto flex-grow flex flex-col lg:flex-row gap-4 min-h-[500px]">
+        
+        <!-- Left: p5.js Cellular Simulation -->
+        <div class="flex-[1.5] bg-slate-900 border-2 border-slate-700 rounded-xl flex flex-col relative overflow-hidden shadow-[inset_0_0_50px_rgba(0,0,0,0.8)] min-h-[400px]" id="p5-container">
+            <!-- Contextual Label -->
+            <div class="absolute top-4 left-4 z-10 pointer-events-none">
+                <span id="tissue-status" class="px-3 py-1 rounded-md bg-slate-800/80 border border-blue-500/50 text-xs text-blue-300 font-mono backdrop-blur-sm shadow-md transition-all">
+                    TISSUE STATE: 37°C IS OPTIMAL FOR VIRUS
+                </span>
+            </div>
+            <!-- p5 canvas injected here -->
+        </div>
+
+        <!-- Right: Graph & Controls -->
+        <div class="flex-[1] bg-slate-800/50 border border-slate-700 rounded-xl p-4 flex flex-col gap-4 shadow-lg min-h-[400px]">
+            
+            <!-- Temperature Control -->
+            <div class="shrink-0 bg-slate-900 p-4 rounded-lg border border-slate-700">
+                <div class="flex justify-between text-sm font-bold mb-2">
+                    <span class="text-blue-400">Normal (36°C)</span>
+                    <span class="text-red-400">High Fever (41°C)</span>
+                </div>
+                <div class="temp-slider-container">
+                    <input type="range" id="temp-slider" class="thermometer" min="36.0" max="41.0" step="0.1" value="37.0">
+                </div>
+                <div class="text-center mt-2 text-xs text-slate-400 font-mono" id="slider-subtitle">
+                    Slide to induce fever response
+                </div>
+            </div>
+
+            <!-- D3/Chart.js Graph Area -->
+            <div class="flex-grow bg-slate-900 rounded-lg border border-slate-700 p-2 relative flex flex-col min-h-[200px]">
+                <h3 class="text-xs text-slate-400 uppercase tracking-wider font-semibold text-center mt-1 shrink-0">Efficiency Curves vs. Temperature</h3>
+                <div class="flex-grow relative w-full h-full p-2">
+                    <canvas id="ratesChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Mini Legend/Key -->
+            <div class="shrink-0 grid grid-cols-2 gap-2 text-xs">
+                <div class="bg-slate-800 p-2 rounded border border-green-500/30 flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-slate-300">Virus (Pathogen)</span>
+                </div>
+                <div class="bg-slate-800 p-2 rounded border border-blue-400/30 flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-blue-400"></div>
+                    <span class="text-slate-300">Macrophage (Immune)</span>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Educational Footer -->
+    <footer class="w-full max-w-7xl mx-auto shrink-0 my-6 bg-slate-800 rounded-xl p-5 border-l-4 border-orange-500 shadow-lg flex flex-col md:flex-row gap-5 items-start md:items-center">
+        <div class="bg-orange-500/20 p-4 rounded-lg shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+        </div>
+        <div class="space-y-2">
+            <h3 class="text-lg font-bold text-white mb-1">Exam Concepts: Why do we get fevers?</h3>
+            <p class="text-sm text-slate-300 leading-relaxed">
+                <span class="text-red-400 font-semibold uppercase tracking-wider text-[11px]">The Myth:</span> Fever is a symptom of the virus "damaging" or "boiling" your body.<br>
+            </p>
+            <p class="text-sm text-slate-300 leading-relaxed">
+                <span class="text-green-400 font-semibold uppercase tracking-wider text-[11px]">Biological Reality:</span> Fever is a deliberate defense mechanism. Viruses evolved to have an <strong>Optimal Temperature</strong> of exactly 37°C. By raising the temperature, the body mathematically shifts the odds:
+            </p>
+            <ul class="text-sm text-slate-300 list-disc list-inside ml-2 space-y-1">
+                <li>Heat causes slight <strong>conformational changes</strong> (denaturation) in viral surface proteins. If the shape changes, it can no longer bind to host cell receptors to replicate.</li>
+                <li>Immune cells (like Macrophages) actually have a higher optimal temperature. The heat increases their kinetic energy, supercharging their movement and rate of <strong>Phagocytosis</strong> (engulfing the virus).</li>
+            </ul>
+        </div>
+    </footer>
+
+    <!-- Application Logic -->
+    <script>
+        // --- Core Application State ---
+        let currentTemp = 37.0;
+        
+        // Biological mathematical models
+        // Viral replication peaks at 37°C, drops sharply at high temps due to conformational changes
+        function getViralReplicationRate(t) {
+            if (t > 40.5) return 0.05; // Severely denatured
+            return Math.max(0.05, 1.0 - Math.pow((t - 37.0) / 2.5, 2));
+        }
+
+        // Immune efficiency (Macrophage speed/aggressiveness) peaks around 39.5°C
+        function getImmuneEfficiency(t) {
+            // Sigmoid-like curve peaking at higher temps
+            return Math.min(1.0, 0.2 + (Math.max(0, t - 36.0) * 0.25));
+        }
+
+        // DOM Elements
+        const tempSlider = document.getElementById('temp-slider');
+        const tempDisplay = document.getElementById('temp-display');
+        const virusCountDisplay = document.getElementById('virus-count');
+        const tissueStatus = document.getElementById('tissue-status');
+
+        // --- Chart.js Setup ---
+        const ctxChart = document.getElementById('ratesChart').getContext('2d');
+        
+        // Generate data points for the curves
+        const labels = [];
+        const viralData = [];
+        const immuneData = [];
+        for(let t = 36.0; t <= 41.0; t += 0.1) {
+            labels.push(t.toFixed(1));
+            viralData.push(getViralReplicationRate(t) * 100); // Scale to %
+            immuneData.push(getImmuneEfficiency(t) * 100);
+        }
+
+        // Custom plugin to draw a vertical line at current temperature
+        const verticalLinePlugin = {
+            id: 'verticalLine',
+            afterDraw: chart => {
+                const xVal = currentTemp.toFixed(1);
+                const xIndex = chart.data.labels.indexOf(xVal);
+                if (xIndex === -1) return;
+                
+                const meta = chart.getDatasetMeta(0);
+                const xPos = meta.data[xIndex].x;
+                const topY = chart.chartArea.top;
+                const bottomY = chart.chartArea.bottom;
+                
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(xPos, topY);
+                ctx.lineTo(xPos, bottomY);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = currentTemp >= 38.0 ? '#EF4444' : '#94A3B8';
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                
+                // Draw dot on the line
+                ctx.beginPath();
+                ctx.arc(xPos, bottomY - 10, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = currentTemp >= 38.0 ? '#EF4444' : '#FFFFFF';
+                ctx.fill();
+                ctx.restore();
+            }
+        };
+
+        const ratesChart = new Chart(ctxChart, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Viral Enzyme Efficiency',
+                        data: viralData,
+                        borderColor: '#10B981', // Emerald
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Phagocytosis Rate (Immune)',
+                        data: immuneData,
+                        borderColor: '#3B82F6', // Blue
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { intersect: false, mode: 'index' },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Body Temp (°C)', color: '#94A3B8' },
+                        grid: { color: '#334155' },
+                        ticks: { color: '#94A3B8', maxTicksLimit: 6 }
+                    },
+                    y: {
+                        title: { display: true, text: 'Efficiency (%)', color: '#94A3B8' },
+                        grid: { color: '#334155' },
+                        ticks: { color: '#94A3B8' },
+                        min: 0, max: 110
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#E2E8F0', boxWidth: 12 } },
+                    tooltip: { enabled: false } // Disable hover tooltip to focus on slider
+                }
+            },
+            plugins: [verticalLinePlugin]
+        });
+
+        // --- Event Listeners ---
+        tempSlider.addEventListener('input', (e) => {
+            currentTemp = parseFloat(e.target.value);
+            tempDisplay.innerText = currentTemp.toFixed(1) + ' °C';
+            
+            // Visual updates based on fever state
+            if (currentTemp >= 38.5) {
+                tempDisplay.className = "text-2xl font-mono font-bold glow-fever transition-colors duration-300";
+                tissueStatus.innerText = "TISSUE STATE: FEVER - VIRAL PROTEINS CONFORMATIONALLY CHANGING";
+                tissueStatus.className = "px-3 py-1 rounded-md bg-red-900/80 border border-red-500/50 text-xs text-red-300 font-mono backdrop-blur-sm shadow-md";
+            } else if (currentTemp >= 37.5) {
+                tempDisplay.className = "text-2xl font-mono font-bold text-yellow-400 drop-shadow-[0_0_10px_rgba(250,204,21,0.8)] transition-colors duration-300";
+                tissueStatus.innerText = "TISSUE STATE: WARMING - MACROPHAGE KINETICS INCREASING";
+                tissueStatus.className = "px-3 py-1 rounded-md bg-yellow-900/80 border border-yellow-500/50 text-xs text-yellow-300 font-mono backdrop-blur-sm shadow-md";
+            } else {
+                tempDisplay.className = "text-2xl font-mono font-bold glow-normal transition-colors duration-300";
+                tissueStatus.innerText = "TISSUE STATE: 37°C IS OPTIMAL FOR VIRUS";
+                tissueStatus.className = "px-3 py-1 rounded-md bg-slate-800/80 border border-blue-500/50 text-xs text-blue-300 font-mono backdrop-blur-sm shadow-md";
+            }
+
+            ratesChart.update(); // Update vertical line
+        });
+
+        // --- p5.js Cellular Simulation ---
+        const sketch = (p) => {
+            let viruses = [];
+            let macrophages = [];
+            let floatingTexts = []; // To display "+ Phagocytosis"
+            
+            // Simulation constants
+            const MAX_VIRUSES = 150; 
+            const MIN_VIRUSES = 5;
+
+            class FloatingText {
+                constructor(x, y, text) {
+                    this.x = x;
+                    this.y = y;
+                    this.text = text;
+                    this.life = 255;
+                }
+                update() {
+                    this.y -= 0.5;
+                    this.life -= 5;
+                }
+                show() {
+                    p.fill(96, 165, 250, this.life); // Blueish text
+                    p.textSize(12);
+                    p.textStyle(p.BOLD);
+                    p.textAlign(p.CENTER, p.CENTER);
+                    p.text(this.text, this.x, this.y);
+                }
+            }
+
+            class Virus {
+                constructor(x, y) {
+                    this.x = x || p.random(p.width);
+                    this.y = y || p.random(p.height);
+                    this.vx = p.random(-1, 1);
+                    this.vy = p.random(-1, 1);
+                    this.size = 14;
+                    this.seed = p.random(1000); // For unique wobbling
+                }
+
+                update() {
+                    let vRate = getViralReplicationRate(currentTemp);
+                    
+                    // High temp = sluggish movement due to compromised enzyme efficiency
+                    let speedMult = p.map(vRate, 0, 1, 0.1, 1.5);
+                    
+                    this.x += this.vx * speedMult;
+                    this.y += this.vy * speedMult;
+
+                    // Bounce
+                    if (this.x < 0 || this.x > p.width) this.vx *= -1;
+                    if (this.y < 0 || this.y > p.height) this.vy *= -1;
+
+                    // Replication Logic (Dependent on kinetic efficiency)
+                    if (p.random() < (0.015 * vRate) && viruses.length < MAX_VIRUSES) {
+                        viruses.push(new Virus(this.x, this.y));
+                    }
+                }
+
+                show() {
+                    p.push();
+                    p.translate(this.x, this.y);
+                    
+                    let isDenaturing = currentTemp >= 38.5;
+                    
+                    // Denaturing effect: wobbling and distorted shape
+                    let wobble = isDenaturing ? p.sin(p.frameCount * 0.2 + this.seed) * 3 : p.sin(p.frameCount * 0.05 + this.seed) * 1;
+                    
+                    // Core
+                    p.noStroke();
+                    p.fill(16, 185, 129, 200); // Emerald green
+                    p.ellipse(0, 0, this.size + wobble, this.size - wobble);
+
+                    // Surface Proteins (Glycoproteins / Spikes)
+                    p.stroke(52, 211, 153);
+                    p.strokeWeight(2);
+                    let spikeCount = 6;
+                    for (let i = 0; i < spikeCount; i++) {
+                        let angle = p.TWO_PI / spikeCount * i + p.frameCount * 0.01;
+                        // Spikes melt/shrink at high temp (Conformational Change)
+                        let spikeLength = isDenaturing ? p.random(1, 3) : 6; 
+                        let sx = p.cos(angle) * (this.size/2 + spikeLength);
+                        let sy = p.sin(angle) * (this.size/2 + spikeLength);
+                        p.line(0, 0, sx, sy);
+                        
+                        // Spike tip (Receptor binding site)
+                        p.noStroke();
+                        // Tips turn red and shrink when changing conformation
+                        p.fill(isDenaturing ? 239 : 255, isDenaturing ? 68 : 255, isDenaturing ? 68 : 255); 
+                        p.ellipse(sx, sy, isDenaturing ? 1.5 : 3.5);
+                    }
+                    
+                    p.pop();
+                }
+            }
+
+            class Macrophage {
+                constructor() {
+                    this.x = p.random(p.width);
+                    this.y = p.random(p.height);
+                    this.size = 45;
+                    this.vx = p.random(-0.5, 0.5);
+                    this.vy = p.random(-0.5, 0.5);
+                    this.seed = p.random(1000);
+                    this.target = null;
+                }
+
+                update() {
+                    let immEff = getImmuneEfficiency(currentTemp);
+                    // Kinetic energy & enzyme efficiency increases with temperature
+                    let speed = p.map(immEff, 0.2, 1.0, 0.5, 3.8); 
+                    let eatRadius = this.size / 2 + 10;
+
+                    // Seeking logic
+                    if (!this.target || !viruses.includes(this.target)) {
+                        let closestDist = Infinity;
+                        this.target = null;
+                        for (let v of viruses) {
+                            let d = p.dist(this.x, this.y, v.x, v.y);
+                            if (d < closestDist) {
+                                closestDist = d;
+                                this.target = v;
+                            }
+                        }
+                    }
+
+                    if (this.target) {
+                        // Move towards target
+                        let angle = p.atan2(this.target.y - this.y, this.target.x - this.x);
+                        this.vx = p.cos(angle) * speed;
+                        this.vy = p.sin(angle) * speed;
+
+                        // Phagocytosis (Eating virus)
+                        let d = p.dist(this.x, this.y, this.target.x, this.target.y);
+                        if (d < eatRadius) {
+                            viruses.splice(viruses.indexOf(this.target), 1);
+                            
+                            // Visual feedback for vocabulary
+                            floatingTexts.push(new FloatingText(this.x, this.y - 20, "+ Phagocytosis"));
+
+                            this.target = null;
+                            this.size = p.min(70, this.size + 3); // Engorge slightly
+                        }
+                    } else {
+                        // Wander
+                        this.x += this.vx * speed;
+                        this.y += this.vy * speed;
+                    }
+
+                    // Keep in bounds
+                    if (this.x < 0 || this.x > p.width) this.vx *= -1;
+                    if (this.y < 0 || this.y > p.height) this.vy *= -1;
+                    
+                    // Gradually shrink back to normal size
+                    if(this.size > 45) this.size -= 0.15;
+                }
+
+                show() {
+                    p.push();
+                    p.translate(this.x, this.y);
+                    
+                    let immEff = getImmuneEfficiency(currentTemp);
+                    let activityLevel = p.map(immEff, 0.2, 1.0, 0.02, 0.15); // Faster pseudopod extensions
+                    
+                    p.noStroke();
+                    // Glow based on temperature/activation
+                    let r = p.map(immEff, 0.2, 1.0, 100, 59);
+                    let g = p.map(immEff, 0.2, 1.0, 150, 130);
+                    let b = p.map(immEff, 0.2, 1.0, 255, 246);
+                    
+                    p.fill(r, g, b, 60);
+                    p.ellipse(0, 0, this.size + 15, this.size + 15); // Outer aura
+                    
+                    p.fill(r, g, b, 200);
+                    
+                    // Draw organic blob shape (Macrophage with pseudopodia)
+                    p.beginShape();
+                    for (let a = 0; a < p.TWO_PI; a += p.PI / 16) {
+                        let xoff = p.map(p.cos(a), -1, 1, 0, 1.5);
+                        let yoff = p.map(p.sin(a), -1, 1, 0, 1.5);
+                        let rShape = p.map(p.noise(xoff + this.seed, yoff + this.seed, p.frameCount * activityLevel), 0, 1, this.size/2 * 0.7, this.size/2 * 1.3);
+                        let sx = rShape * p.cos(a);
+                        let sy = rShape * p.sin(a);
+                        p.vertex(sx, sy);
+                    }
+                    p.endShape(p.CLOSE);
+
+                    // Multi-lobed nucleus characteristic of some phagocytes (or just general cellular structure)
+                    p.fill(30, 58, 138, 150); // Darker blue nucleus
+                    p.ellipse(-5, -2, this.size * 0.35);
+                    p.ellipse(5, 4, this.size * 0.3);
+
+                    p.pop();
+                }
+            }
+
+            p.setup = () => {
+                let container = document.getElementById('p5-container');
+                let canvas = p.createCanvas(container.clientWidth, container.clientHeight);
+                canvas.parent('p5-container');
+
+                // Initial spawn
+                for (let i = 0; i < 35; i++) viruses.push(new Virus());
+                for (let i = 0; i < 3; i++) macrophages.push(new Macrophage());
+            };
+
+            p.windowResized = () => {
+                let container = document.getElementById('p5-container');
+                p.resizeCanvas(container.clientWidth, container.clientHeight);
+            };
+
+            p.draw = () => {
+                // Background reacts to temperature
+                // Normal: Deep slate. Fever: Hostile reddish hue
+                let bgR = p.map(currentTemp, 36, 41, 15, 70);
+                let bgG = 23;
+                let bgB = p.map(currentTemp, 36, 41, 42, 25);
+                p.background(bgR, bgG, bgB, 200); // Slight trail effect with alpha
+
+                // Prevent extinction so the simulation doesn't stall completely
+                if (viruses.length < MIN_VIRUSES && p.frameCount % 90 === 0) {
+                    viruses.push(new Virus());
+                }
+
+                // Update and draw entities
+                for (let v of viruses) {
+                    v.update();
+                    v.show();
+                }
+
+                for (let m of macrophages) {
+                    m.update();
+                    m.show();
+                }
+
+                // Process floating text
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    floatingTexts[i].update();
+                    floatingTexts[i].show();
+                    if (floatingTexts[i].life <= 0) {
+                        floatingTexts.splice(i, 1);
+                    }
+                }
+
+                // Update DOM counter
+                virusCountDisplay.innerText = viruses.length;
+            };
+        };
+
+        // Initialize p5
+        new p5(sketch);
+
+    </script>
+</body>
+</html>
