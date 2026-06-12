@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chaperone Proteins: Folding Mechanism Simulator</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for UI Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* Base resets and app-like behavior */
+        * {
+            -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
+        }
+
+        /* Custom Animations */
+        @keyframes floatUp {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-60px); opacity: 0; }
+        }
+        
+        @keyframes gentlePulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .animate-float-up { animation: floatUp 2s ease-out forwards; }
+        .animate-gentle-pulse { animation: gentlePulse 3s infinite ease-in-out; }
+        
+        /* Smooth transition for dragging snap-backs */
+        .snap-transition {
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        /* Custom Scrollbar for Logs */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans h-screen max-h-[1000px] overflow-hidden flex flex-col selection:bg-cyan-500 selection:text-white">
+
+    <!-- HEADER: Title & Real-time Stats -->
+    <header class="h-20 bg-slate-800 shadow-md flex justify-between items-center px-6 border-b border-slate-700 shrink-0 z-20">
+        <div class="flex items-center gap-4">
+            <div class="w-12 h-12 bg-indigo-500/20 rounded-lg flex items-center justify-center border border-indigo-500/50">
+                <i class="fas fa-microscope text-2xl text-indigo-400"></i>
+            </div>
+            <div>
+                <h1 class="text-xl md:text-2xl font-bold text-teal-400 leading-tight">Protein Folding Simulator</h1>
+                <p class="text-xs md:text-sm text-slate-400">GroEL/GroES Chaperonin Complex Mechanism</p>
+            </div>
+        </div>
+        
+        <div class="flex space-x-6 bg-slate-900/50 p-2 rounded-xl border border-slate-700">
+            <div class="text-center px-3">
+                <span class="block text-[10px] uppercase tracking-wider text-slate-400">Proteins Folded</span>
+                <span id="folded-count" class="text-xl font-bold text-emerald-400">0</span>
+            </div>
+            <div class="text-center px-3 border-l border-slate-700">
+                <span class="block text-[10px] uppercase tracking-wider text-slate-400">ATP Used</span>
+                <span id="atp-count" class="text-xl font-bold text-yellow-400">0</span>
+            </div>
+            <div class="text-center px-3 border-l border-slate-700">
+                <span class="block text-[10px] uppercase tracking-wider text-slate-400">Aggregations</span>
+                <span id="agg-count" class="text-xl font-bold text-rose-400">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN STAGE: Interactive Area -->
+    <main id="main-stage" class="flex-1 relative flex gap-6 p-6 overflow-hidden">
+        
+        <!-- LEFT: Cytoplasm (Source of Unfolded Proteins) -->
+        <div class="w-1/3 bg-slate-800/60 rounded-2xl border border-slate-700 p-5 flex flex-col relative overflow-hidden shadow-lg z-10">
+            <i class="fas fa-dna absolute -bottom-4 -right-4 text-slate-700/30 text-8xl transform -rotate-12 pointer-events-none"></i>
+            
+            <h2 class="text-lg font-bold text-slate-100 border-b border-slate-600 pb-2 mb-2 flex items-center gap-2">
+                <i class="fas fa-water text-blue-400"></i> Crowded Cytoplasm
+            </h2>
+            <p class="text-xs text-slate-300 mb-4 z-10">
+                Ribosomes are translating mRNA into amino acid chains. Because the cytoplasm is crowded, exposed <strong class="text-rose-400">hydrophobic residues (red dots)</strong> will stick to other proteins causing fatal aggregation if not rescued quickly!
+            </p>
+            
+            <div id="spawner" class="flex-1 relative border-2 border-dashed border-slate-600/50 rounded-xl bg-slate-900/40 flex flex-col items-center justify-center p-4">
+                <p class="text-slate-500 text-xs text-center font-mono select-none pointer-events-none">
+                    <i class="fas fa-arrow-down mb-2 text-lg"></i><br>
+                    Newly Synthesized Proteins<br>Appear Here
+                </p>
+            </div>
+        </div>
+
+        <!-- RIGHT: Chaperone Chamber (Dropzone) -->
+        <div class="w-2/3 bg-slate-800/40 rounded-2xl border border-slate-700 flex flex-col items-center justify-center relative p-8 shadow-inner overflow-hidden z-10">
+            
+            <!-- Chaperone Complex SVG/CSS Construction -->
+            <div id="chaperone-complex" class="relative w-64 h-[400px] flex flex-col items-center justify-end pb-8 z-10">
+                
+                <!-- GroES Lid -->
+                <div id="groes-lid" class="absolute z-30 transition-all duration-700 ease-in-out w-48 h-14 bg-gradient-to-r from-rose-500 to-red-600 rounded-t-[30px] rounded-b-xl border-[5px] border-red-800 flex items-center justify-center shadow-[0_10px_20px_rgba(0,0,0,0.5)]" 
+                     style="bottom: 248px; transform: translateY(-70px); opacity: 0; pointer-events: none;">
+                    <span class="text-xs font-bold text-red-100 tracking-widest uppercase">GroES Cap</span>
+                </div>
+                
+                <!-- GroEL Barrel -->
+                <div id="groel-barrel" class="relative w-56 h-64 bg-gradient-to-b from-indigo-600 to-blue-800 rounded-[40px] border-[6px] border-indigo-900 z-20 flex flex-col items-center pt-6 shadow-[0_20px_50px_rgba(30,58,138,0.5)] transition-all duration-300">
+                    
+                    <!-- Barrel Ridges -->
+                    <div class="absolute w-full top-[30%] border-t-[5px] border-indigo-900/50 pointer-events-none"></div>
+                    <div class="absolute w-full top-[60%] border-t-[5px] border-indigo-900/50 pointer-events-none"></div>
+                    
+                    <div class="text-center text-[10px] font-bold text-indigo-200 tracking-widest uppercase mb-2">GroEL Chamber</div>
+                    
+                    <!-- Chamber Interior (Where folding happens) -->
+                    <div id="chamber-interior" class="relative w-40 h-40 bg-slate-950 rounded-[28px] border-4 border-slate-800 transition-all duration-1000 flex items-center justify-center overflow-hidden z-30 shadow-[inset_0_0_30px_rgba(0,0,0,0.8)]">
+                        <span id="chamber-state-text" class="absolute top-2 text-[10px] text-slate-500 font-mono text-center uppercase tracking-wider font-bold z-0 opacity-70 transition-colors duration-1000">Hydrophobic</span>
+                        
+                        <!-- Container for SVG during processing -->
+                        <div id="processing-protein" class="z-10 w-24 h-24 flex items-center justify-center"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Folded Output Area -->
+            <div id="completion-area" class="absolute bottom-6 right-8 w-44 h-44 bg-emerald-900/10 border-2 border-emerald-500/20 rounded-full flex flex-col items-center justify-center transition-all duration-500 z-0 opacity-40">
+                <span class="text-emerald-500/70 text-[10px] font-bold uppercase tracking-widest absolute top-2 text-center w-full">Extracellular / Output</span>
+                <div id="folded-output" class="relative w-24 h-24 mt-4 flex items-center justify-center"></div>
+            </div>
+            
+            <!-- Instructions Overlay -->
+            <div class="absolute top-6 right-8 text-right pointer-events-none">
+                <p class="text-slate-400 font-mono text-xs animate-pulse">Drag unfolded proteins<br>into the GroEL chamber</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- FOOTER: Educational Content & Logs -->
+    <footer class="h-56 bg-slate-800 border-t border-slate-700 p-4 flex gap-4 shrink-0 z-20">
+        
+        <!-- The Misconceptions -->
+        <div id="misconception-box" class="w-1/3 bg-slate-900/60 p-4 rounded-xl border border-rose-900/50 transition-all duration-500 flex flex-col">
+            <h3 class="text-rose-400 font-bold mb-2 flex items-center gap-2 text-sm uppercase tracking-wide">
+                <i class="fas fa-exclamation-triangle"></i> Student Misconceptions
+            </h3>
+            <div class="text-xs text-slate-300 leading-relaxed overflow-y-auto pr-2 flex-1 custom-scrollbar space-y-2">
+                <p>
+                    <strong>1. The "Instant Fold":</strong> Proteins don't snap into 3D shapes instantly. Exposed <span class="text-rose-400 font-bold">hydrophobic</span> regions will bind to *other* proteins first, causing useless <strong class="text-rose-400">aggregations</strong>!
+                </p>
+                <p>
+                    <strong>2. The "Magnet":</strong> In this game you drag the protein. In reality, chaperones don't "suck up" proteins. They bump into them randomly via <em>Brownian Motion</em>!
+                </p>
+            </div>
+        </div>
+        
+        <!-- The Mechanism -->
+        <div class="w-1/3 bg-slate-900/60 p-4 rounded-xl border border-cyan-900/50 flex flex-col">
+            <h3 class="text-cyan-400 font-bold mb-2 flex items-center gap-2 text-sm uppercase tracking-wide">
+                <i class="fas fa-shield-alt"></i> The Mechanism
+            </h3>
+            <div class="text-xs text-slate-300 leading-relaxed overflow-y-auto pr-2 flex-1 custom-scrollbar space-y-1">
+                <p>1. <strong class="text-slate-400">Hydrophobic</strong> walls catch the unfolded protein.</p>
+                <p>2. <strong class="text-yellow-400">7 ATP</strong> bind & Cap attaches. Interior shifts to <strong class="text-cyan-400">Hydrophilic</strong>!</p>
+                <p>3. <strong>The Timer:</strong> ATP slowly hydrolyzes to ADP. This gives the protein ~10s to undergo "hydrophobic collapse" inside the safe room.</p>
+                <p>4. <strong>Not Always Perfect:</strong> Sometimes a protein fails to fold on the first try and must re-enter the cycle!</p>
+            </div>
+        </div>
+        
+        <!-- Live System Logs -->
+        <div class="w-1/3 bg-black/80 rounded-xl border border-slate-700 p-3 font-mono flex flex-col shadow-inner">
+            <h3 class="text-green-500 font-bold mb-2 text-xs uppercase tracking-widest border-b border-slate-800 pb-1">System Terminal</h3>
+            <div id="log-container" class="flex-1 overflow-y-auto text-[10px] text-slate-400 space-y-1.5 pr-2 custom-scrollbar">
+                <!-- Logs injected via JS -->
+            </div>
+        </div>
+    </footer>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        /**
+         * SCIENTIFIC BACKGROUND FOR THIS SIMULATION:
+         * 1. Primary Structure (Sequence): Represented by wavy lines. Red dots are hydrophobic residues.
+         * 2. Crowding & Aggregation: Represented by the timer.
+         * 3. GroEL Binding: Initial state of the barrel interior is Hydrophobic.
+         * 4. ATP Binding & GroES: Causes massive conformational shift.
+         * 5. Hydrophilic Shift & Timer: The interior exposes hydrophilic residues. ATP hydrolysis acts as a ~10s timer.
+         * 6. Iterative Process: Folding isn't 100% successful. Proteins often need multiple cycles.
+         */
+
+        // --- STATE & CONFIG ---
+        const STATE = {
+            folded: 0,
+            atp: 0,
+            aggregated: 0,
+            isProcessing: false,
+            maxProteins: 4 // Max allowed in cytoplasm at once
+        };
+
+        // DOM Elements
+        const mainStage = document.getElementById('main-stage');
+        const spawner = document.getElementById('spawner');
+        const logContainer = document.getElementById('log-container');
+        
+        // --- SVG ASSETS ---
+        
+        function getUnfoldedSVG() {
+            return `
+            <svg viewBox="0 0 100 100" class="w-full h-full filter drop-shadow-[0_0_8px_rgba(217,70,239,0.6)]">
+                <!-- Unfolded Polypeptide Chain -->
+                <path d="M10,50 C 20,-10 40,110 60,30 C 70,-10 90,80 90,50" fill="none" stroke="url(#unfoldedGrad)" stroke-width="6" stroke-linecap="round"/>
+                <defs>
+                    <linearGradient id="unfoldedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#d946ef" /> <!-- Fuchsia -->
+                        <stop offset="100%" stop-color="#06b6d4" /> <!-- Cyan -->
+                    </linearGradient>
+                </defs>
+                <!-- Exposed Hydrophobic Residues (Danger of aggregation) -->
+                <circle cx="28" cy="46" r="4" fill="#ef4444" class="animate-pulse"/>
+                <circle cx="48" cy="55" r="4" fill="#ef4444" class="animate-pulse"/>
+                <circle cx="75" cy="42" r="4" fill="#ef4444" class="animate-pulse"/>
+            </svg>`;
+        }
+
+        function getFoldedSVG() {
+            return `
+            <svg viewBox="0 0 100 100" class="w-full h-full drop-shadow-[0_0_12px_rgba(16,185,129,0.8)]">
+                <!-- Native 3D Conformation (Compact & Stable) -->
+                <path d="M50,20 L80,45 L70,80 L30,80 L20,45 Z" fill="rgba(16,185,129,0.2)" stroke="#10b981" stroke-width="4" stroke-linejoin="round"/>
+                <path d="M50,20 L50,55 L80,45 M50,55 L70,80 M50,55 L30,80 M50,55 L20,45" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>
+                
+                <!-- Hydrophobic residues (Red) are now SAFELY BURIED inside the core -->
+                <circle cx="45" cy="48" r="3" fill="#ef4444"/>
+                <circle cx="55" cy="55" r="3" fill="#ef4444"/>
+                <circle cx="48" cy="60" r="3" fill="#ef4444"/>
+                
+                <!-- Hydrophilic residues (Blue) interact safely with water on the outside -->
+                <circle cx="50" cy="20" r="4" fill="#3b82f6"/>
+                <circle cx="80" cy="45" r="4" fill="#3b82f6"/>
+                <circle cx="70" cy="80" r="4" fill="#3b82f6"/>
+                <circle cx="30" cy="80" r="4" fill="#3b82f6"/>
+                <circle cx="20" cy="45" r="4" fill="#3b82f6"/>
+            </svg>`;
+        }
+
+        function getAggregatedSVG() {
+            return `
+            <svg viewBox="0 0 100 100" class="w-full h-full opacity-80 grayscale drop-shadow-md">
+                <!-- Tangled mess of multiple misfolded chains -->
+                <path d="M20,20 Q80,10 50,50 T80,80 T20,80 T50,50 T20,20" fill="none" stroke="#64748b" stroke-width="5" stroke-linejoin="round"/>
+                <path d="M10,40 Q90,90 40,60 T90,20" fill="none" stroke="#475569" stroke-width="4"/>
+                
+                <!-- Clumped hydrophobic residues stuck together unproductively -->
+                <circle cx="45" cy="45" r="8" fill="#7f1d1d" opacity="0.9"/>
+                <circle cx="55" cy="55" r="7" fill="#7f1d1d" opacity="0.9"/>
+                <circle cx="40" cy="58" r="6" fill="#7f1d1d" opacity="0.9"/>
+            </svg>`;
+        }
+
+        // --- UTILS ---
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+        function logMsg(msg, type='info') {
+            const div = document.createElement('div');
+            let colorClass = 'text-slate-400';
+            if (type === 'error') colorClass = 'text-rose-400';
+            if (type === 'success') colorClass = 'text-emerald-400';
+            if (type === 'warn') colorClass = 'text-yellow-400';
+            if (type === 'system') colorClass = 'text-cyan-400';
+            
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric", second: "numeric" });
+            div.className = `${colorClass} font-mono animate-fade-in`;
+            div.innerHTML = `<span class="opacity-50">[${time}]</span> > ${msg}`;
+            
+            logContainer.appendChild(div);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function flashMisconceptionBox() {
+            const box = document.getElementById('misconception-box');
+            box.classList.add('bg-rose-900/80', 'scale-[1.02]');
+            setTimeout(() => {
+                box.classList.remove('bg-rose-900/80', 'scale-[1.02]');
+            }, 600);
+        }
+
+        // --- CORE LOGIC ---
+
+        // Modified spawn function to accept specific elements or create new ones
+        function spawnProtein(existingEl = null, startLife = 15) {
+            const currentProteins = document.querySelectorAll('.unfolded-protein:not(.aggregated)').length;
+            if (currentProteins >= STATE.maxProteins && !existingEl) return;
+
+            const spawnerRect = spawner.getBoundingClientRect();
+            const stageRect = mainStage.getBoundingClientRect();
+
+            let el = existingEl;
+            
+            if (!el) {
+                el = document.createElement('div');
+                el.className = 'unfolded-protein absolute w-16 h-16 cursor-grab flex flex-col items-center justify-center animate-gentle-pulse z-20';
+                el.style.touchAction = 'none'; 
+                el.innerHTML = `
+                    ${getUnfoldedSVG()}
+                    <div class="w-12 bg-slate-800 h-1.5 mt-1 rounded-full overflow-hidden border border-slate-700 pointer-events-none">
+                        <div class="life-bar bg-rose-500 h-full w-full transition-all duration-1000 ease-linear"></div>
+                    </div>
+                `;
+                // Attach Pointer Events for cross-device drag & drop
+                el.addEventListener('pointerdown', handlePointerDown);
+                mainStage.appendChild(el);
+                logMsg("New unfolded protein synthesized.", "system");
+            }
+
+            // Randomize position slightly within the spawner box
+            const pad = 10;
+            const xOffset = pad + Math.random() * (spawnerRect.width - 64 - pad*2);
+            const yOffset = pad + Math.random() * (spawnerRect.height - 64 - pad*2);
+            
+            el.style.left = (spawnerRect.left - stageRect.left + xOffset) + 'px';
+            el.style.top = (spawnerRect.top - stageRect.top + yOffset) + 'px';
+
+            // Lifecycle / Aggregation Timer
+            let life = startLife; 
+            
+            // Clear any existing intervals
+            if(el.dataset.intervalId) clearInterval(parseInt(el.dataset.intervalId));
+            
+            el.dataset.intervalId = setInterval(() => {
+                // Pause dying if currently being dragged
+                if (activeProtein === el) return; 
+                
+                life--;
+                const bar = el.querySelector('.life-bar');
+                if (bar) bar.style.width = (life / 15 * 100) + '%';
+                
+                // Color shift as it gets closer to aggregating
+                if(life < 6 && bar) bar.classList.replace('bg-rose-500', 'bg-red-600');
+                
+                if (life <= 0) {
+                    clearInterval(parseInt(el.dataset.intervalId));
+                    aggregateProtein(el);
+                }
+            }, 1000);
+        }
+
+        function aggregateProtein(el) {
+            el.classList.add('aggregated');
+            el.classList.remove('cursor-grab', 'animate-gentle-pulse');
+            el.style.cursor = 'not-allowed';
+            
+            el.innerHTML = getAggregatedSVG() + `<span class="text-[9px] text-rose-500 font-bold mt-1 absolute -bottom-5 bg-slate-900/80 px-1 rounded border border-rose-900 pointer-events-none">Aggregated!</span>`;
+            
+            STATE.aggregated++;
+            document.getElementById('agg-count').innerText = STATE.aggregated;
+            
+            logMsg("Aggregation occurred! Hydrophobic patches stuck together.", "error");
+            flashMisconceptionBox();
+            
+            setTimeout(() => {
+                el.style.transition = 'opacity 1.5s ease';
+                el.style.opacity = '0';
+                setTimeout(() => el.remove(), 1500);
+            }, 3000);
+        }
+
+        // --- DRAG AND DROP SYSTEM (Vanilla Pointer Events) ---
+        
+        let activeProtein = null;
+        let startPointerX, startPointerY;
+        let initialLeft, initialTop;
+
+        function handlePointerDown(e) {
+            const el = e.currentTarget;
+            if (el.classList.contains('aggregated')) return; 
+            
+            activeProtein = el;
+            
+            initialLeft = parseFloat(el.style.left) || 0;
+            initialTop = parseFloat(el.style.top) || 0;
+            startPointerX = e.clientX;
+            startPointerY = e.clientY;
+            
+            el.classList.remove('cursor-grab', 'animate-gentle-pulse');
+            el.classList.add('cursor-grabbing', 'scale-110', 'drop-shadow-[0_15px_15px_rgba(0,0,0,0.5)]');
+            el.style.zIndex = 100;
+            
+            el.setPointerCapture(e.pointerId);
+            
+            el.addEventListener('pointermove', handlePointerMove);
+            el.addEventListener('pointerup', handlePointerUp);
+            el.addEventListener('pointercancel', handlePointerUp);
+        }
+
+        function handlePointerMove(e) {
+            if (!activeProtein) return;
+            
+            const dx = e.clientX - startPointerX;
+            const dy = e.clientY - startPointerY;
+            
+            activeProtein.style.left = (initialLeft + dx) + 'px';
+            activeProtein.style.top = (initialTop + dy) + 'px';
+            
+            const barrel = document.getElementById('groel-barrel');
+            if (!STATE.isProcessing && checkOverlap(activeProtein, barrel)) {
+                barrel.classList.add('ring-4', 'ring-cyan-400', 'ring-offset-4', 'ring-offset-slate-900', 'scale-[1.02]');
+            } else {
+                barrel.classList.remove('ring-4', 'ring-cyan-400', 'ring-offset-4', 'ring-offset-slate-900', 'scale-[1.02]');
+            }
+        }
+
+        function handlePointerUp(e) {
+            if (!activeProtein) return;
+            const el = activeProtein;
+            
+            el.releasePointerCapture(e.pointerId);
+            el.removeEventListener('pointermove', handlePointerMove);
+            el.removeEventListener('pointerup', handlePointerUp);
+            el.removeEventListener('pointercancel', handlePointerUp);
+            
+            el.classList.remove('cursor-grabbing', 'scale-110', 'drop-shadow-[0_15px_15px_rgba(0,0,0,0.5)]');
+            el.classList.add('cursor-grab', 'animate-gentle-pulse');
+            el.style.zIndex = 20;
+            
+            const barrel = document.getElementById('groel-barrel');
+            barrel.classList.remove('ring-4', 'ring-cyan-400', 'ring-offset-4', 'ring-offset-slate-900', 'scale-[1.02]');
+            
+            if (checkOverlap(el, barrel)) {
+                if (STATE.isProcessing) {
+                    logMsg("Chamber full! GroEL processes one sequence at a time.", "warn");
+                    snapBackToSpawner(el);
+                } else {
+                    clearInterval(parseInt(el.dataset.intervalId));
+                    processProteinInChaperone(el);
+                }
+            } else {
+                snapBackToSpawner(el);
+            }
+            
+            activeProtein = null;
+        }
+
+        function checkOverlap(dragEl, targetEl) {
+            const rect1 = dragEl.getBoundingClientRect();
+            const rect2 = targetEl.getBoundingClientRect();
+            
+            const centerX = rect1.left + rect1.width / 2;
+            const centerY = rect1.top + rect1.height / 2;
+            
+            return (
+                centerX >= rect2.left &&
+                centerX <= rect2.right &&
+                centerY >= rect2.top &&
+                centerY <= rect2.bottom
+            );
+        }
+
+        function snapBackToSpawner(el) {
+            const spawnerRect = spawner.getBoundingClientRect();
+            const stageRect = mainStage.getBoundingClientRect();
+            
+            const targetLeft = spawnerRect.left - stageRect.left + (spawnerRect.width/2) - 32;
+            const targetTop = spawnerRect.top - stageRect.top + (spawnerRect.height/2) - 32;
+            
+            el.classList.add('snap-transition');
+            el.style.left = targetLeft + 'px';
+            el.style.top = targetTop + 'px';
+            
+            setTimeout(() => {
+                if(el) el.classList.remove('snap-transition');
+            }, 400);
+        }
+
+        // --- FOLDING SIMULATION SEQUENCE ---
+        
+        async function processProteinInChaperone(proteinEl) {
+            STATE.isProcessing = true;
+            
+            // Remove dragged item from DOM
+            proteinEl.remove();
+
+            const interior = document.getElementById('chamber-interior');
+            const lid = document.getElementById('groes-lid');
+            const stateText = document.getElementById('chamber-state-text');
+            const procContainer = document.getElementById('processing-protein');
+
+            // Phase 1: Enter Chamber
+            logMsg("Protein enters GroEL. Hydrophobic interior catches it.", "success");
+            procContainer.innerHTML = getUnfoldedSVG();
+            procContainer.classList.add('animate-gentle-pulse');
+            
+            await sleep(1000);
+
+            // Phase 2: ATP & Cap Binding
+            logMsg("7 ATP molecules bind. GroES Cap attaches!", "warn");
+            
+            lid.style.transform = "translateY(0)";
+            lid.style.opacity = "1";
+            animateATPUsage(7);
+            
+            await sleep(1000);
+
+            // Phase 3: Conformational Change & Timer Mechanism
+            logMsg("Chamber becomes HYDROPHILIC. ATP hydrolysis timer starts.", "system");
+            
+            interior.classList.remove('bg-slate-950', 'border-slate-800', 'shadow-[inset_0_0_30px_rgba(0,0,0,0.8)]');
+            interior.classList.add('bg-cyan-100', 'border-cyan-400', 'shadow-[inset_0_0_40px_rgba(6,182,212,0.8)]');
+            
+            stateText.innerText = "HYDROPHILIC";
+            stateText.classList.remove('text-slate-500');
+            stateText.classList.add('text-cyan-800', 'scale-110');
+            
+            await sleep(1000);
+            
+            logMsg("Hydrophobic collapse triggered. Attempting to fold...", "info");
+            
+            // Spin to simulate folding
+            procContainer.querySelector('svg').classList.add('animate-[spin_2s_linear_infinite]');
+            await sleep(2000); 
+
+            // BIOLOGICAL REALITY CHECK: 15% chance it fails to fold completely!
+            const isSuccessful = Math.random() > 0.15;
+
+            // Phase 4: Release
+            lid.style.transform = "translateY(-70px)";
+            lid.style.opacity = "0";
+            
+            if (isSuccessful) {
+                logMsg("Folding successful! GroES Cap releases properly folded protein.", "success");
+                procContainer.innerHTML = ''; 
+                spawnFoldedOutput();
+            } else {
+                logMsg("Biological Reality: Protein failed to fold! Released to try again.", "error");
+                procContainer.innerHTML = '';
+                // Respawn it back in the cytoplasm with a renewed timer
+                spawnProtein(null, 10); 
+            }
+            
+            // Revert chamber state
+            interior.classList.add('bg-slate-950', 'border-slate-800', 'shadow-[inset_0_0_30px_rgba(0,0,0,0.8)]');
+            interior.classList.remove('bg-cyan-100', 'border-cyan-400', 'shadow-[inset_0_0_40px_rgba(6,182,212,0.8)]');
+            stateText.innerText = "HYDROPHOBIC";
+            stateText.classList.add('text-slate-500');
+            stateText.classList.remove('text-cyan-800', 'scale-110');
+
+            // Reset
+            STATE.isProcessing = false;
+        }
+
+        function animateATPUsage(amount) {
+            STATE.atp += amount;
+            document.getElementById('atp-count').innerText = STATE.atp;
+            
+            const floater = document.createElement('div');
+            floater.className = 'absolute text-yellow-400 font-bold text-xl pointer-events-none animate-float-up z-50 drop-shadow-md';
+            floater.innerText = `-${amount} ATP`;
+            
+            const barrel = document.getElementById('groel-barrel');
+            const rect = barrel.getBoundingClientRect();
+            const stage = mainStage.getBoundingClientRect();
+            
+            floater.style.left = (rect.left - stage.left + rect.width/2 - 30) + 'px';
+            floater.style.top = (rect.top - stage.top) + 'px';
+            
+            mainStage.appendChild(floater);
+            setTimeout(() => floater.remove(), 2000);
+        }
+
+        function spawnFoldedOutput() {
+            STATE.folded++;
+            document.getElementById('folded-count').innerText = STATE.folded;
+
+            const outputContainer = document.getElementById('folded-output');
+            const compArea = document.getElementById('completion-area');
+            
+            const el = document.createElement('div');
+            el.className = 'w-16 h-16 absolute animate-[bounce_0.8s_ease-out_1] z-10';
+            el.innerHTML = getFoldedSVG();
+            
+            outputContainer.appendChild(el);
+            
+            compArea.classList.add('bg-emerald-900/40', 'scale-105');
+            setTimeout(() => compArea.classList.remove('bg-emerald-900/40', 'scale-105'), 500);
+
+            setTimeout(() => {
+                el.style.transition = 'opacity 1s ease, transform 1s ease';
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(20px)';
+                setTimeout(() => el.remove(), 1000);
+            }, 3000);
+        }
+
+        // --- INITIALIZATION ---
+        window.onload = () => {
+            logMsg("Simulator Initialized.", "system");
+            logMsg("Ribosomes active. Awaiting first polypeptide chain...", "info");
+            
+            setTimeout(spawnProtein, 1500);
+            
+            setInterval(() => {
+                if (Math.random() > 0.4) {
+                    spawnProtein();
+                }
+            }, 3500);
+        };
+    </script>
+</body>
+</html>
