@@ -2,1145 +2,1995 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
-    <meta name="description" content="Interactive virtual lab visualizing Absorption in the Small Intestine. Explore villi, microvilli, chylomicron formation, osmosis, and 3D anatomical structures.">
-    <title>Biology Virtual Labs - Absorption in the Small Intestine</title>
-    
+    <meta name="description" content="Interactive 3D Intestinal Villi & Nutrient Absorption Simulator. Explore columnar enterocytes, microvilli brush border, chylomicron exocytosis into lacteals, hepatic portal capillaries, ATP inhibition, and celiac villous atrophy.">
+    <title>3D Absorption in the Small Intestine | Luminous Learner Virtual Labs</title>
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome for Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- PixiJS for High-Performance 2D WebGL Rendering -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
-    <!-- GSAP for Smooth Animations & Pathing -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-    <!-- Three.js Core and OrbitControls for 3D Viewport -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js Core & Self-Contained OrbitControls (100% immune to school firewall / secondary CDN blocks) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'function') {
+            THREE.OrbitControls = function (object, domElement) {
+                this.object = object;
+                this.domElement = domElement || document;
+                this.enabled = true;
+                this.target = new THREE.Vector3();
+                this.enableDamping = true;
+                this.dampingFactor = 0.06;
+                this.enableZoom = true;
+                this.zoomSpeed = 1.0;
+                this.enableRotate = true;
+                this.rotateSpeed = 0.9;
+                this.enablePan = true;
+                this.panSpeed = 0.85;
+                this.minDistance = 4.0;
+                this.maxDistance = 28.0;
+                this.minPolarAngle = 0.08;
+                this.maxPolarAngle = Math.PI - 0.08;
+
+                const scope = this;
+                const listeners = {};
+                const spherical = new THREE.Spherical();
+                const sphericalDelta = new THREE.Spherical(0, 0, 0);
+                const panOffset = new THREE.Vector3();
+                const offset = new THREE.Vector3();
+                let scale = 1.0;
+                let mode = 'none';
+                const prevPointer = new THREE.Vector2();
+                let prevPinchDist = 0;
+
+                this.addEventListener = function (type, fn) {
+                    if (!listeners[type]) listeners[type] = [];
+                    if (!listeners[type].includes(fn)) listeners[type].push(fn);
+                };
+                this.dispatchEvent = function (event) {
+                    const arr = listeners[event.type];
+                    if (arr) arr.forEach(fn => fn.call(scope, event));
+                };
+
+                function applyPan(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    const dist = scope.object.position.distanceTo(scope.target);
+                    const targetDist = dist * Math.tan((scope.object.fov * 0.5) * Math.PI / 180.0);
+                    const vLeft = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 0)
+                        .multiplyScalar(-(2 * dx * targetDist / height) * scope.panSpeed);
+                    const vUp = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 1)
+                        .multiplyScalar((2 * dy * targetDist / height) * scope.panSpeed);
+                    panOffset.add(vLeft).add(vUp);
+                }
+                function applyRotate(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    sphericalDelta.theta -= (2 * Math.PI * dx / height) * scope.rotateSpeed;
+                    sphericalDelta.phi   -= (2 * Math.PI * dy / height) * scope.rotateSpeed;
+                }
+
+                function onMouseDown(e) {
+                    if (!scope.enabled) return;
+                    if (e.button === 0 && !e.shiftKey) mode = 'rotate';
+                    else if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) mode = 'pan';
+                    else return;
+                    prevPointer.set(e.clientX, e.clientY);
+                    window.addEventListener('mousemove', onMouseMove);
+                    window.addEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'start' });
+                }
+                function onMouseMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    const dx = e.clientX - prevPointer.x;
+                    const dy = e.clientY - prevPointer.y;
+                    prevPointer.set(e.clientX, e.clientY);
+                    if (mode === 'rotate') applyRotate(dx, dy);
+                    else if (mode === 'pan') applyPan(dx, dy);
+                }
+                function onMouseUp() {
+                    mode = 'none';
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onWheel(e) {
+                    if (!scope.enabled || !scope.enableZoom) return;
+                    e.preventDefault();
+                    scope.dispatchEvent({ type: 'start' });
+                    const zf = Math.pow(0.92, scope.zoomSpeed);
+                    if (e.deltaY < 0) scale *= zf; else if (e.deltaY > 0) scale /= zf;
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onTouchStart(e) {
+                    if (!scope.enabled) return;
+                    if (e.touches.length === 1) {
+                        mode = 'rotate';
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                        scope.dispatchEvent({ type: 'start' });
+                    } else if (e.touches.length === 2) {
+                        mode = 'pinch';
+                        prevPinchDist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        prevPointer.set(
+                            0.5 * (e.touches[0].pageX + e.touches[1].pageX),
+                            0.5 * (e.touches[0].pageY + e.touches[1].pageY)
+                        );
+                        scope.dispatchEvent({ type: 'start' });
+                    }
+                }
+                function onTouchMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    e.preventDefault();
+                    if (mode === 'rotate' && e.touches.length === 1) {
+                        applyRotate(e.touches[0].pageX - prevPointer.x, e.touches[0].pageY - prevPointer.y);
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                    } else if (mode === 'pinch' && e.touches.length === 2) {
+                        const dist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        if (prevPinchDist > 0 && dist > 0) scale *= (prevPinchDist / dist);
+                        prevPinchDist = dist;
+                        const mx = 0.5 * (e.touches[0].pageX + e.touches[1].pageX);
+                        const my = 0.5 * (e.touches[0].pageY + e.touches[1].pageY);
+                        applyPan(mx - prevPointer.x, my - prevPointer.y);
+                        prevPointer.set(mx, my);
+                    }
+                }
+                function onTouchEnd() { mode = 'none'; scope.dispatchEvent({ type: 'end' }); }
+
+                this.domElement.addEventListener('contextmenu', e => e.preventDefault());
+                this.domElement.addEventListener('mousedown', onMouseDown);
+                this.domElement.addEventListener('wheel', onWheel, { passive: false });
+                this.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+                this.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+                this.domElement.addEventListener('touchend', onTouchEnd);
+
+                this.update = function () {
+                    offset.copy(scope.object.position).sub(scope.target);
+                    spherical.setFromVector3(offset);
+                    const damp = scope.enableDamping ? scope.dampingFactor * 1.8 : 1.0;
+                    spherical.theta += sphericalDelta.theta * damp;
+                    spherical.phi   += sphericalDelta.phi   * damp;
+                    spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+                    spherical.makeSafe();
+                    spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius * scale));
+                    scope.target.addScaledVector(panOffset, damp);
+                    offset.setFromSpherical(spherical);
+                    scope.object.position.copy(scope.target).add(offset);
+                    scope.object.lookAt(scope.target);
+
+                    const decay = scope.enableDamping ? Math.max(0, 1 - damp) : 0;
+                    sphericalDelta.theta *= decay;
+                    sphericalDelta.phi   *= decay;
+                    panOffset.multiplyScalar(decay);
+                    scale = 1.0;
+                    scope.dispatchEvent({ type: 'change' });
+                    return false;
+                };
+                this.update();
+            };
+        }
+    </script>
 
     <style>
         body {
-            background-color: #0F172A; /* Deep Slate */
+            font-family: 'Inter', sans-serif;
+            background-color: #060913;
             color: #F8FAFC;
-            font-family: 'Inter', system-ui, sans-serif;
-            overflow: hidden;
-            user-select: none;
-            touch-action: none;
+            margin: 0;
+        }
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .panel {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(51, 65, 85, 0.85);
+            backdrop-filter: blur(14px);
         }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.8); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 1); }
 
         /* Toggle Switch */
-        .toggle-checkbox:checked {
-            right: 0;
-            border-color: #10b981; /* Emerald 500 */
+        .switch-input:checked + .switch-slider {
+            background-color: #EA580C;
+            border-color: #FB923C;
         }
-        .toggle-checkbox:checked + .toggle-label {
-            background-color: #10b981;
+        .switch-input:checked + .switch-slider::before {
+            transform: translateX(14px);
+            background-color: #FFFFFF;
+        }
+        .switch-slider::before {
+            content: "";
+            position: absolute;
+            height: 12px;
+            width: 12px;
+            left: 2px;
+            top: 2px;
+            background-color: #94A3B8;
+            border-radius: 50%;
+            transition: transform 0.2s ease, background-color 0.2s ease;
         }
 
-        #pixi-container, #three-container {
+        /* 3D Viewport */
+        #three-viewport {
+            width: 100%;
+            height: 100%;
             border-radius: 0.75rem;
+            background: radial-gradient(circle at 50% 35%, #261424 0%, #101528 56%, #050811 100%);
+            box-shadow: inset 0 0 85px rgba(0, 0, 0, 0.92);
             position: relative;
             overflow: hidden;
-            box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
-            width: 100%;
-            height: 100%;
-        }
-
-        #pixi-container {
-            background-image: linear-gradient(180deg, #1e1b4b 0%, #312e81 35%, #0f172a 100%);
-        }
-
-        #three-container {
-            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #050811 100%);
-        }
-        
-        canvas {
-            display: block;
-            width: 100%;
-            height: 100%;
+            cursor: grab;
             touch-action: none;
         }
-
-        .btn-spawn {
-            transition: all 0.2s ease;
-        }
-        .btn-spawn:active {
-            transform: scale(0.95);
+        #three-viewport:active {
+            cursor: grabbing;
         }
 
-        /* View Toggle Tabs */
-        .view-tab { transition: all 0.3s; }
-        .view-tab.active { background-color: #f97316; color: #020617; font-weight: 900; }
-
-        /* 3D Anatomical Pins (HTML Overlays) */
-        .anatomical-pin {
+        /* Floating 3D Clickable Anatomical Pins */
+        .anat-pin {
             position: absolute;
             transform: translate(-50%, -50%);
-            background: rgba(15, 23, 42, 0.85);
-            border: 1px solid #475569;
-            color: #f8fafc;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            pointer-events: auto;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-            white-space: nowrap;
             z-index: 20;
-            backdrop-filter: blur(4px);
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.2s ease, transform 0.15s ease;
         }
-        .anatomical-pin::after {
-            content: '';
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: #475569 transparent transparent transparent;
-        }
-        .anatomical-pin:hover, .anatomical-pin.active {
-            background: rgba(249, 115, 22, 0.9); /* Orange 500 */
-            border-color: #ffedd5;
-            box-shadow: 0 0 15px rgba(249, 115, 22, 0.6);
+        .anat-pin:hover {
+            transform: translate(-50%, -50%) scale(1.08);
             z-index: 30;
         }
-        .anatomical-pin:hover::after, .anatomical-pin.active::after {
-            border-color: #f97316 transparent transparent transparent;
+        .anat-pin-tag {
+            background: rgba(8, 12, 24, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            backdrop-filter: blur(6px);
+            padding: 2.5px 8px;
+            border-radius: 9999px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: #F1F5F9;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
-
+        .anat-pin.active .anat-pin-tag {
+            background: rgba(234, 88, 12, 0.94);
+            border-color: #FED7AA;
+            color: #FFFFFF;
+            box-shadow: 0 0 16px rgba(249, 115, 22, 0.65);
+        }
+        .anat-pin-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 9999px;
+            flex-shrink: 0;
+        }
         .pin-hidden {
             opacity: 0;
             pointer-events: none;
-            transform: translate(-50%, -50%) scale(0.5);
+            transform: translate(-50%, -50%) scale(0.75);
+        }
+
+        /* Floating 3D Mechanism Callout Pills */
+        .mech-float {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 25;
+            font-size: 10px;
+            font-weight: 800;
+            padding: 2px 7px;
+            border-radius: 6px;
+            background: rgba(9, 13, 24, 0.88);
+            border: 1px solid currentColor;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         }
     </style>
 </head>
-<body class="h-screen w-screen flex justify-center items-center p-2 md:p-4">
+<body class="min-h-screen lg:h-screen w-full flex flex-col lg:overflow-hidden select-none">
 
-    <!-- Main Container -->
-    <div class="w-full h-full max-w-[1400px] max-h-[950px] flex flex-col bg-slate-900 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.6)] overflow-hidden border border-slate-700/50 relative">
-        
-        <!-- Header -->
-        <header class="p-4 md:px-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-sm z-10 shrink-0 gap-4 md:gap-0">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-rose-500 flex items-center gap-3">
-                    <i class="fa-solid fa-stomach text-orange-400"></i> Absorption in the Small Intestine
-                </h1>
-                <p class="text-[10px] md:text-xs font-medium text-slate-400 uppercase tracking-widest mt-1">Villi Structure & Nutrient Sorting Logic</p>
+    <!-- Main Container (Guaranteed fit inside 800px iframes, 768p Chromebooks & Desktop Monitors) -->
+    <div class="w-full max-w-[1440px] mx-auto flex-1 min-h-0 flex flex-col gap-2.5 p-2.5 sm:p-3.5">
+
+        <!-- TOP HEADER: Title, Dual-Route Telemetry Counters & Exam Reference Table -->
+        <header class="panel rounded-xl px-4 py-2.5 flex flex-wrap justify-between items-center gap-3 shrink-0 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-orange-500/25 to-rose-500/25 border border-orange-400/40 flex items-center justify-center shrink-0">
+                    <svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 18v-6a4 4 0 018 0v6m2 0V9a4 4 0 018 0v9M2 18h20"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold tracking-tight bg-gradient-to-r from-orange-300 via-rose-200 to-emerald-300 bg-clip-text text-transparent">
+                        3D Intestinal Villi &amp; Nutrient Absorption Lab
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-medium">Brush-Border Microvilli, Active Co-Transport, Chylomicron Exocytosis &amp; Hepatic Portal Sorting</p>
+                </div>
             </div>
 
-            <!-- View Switcher -->
-            <div class="flex bg-slate-950 p-1.5 rounded-xl border border-slate-700 shadow-inner">
-                <button onclick="switchView('2d')" id="tab-2d" class="view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-900 bg-orange-400">
-                    <i class="fa-solid fa-square-poll-horizontal"></i> 2D Absorption Lab
+            <!-- Live Dual-Vessel Sorting Dashboard + Reference Modal Button -->
+            <div class="flex flex-wrap items-center gap-2.5">
+                <!-- Route 1: Blood Capillaries -> Hepatic Portal Vein -->
+                <div class="bg-slate-950/90 px-3 py-1.5 rounded-lg border border-rose-500/35 flex items-center gap-2.5">
+                    <div class="text-[9px] uppercase tracking-wider font-bold text-rose-300 leading-tight">
+                        Blood Capillaries<br><span class="text-slate-400 font-normal">→ Hepatic Portal</span>
+                    </div>
+                    <div class="flex items-center gap-2.5 pl-2 border-l border-slate-800 text-center">
+                        <div>
+                            <div id="stat-glucose" class="text-sm font-mono-tech font-extrabold text-cyan-400 leading-none">0</div>
+                            <div class="text-[8.5px] text-slate-400 font-bold uppercase mt-0.5">Glc</div>
+                        </div>
+                        <div>
+                            <div id="stat-amino" class="text-sm font-mono-tech font-extrabold text-purple-400 leading-none">0</div>
+                            <div class="text-[8.5px] text-slate-400 font-bold uppercase mt-0.5">AA</div>
+                        </div>
+                        <div>
+                            <div id="stat-water" class="text-sm font-mono-tech font-extrabold text-sky-400 leading-none">0</div>
+                            <div class="text-[8.5px] text-slate-400 font-bold uppercase mt-0.5">H₂O</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Route 2: Central Lacteal -> Thoracic Lymph Duct -->
+                <div class="bg-slate-950/90 px-3 py-1.5 rounded-lg border border-emerald-500/35 flex items-center gap-2.5">
+                    <div class="text-[9px] uppercase tracking-wider font-bold text-emerald-300 leading-tight">
+                        Central Lacteal<br><span class="text-slate-400 font-normal">→ Lymph Duct</span>
+                    </div>
+                    <div class="pl-2 border-l border-slate-800 text-center">
+                        <div id="stat-lipid" class="text-sm font-mono-tech font-extrabold text-amber-300 leading-none">0</div>
+                        <div class="text-[8.5px] text-slate-400 font-bold uppercase mt-0.5">Chylomicrons</div>
+                    </div>
+                </div>
+
+                <button id="openTableBtn" class="px-3 py-2 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold border border-indigo-400/40 shadow flex items-center gap-1.5 transition">
+                    <span>📊 Transport &amp; Adaptations</span>
                 </button>
-                <button onclick="switchView('3d')" id="tab-3d" class="view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white">
-                    <i class="fa-solid fa-cube"></i> 3D Villi Anatomy
-                </button>
-            </div>
-            
-            <!-- Live Absorption Dashboard -->
-            <div id="stats-dashboard" class="flex gap-3 md:gap-6 bg-slate-950 p-2 px-4 md:px-6 rounded-xl border border-slate-700 shadow-inner items-center">
-                <div class="text-center flex flex-col items-center min-w-[60px]">
-                    <div class="text-xl md:text-2xl font-mono font-black text-cyan-400" id="stat-glucose">0</div>
-                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">Glucose</div>
-                </div>
-                <div class="w-px bg-slate-700 h-8"></div>
-                <div class="text-center flex flex-col items-center min-w-[60px]">
-                    <div class="text-xl md:text-2xl font-mono font-black text-purple-400" id="stat-amino">0</div>
-                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">Amino Acids</div>
-                </div>
-                <div class="w-px bg-slate-700 h-8"></div>
-                <div class="text-center flex flex-col items-center min-w-[60px]">
-                    <div class="text-xl md:text-2xl font-mono font-black text-yellow-400" id="stat-lipid">0</div>
-                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">Lipids</div>
-                </div>
-                <div class="w-px bg-slate-700 h-8"></div>
-                <div class="text-center flex flex-col items-center min-w-[60px]">
-                    <div class="text-xl md:text-2xl font-mono font-black text-blue-400" id="stat-water">0</div>
-                    <div class="text-[9px] md:text-[10px] text-slate-400 uppercase tracking-wider font-semibold mt-1">Water</div>
-                </div>
             </div>
         </header>
 
-        <!-- Main Workspace -->
-        <main class="flex flex-col md:flex-row flex-1 overflow-hidden relative z-0">
-            
-            <!-- Controls Sidebar (Left) -->
-            <aside class="w-full md:w-[380px] flex flex-col gap-4 p-4 shrink-0 h-full overflow-y-auto bg-slate-800/30 border-r border-slate-700 custom-scrollbar">
-                
-                <!-- Educational Panel / Inspector -->
-                <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg relative overflow-hidden flex flex-col min-h-[220px] shrink-0">
-                    <div class="absolute top-0 left-0 w-1 h-full bg-orange-500 transition-colors duration-500" id="info-accent"></div>
-                    <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1" id="inspector-subtitle">Process Inspector</h3>
-                    
-                    <h2 id="info-title" class="text-lg font-black text-white flex items-center gap-2 mb-2">
-                        Intestinal Villi
-                    </h2>
-                    <p id="info-desc" class="text-xs text-slate-300 leading-relaxed mb-3">
-                        The inner lining of the small intestine is covered in millions of finger-like projections called villi. These structures vastly increase the surface area available for nutrient absorption.
+        <!-- MAIN WORKSPACE -->
+        <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
+
+            <!-- LEFT SIDEBAR: Nutrient Spawners, Physiological Experiments & Structure Inspector -->
+            <aside class="lg:col-span-4 flex flex-col gap-2.5 lg:min-h-0 lg:overflow-y-auto custom-scrollbar pr-0.5">
+
+                <!-- 1. Interactive Nutrient Spawners & Auto-Chyme Stream -->
+                <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[11px] font-bold text-orange-300 uppercase tracking-wider">1. Release Digested Monomers</span>
+                        <label class="flex items-center gap-1.5 cursor-pointer" title="Continuously stream digested chyme monomers into the intestinal lumen">
+                            <span class="text-[10.5px] font-bold text-emerald-300">Auto-Feed</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="autoFeedToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-1.5 mb-2">
+                        <button data-spawn="glucose" class="spawn-btn py-2 px-2.5 rounded-lg bg-cyan-950/55 hover:bg-cyan-900/75 border border-cyan-500/45 text-cyan-300 text-xs font-bold flex items-center justify-between transition active:scale-95">
+                            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-cyan-400 inline-block"></span> + Glucose</span>
+                            <span class="text-[9.5px] font-mono-tech text-cyan-200/80">ATP / Diff</span>
+                        </button>
+
+                        <button data-spawn="amino" class="spawn-btn py-2 px-2.5 rounded-lg bg-purple-950/55 hover:bg-purple-900/75 border border-purple-500/45 text-purple-300 text-xs font-bold flex items-center justify-between transition active:scale-95">
+                            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-400 inline-block"></span> + Amino Acid</span>
+                            <span class="text-[9.5px] font-mono-tech text-purple-200/80">ATP / Diff</span>
+                        </button>
+
+                        <button data-spawn="lipid" class="spawn-btn py-2 px-2.5 rounded-lg bg-amber-950/55 hover:bg-amber-900/75 border border-amber-500/45 text-amber-300 text-xs font-bold flex items-center justify-between transition active:scale-95">
+                            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rotate-45 bg-amber-400 inline-block"></span> + Fatty Acid</span>
+                            <span class="text-[9.5px] font-mono-tech text-amber-200/80">Simple Diff</span>
+                        </button>
+
+                        <button data-spawn="water" class="spawn-btn py-2 px-2.5 rounded-lg bg-sky-950/55 hover:bg-sky-900/75 border border-sky-500/45 text-sky-300 text-xs font-bold flex items-center justify-between transition active:scale-95">
+                            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block"></span> + Water (H₂O)</span>
+                            <span class="text-[9.5px] font-mono-tech text-sky-200/80">Osmosis</span>
+                        </button>
+                    </div>
+
+                    <!-- Dual Vessel Sorting Key -->
+                    <div class="bg-slate-950/80 rounded-lg p-2 border border-slate-800 text-[10.5px] space-y-1">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-300"><strong class="text-cyan-300">Water-Soluble</strong> (Glc, AA, H₂O)</span>
+                            <span class="font-bold text-rose-400">→ Blood Capillaries</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-300"><strong class="text-amber-300">Lipids</strong> → <strong class="text-yellow-100">Chylomicrons</strong></span>
+                            <span class="font-bold text-emerald-400">→ Central Lacteal</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Physiological & Pathology Lab Conditions (High-Yield Exam Experiments!) -->
+                <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">2. Mucosal &amp; ATP Condition</span>
+                        <span id="area-badge" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                            Area: 100% (~250 m²)
+                        </span>
+                    </div>
+
+                    <select id="conditionSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-bold text-slate-100 focus:outline-none focus:border-orange-400 cursor-pointer mb-2">
+                        <option value="healthy">✓ Healthy Mucosa (Normal Villi &amp; ATP Active Transport)</option>
+                        <option value="no_atp">⚡ Respiratory Inhibitor / Cyanide (No ATP Synthesis!)</option>
+                        <option value="celiac">⚠ Celiac Disease (Autoimmune Villous Atrophy)</option>
+                    </select>
+
+                    <p id="conditionNote" class="text-[10.5px] text-slate-300 bg-slate-950/75 border border-slate-800 rounded-lg p-2 leading-snug">
+                        Enterocyte mitochondria supply <strong>ATP</strong> to Na⁺/K⁺ pumps, allowing 100% uptake of glucose &amp; amino acids even against steep concentration gradients.
                     </p>
-                    
-                    <div id="vessel-legend-box" class="mt-auto pt-2 border-t border-slate-700 text-[10px] text-slate-300 leading-relaxed font-mono flex flex-col gap-1.5">
-                        <div class="flex items-center justify-between">
-                            <span><span class="text-cyan-400 font-bold">Glucose/Amino/H₂O</span> <span class="text-[8px] text-slate-500">(Water-soluble)</span></span>
-                            <span class="text-rose-400 font-bold"><i class="fa-solid fa-arrow-right"></i> Blood Capillaries</span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span><span class="text-yellow-400 font-bold">Lipids</span> <span class="text-[8px] text-slate-500">(Fat-soluble)</span></span>
-                            <span class="text-green-400 font-bold"><i class="fa-solid fa-arrow-right"></i> Lacteals (Lymph)</span>
-                        </div>
-                    </div>
                 </div>
 
-                <!-- Simulation Controls (2D View Panel) -->
-                <div id="control-panel-2d" class="bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-4 flex-1">
-                    
-                    <!-- View Toggles -->
-                    <div class="flex flex-col gap-3 border-b border-slate-700 pb-4">
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Visualization Tools</h3>
-                        
-                        <!-- Zoom to Microvilli -->
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <label class="text-xs font-bold text-slate-200 flex items-center gap-2">
-                                    <i class="fa-solid fa-microscope text-emerald-400"></i> Microvilli Zoom
-                                </label>
-                            </div>
-                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in mt-1">
-                                <input type="checkbox" id="zoom-toggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
-                                <label for="zoom-toggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
-                            </div>
-                        </div>
+                <!-- 3. 3D Histological & Cellular Structure Inspector -->
+                <div class="panel rounded-xl p-3.5 flex-1 flex flex-col min-h-[235px] relative overflow-hidden shadow-md">
+                    <div id="inspAccent" class="absolute top-0 left-0 w-1 h-full bg-orange-500 transition-colors"></div>
 
-                        <!-- Concentration Gradient -->
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <label class="text-xs font-bold text-slate-200 flex items-center gap-2">
-                                    <i class="fa-solid fa-temperature-half text-rose-400"></i> Concentration Gradient
-                                </label>
-                            </div>
-                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in mt-1">
-                                <input type="checkbox" id="gradient-toggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
-                                <label for="gradient-toggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
-                            </div>
-                        </div>
-
-                        <!-- Auto-Absorb Toggle -->
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <label class="text-xs font-bold text-slate-200 flex items-center gap-2">
-                                    <i class="fa-solid fa-wand-magic-sparkles text-amber-400"></i> Auto-Absorption Mode
-                                </label>
-                            </div>
-                            <div class="relative inline-block w-10 align-middle select-none transition duration-200 ease-in mt-1">
-                                <input type="checkbox" id="auto-toggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
-                                <label for="auto-toggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
-                            </div>
-                        </div>
+                    <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                        <span id="inspCategory" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">1-Cell-Thick Barrier</span>
+                        <span id="inspBadge" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-orange-500/15 text-orange-300 border border-orange-500/30">
+                            Fick’s Law Optimized
+                        </span>
                     </div>
 
-                    <!-- Nutrient Spawners -->
-                    <div class="flex flex-col gap-2">
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Add Elements to Lumen</h3>
-                        <div class="grid grid-cols-2 gap-2">
-                            <button onclick="spawnParticle('glucose')" class="btn-spawn bg-cyan-950/50 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-400 py-2 rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2">
-                                <div class="w-3 h-3 bg-cyan-400 rounded-sm"></div> Glucose
-                            </button>
-                            <button onclick="spawnParticle('amino')" class="btn-spawn bg-purple-950/50 hover:bg-purple-900 border border-purple-500/50 text-purple-400 py-2 rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2">
-                                <div class="w-3 h-3 bg-purple-400 rounded-full"></div> Amino Acid
-                            </button>
-                            <button onclick="spawnParticle('lipid')" class="btn-spawn bg-yellow-950/50 hover:bg-yellow-900 border border-yellow-500/50 text-yellow-400 py-2 rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2">
-                                <div class="w-3 h-3 bg-yellow-400 rotate-45 transform"></div> Lipid
-                            </button>
-                            <button onclick="spawnParticle('water')" class="btn-spawn bg-blue-950/50 hover:bg-blue-900 border border-blue-500/50 text-blue-400 py-2 rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2">
-                                <i class="fa-solid fa-droplet text-[10px]"></i> Water (H₂O)
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Simulation Controls (3D View Panel) -->
-                <div id="control-panel-3d" class="hidden bg-slate-800 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-4 flex-1">
-                    <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold border-b border-slate-700 pb-2">3D Villi Explorer Directory</h3>
-                    
-                    <div class="flex flex-col gap-2 overflow-y-auto pr-2 max-h-[220px]" id="directory-list-3d">
-                        <!-- Buttons injected via JS -->
+                    <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col">
+                        <h3 id="inspTitle" class="text-sm sm:text-base font-extrabold text-orange-300 mb-1">
+                            Columnar Epithelium (Enterocytes)
+                        </h3>
+                        <p id="inspDesc" class="text-xs text-slate-300 leading-relaxed mb-2"></p>
+                        <div id="inspExam" class="mt-auto bg-slate-950/85 border border-slate-700/80 rounded-lg p-2 text-[11px] text-amber-200/95 leading-snug"></div>
                     </div>
 
-                    <!-- Reset Camera -->
-                    <button onclick="reset3DCamera()" class="mt-auto w-full bg-slate-700 hover:bg-slate-600 text-slate-300 py-2 rounded-lg text-xs font-bold transition-colors border border-slate-600 flex justify-center items-center gap-2 shadow">
-                        <i class="fa-solid fa-video"></i> Reset View
-                    </button>
+                    <!-- Quick Structure Jump Chips -->
+                    <div class="pt-2 mt-2 border-t border-slate-800 shrink-0">
+                        <div id="structureChips" class="grid grid-cols-3 gap-1"></div>
+                    </div>
                 </div>
             </aside>
 
-            <!-- Interactive Canvas Area (Right) -->
-            <section class="flex-1 p-2 md:p-4 bg-slate-950 flex flex-col relative overflow-hidden">
-                <!-- 2D Container -->
-                <div id="pixi-container" class="w-full h-full border border-slate-700 shadow-inner">
-                    <!-- Environment Tags -->
-                    <div class="absolute top-4 left-6 z-10 text-slate-400/60 font-black text-xs uppercase tracking-widest pointer-events-none">Intestinal Lumen (Chyme)</div>
-                    <div class="absolute bottom-4 left-6 z-10 text-slate-400/60 font-black text-xs uppercase tracking-widest pointer-events-none">Submucosa / Mesentery</div>
-                    <!-- Pixi Canvas Injected Here -->
+            <!-- RIGHT DUAL-SCALE 3D VIEWPORT -->
+            <section class="lg:col-span-8 panel rounded-xl p-2 flex flex-col min-h-[500px] sm:min-h-[560px] lg:min-h-0 relative shadow-xl">
+
+                <!-- Top Viewport Toolbar: Scale Switcher (3D Villus Cutaway vs. 2000x Enterocyte Zoom) & Overlays -->
+                <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800 flex flex-wrap items-center justify-between gap-2 mb-2 shrink-0 z-20">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <button id="scaleVillusBtn" class="px-3 py-1.5 rounded-md text-xs font-extrabold bg-orange-500/25 text-orange-200 border border-orange-400/50 shadow transition">
+                            🔬 100× 3D Villus &amp; Crypt Cutaway
+                        </button>
+                        <button id="scaleCellBtn" class="px-3 py-1.5 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800 transition" title="Zoom 2000× into Brush-Border Microvilli, SGLT1 Channels, Mitochondria, Golgi Chylomicrons & Vessel Pores!">
+                            🧬 2000× Brush-Border &amp; Cell Zoom
+                        </button>
+                        <button id="resetCamBtn" class="px-2.5 py-1.5 rounded-md text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition">
+                            Reset Angle
+                        </button>
+                    </div>
+
+                    <!-- Gradient & 3D Pins Toggles -->
+                    <div class="flex items-center gap-3 text-[11px]">
+                        <label class="flex items-center gap-1.5 cursor-pointer" title="Visualize high-to-low solute concentration gradient from Intestinal Lumen into Vessels">
+                            <span class="font-semibold text-pink-300">Gradient Glow</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="gradientToggle" class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+
+                        <label class="flex items-center gap-1.5 pl-2.5 border-l border-slate-800 cursor-pointer">
+                            <span class="font-semibold text-slate-300">3D Pins</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="pinsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+                    </div>
                 </div>
 
-                <!-- 3D Container -->
-                <div id="three-container" class="hidden w-full h-full border border-slate-700 shadow-inner">
-                    <div class="absolute top-4 left-6 z-10 text-slate-400/60 font-black text-xs uppercase tracking-widest pointer-events-none">3D Villi Anatomy (90° Cutaway)</div>
-                    <!-- HTML Overlay Container for Pins -->
-                    <div id="pins-container-3d" class="absolute inset-0 pointer-events-none"></div>
+                <!-- 3D WebGL Canvas Container -->
+                <div id="three-viewport" class="flex-1 min-h-0">
+                    <!-- Dynamic Clickable 3D Anatomical Pins -->
+                    <div id="pins-container" class="absolute inset-0 overflow-hidden pointer-events-none z-20"></div>
+
+                    <!-- Floating Transient Mechanism Callouts -->
+                    <div id="float-labels-layer" class="absolute inset-0 overflow-hidden pointer-events-none z-25"></div>
+
+                    <!-- Top-Left Context Indicator -->
+                    <div class="absolute top-3 left-3 bg-slate-950/82 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-[10.5px] pointer-events-none z-15 shadow-lg">
+                        <div id="view-context-title" class="font-extrabold text-orange-300 uppercase tracking-wider">Ileum Mucosa • 110° 3D Cellular Cutaway</div>
+                        <div id="view-context-sub" class="text-[10px] text-slate-400">Top: Intestinal Lumen (Chyme) &bull; Base: Submucosa → Hepatic Portal &amp; Lymph</div>
+                    </div>
+
+                    <!-- Surface Area Amplification Pill (Top-Right) -->
+                    <div class="absolute top-3 right-3 bg-slate-950/82 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-[10px] text-slate-300 pointer-events-none z-15 hidden sm:block shadow-lg">
+                        <span class="text-slate-400">Folding Amplification:</span>
+                        <span class="text-orange-300 font-bold ml-1">Folds (3×)</span> →
+                        <span class="text-rose-300 font-bold">Villi (30×)</span> →
+                        <span class="text-emerald-300 font-bold">Microvilli (600×!)</span>
+                    </div>
+
+                    <!-- Bottom Interactive Hint -->
+                    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-slate-700/80 text-[11px] text-slate-300 pointer-events-none flex items-center gap-2 shadow-lg z-15 whitespace-nowrap">
+                        <span class="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>
+                        <span>Drag to Orbit 360° &bull; Click Any 3D Structure &bull; Switch to <strong>2000× Cell Zoom</strong> to See Chylomicron Assembly</span>
+                    </div>
                 </div>
             </section>
-        </main>
+        </div>
     </div>
 
-    <!-- Application Script -->
-    <script>
-        // ==========================================
-        // GLOBAL STATE & ANATOMICAL DATABASES
-        // ==========================================
-        const ANATOMY_3D_DATA = {
-            'epithelium': { id: 'epithelium', name: 'Columnar Epithelium', color: '#fda4af', desc: 'A single layer of columnar epithelial cells. It acts as a selective barrier, absorbing nutrients while protecting the body from pathogens. Its surface is folded into microvilli to multiply surface area.' },
-            'lacteal': { id: 'lacteal', name: 'Central Lacteal', color: '#22c55e', desc: 'A specialized lymphatic capillary in the center of the villus. It absorbs fat-soluble lipids (packaged as chylomicrons) and transports them into the lymphatic system.' },
-            'capillaries': { id: 'capillaries', name: 'Capillary Network', color: '#ef4444', desc: 'A rich capillary bed that wraps around the lacteal. It directly absorbs water-soluble nutrients (glucose, amino acids, water) and delivers them to the hepatic portal vein.' },
-            'crypt': { id: 'crypt', name: 'Crypt of Lieberkühn', color: '#cbd5e1', desc: 'Tubular glands at the base of the villi. They contain stem cells that constantly multiply to produce new epithelial cells, which migrate upwards to renew the villus lining.' },
-            'submucosa': { id: 'submucosa', name: 'Submucosa Layer', color: '#64748b', desc: 'The connective tissue layer beneath the mucosa. It supports the villi and contains larger blood vessels, lymphatics, and nerves that distribute absorbed nutrients.' }
-        };
+    <!-- ==================================================================== -->
+    <!-- MODAL: NUTRIENT TRANSPORT MECHANISMS & VILLUS ADAPTATIONS TABLE      -->
+    <!-- ==================================================================== -->
+    <div id="examModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6">
+        <div class="panel rounded-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-600">
+            <div class="px-5 py-3.5 bg-slate-900/95 border-b border-slate-700 flex items-center justify-between shrink-0">
+                <div>
+                    <h2 class="text-base sm:text-lg font-extrabold text-white">Small Intestine Absorption: Transport Mechanisms &amp; Structural Adaptations</h2>
+                    <p class="text-xs text-slate-400">Complete IB, AP Biology, A-Level &amp; DSE exam summary.</p>
+                </div>
+                <button id="closeTableBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition">
+                    ✕ Close
+                </button>
+            </div>
 
-        let activeView = '2d';
-        let threeSceneInitialized = false;
-        
-        let app;
-        let mainCamera;
-        let villusGroup;
-        let particles = [];
-        let gradientOverlay;
-        
-        let state = {
-            isZoomed: false,
-            showGradient: false,
-            autoAbsorb: false,
-            absorbed: {
-                glucose: 0,
-                amino: 0,
-                lipid: 0,
-                water: 0
+            <div class="p-4 sm:p-5 overflow-auto custom-scrollbar space-y-5">
+                <!-- Table 1: Nutrient Sorting & Transport -->
+                <div>
+                    <h3 class="text-xs font-extrabold uppercase tracking-wider text-orange-300 mb-2">1. Nutrient Monomer Transport &amp; Vascular Destination</h3>
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-[10.5px] uppercase tracking-wider text-slate-400 bg-slate-900/60">
+                                <th class="p-2.5 font-bold">Digested Nutrient</th>
+                                <th class="p-2.5 font-bold">Apical Entry (Brush Border)</th>
+                                <th class="p-2.5 font-bold">Inside Enterocyte &amp; Exit</th>
+                                <th class="p-2.5 font-bold">Target Vessel &amp; Destination</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 text-slate-200">
+                            <tr>
+                                <td class="p-2.5 font-bold text-cyan-300">Glucose &amp; Galactose</td>
+                                <td class="p-2.5"><strong>Na⁺ Co-Transport (Secondary Active Transport)</strong> via SGLT1 + Facilitated Diffusion.</td>
+                                <td class="p-2.5">Requires mitochondrial <strong>ATP</strong> for basolateral Na⁺/K⁺ pump; exits via GLUT2.</td>
+                                <td class="p-2.5 font-semibold text-rose-300">Blood Capillaries → Hepatic Portal Vein → Liver</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-purple-300">L-Amino Acids &amp; Dipeptides</td>
+                                <td class="p-2.5"><strong>Na⁺ / H⁺-Coupled Active Transport</strong> &amp; Facilitated Diffusion carriers.</td>
+                                <td class="p-2.5">ATP-dependent gradient maintenance; facilitated diffusion across basolateral membrane.</td>
+                                <td class="p-2.5 font-semibold text-rose-300">Blood Capillaries → Hepatic Portal Vein → Liver</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-amber-300">Fatty Acids &amp; Monoglycerides</td>
+                                <td class="p-2.5"><strong>Simple Diffusion</strong> directly through phospholipid bilayer (non-polar, zero ATP!).</td>
+                                <td class="p-2.5">Re-esterified into triglycerides in <strong>Smooth ER</strong> → packaged by <strong>Golgi</strong> into <strong>Chylomicrons</strong> → <strong>Exocytosis</strong>.</td>
+                                <td class="p-2.5 font-semibold text-emerald-300">Central Lacteal (Chyle) → Thoracic Duct → Subclavian Vein</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-sky-300">Water (H₂O)</td>
+                                <td class="p-2.5"><strong>Osmosis</strong> via Aquaporin channels &amp; tight junctions.</td>
+                                <td class="p-2.5">Follows osmotic water potential gradient created by active absorption of Na⁺, glucose &amp; amino acids.</td>
+                                <td class="p-2.5 font-semibold text-rose-300">Blood Capillaries → Hepatic Portal Vein</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Table 2: Structural Adaptations of Villi (Fick's Law) -->
+                <div>
+                    <h3 class="text-xs font-extrabold uppercase tracking-wider text-emerald-300 mb-2">2. Structural Adaptations of Intestinal Villi (Fick’s Law of Diffusion)</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-orange-300 mb-1">Massive Surface Area (~600×)</div>
+                            <p class="text-slate-300 leading-snug">Long coiled ileum + circular folds + millions of finger-like <strong>villi</strong> + microscopic brush-border <strong>microvilli</strong> maximize contact area.</p>
+                        </div>
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-rose-300 mb-1">1-Cell-Thick Epithelium</div>
+                            <p class="text-slate-300 leading-snug">Single layer of columnar enterocytes (~25 µm) minimizes diffusion distance between lumen chyme and underlying capillaries/lacteal.</p>
+                        </div>
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-sky-300 mb-1">Steep Concentration Gradient</div>
+                            <p class="text-slate-300 leading-snug">Dense capillary blood flow and rhythmic villus smooth muscle swaying continuously carry absorbed nutrients away.</p>
+                        </div>
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-amber-300 mb-1">Abundant Mitochondria</div>
+                            <p class="text-slate-300 leading-snug">Enterocytes are packed with mitochondria performing aerobic respiration to supply <strong>ATP</strong> for active transport &amp; exocytosis.</p>
+                        </div>
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-emerald-300 mb-1">Wide-Pored Central Lacteal</div>
+                            <p class="text-slate-300 leading-snug">Overlapping lymphatic endothelial flaps admit large (~200 nm) lipoprotein <strong>chylomicrons</strong> that cannot enter blood capillaries.</p>
+                        </div>
+                        <div class="bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+                            <div class="font-bold text-purple-300 mb-1">Brush-Border Enzymes &amp; Goblet Mucus</div>
+                            <p class="text-slate-300 leading-snug">Immobilized maltase/peptidases finish digestion right at carrier channels, while goblet mucus protects the delicate 1-cell lining.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * ============================================================================
+ * LUMINOUS LEARNER — 3D INTESTINAL VILLI & NUTRIENT ABSORPTION ENGINE
+ * ============================================================================
+ * Dual-Scale 3D Architecture:
+ * 1. Scale 1 (`villusWorld` — 100× 3D Villus, Crypts & Submucosa Cutaway):
+ *    - Finger-shaped hero villus built from hundreds of instanced 3D Columnar
+ *      Enterocytes with basal purple nuclei, Goblet mucus cells, and a velvety
+ *      3D Microvilli Brush-Border fringe along a 110° longitudinal cutaway!
+ *    - Neighboring intact 3D villi + true downward-invaginating Crypts of
+ *      Lieberkühn sinking into the mucosa above Muscularis Mucosae & Submucosa!
+ *    - Anastomosing 3D Capillary Basketwork (Arteriole -> Capillary Loops ->
+ *      Hepatic Portal Venule) with flowing 3D biconcave RBCs wrapping around
+ *      a blind-ended milky-emerald Central Lacteal!
+ * 2. Scale 2 (`cellWorld` — 2000× Brush Border & Enterocyte Molecular Zoom):
+ *    - High-magnification 3D cutaway of Columnar Enterocyte + Goblet Cell:
+ *      48 individual 3D Microvilli, SGLT1 symporters, Aquaporins, Tight
+ *      Junctions, 6 glowing 3D Mitochondria, Smooth ER, Golgi Chylomicron
+ *      packaging, Fenestrated Blood Capillary, and Open-Flap Central Lacteal!
+ * 3. Live 3D Nutrient Particle & Pathology Engine:
+ *    - Spawn or Auto-Feed Glucose, Amino Acids, Fatty Acid Micelles, and H2O!
+ *    - Test Healthy Mucosa vs. Cyanide/No-ATP vs. Celiac Villous Atrophy!
+ */
+
+// ============================================================================
+// 1. HISTOLOGICAL & CELLULAR INSPECTOR DATABASE (9 STRUCTURES)
+// ============================================================================
+const STRUCTURES_DB = {
+    microvilli: {
+        id: 'microvilli', short: 'Microvilli Border',
+        title: 'Microvilli (Apical Brush Border)',
+        category: '20× Cellular Surface Amplification',
+        badge: '~3,000 per Enterocyte',
+        accent: '#FB923C',
+        bestScale: 'cell',
+        pinVillus: new THREE.Vector3(1.52, 2.25, 0.45),
+        pinCell:   new THREE.Vector3(-0.65, 2.25, 0.45),
+        desc: 'Microscopic finger-like folds (~1 µm tall) of the apical plasma membrane on every columnar enterocyte, multiplying absorptive surface area an extra ~20×! Coated with glycocalyx and immobilized brush-border enzymes (maltase, lactase, peptidases) right next to SGLT1 carrier proteins.',
+        exam: 'Distinguish Villi vs. Microvilli on exams: VILLI are multicellular tissue projections (~1 mm) containing capillaries & a lacteal; MICROVILLI are subcellular membrane folds (~1 µm) of a single epithelial cell!'
+    },
+    epithelium: {
+        id: 'epithelium', short: 'Enterocytes',
+        title: 'Columnar Epithelium (Enterocytes & Goblet Cells)',
+        category: '1-Cell-Thick Selective Barrier',
+        badge: 'Tight Junctions + Mucus',
+        accent: '#FDA4AF',
+        bestScale: 'villus',
+        pinVillus: new THREE.Vector3(-1.38, 1.05, 0.65),
+        pinCell:   new THREE.Vector3(-1.85, 0.25, 0.45),
+        desc: 'A strictly single-cell-thick layer of tall columnar absorptive cells (enterocytes) joined near their apex by Tight Junctions so lumen contents cannot leak uncontrolled between cells. Interspersed Goblet Cells secrete protective mucin glycoproteins.',
+        exam: 'Why is the epithelium only ONE cell thick? By Fick’s Law, minimizing diffusion distance maximizes the rate at which digested monomers reach blood capillaries and the lacteal!'
+    },
+    mitochondria: {
+        id: 'mitochondria', short: 'Mitochondria & ATP',
+        title: 'Enterocyte Mitochondria & Active Transport',
+        category: 'Bioenergetics Organelle',
+        badge: 'Powers Na⁺/K⁺-ATPase',
+        accent: '#F43F5E',
+        bestScale: 'cell',
+        pinVillus: null,
+        pinCell:   new THREE.Vector3(-1.12, -0.35, 0.35),
+        desc: 'Columnar enterocytes are densely packed with mitochondria performing aerobic respiration to synthesize ATP. ATP fuels basolateral Na⁺/K⁺ pumps, maintaining the steep inward Na⁺ gradient that drives apical SGLT1 co-transport of glucose and amino acids!',
+        exam: 'Select "⚡ Respiratory Inhibitor / Cyanide" on the left: blocking ATP stops active transport of Glucose & Amino Acids against a gradient, while Lipid simple diffusion continues!'
+    },
+    golgi_ser: {
+        id: 'golgi_ser', short: 'SER & Golgi (Lipids)',
+        title: 'Smooth ER, Golgi & Chylomicron Assembly',
+        category: 'Intracellular Lipid Processing',
+        badge: 'Triglyceride → Chylomicron',
+        accent: '#FBBF24',
+        bestScale: 'cell',
+        pinVillus: null,
+        pinCell:   new THREE.Vector3(0.75, 0.42, 0.35),
+        desc: 'Non-polar fatty acids and monoglycerides diffuse freely across the microvilli membrane into the Smooth Endoplasmic Reticulum (SER), where they re-condense into triglycerides. The Golgi Apparatus coats them with amphipathic phospholipids and proteins into water-dispersible Chylomicrons (~200 nm) for exocytosis!',
+        exam: 'Why don’t chylomicrons enter blood capillaries? At ~200 nm diameter, chylomicrons are too large to cross the continuous capillary basement membrane, so they enter the wide-pored Lacteal!'
+    },
+    lacteal: {
+        id: 'lacteal', short: 'Central Lacteal',
+        title: 'Central Lacteal (Lymphatic Capillary)',
+        category: 'Lipid & Fat-Soluble Vitamin Route',
+        badge: 'Milky Chyle → Thoracic Duct',
+        accent: '#34D399',
+        bestScale: 'villus',
+        pinVillus: new THREE.Vector3(0.0, 1.85, 0.22),
+        pinCell:   new THREE.Vector3(2.15, -2.55, 0.35),
+        desc: 'Blind-ended lymphatic vessel running down the center of each villus. Its endothelial cells overlap loosely like one-way swinging mini-valves, admitting exocytosed Chylomicrons (and fat-soluble vitamins A, D, E, K). After a fatty meal, its lymph turns milky white ("chyle").',
+        exam: 'Trace absorbed fat to the heart: Central Lacteal → Lymphatic Vessels → Thoracic Duct → Left Subclavian Vein → Superior Vena Cava → Right Atrium (bypasses the liver on first pass)!'
+    },
+    capillaries: {
+        id: 'capillaries', short: 'Capillary Bed',
+        title: 'Fenestrated Blood Capillary Network',
+        category: 'Water-Soluble Monomer Route',
+        badge: '→ Hepatic Portal Vein',
+        accent: '#EF4444',
+        bestScale: 'villus',
+        pinVillus: new THREE.Vector3(0.72, 0.15, 0.55),
+        pinCell:   new THREE.Vector3(-2.05, -2.45, 0.35),
+        desc: 'Dense basketwork of fenestrated capillaries hugging immediately beneath the enterocyte basement membrane. Absorbs water-soluble Glucose, Amino Acids, Minerals, Water-Soluble Vitamins (B, C), and Water (by osmosis), sweeping them rapidly away to maintain a steep diffusion gradient.',
+        exam: 'All villus blood capillaries merge into the HEPATIC PORTAL VEIN leading straight to the LIVER—allowing hepatocytes to buffer blood glucose (glycogen) and detoxify solutes first!'
+    },
+    crypt: {
+        id: 'crypt', short: 'Crypt of Lieberkühn',
+        title: 'Crypt of Lieberkühn (Intestinal Gland)',
+        category: 'Mucosal Stem-Cell Renewal',
+        badge: 'Renews Lining Every 4–5 Days',
+        accent: '#A78BFA',
+        bestScale: 'villus',
+        pinVillus: new THREE.Vector3(-2.55, -2.55, 0.55),
+        pinCell:   null,
+        desc: 'Tubular invaginations sinking down into the lamina propria at the base between adjacent villi. Mitotic intestinal stem cells in the crypt divide continuously; daughter cells differentiate and migrate upward like an escalator to replace shed cells at the villus tip!',
+        exam: 'Notice how Crypts invaginate DOWNWARD into the mucosa (secreting intestinal fluid & antimicrobial peptides from Paneth cells), whereas Villi project UPWARD into the lumen!'
+    },
+    submucosa: {
+        id: 'submucosa', short: 'Hepatic Portal / Submucosa',
+        title: 'Muscularis Mucosae & Submucosal Vessels',
+        category: 'Vascular & Lymphatic Drainage',
+        badge: 'Arteriole • Venule • Lymph',
+        accent: '#60A5FA',
+        bestScale: 'villus',
+        pinVillus: new THREE.Vector3(1.65, -3.72, 0.95),
+        pinCell:   null,
+        desc: 'Connective tissue foundation beneath the muscularis mucosae housing larger arterioles, submucosal lymphatic trunks, and tributaries of the Hepatic Portal Vein. Thin strands of smooth muscle extend up into the villus so rhythmic swaying pumps lymph out of the central lacteal!',
+        exam: 'Lacteals have no heart pump of their own—rhythmic contraction of muscularis mucosae smooth muscle strands squeezes the villus like a sponge to propel milky chyle downward!'
+    }
+};
+
+// ============================================================================
+// 2. MATH UTILITIES & SHARED BICONCAVE RBC BUILDER
+// ============================================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+};
+
+function createBiconcaveRBCGeo(radius = 0.095) {
+    const pts = [];
+    const steps = 10;
+    for (let i = 0; i <= steps; i++) {
+        const r = (i / steps) * 0.999;
+        const r2 = r * r;
+        const y = 0.5 * Math.sqrt(Math.max(0, 1 - r2)) * (0.22 + 1.95 * r2 - 1.10 * r2 * r2);
+        pts.push(new THREE.Vector2(r * radius, y * radius));
+    }
+    for (let i = steps - 1; i >= 0; i--) {
+        const r = (i / steps) * 0.999;
+        const r2 = r * r;
+        const y = -0.5 * Math.sqrt(Math.max(0, 1 - r2)) * (0.22 + 1.95 * r2 - 1.10 * r2 * r2);
+        pts.push(new THREE.Vector2(r * radius, y * radius));
+    }
+    const geo = new THREE.LatheGeometry(pts, 14);
+    geo.computeVertexNormals();
+    return geo;
+}
+
+// ============================================================================
+// 3. THREE.JS SCENE, DUAL-SCALE WORLDS (`villusWorld` & `cellWorld`)
+// ============================================================================
+let scene, camera, renderer, controls, raycaster;
+let villusWorld, cellWorld;
+
+// VillusWorld Dynamic Groups (for Celiac Atrophy morphing, RBC flow & Gradient Glow)
+let heroVillusMorphGroup, bgVilliGroup, villusGradientDome;
+const villusRBCs = [];
+const lactealChyleOrbs = [];
+
+// CellWorld Dynamic Groups (for 2000× Microvilli, Mitochondria ATP glow, RBCs & Gradient)
+let cellMicrovilliGroup, cellGradientPlane;
+const mitoMeshes = [];
+const cellRBCs = [];
+let atpFlashOrbs = [];
+
+// Active Nutrient Molecules Pool (Animates in BOTH 100× Villus & 2000× Cell Worlds!)
+const activeNutrients = [];
+const floatingCallouts = [];
+
+const pickableVillus = [];
+const pickableCell   = [];
+const structHighlightMats = {};
+const pinRegistry = [];
+
+// Simulation State
+const state = {
+    scaleMode: 'villus',      // 'villus' (100x 3D Villus & Crypt) | 'cell' (2000x Brush-Border Enterocyte)
+    condition: 'healthy',     // 'healthy' | 'no_atp' | 'celiac'
+    autoFeed: true,
+    showGradient: false,
+    showPins: true,
+    selectedId: 'epithelium',
+    autoSpawnTimer: 0,
+    counts: { glucose: 0, amino: 0, lipid: 0, water: 0 }
+};
+
+const CAM_GOALS = {
+    villus: { pos: new THREE.Vector3(0.4, 0.55, 12.8), target: new THREE.Vector3(0.0, -0.15, 0.0) },
+    cell:   { pos: new THREE.Vector3(0.0, 0.15, 10.6), target: new THREE.Vector3(0.0, -0.10, 0.0) }
+};
+let camGoalPos = CAM_GOALS.villus.pos.clone();
+let camGoalTarget = CAM_GOALS.villus.target.clone();
+let camGliding = false;
+
+function registerPick(worldKey, obj, structId) {
+    const arr = worldKey === 'villus' ? pickableVillus : pickableCell;
+    obj.traverse(ch => {
+        if (ch.isMesh) {
+            ch.userData.structId = structId;
+            arr.push(ch);
+            if (ch.material && ch.material.emissive) {
+                if (!structHighlightMats[structId]) structHighlightMats[structId] = [];
+                if (!structHighlightMats[structId].includes(ch.material)) {
+                    ch.material.userData.origEmissive = ch.material.emissive.getHex();
+                    ch.material.userData.origEmissiveInt = ch.material.emissiveIntensity || 0.2;
+                    structHighlightMats[structId].push(ch.material);
+                }
             }
-        };
-
-        // 3D Engine Variables
-        let tScene, tCamera, tRenderer, tControls, tVillusGroup;
-        let tAnatomyMeshes = {};
-        let tPins = [];
-
-        // DOM Handles (Initialized safely inside initDOM on load)
-        let DOM = {};
-
-        // Coordinates for absorption routing
-        const ROUTE_LACT_ENTRY = { x: 0, y: -50 };  // Entry for fat
-        const ROUTE_EXIT = { y: 500 };              // Flow out bottom of screen
-
-        // ==========================================
-        // INITIALIZATION AND DOM REFS
-        // ==========================================
-        function initDOM() {
-            DOM = {
-                container: document.getElementById('pixi-container'),
-                zoomToggle: document.getElementById('zoom-toggle'),
-                gradientToggle: document.getElementById('gradient-toggle'),
-                autoToggle: document.getElementById('auto-toggle'),
-                statGlucose: document.getElementById('stat-glucose'),
-                statAmino: document.getElementById('stat-amino'),
-                statLipid: document.getElementById('stat-lipid'),
-                statWater: document.getElementById('stat-water'),
-                infoTitle: document.getElementById('info-title'),
-                infoDesc: document.getElementById('info-desc'),
-                infoAccent: document.getElementById('info-accent'),
-                directoryList3D: document.getElementById('directory-list-3d'),
-                vesselLegendBox: document.getElementById('vessel-legend-box'),
-                statsDashboard: document.getElementById('stats-dashboard'),
-                controlPanel2D: document.getElementById('control-panel-2d'),
-                controlPanel3D: document.getElementById('control-panel-3d'),
-                tab2D: document.getElementById('tab-2d'),
-                tab3D: document.getElementById('tab-3d')
-            };
         }
+    });
+}
 
-        function setupEventListeners() {
-            DOM.zoomToggle.addEventListener('change', (e) => {
-                state.isZoomed = e.target.checked;
-                if (state.isZoomed) {
-                    gsap.to(mainCamera.scale, { x: 3.5, y: 3.5, duration: 1.5, ease: "power2.inOut" });
-                    gsap.to(mainCamera, { 
-                        x: app.screen.width / 2, 
-                        y: app.screen.height / 2 + 500, 
-                        duration: 1.5, 
-                        ease: "power2.inOut" 
-                    });
-                    DOM.infoTitle.innerText = "Microvilli (Brush Border)";
-                    DOM.infoDesc.innerText = "Zooming in reveals the 'brush border'. The membrane of each epithelial cell is folded into microscopic microvilli, exponentially multiplying absorption area.";
-                    DOM.infoAccent.style.backgroundColor = "#10b981"; 
-                    DOM.infoTitle.style.color = "#10b981";
-                    DOM.vesselLegendBox.classList.add('hidden');
-                } else {
-                    gsap.to(mainCamera.scale, { x: 1, y: 1, duration: 1.5, ease: "power2.inOut" });
-                    gsap.to(mainCamera, { 
-                        x: app.screen.width / 2, 
-                        y: app.screen.height / 2 + 100, 
-                        duration: 1.5, 
-                        ease: "power2.inOut" 
-                    });
-                    resetInspectorTexts();
-                }
-            });
+function initThreeScene() {
+    const viewport = document.getElementById('three-viewport');
+    scene = new THREE.Scene();
 
-            DOM.gradientToggle.addEventListener('change', (e) => {
-                state.showGradient = e.target.checked;
-                gsap.to(gradientOverlay, { alpha: state.showGradient ? 1 : 0, duration: 0.5 });
-                if(state.showGradient) {
-                    DOM.infoTitle.innerText = "Concentration Gradient";
-                    DOM.infoDesc.innerText = "Nutrients are highly concentrated in the lumen (pink area) after digestion. They move down their concentration gradient into the cells via passive or facilitated diffusion, or osmosis for water.";
-                    DOM.infoAccent.style.backgroundColor = "#ec4899"; 
-                    DOM.infoTitle.style.color = "#ec4899";
-                    DOM.vesselLegendBox.classList.add('hidden');
-                } else {
-                    resetInspectorTexts();
-                }
-            });
+    camera = new THREE.PerspectiveCamera(39, viewport.clientWidth / viewport.clientHeight, 0.1, 120);
+    camera.position.copy(camGoalPos);
 
-            DOM.autoToggle.addEventListener('change', (e) => {
-                state.autoAbsorb = e.target.checked;
-            });
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    viewport.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.copy(camGoalTarget);
+    controls.addEventListener('start', () => { camGliding = false; });
+
+    raycaster = new THREE.Raycaster();
+
+    // Biological Wet Mucosal Studio Lighting
+    scene.add(new THREE.HemisphereLight(0xFFE4E6, 0x0F172A, 0.92));
+
+    const keyLight = new THREE.DirectionalLight(0xFFF7ED, 1.32);
+    keyLight.position.set(6, 10, 12);
+    scene.add(keyLight);
+
+    const rimWarm = new THREE.DirectionalLight(0xFB923C, 0.85);
+    rimWarm.position.set(-9, 6, -9);
+    scene.add(rimWarm);
+
+    const rimCool = new THREE.DirectionalLight(0x34D399, 0.65);
+    rimCool.position.set(7, -8, -8);
+    scene.add(rimCool);
+
+    villusWorld = new THREE.Group();
+    cellWorld   = new THREE.Group();
+    cellWorld.visible = false;
+    scene.add(villusWorld, cellWorld);
+
+    build100xVillusWorld();
+    build2000xEnterocyteWorld();
+    setupPinsAndChips();
+    bindCanvasPicking(viewport);
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+    const viewport = document.getElementById('three-viewport');
+    if (!viewport || viewport.clientWidth === 0 || viewport.clientHeight === 0) return;
+    camera.aspect = viewport.clientWidth / viewport.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+}
+
+// ============================================================================
+// 4. BUILD SCALE 1: 100× 3D VILLUS, CRYPTS OF LIEBERKÜHN & SUBMUCOSA WORLD
+// ============================================================================
+
+// Hero Villus Radius Profile: y from -1.95 (base) to +3.65 (finger dome apex)
+function evalVillusOuterRadius(y) {
+    if (y <= 2.15) {
+        const t = clamp((y - (-1.95)) / 4.10, 0, 1);
+        // Subtle organic finger waist & gentle mid-belly
+        return 1.36 + 0.12 * Math.sin(t * Math.PI);
+    } else {
+        const u = clamp((y - 2.15) / 1.50, 0, 1);
+        return 1.36 * Math.sqrt(Math.max(0.001, 1 - u * u));
+    }
+}
+
+function build100xVillusWorld() {
+    // 1. SUBMUCOSA & MUSCULARIS MUCOSAE FOUNDATION BLOCK + DRAINAGE TRUNKS
+    const submucosaGroup = new THREE.Group();
+
+    const subBlockMat = new THREE.MeshPhysicalMaterial({
+        color: 0x334155, emissive: 0x0F172A, emissiveIntensity: 0.25, roughness: 0.65
+    });
+    const subBlock = new THREE.Mesh(new THREE.BoxGeometry(8.8, 1.05, 4.6), subBlockMat);
+    subBlock.position.set(0, -3.75, -0.35);
+
+    const muscMucosaeMat = new THREE.MeshPhysicalMaterial({
+        color: 0xBE185D, emissive: 0x4C0519, emissiveIntensity: 0.28, roughness: 0.5
+    });
+    const muscRibbon = new THREE.Mesh(new THREE.BoxGeometry(8.82, 0.22, 4.62), muscMucosaeMat);
+    muscRibbon.position.set(0, -3.12, -0.35);
+
+    // Submucosal Horizontal Collector Trunks: Arteriole (Red), Hepatic Portal Venule (Blue), Lymphatic Trunk (Green)
+    const artTrunkMat   = new THREE.MeshStandardMaterial({ color: 0xEF4444, emissive: 0x7F1D1D, emissiveIntensity: 0.35, roughness: 0.35 });
+    const venTrunkMat   = new THREE.MeshStandardMaterial({ color: 0x3B82F6, emissive: 0x1E3A8A, emissiveIntensity: 0.38, roughness: 0.35 });
+    const lymphTrunkMat = new THREE.MeshStandardMaterial({ color: 0x22C55E, emissive: 0x065F46, emissiveIntensity: 0.42, roughness: 0.32 });
+
+    const subArt = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 8.6, 14), artTrunkMat);
+    subArt.rotation.z = Math.PI * 0.5;
+    subArt.position.set(0, -3.52, 0.55);
+
+    const subVen = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 8.6, 14), venTrunkMat);
+    subVen.rotation.z = Math.PI * 0.5;
+    subVen.position.set(0, -3.82, 0.95);
+
+    const subLymph = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 8.6, 14), lymphTrunkMat);
+    subLymph.rotation.z = Math.PI * 0.5;
+    subLymph.position.set(0, -3.66, 0.05);
+
+    submucosaGroup.add(subBlock, muscRibbon, subArt, subVen, subLymph);
+    villusWorld.add(submucosaGroup);
+    registerPick('villus', submucosaGroup, 'submucosa');
+
+    // 2. INVAGINATED CRYPTS OF LIEBERKÜHN (Tubular Pits Sinking Down into Lamina Propria at x = ±2.55!)
+    const cryptGroup = new THREE.Group();
+    const laminaFloorMat = new THREE.MeshPhysicalMaterial({
+        color: 0x9F1239, emissive: 0x3B0718, emissiveIntensity: 0.25, roughness: 0.55
+    });
+    // Mucosal shoulders flanking the crypts
+    [-3.75, 3.75].forEach(sx => {
+        const shoulder = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.05, 4.2), laminaFloorMat);
+        shoulder.position.set(sx, -2.48, -0.35);
+        cryptGroup.add(shoulder);
+    });
+    const centralPedestal = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.65, 1.08, 28), laminaFloorMat);
+    centralPedestal.position.set(0, -2.48, 0.0);
+    cryptGroup.add(centralPedestal);
+
+    // Discrete 3D Crypt Epithelial Cells + Mitotic Stem Cells lining Left & Right Crypt Pits!
+    const cryptCellMat = new THREE.MeshPhysicalMaterial({ color: 0xFDA4AF, emissive: 0x831843, emissiveIntensity: 0.24, roughness: 0.4 });
+    const stemCellMat  = new THREE.MeshPhysicalMaterial({ color: 0xC4B5FD, emissive: 0x5B21B6, emissiveIntensity: 0.55, roughness: 0.35 });
+
+    [-2.55, 2.55].forEach(cx => {
+        // U-shaped tubular pit cutaway (posterior 210° arc so viewer sees straight inside the crypt lumen!)
+        for (let row = 0; row < 5; row++) {
+            const py = -2.92 + row * 0.24;
+            const pRad = 0.52 + row * 0.03;
+            const isStemZone = row <= 1;
+            for (let a = 0; a <= 10; a++) {
+                const theta = Math.PI * 0.65 + (a / 10) * Math.PI * 1.70; // Open in front (+Z)!
+                const cell = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.18, 0.20, 0.24),
+                    isStemZone ? stemCellMat : cryptCellMat
+                );
+                cell.position.set(cx + Math.sin(theta) * pRad, py, Math.cos(theta) * pRad);
+                cell.lookAt(cx, py, 0);
+                cryptGroup.add(cell);
+            }
         }
+    });
+    villusWorld.add(cryptGroup);
+    registerPick('villus', cryptGroup, 'crypt');
 
-        // ==========================================
-        // GLOBAL VIEW MANAGEMENT
-        // ==========================================
-        function switchView(view) {
-            activeView = view;
-            
-            // Toggle Tab Buttons
-            if (view === '2d') {
-                DOM.tab2D.className = "view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-900 bg-orange-400";
-                DOM.tab3D.className = "view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white";
-                
-                DOM.container.classList.remove('hidden');
-                document.getElementById('three-container').classList.add('hidden');
-                DOM.controlPanel2D.classList.remove('hidden');
-                DOM.controlPanel2D.classList.add('flex');
-                DOM.controlPanel3D.classList.add('hidden');
-                DOM.statsDashboard.classList.remove('hidden');
-                DOM.statsDashboard.classList.add('flex');
-                
-                resetInspectorTexts();
+    // 3. TWO INTACT NEIGHBORING BACKGROUND VILLI (Demonstrating Dense Forest of Projections!)
+    bgVilliGroup = new THREE.Group();
+    const bgVillusMat = new THREE.MeshPhysicalMaterial({
+        color: 0xF472B6, emissive: 0x500724, emissiveIntensity: 0.25, roughness: 0.48, clearcoat: 0.3
+    });
+    [[-3.65, -1.75, 0.86], [3.65, -1.75, 0.88]].forEach(([bx, bz, sc]) => {
+        const pts = [];
+        for (let i = 0; i <= 24; i++) {
+            const y = -1.95 + (i / 24) * 5.55;
+            pts.push(new THREE.Vector2(evalVillusOuterRadius(y) * sc, y));
+        }
+        const bgMesh = new THREE.Mesh(new THREE.LatheGeometry(pts, 28), bgVillusMat);
+        bgMesh.position.set(bx, 0, bz);
+        bgVilliGroup.add(bgMesh);
+    });
+    villusWorld.add(bgVilliGroup);
+
+    // 4. CENTRAL HERO 3D VILLUS WITH 110° CELLULAR CUTAWAY (`heroVillusMorphGroup`)
+    heroVillusMorphGroup = new THREE.Group();
+    villusWorld.add(heroVillusMorphGroup);
+
+    // 4A. Discrete Instanced 3D Columnar Enterocytes, Basal Nuclei, Goblet Cells & Microvilli Fringe!
+    const enterocyteGroup = new THREE.Group();
+    const cellGeo = new THREE.BoxGeometry(0.21, 0.23, 0.34); // Z is radial columnar cell height!
+    const enterocyteMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFBCFE8, emissive: 0x831843, emissiveIntensity: 0.22, roughness: 0.38, clearcoat: 0.45
+    });
+    const gobletMat = new THREE.MeshPhysicalMaterial({
+        color: 0x67E8F9, emissive: 0x0E7490, emissiveIntensity: 0.42, roughness: 0.22, clearcoat: 0.8
+    });
+    const nucleusMat = new THREE.MeshStandardMaterial({
+        color: 0x7E22CE, emissive: 0x3B0764, emissiveIntensity: 0.45, roughness: 0.35
+    });
+    const brushFringeMat = new THREE.MeshStandardMaterial({
+        color: 0xFB923C, emissive: 0x9A3412, emissiveIntensity: 0.38, roughness: 0.65
+    });
+
+    // Collect cell transforms first so we can allocate exact InstancedMeshes for 60fps performance
+    const enterocyteMatrices = [];
+    const gobletMatrices     = [];
+    const nucleusMatrices    = [];
+    const brushMatrices      = [];
+
+    const dummy = new THREE.Object3D();
+    const cutHalfRad = THREE.MathUtils.degToRad(56); // 112° open anterior cutaway facing +Z!
+
+    const numTiers = 22;
+    for (let t = 0; t < numTiers; t++) {
+        const y = -1.82 + (t / (numTiers - 1)) * 5.38;
+        const rOuter = evalVillusOuterRadius(y);
+        if (rOuter < 0.22) continue;
+
+        const rMid = Math.max(0.18, rOuter - 0.17);
+        // Slope normal for dome curvature
+        const dy = 0.08;
+        const dr = evalVillusOuterRadius(Math.min(3.64, y + dy)) - rOuter;
+        const tiltX = Math.atan2(-dr, dy) * 0.65;
+
+        const circum = 2 * Math.PI * rMid;
+        const totalCols = Math.max(8, Math.round(circum / 0.23));
+
+        for (let c = 0; c < totalCols; c++) {
+            const theta = (c / totalCols) * Math.PI * 2; // 0 is +Z (front cutaway center)
+            const normTheta = theta > Math.PI ? theta - Math.PI * 2 : theta;
+            // Skip front cutaway window except right at top apex tip so dome cap looks complete
+            if (Math.abs(normTheta) < cutHalfRad && y < 3.42) continue;
+
+            dummy.position.set(Math.sin(theta) * rMid, y, Math.cos(theta) * rMid);
+            dummy.lookAt(0, y - Math.tan(tiltX) * rMid, 0);
+
+            const isGoblet = ((t * 7 + c * 3) % 19 === 0) && y < 3.1;
+            dummy.updateMatrix();
+            if (isGoblet) {
+                gobletMatrices.push(dummy.matrix.clone());
             } else {
-                DOM.tab3D.className = "view-tab active px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-900 bg-orange-400";
-                DOM.tab2D.className = "view-tab px-4 py-2 rounded-lg text-xs tracking-widest uppercase font-bold flex items-center gap-2 text-slate-400 hover:text-white";
-                
-                DOM.container.classList.add('hidden');
-                document.getElementById('three-container').classList.remove('hidden');
-                DOM.controlPanel2D.classList.add('hidden');
-                DOM.controlPanel2D.classList.remove('flex');
-                DOM.controlPanel3D.classList.remove('hidden');
-                DOM.statsDashboard.classList.add('hidden');
-                DOM.statsDashboard.classList.remove('flex');
-
-                if (!threeSceneInitialized) {
-                    initThree();
-                } else {
-                    resizeThree();
-                }
-                
-                selectAnatomy3D('epithelium');
-            }
-        }
-
-        function resetInspectorTexts() {
-            DOM.infoAccent.style.backgroundColor = '#f97316'; // orange-500
-            document.getElementById('inspector-subtitle').innerText = 'Process Inspector';
-            DOM.infoTitle.innerText = 'Intestinal Villi';
-            DOM.infoTitle.style.color = '#ffffff';
-            DOM.infoDesc.innerHTML = 'The inner lining of the small intestine is covered in millions of finger-like projections called villi. These structures vastly increase the surface area available for nutrient absorption.';
-            DOM.vesselLegendBox.classList.remove('hidden');
-            DOM.vesselLegendBox.classList.add('flex');
-        }
-
-        // ==========================================
-        // 2D VIEW: PIXI.JS ABSORPTION SIMULATOR
-        // ==========================================
-        function initPixi() {
-            app = new PIXI.Application({
-                resizeTo: DOM.container,
-                backgroundAlpha: 0, 
-                antialias: true,
-                resolution: window.devicePixelRatio || 1
-            });
-            DOM.container.appendChild(app.view);
-
-            mainCamera = new PIXI.Container();
-            app.stage.addChild(mainCamera);
-
-            buildScene();
-
-            window.addEventListener('resize', () => {
-                if (activeView === '2d') centerCamera();
-            });
-
-            // Animation Loop (Brownian motion & Auto-Absorb)
-            app.ticker.add((delta) => {
-                if (activeView !== '2d') return;
-                particles.forEach(p => {
-                    if (p.isFloating && !p.isDragging) {
-                        if (state.autoAbsorb) {
-                            let targetY = p.y > 0 ? 0 : -100;
-                            let dx = 0 - p.x;
-                            let dy = targetY - p.y;
-                            let dist = Math.hypot(dx, dy);
-                            
-                            if (dist < 100) {
-                                triggerAbsorption(p);
-                            } else {
-                                p.x += (dx / dist) * 1.5 * delta;
-                                p.y += (dy / dist) * 1.5 * delta;
-                                p.rotation += p.rotSpeed * delta;
-                            }
-                        } else {
-                            p.x += (Math.random() - 0.5) * 2 * delta;
-                            p.y += (Math.random() - 0.2) * 1 * delta;
-                            p.rotation += p.rotSpeed * delta;
-                            
-                            if (p.y > 100) p.y = 100;
-                            if (p.y < -300) p.y = -300;
-                            if (p.x < -400) p.x = 400;
-                            if (p.x > 400) p.x = -400;
-                        }
-                    }
-                });
-            });
-
-            // Auto-spawn some initial particles
-            spawnParticle('glucose');
-            spawnParticle('amino');
-            spawnParticle('lipid');
-            spawnParticle('water');
-        }
-
-        function buildScene() {
-            mainCamera.removeChildren();
-
-            const gradCanvas = document.createElement('canvas');
-            gradCanvas.width = 1;
-            gradCanvas.height = 500;
-            const ctx = gradCanvas.getContext('2d');
-            const grd = ctx.createLinearGradient(0, 0, 0, 500);
-            grd.addColorStop(0, 'rgba(236, 72, 153, 0.4)'); 
-            grd.addColorStop(1, 'rgba(236, 72, 153, 0)');   
-            ctx.fillStyle = grd;
-            ctx.fillRect(0, 0, 1, 500);
-            
-            const gradTexture = PIXI.Texture.from(gradCanvas);
-            gradientOverlay = new PIXI.Sprite(gradTexture);
-            gradientOverlay.width = 2000;
-            gradientOverlay.height = 600;
-            gradientOverlay.x = -1000;
-            gradientOverlay.y = -450;
-            gradientOverlay.alpha = 0; 
-            mainCamera.addChild(gradientOverlay);
-
-            villusGroup = new PIXI.Container();
-            mainCamera.addChild(villusGroup);
-
-            drawVillus(-300, 100, 0.8, 0x1e1b4b); 
-            drawVillus(300, 100, 0.8, 0x1e1b4b);  
-            drawVillus(0, 0, 1.0, 0xffffff);      
-
-            centerCamera();
-        }
-
-        function drawVillus(xOffset, yOffset, scale, tintColor) {
-            const villus = new PIXI.Container();
-            villus.x = xOffset;
-            villus.y = yOffset;
-            villus.scale.set(scale);
-
-            const core = new PIXI.Graphics();
-            core.beginFill(0xffedd5, 0.1); 
-            core.moveTo(-75, 400);
-            core.lineTo(-75, -100);
-            core.arc(0, -100, 75, Math.PI, 0);
-            core.lineTo(75, 400);
-            core.endFill();
-            villus.addChild(core);
-
-            // Path indicators on central active villus
-            if (tintColor === 0xffffff) {
-                const paths = new PIXI.Graphics();
-                paths.lineStyle(2, 0xfacc15, 0.4); 
-                drawDashedLine(paths, -55, -50, -15, -50, 4);
-                drawDashedLine(paths, 55, -50, 15, -50, 4);
-                
-                paths.lineStyle(2, 0x38bdf8, 0.4); 
-                drawDashedLine(paths, -55, 30, -40, 30, 4);
-                drawDashedLine(paths, 55, 30, 40, 30, 4);
-                drawDashedLine(paths, -55, -80, -40, -80, 4);
-                drawDashedLine(paths, 55, -80, 40, -80, 4);
-                villus.addChild(paths);
+                enterocyteMatrices.push(dummy.matrix.clone());
             }
 
-            const lacteal = new PIXI.Graphics();
-            lacteal.lineStyle(24, 0x22c55e, 0.85); 
-            lacteal.moveTo(0, 400);
-            lacteal.lineTo(0, -130); 
-            lacteal.beginFill(0x22c55e, 0.85);
-            lacteal.drawCircle(0, -130, 12);
-            lacteal.endFill();
-            villus.addChild(lacteal);
-
-            const capillary = new PIXI.Graphics();
-            capillary.lineStyle(8, 0xef4444, 0.9); 
-            capillary.moveTo(-35, 400);
-            capillary.lineTo(-35, -50);
-            capillary.bezierCurveTo(-35, -180, 35, -180, 35, -50); 
-            
-            capillary.lineStyle(8, 0x3b82f6, 0.9);
-            capillary.lineTo(35, 400);
-            
-            capillary.lineStyle(6, 0xa855f7, 0.7); 
-            capillary.moveTo(-35, 0).lineTo(35, 0);
-            capillary.moveTo(-35, -60).lineTo(35, -60);
-            capillary.moveTo(-35, 60).lineTo(35, 60);
-            villus.addChild(capillary);
-
-            const epithelium = new PIXI.Graphics();
-            epithelium.lineStyle(3, 0xf43f5e, 1); 
-            epithelium.beginFill(0xffe4e6, 0.6);  
-            
-            epithelium.moveTo(-90, 400);
-            epithelium.lineTo(-90, -120);
-            epithelium.arc(0, -120, 90, Math.PI, 0); 
-            epithelium.lineTo(90, 400);
-            epithelium.lineTo(-90, 400);
-            epithelium.endFill();
-            
-            epithelium.lineStyle(1.5, 0xf43f5e, 0.6); 
-            
-            for(let y = -100; y < 400; y += 30) {
-                epithelium.moveTo(-90, y).lineTo(-70, y); 
-                epithelium.beginFill(0x881337, 0.8);
-                epithelium.drawCircle(-80, y + 15, 3.5);
-                epithelium.endFill();
-            }
-            for(let y = -100; y < 400; y += 30) {
-                epithelium.moveTo(90, y).lineTo(70, y); 
-                epithelium.beginFill(0x881337, 0.8);
-                epithelium.drawCircle(80, y + 15, 3.5);
-                epithelium.endFill();
-            }
-            villus.addChild(epithelium);
-
-            if (tintColor === 0xffffff) {
-                const brushBorder = new PIXI.Graphics();
-                brushBorder.lineStyle(4, 0xf43f5e, 0.9);
-                
-                for(let angle = Math.PI; angle >= 0; angle -= 0.05) {
-                    const rBase = 90;
-                    const rPeak = 95;
-                    const bx = Math.cos(angle) * rBase;
-                    const by = Math.sin(angle) * rBase - 120;
-                    const px = Math.cos(angle) * rPeak;
-                    const py = Math.sin(angle) * rPeak - 120;
-                    
-                    brushBorder.moveTo(bx, by);
-                    brushBorder.lineTo(px, py);
-                }
-                for(let y = -120; y < 150; y += 5) {
-                    brushBorder.moveTo(-90, y).lineTo(-95, y);
-                    brushBorder.moveTo(90, y).lineTo(95, y);
-                }
-                villus.addChild(brushBorder);
-                villus.brushBorder = brushBorder;
+            // Place Basal Purple Nucleus on exposed cutaway edge columns (and inner ring) for crisp histology!
+            const nearCutEdge = Math.abs(Math.abs(normTheta) - cutHalfRad) < (Math.PI * 2 / totalCols) * 1.6;
+            if (nearCutEdge || c % 2 === 0) {
+                const rNuc = Math.max(0.12, rOuter - 0.25);
+                dummy.position.set(Math.sin(theta) * rNuc, y - 0.02, Math.cos(theta) * rNuc);
+                dummy.updateMatrix();
+                nucleusMatrices.push(dummy.matrix.clone());
             }
 
-            if (tintColor !== 0xffffff) {
-                epithelium.tint = tintColor;
-                epithelium.alpha = 0.5;
-            }
-
-            villusGroup.addChild(villus);
-            return villus;
-        }
-
-        function drawDashedLine(graphics, x1, y1, x2, y2, dashLength = 5) {
-            const dx = x2 - x1;
-            const dy = y2 - y1;
-            const distance = Math.sqrt(dx*dx + dy*dy);
-            const dashes = Math.floor(distance / dashLength);
-            const dashX = dx / dashes;
-            const dashY = dy / dashes;
-
-            for (let i = 0; i < dashes; i++) {
-                if (i % 2 === 0) {
-                    graphics.moveTo(x1 + i * dashX, y1 + i * dashY);
-                    graphics.lineTo(x1 + (i + 1) * dashX, y1 + (i + 1) * dashY);
-                }
+            // Apical Microvilli Brush-Border Tuft on exterior of every enterocyte!
+            if (!isGoblet) {
+                const rBrush = rOuter + 0.045;
+                dummy.position.set(Math.sin(theta) * rBrush, y + Math.sin(tiltX) * 0.04, Math.cos(theta) * rBrush);
+                dummy.updateMatrix();
+                brushMatrices.push(dummy.matrix.clone());
             }
         }
+    }
 
-        function centerCamera() {
-            mainCamera.x = app.screen.width / 2;
-            mainCamera.y = app.screen.height / 2 + 100;
-        }
+    function makeInstanced(geo, mat, mats) {
+        const im = new THREE.InstancedMesh(geo, mat, mats.length);
+        mats.forEach((m, i) => im.setMatrixAt(i, m));
+        im.instanceMatrix.needsUpdate = true;
+        return im;
+    }
 
-        function spawnParticle(type) {
-            const p = new PIXI.Graphics();
-            p.nutriType = type;
-            
-            if (type === 'glucose') {
-                p.beginFill(0x22d3ee); 
-                p.drawPolygon([-8,-8, 8,-8, 12,0, 8,8, -8,8, -12,0]); 
-            } else if (type === 'amino') {
-                p.beginFill(0xc084fc); 
-                p.drawCircle(0, 0, 8); 
-            } else if (type === 'lipid') {
-                p.beginFill(0xfacc15); 
-                p.drawRect(-7, -7, 14, 14); 
-                p.rotation = Math.PI / 4;
-            } else if (type === 'water') {
-                p.beginFill(0x60a5fa); 
-                p.drawCircle(0, 0, 6); 
+    const instEnterocytes = makeInstanced(cellGeo, enterocyteMat, enterocyteMatrices);
+    const instGoblets     = makeInstanced(new THREE.SphereGeometry(0.135, 10, 8), gobletMat, gobletMatrices);
+    const instNuclei      = makeInstanced(new THREE.SphereGeometry(0.062, 8, 8), nucleusMat, nucleusMatrices);
+    const instBrush       = makeInstanced(new THREE.BoxGeometry(0.20, 0.21, 0.09), brushFringeMat, brushMatrices);
+
+    enterocyteGroup.add(instEnterocytes, instGoblets, instNuclei);
+    heroVillusMorphGroup.add(enterocyteGroup, instBrush);
+    registerPick('villus', enterocyteGroup, 'epithelium');
+    registerPick('villus', instBrush, 'microvilli');
+
+    // Translucent Basement Membrane & Lamina Propria Core Support
+    const laminaPts = [];
+    for (let i = 0; i <= 24; i++) {
+        const y = -1.95 + (i / 24) * 5.25;
+        laminaPts.push(new THREE.Vector2(Math.max(0.05, evalVillusOuterRadius(y) - 0.34), y));
+    }
+    const laminaMesh = new THREE.Mesh(
+        new THREE.LatheGeometry(laminaPts, 28, cutHalfRad, Math.PI * 2 - cutHalfRad * 2),
+        new THREE.MeshPhysicalMaterial({ color: 0xFDA4AF, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide })
+    );
+    heroVillusMorphGroup.add(laminaMesh);
+
+    // 4B. BLIND-ENDED CENTRAL LACTEAL (Milky-Emerald Lymphatic Capillary + Flowing Chyle Orbs!)
+    const lactealGroup = new THREE.Group();
+    const lactealMat = new THREE.MeshPhysicalMaterial({
+        color: 0x34D399, emissive: 0x065F46, emissiveIntensity: 0.42,
+        roughness: 0.25, clearcoat: 0.7, transparent: true, opacity: 0.82
+    });
+    const lactealShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.30, 6.25, 22), lactealMat);
+    lactealShaft.position.set(0, -0.52, 0.02);
+    const lactealTip = new THREE.Mesh(new THREE.SphereGeometry(0.28, 22, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), lactealMat);
+    lactealTip.position.set(0, 2.60, 0.02);
+    lactealGroup.add(lactealShaft, lactealTip);
+
+    // Chylomicron / Milky Chyle droplets gently drifting inside the Central Lacteal
+    const chyleGeo = new THREE.SphereGeometry(0.068, 10, 8);
+    const chyleMat = new THREE.MeshBasicMaterial({ color: 0xFEF9C3 });
+    for (let i = 0; i < 14; i++) {
+        const orb = new THREE.Mesh(chyleGeo, chyleMat);
+        lactealGroup.add(orb);
+        lactealChyleOrbs.push({
+            mesh: orb,
+            offset: i / 14,
+            rx: (Math.random() - 0.5) * 0.22,
+            rz: (Math.random() - 0.5) * 0.22
+        });
+    }
+    heroVillusMorphGroup.add(lactealGroup);
+    registerPick('villus', lactealGroup, 'lacteal');
+
+    // 4C. ANASTOMOSING 3D CAPILLARY BASKETWORK (Arteriole -> Capillary Loops -> Hepatic Portal Venule + 3D RBCs!)
+    const capGroup = new THREE.Group();
+    const capRedMat    = new THREE.MeshStandardMaterial({ color: 0xEF4444, emissive: 0x7F1D1D, emissiveIntensity: 0.38, roughness: 0.32 });
+    const capVioletMat = new THREE.MeshStandardMaterial({ color: 0xA855F7, emissive: 0x4C1D95, emissiveIntensity: 0.38, roughness: 0.35 });
+    const capBlueMat   = new THREE.MeshStandardMaterial({ color: 0x3B82F6, emissive: 0x1E3A8A, emissiveIntensity: 0.38, roughness: 0.32 });
+
+    // Ascending Arteriole (-X) -> Superior Apical Arch -> Descending Hepatic Portal Venule (+X)
+    const mainCapLoopCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.68, -3.52, 0.35), // Submucosal Arteriole origin
+        new THREE.Vector3(-0.78, -1.20, 0.32),
+        new THREE.Vector3(-0.76,  1.45, 0.28),
+        new THREE.Vector3(-0.42,  2.82, 0.20), // Apical Villus Capillary Arch
+        new THREE.Vector3( 0.42,  2.82, 0.20),
+        new THREE.Vector3( 0.76,  1.45, 0.28),
+        new THREE.Vector3( 0.78, -1.20, 0.32),
+        new THREE.Vector3( 0.68, -3.82, 0.65)  // Drains into Submucosal Hepatic Portal Venule!
+    ]);
+
+    // Color-code ascending arterial half vs. descending venous half
+    const artHalfPts = [], venHalfPts = [];
+    for (let i = 0; i <= 24; i++) artHalfPts.push(mainCapLoopCurve.getPointAt((i / 24) * 0.5));
+    for (let i = 0; i <= 24; i++) venHalfPts.push(mainCapLoopCurve.getPointAt(0.5 + (i / 24) * 0.5));
+    capGroup.add(
+        new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(artHalfPts), 28, 0.085, 10, false), capRedMat),
+        new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(venHalfPts), 28, 0.095, 10, false), capBlueMat)
+    );
+
+    // 6 Curved Anastomosing Capillary Cross-Bridges wrapping BOTH anteriorly & posteriorly around Central Lacteal!
+    const bridgeHeights = [-1.45, -0.65, 0.15, 0.95, 1.75, 2.35];
+    bridgeHeights.forEach((by, bIdx) => {
+        const wSpan = by > 2.1 ? 0.56 : 0.78;
+        const zArc  = (bIdx % 2 === 0) ? 0.54 : -0.46;
+        const brCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-wSpan, by, 0.28),
+            new THREE.Vector3(-wSpan * 0.45, by + 0.14, zArc),
+            new THREE.Vector3( wSpan * 0.45, by - 0.10, zArc),
+            new THREE.Vector3( wSpan, by, 0.28)
+        ]);
+        capGroup.add(new THREE.Mesh(new THREE.TubeGeometry(brCurve, 18, 0.052, 8, false), capVioletMat));
+    });
+    heroVillusMorphGroup.add(capGroup);
+    registerPick('villus', capGroup, 'capillaries');
+
+    // 30 Flowing 3D Biconcave Erythrocytes along Main Capillary Loop
+    const rbcGeo = createBiconcaveRBCGeo(0.072);
+    const rbcMat = new THREE.MeshStandardMaterial({ color: 0xFB2C4C, emissive: 0x881337, emissiveIntensity: 0.45 });
+    for (let i = 0; i < 30; i++) {
+        const m = new THREE.Mesh(rbcGeo, rbcMat);
+        capGroup.add(m);
+        villusRBCs.push({ mesh: m, curve: mainCapLoopCurve, t: i / 30 });
+    }
+
+    // 5. Concentration Gradient Volumetric Lumen Aura (Toggled by "Gradient Glow")
+    villusGradientDome = new THREE.Mesh(
+        new THREE.SphereGeometry(3.8, 32, 24),
+        new THREE.MeshBasicMaterial({ color: 0xEC4899, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.BackSide })
+    );
+    villusGradientDome.position.set(0, 1.8, 0);
+    villusGradientDome.visible = false;
+    villusWorld.add(villusGradientDome);
+}
+
+// ============================================================================
+// 5. BUILD SCALE 2: 2000× BRUSH-BORDER & ENTEROCYTE MOLECULAR TRANSPORT WORLD
+// ============================================================================
+function build2000xEnterocyteWorld() {
+    // 1. CENTRAL HERO COLUMNAR ENTEROCYTE + NEIGHBORING ENTEROCYTE & GOBLET CELL (`y = -1.45` to `+1.55`)
+    const plasmaMembraneMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFDA4AF, emissive: 0x831843, emissiveIntensity: 0.18,
+        roughness: 0.3, clearcoat: 0.6, transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide
+    });
+    const neighborCellMat = new THREE.MeshPhysicalMaterial({
+        color: 0xF472B6, emissive: 0x500724, emissiveIntensity: 0.2,
+        roughness: 0.42, transparent: true, opacity: 0.35, depthWrite: false
+    });
+
+    // Main Enterocyte Translucent Cutaway Box (`x = -1.75..+1.75, y = -1.45..+1.55, z = -0.85..+0.85`)
+    const mainCellBox = new THREE.Mesh(new THREE.BoxGeometry(3.5, 3.0, 1.65), plasmaMembraneMat);
+    mainCellBox.position.set(0, 0.05, 0);
+    cellWorld.add(mainCellBox);
+    registerPick('cell', mainCellBox, 'epithelium');
+
+    // Left Neighbor Enterocyte & Right Mucus-Secreting Goblet Cell (with mucin droplets!)
+    const leftNeighbor = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.0, 1.55), neighborCellMat);
+    leftNeighbor.position.set(-2.62, 0.05, -0.05);
+    const rightGobletBody = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.0, 1.55), neighborCellMat);
+    rightGobletBody.position.set(2.62, 0.05, -0.05);
+    cellWorld.add(leftNeighbor, rightGobletBody);
+
+    // Goblet Cell Mucigen Granules + Tight Junction Sealing Belts (`x = ±1.78, y = +1.35`)
+    const mucinMat = new THREE.MeshPhysicalMaterial({ color: 0x67E8F9, emissive: 0x0891B2, emissiveIntensity: 0.45, roughness: 0.2 });
+    for (let g = 0; g < 12; g++) {
+        const drop = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), mucinMat);
+        drop.position.set(2.55 + ((g % 3) - 1) * 0.28, 0.55 + Math.floor(g / 3) * 0.34, ((g % 2) - 0.5) * 0.28);
+        cellWorld.add(drop);
+        registerPick('cell', drop, 'epithelium');
+    }
+
+    const tightJuncMat = new THREE.MeshStandardMaterial({ color: 0xFDE047, emissive: 0xCA8A04, emissiveIntensity: 0.5 });
+    [-1.76, 1.76].forEach(tx => {
+        const belt = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 1.68), tightJuncMat);
+        belt.position.set(tx, 1.38, 0);
+        cellWorld.add(belt);
+    });
+
+    // 2. 48 FINGER-LIKE 3D MICROVILLI (BRUSH BORDER) + SGLT1 SYMPORTER & AQUAPORIN CHANNELS!
+    cellMicrovilliGroup = new THREE.Group();
+    const mvMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFB923C, emissive: 0x9A3412, emissiveIntensity: 0.32, roughness: 0.36, clearcoat: 0.5
+    });
+    const sgltMat = new THREE.MeshStandardMaterial({ color: 0x22D3EE, emissive: 0x0284C7, emissiveIntensity: 0.65 });
+    const aqpMat  = new THREE.MeshStandardMaterial({ color: 0x60A5FA, emissive: 0x1D4ED8, emissiveIntensity: 0.65 });
+
+    for (let ix = -7; ix <= 7; ix++) {
+        for (let iz = -1; iz <= 1; iz++) {
+            const mx = ix * 0.22;
+            const mz = iz * 0.44;
+            const mvGrp = new THREE.Group();
+            const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.072, 0.82, 12), mvMat);
+            shaft.position.y = 1.96;
+            const tip = new THREE.Mesh(new THREE.SphereGeometry(0.068, 12, 10), mvMat);
+            tip.position.y = 2.37;
+            mvGrp.add(shaft, tip);
+
+            // Embed Transmembrane Carrier Proteins (Cyan SGLT1 Symporters & Sky Aquaporins) on front row!
+            if (iz === 1 && ix % 3 === 0) {
+                const chan = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.076, 0.024, 8, 16),
+                    ix < 0 ? sgltMat : aqpMat
+                );
+                chan.rotation.x = Math.PI * 0.5;
+                chan.position.y = 1.85;
+                mvGrp.add(chan);
             }
-            p.endFill();
-
-            p.x = (Math.random() - 0.5) * 600;
-            p.y = -350 + Math.random() * 150;
-            
-            p.isFloating = true;
-            p.isDragging = false;
-            p.rotSpeed = (Math.random() - 0.5) * 0.05;
-
-            p.interactive = true;
-            p.buttonMode = true;
-            p.cursor = 'grab';
-
-            p.on('pointerdown', onDragStart)
-             .on('pointermove', onDragMove)
-             .on('pointerup', onDragEnd)
-             .on('pointerupoutside', onDragEnd);
-
-            mainCamera.addChild(p);
-            particles.push(p);
+            mvGrp.position.set(mx, 0, mz);
+            cellMicrovilliGroup.add(mvGrp);
         }
+    }
+    cellWorld.add(cellMicrovilliGroup);
+    registerPick('cell', cellMicrovilliGroup, 'microvilli');
 
-        function showFloatingText(textStr, x, y, colorHex) {
-            const style = new PIXI.TextStyle({
-                fontFamily: 'Inter',
-                fontSize: 14,
-                fontWeight: 'bold',
-                fill: colorHex,
-                stroke: '#0f172a',
-                strokeThickness: 4,
-                letterSpacing: 1
-            });
-            const textObj = new PIXI.Text(textStr, style);
-            textObj.anchor.set(0.5);
-            textObj.x = x;
-            textObj.y = y;
-            mainCamera.addChild(textObj);
+    // 3. INTRACELLULAR ORGANELLES: BASAL NUCLEUS, 6 MITOCHONDRIA, SMOOTH ER & GOLGI CHYLOMICRON FACTORY!
+    // Large Oval Basal Nucleus
+    const cellNucleus = new THREE.Mesh(
+        new THREE.SphereGeometry(0.56, 26, 22),
+        new THREE.MeshPhysicalMaterial({ color: 0x7E22CE, emissive: 0x3B0764, emissiveIntensity: 0.42, roughness: 0.35 })
+    );
+    cellNucleus.scale.set(0.88, 1.15, 0.78);
+    cellNucleus.position.set(-0.12, -0.68, -0.15);
+    cellWorld.add(cellNucleus);
+    registerPick('cell', cellNucleus, 'epithelium');
 
-            gsap.to(textObj, {
-                y: y - 40,
-                alpha: 0,
-                duration: 1.5,
-                ease: "power1.out",
-                onComplete: () => textObj.destroy()
-            });
-        }
+    // 6 Bean-Shaped 3D Mitochondria (Supplying ATP for Active Transport!)
+    const mitoPositions = [
+        [-1.22,  0.65, 0.18,  0.35],
+        [-1.12, -0.35, 0.25, -0.28],
+        [-0.75, -1.05, 0.22,  0.85], // Near basolateral Na+/K+-ATPase pump!
+        [-1.38, -0.98, -0.15, 0.15],
+        [ 0.35,  0.85, -0.18, -0.45],
+        [ 1.28, -0.65, 0.18,  0.30]
+    ];
+    mitoPositions.forEach(([mx, my, mz, rotZ]) => {
+        const mMat = new THREE.MeshPhysicalMaterial({
+            color: 0xF43F5E, emissive: 0xBE123C, emissiveIntensity: 0.58, roughness: 0.32, clearcoat: 0.5
+        });
+        const mGrp = new THREE.Group();
+        const outerBean = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 14), mMat);
+        outerBean.scale.set(0.75, 1.55, 0.75);
+        // Zigzag inner cristae ribbon
+        const cristae = new THREE.Mesh(
+            new THREE.TorusKnotGeometry(0.075, 0.018, 28, 6, 2, 3),
+            new THREE.MeshBasicMaterial({ color: 0xFDE047 })
+        );
+        mGrp.add(outerBean, cristae);
+        mGrp.position.set(mx, my, mz);
+        mGrp.rotation.z = rotZ;
+        cellWorld.add(mGrp);
+        mitoMeshes.push({ grp: mGrp, mat: mMat, cristae });
+        registerPick('cell', mGrp, 'mitochondria');
+    });
 
-        function onDragStart(event) {
-            if (!this.isFloating) return; 
-            this.isDragging = true;
-            this.dragData = event.data;
-            this.cursor = 'grabbing';
-            this.alpha = 0.8;
-            mainCamera.addChild(this); 
-        }
+    // Smooth Endoplasmic Reticulum (SER) & Stacked Golgi Cisternae on Right Half (`x = +0.55..+1.35`)
+    const golgiGroup = new THREE.Group();
+    const serMat = new THREE.MeshPhysicalMaterial({ color: 0xF59E0B, emissive: 0x92400E, emissiveIntensity: 0.38, roughness: 0.35 });
+    const golgiMat = new THREE.MeshPhysicalMaterial({ color: 0xFBBF24, emissive: 0xB45309, emissiveIntensity: 0.45, roughness: 0.28, clearcoat: 0.6 });
 
-        function onDragMove() {
-            if (this.isDragging) {
-                const newPosition = this.dragData.getLocalPosition(this.parent);
-                this.x = newPosition.x;
-                this.y = newPosition.y;
-            }
-        }
+    // Interconnected SER tubules (re-esterifying fatty acids + monoglycerides -> triglycerides)
+    for (let s = 0; s < 4; s++) {
+        const serLoop = new THREE.Mesh(new THREE.TorusGeometry(0.24 - s * 0.03, 0.042, 10, 20), serMat);
+        serLoop.position.set(0.88, 0.92 - s * 0.11, 0.12);
+        serLoop.rotation.x = Math.PI * 0.38;
+        golgiGroup.add(serLoop);
+    }
+    // 4 Curved Golgi Cisternae Discs (packaging triglycerides + apolipoproteins into Chylomicrons!)
+    for (let c = 0; c < 4; c++) {
+        const cisterna = new THREE.Mesh(
+            new THREE.TorusGeometry(0.36, 0.048, 10, 24, Math.PI * 1.15),
+            golgiMat
+        );
+        cisterna.position.set(0.85, 0.18 - c * 0.16, 0.18);
+        cisterna.rotation.z = Math.PI * 0.92;
+        golgiGroup.add(cisterna);
+    }
+    cellWorld.add(golgiGroup);
+    registerPick('cell', golgiGroup, 'golgi_ser');
 
-        function onDragEnd() {
-            if (!this.isDragging) return;
-            this.isDragging = false;
-            this.dragData = null;
-            this.cursor = 'grab';
-            this.alpha = 1;
+    // 4. BASEMENT MEMBRANE (`y = -1.55`) + DUAL VASCULAR EXIT: BLOOD CAPILLARY (LEFT) & CENTRAL LACTEAL (RIGHT)
+    const basalSheet = new THREE.Mesh(
+        new THREE.BoxGeometry(8.2, 0.10, 2.2),
+        new THREE.MeshPhysicalMaterial({ color: 0x94A3B8, transparent: true, opacity: 0.36 })
+    );
+    basalSheet.position.set(0, -1.55, 0);
+    cellWorld.add(basalSheet);
 
-            if (Math.abs(this.x) < 120 && this.y > -250 && this.y < 100) {
-                triggerAbsorption(this);
-            }
-        }
+    // Left Vessel: Fenestrated Blood Capillary (`x = -4.2` -> `-0.15`, `y = -2.42`) -> Hepatic Portal Vein!
+    const cellCapCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-4.25, -2.42, 0.0),
+        new THREE.Vector3(-2.10, -2.35, 0.10),
+        new THREE.Vector3(-0.15, -2.65, 0.0)
+    ]);
+    const cellCapMat = new THREE.MeshPhysicalMaterial({
+        color: 0xEF4444, emissive: 0x7F1D1D, emissiveIntensity: 0.34,
+        roughness: 0.3, transparent: true, opacity: 0.52, depthWrite: false, side: THREE.DoubleSide
+    });
+    const cellCapTube = new THREE.Mesh(new THREE.TubeGeometry(cellCapCurve, 28, 0.44, 18, false), cellCapMat);
+    cellWorld.add(cellCapTube);
+    registerPick('cell', cellCapTube, 'capillaries');
 
-        function triggerAbsorption(particle) {
-            particle.isFloating = false;
-            particle.interactive = false;
-            particle.buttonMode = false;
+    const bigRbcGeo = createBiconcaveRBCGeo(0.24);
+    const bigRbcMat = new THREE.MeshStandardMaterial({ color: 0xFB2C4C, emissive: 0x881337, emissiveIntensity: 0.45 });
+    for (let i = 0; i < 6; i++) {
+        const rm = new THREE.Mesh(bigRbcGeo, bigRbcMat);
+        cellWorld.add(rm);
+        cellRBCs.push({ mesh: rm, curve: cellCapCurve, t: i / 6 });
+    }
 
-            let color = particle.nutriType === 'glucose' ? '#22d3ee' : (particle.nutriType === 'amino' ? '#c084fc' : (particle.nutriType === 'water' ? '#60a5fa' : '#facc15'));
-            
-            DOM.infoTitle.innerText = `${particle.nutriType.charAt(0).toUpperCase() + particle.nutriType.slice(1)} Absorption`;
-            DOM.infoTitle.style.color = color;
-            DOM.infoAccent.style.backgroundColor = color;
-            DOM.vesselLegendBox.classList.add('hidden');
-            
-            if (particle.nutriType === 'lipid') {
-                DOM.infoDesc.innerHTML = `Fat-soluble lipids enter via <strong>Simple Diffusion</strong>, are packaged into <strong>Chylomicrons</strong> via the Golgi, and undergo exocytosis into the <strong class="text-green-400">Lacteal</strong>.`;
-            } else if (particle.nutriType === 'water') {
-                DOM.infoDesc.innerHTML = `Water molecules move freely across the epithelial membrane via <strong>Osmosis</strong> to maintain osmotic balance, entering the <strong class="text-blue-400">Blood Capillary</strong>.`;
-            } else {
-                DOM.infoDesc.innerHTML = `Water-soluble nutrients use <strong>Active Transport</strong> or facilitated diffusion to cross the epithelium and enter the <strong class="text-blue-400">Blood Capillary</strong> directly.`;
-            }
+    // Right Vessel: Open-Flap Lymphatic Central Lacteal (`x = +0.25` -> `+4.25`, `y = -2.52`) -> Thoracic Lymph Duct!
+    const cellLactCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.45, -2.45, 0.05),
+        new THREE.Vector3(2.25, -2.52, 0.10),
+        new THREE.Vector3(4.25, -2.65, 0.0)
+    ]);
+    const cellLactMat = new THREE.MeshPhysicalMaterial({
+        color: 0x34D399, emissive: 0x065F46, emissiveIntensity: 0.38,
+        roughness: 0.25, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide
+    });
+    const cellLactTube = new THREE.Mesh(new THREE.TubeGeometry(cellLactCurve, 28, 0.52, 18, false), cellLactMat);
+    cellWorld.add(cellLactTube);
+    registerPick('cell', cellLactTube, 'lacteal');
 
-            const tl = gsap.timeline({
-                onComplete: () => {
-                    particle.destroy();
-                    const index = particles.indexOf(particle);
-                    if (index > -1) particles.splice(index, 1);
-                    
-                    state.absorbed[particle.nutriType]++;
-                    document.getElementById(`stat-${particle.nutriType}`).innerText = state.absorbed[particle.nutriType];
-                }
-            });
+    // Concentration Gradient Backdrop Plane for 2000× Cell View
+    const gradCanvas = document.createElement('canvas');
+    gradCanvas.width = 16; gradCanvas.height = 128;
+    const gctx = gradCanvas.getContext('2d');
+    const grd = gctx.createLinearGradient(0, 0, 0, 128);
+    grd.addColorStop(0.0, 'rgba(236, 72, 153, 0.42)');
+    grd.addColorStop(0.55, 'rgba(236, 72, 153, 0.10)');
+    grd.addColorStop(1.0, 'rgba(15, 23, 42, 0.0)');
+    gctx.fillStyle = grd;
+    gctx.fillRect(0, 0, 16, 128);
+    cellGradientPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(11, 7.8),
+        new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gradCanvas), transparent: true, depthWrite: false })
+    );
+    cellGradientPlane.position.set(0, 0.5, -1.2);
+    cellGradientPlane.visible = false;
+    cellWorld.add(cellGradientPlane);
+}
 
-            let surfaceX = (particle.x > 0) ? 75 : -75;
-            let surfaceY = particle.y;
-            if (particle.y < -120) { surfaceX = particle.x * 0.8; surfaceY = -110; } 
-            
-            tl.to(particle, { x: surfaceX, y: surfaceY, duration: 0.3, ease: "power1.in" });
-
-            tl.call(() => {
-                let mechanism = "";
-                if (particle.nutriType === 'lipid') mechanism = "Simple Diffusion";
-                else if (particle.nutriType === 'water') mechanism = "Osmosis";
-                else mechanism = "Active Transport";
-                
-                showFloatingText(mechanism, surfaceX + (surfaceX > 0 ? 30 : -30), surfaceY - 15, color);
-            });
-
-            if (particle.nutriType === 'lipid') {
-                tl.to(particle, { duration: 0.5, onStart: () => {
-                    showFloatingText("Chylomicron Formation", surfaceX, surfaceY + 20, "#ffffff");
-                    particle.clear();
-                    particle.beginFill(0xffffff); 
-                    particle.lineStyle(2, 0xfacc15); 
-                    particle.drawCircle(0, 0, 10);
-                    particle.endFill();
-                }});
-                
-                tl.call(() => showFloatingText("Exocytosis", 0, surfaceY - 15, "#22c55e"));
-                tl.to(particle, { x: 0, y: surfaceY, duration: 0.6, ease: "power1.inOut" });
-                tl.to(particle, { x: 0, y: ROUTE_EXIT.y, duration: 1.5, ease: "power1.in" });
-                
-            } else {
-                let capX = particle.x < 0 ? -35 : 35; 
-                tl.to(particle, { x: capX, y: surfaceY, duration: 0.5, ease: "power1.inOut" });
-                tl.to(particle, { x: capX, y: ROUTE_EXIT.y, duration: 1.5, ease: "power1.in" });
-            }
-        }
-
-        // ==========================================
-        // 3D VIEW: THREE.JS VILLI MODEL
-        // ==========================================
-        function initThree() {
-            const threeContainer = document.getElementById('three-container');
-            const w = threeContainer.clientWidth;
-            const h = threeContainer.clientHeight;
-
-            // 1. Scene & Camera
-            tScene = new THREE.Scene();
-            tCamera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
-            tCamera.position.set(0, 4, 30);
-
-            // 2. Renderer
-            tRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            tRenderer.setSize(w, h);
-            tRenderer.setPixelRatio(window.devicePixelRatio || 1);
-            threeContainer.appendChild(tRenderer.domElement);
-
-            // 3. OrbitControls
-            tControls = new THREE.OrbitControls(tCamera, tRenderer.domElement);
-            tControls.enableDamping = true;
-            tControls.dampingFactor = 0.05;
-            tControls.maxDistance = 50;
-            tControls.minDistance = 8;
-            tControls.target.set(0, 1, 0);
-
-            // 4. Lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-            tScene.add(ambientLight);
-
-            const frontLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            frontLight.position.set(10, 20, 15);
-            tScene.add(frontLight);
-
-            const backLight = new THREE.DirectionalLight(0xffedd5, 0.3);
-            backLight.position.set(-10, 10, -15);
-            tScene.add(backLight);
-
-            build3DVillus();
-            build3DDirectory();
-            
-            threeSceneInitialized = true;
-            animateThree();
-        }
-
-        function build3DVillus() {
-            tVillusGroup = new THREE.Group();
-            tScene.add(tVillusGroup);
-
-            // 3D Materials (Matte, vibrant medical style)
-            const getMat = (colorHex, isTransparent = false, opacity = 1.0) => new THREE.MeshStandardMaterial({
-                color: colorHex,
-                roughness: 0.6,
-                metalness: 0.15,
-                side: THREE.DoubleSide,
-                transparent: isTransparent,
-                opacity: opacity
-            });
-
-            // A. Base Submucosa (Flat support cylinder)
-            const baseGeo = new THREE.CylinderGeometry(8, 8, 1, 32);
-            const baseMesh = new THREE.Mesh(baseGeo, getMat(0x475569)); 
-            baseMesh.position.y = -6;
-            register3DPart(baseMesh, 'submucosa', new THREE.Vector3(0, -6, 4.5));
-
-            // B. Central Lacteal (Green Cylinder + Sphere Dome)
-            const lactealGroup = new THREE.Group();
-            const lactealCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 10, 16), getMat(0x22c55e)); 
-            const lactealDome = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 16, 0, Math.PI*2, 0, Math.PI/2), getMat(0x22c55e));
-            lactealCyl.position.y = 0;
-            lactealDome.position.y = 5;
-            lactealGroup.add(lactealCyl, lactealDome);
-            lactealGroup.position.set(0, -1, 0);
-            register3DPart(lactealGroup, 'lacteal', new THREE.Vector3(0, 2.5, 0.8));
-
-            // C. Capillary Network (Red / Blue branching cylinders)
-            const capGroup = new THREE.Group();
-            
-            // Arteriole (Red tube entering and ascending)
-            const artCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 10, 12), getMat(0xef4444));
-            artCyl.position.set(-1.4, 0, 0.2);
-            capGroup.add(artCyl);
-            
-            // Venule (Blue tube descending and exiting)
-            const venCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 10, 12), getMat(0x3b82f6));
-            venCyl.position.set(1.4, 0, 0.2);
-            capGroup.add(venCyl);
-
-            // Capillary loops (bridging Red to Blue across lacteal)
-            const loopGeo = new THREE.TorusGeometry(1.4, 0.15, 8, 24, Math.PI);
-            const matBridge = getMat(0xa855f7); 
-
-            for (let yOffset = -3.5; yOffset <= 3.5; yOffset += 2.5) {
-                const bridge = new THREE.Mesh(loopGeo, matBridge);
-                bridge.position.set(0, yOffset, 0.2);
-                bridge.rotation.x = Math.PI / 2; 
-                capGroup.add(bridge);
-            }
-            capGroup.position.set(0, -1, 0);
-            register3DPart(capGroup, 'capillaries', new THREE.Vector3(-1.4, -0.5, 1.2));
-
-            // D. Crypt of Lieberkühn (Base depressions)
-            const cryptGroup = new THREE.Group();
-            const crypt1 = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 3, 16, 1, true), getMat(0x64748b));
-            crypt1.position.set(-4, -4.5, 0);
-            const crypt2 = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 3, 16, 1, true), getMat(0x64748b));
-            crypt2.position.set(4, -4.5, 0);
-            cryptGroup.add(crypt1, crypt2);
-            register3DPart(cryptGroup, 'crypt', new THREE.Vector3(-4, -4.5, 1.2));
-
-            // E. Outer Columnar Epithelium (90-degree cutaway shell)
-            const epiGroup = new THREE.Group();
-            const epiShell = new THREE.Mesh(
-                new THREE.CylinderGeometry(3.0, 3.0, 11, 32, 1, true, 0, Math.PI * 1.5),
-                getMat(0xffe4e6, true, 0.75) 
-            );
-            const epiDome = new THREE.Mesh(
-                new THREE.SphereGeometry(3.0, 32, 16, 0, Math.PI * 1.5, 0, Math.PI / 2),
-                getMat(0xffe4e6, true, 0.75)
-            );
-            epiShell.position.y = 0.5;
-            epiDome.position.y = 6;
-            
-            // Microvilli brush border (slightly larger, bright glowing rose shell)
-            const borderShell = new THREE.Mesh(
-                new THREE.CylinderGeometry(3.1, 3.1, 11, 32, 1, true, 0, Math.PI * 1.5),
-                getMat(0xf43f5e, true, 0.4) 
-            );
-            borderShell.position.y = 0.5;
-            
-            epiGroup.add(epiShell, epiDome, borderShell);
-            epiGroup.position.set(0, -1, 0);
-            epiGroup.rotation.y = -Math.PI / 4; 
-            
-            register3DPart(epiGroup, 'epithelium', new THREE.Vector3(2.5, 1.0, 2.5));
-
-            tVillusGroup.position.y = -2;
-        }
-
-        function register3DPart(mesh, id, pinPos) {
-            mesh.userData = { id: id };
-            tAnatomyMeshes[id] = mesh;
-            tVillusGroup.add(mesh);
-            create3DPin(id, pinPos);
-        }
-
-        function create3DPin(id, pos3D) {
-            const data = ANATOMY_3D_DATA[id];
-            if (!data) return;
-
-            const el = document.createElement('div');
-            el.id = `pin-3d-${id}`;
-            el.className = 'anatomical-pin';
-            el.innerText = data.name;
-            el.onclick = () => selectAnatomy3D(id);
-
-            document.getElementById('pins-container-3d').appendChild(el);
-            tPins.push({ id: id, element: el, pos3D: pos3D });
-        }
-
-        function build3DDirectory() {
-            DOM.directoryList3D.innerHTML = ''; 
-
-            Object.keys(ANATOMY_3D_DATA).forEach(id => {
-                const data = ANATOMY_3D_DATA[id];
-                const btn = document.createElement('button');
-                btn.id = `dir-btn-3d-${id}`;
-                btn.className = `w-full text-left p-2 rounded border border-slate-700 hover:border-slate-500 bg-slate-800/50 transition-all text-xs font-bold text-slate-300 flex items-center gap-2`;
-                
-                btn.innerHTML = `<div class="w-3 h-3 rounded-full" style="background-color: ${data.color || '#cbd5e1'}"></div> ${data.name}`;
-                btn.onclick = () => selectAnatomy3D(id);
-                DOM.directoryList3D.appendChild(btn);
-            });
-        }
-
-        function selectAnatomy3D(id) {
-            activeAnatomyId = id;
-            const data = ANATOMY_3D_DATA[id];
-            if (!data) return;
-
-            // 1. Update Info Panel
-            DOM.infoAccent.style.backgroundColor = data.color || '#f97316';
-            document.getElementById('inspector-subtitle').innerText = 'Anatomical Structure';
-            DOM.infoTitle.style.color = data.color || '#ffffff';
-            DOM.infoTitle.innerText = data.name;
-            DOM.infoDesc.innerText = data.desc;
-            DOM.vesselLegendBox.classList.add('hidden');
-
-            // 2. Update Directory List
-            document.querySelectorAll('#directory-list-3d button').forEach(b => b.style.borderColor = '#334155');
-            const activeBtn = document.getElementById(`dir-btn-3d-${id}`);
-            if (activeBtn) activeBtn.style.borderColor = data.color || '#f97316';
-
-            // 3. Highlight HTML Overlay Pin
-            document.querySelectorAll('.anatomical-pin').forEach(p => p.classList.remove('active'));
-            const activePin = document.getElementById(`pin-3d-${id}`);
-            if (activePin) activePin.classList.add('active');
-
-            // 4. Highlight 3D Mesh
-            Object.values(tAnatomyMeshes).forEach(group => {
-                group.traverse(child => {
-                    if (child.isMesh && child.material) {
-                        child.material.emissive?.setHex(0x000000); 
-                    }
-                });
-            });
-            const meshGroup = tAnatomyMeshes[id];
-            if (meshGroup) {
-                meshGroup.traverse(child => {
-                    if (child.isMesh && child.material) {
-                        child.material.emissive?.setHex(0x331111); 
-                    }
-                });
-            }
-        }
-
-        function reset3DCamera() {
-            tControls.reset();
-            tCamera.position.set(0, 4, 30);
-            tControls.target.set(0, 1, 0);
-            selectAnatomy3D('epithelium');
-        }
-
-        function resizeThree() {
-            const threeContainer = document.getElementById('three-container');
-            const w = threeContainer.clientWidth;
-            const h = threeContainer.clientHeight;
-            tCamera.aspect = w / h;
-            tCamera.updateProjectionMatrix();
-            tRenderer.setSize(w, h);
-        }
-
-        function animateThree() {
-            if (activeView !== '3d') {
-                requestAnimationFrame(animateThree);
-                return;
-            }
-
-            tControls.update();
-
-            // Project 3D Pin Positions to 2D HTML Overlays
-            const canvasW = document.getElementById('three-container').clientWidth;
-            const canvasH = document.getElementById('three-container').clientHeight;
-            tCamera.updateMatrixWorld();
-
-            tPins.forEach(pin => {
-                const worldPos = pin.pos3D.clone();
-                worldPos.applyMatrix4(tVillusGroup.matrixWorld);
-
-                const vector = worldPos.project(tCamera);
-
-                // Hide if behind the camera clip
-                if (vector.z > 1.0) {
-                    pin.element.classList.add('pin-hidden');
-                } else {
-                    pin.element.classList.remove('pin-hidden');
-                    const x = (vector.x * 0.5 + 0.5) * canvasW;
-                    const y = (vector.y * -0.5 + 0.5) * canvasH;
-
-                    pin.element.style.left = `${x}px`;
-                    pin.element.style.top = `${y - 12}px`;
-                }
-            });
-
-            tRenderer.render(tScene, tCamera);
-            requestAnimationFrame(animateThree);
-        }
-
-        // ==========================================
-        // WINDOW BOOTSTRAP
-        // ==========================================
-        window.onload = () => {
-            initDOM();
-            setupEventListeners();
-            initPixi();
+// ============================================================================
+// 6. REAL-TIME 3D NUTRIENT SORTING & CHYLOMICRON EXOCYTOSIS ENGINE
+// ============================================================================
+const NUTRIENT_SHAPES = {};
+function getNutrientProto(type) {
+    if (NUTRIENT_SHAPES[type]) return NUTRIENT_SHAPES[type];
+    if (type === 'glucose') {
+        NUTRIENT_SHAPES.glucose = {
+            geo: new THREE.CylinderGeometry(0.11, 0.11, 0.07, 6), // Cyan Hexose Ring!
+            mat: new THREE.MeshStandardMaterial({ color: 0x22D3EE, emissive: 0x0284C7, emissiveIntensity: 0.65 }),
+            colorHex: '#22D3EE'
         };
+    } else if (type === 'amino') {
+        NUTRIENT_SHAPES.amino = {
+            geo: new THREE.SphereGeometry(0.095, 14, 12), // Violet Amino Acid!
+            mat: new THREE.MeshStandardMaterial({ color: 0xC084FC, emissive: 0x7E22CE, emissiveIntensity: 0.65 }),
+            colorHex: '#C084FC'
+        };
+    } else if (type === 'lipid') {
+        NUTRIENT_SHAPES.lipid = {
+            geo: new THREE.OctahedronGeometry(0.10, 0), // Amber Fatty Acid / Micelle!
+            mat: new THREE.MeshStandardMaterial({ color: 0xFACC15, emissive: 0xCA8A04, emissiveIntensity: 0.65 }),
+            colorHex: '#FACC15'
+        };
+    } else if (type === 'water') {
+        NUTRIENT_SHAPES.water = {
+            geo: new THREE.SphereGeometry(0.072, 12, 10), // Sky H2O Molecule!
+            mat: new THREE.MeshStandardMaterial({ color: 0x60A5FA, emissive: 0x2563EB, emissiveIntensity: 0.65 }),
+            colorHex: '#60A5FA'
+        };
+    } else if (type === 'chylomicron') {
+        NUTRIENT_SHAPES.chylomicron = {
+            geo: new THREE.IcosahedronGeometry(0.165, 1), // Large Pearly-Gold Lipoprotein Chylomicron!
+            mat: new THREE.MeshPhysicalMaterial({ color: 0xFEF08A, emissive: 0xD97706, emissiveIntensity: 0.55, roughness: 0.2, clearcoat: 0.8 }),
+            colorHex: '#FDE047'
+        };
+    }
+    return NUTRIENT_SHAPES[type];
+}
 
-    </script>
+function spawnFloatingCallout(text, worldPos, colorHex) {
+    // Limit simultaneous callouts so screen stays clean & legible
+    if (floatingCallouts.length >= 4) return;
+    const layer = document.getElementById('float-labels-layer');
+    const el = document.createElement('div');
+    el.className = 'mech-float';
+    el.style.color = colorHex;
+    el.textContent = text;
+    layer.appendChild(el);
+    floatingCallouts.push({ el, pos: worldPos.clone(), age: 0, maxAge: 1.35 });
+}
+
+function spawnNutrientMolecule(type, isManualClick = false) {
+    if (activeNutrients.length > 36) return;
+
+    const proto = getNutrientProto(type);
+    const mesh = new THREE.Mesh(proto.geo, proto.mat);
+    const inCellView = (state.scaleMode === 'cell');
+    const parentWorld = inCellView ? cellWorld : villusWorld;
+    parentWorld.add(mesh);
+
+    // Check Physiological Pathology Rules!
+    const noAtp  = (state.condition === 'no_atp');
+    const celiac = (state.condition === 'celiac');
+
+    // If Cyanide / No ATP: Active Transport of Glucose & Amino Acids is BLOCKED (~80% bounce back off brush border; only 20% trickle by passive facilitated diffusion)!
+    // Meanwhile, Lipids (Simple Diffusion) cross 100% normally without ATP!
+    let blockedAtApical = false;
+    if (noAtp && (type === 'glucose' || type === 'amino')) {
+        blockedAtApical = Math.random() < 0.80;
+    } else if (celiac && !isManualClick) {
+        // Celiac Villous Atrophy reduces surface contact probability by ~72%!
+        blockedAtApical = Math.random() < 0.72;
+    }
+
+    let pathCurve, morphAtU = -1, calloutText = '';
+
+    if (!inCellView) {
+        // 100× 3D VILLUS PATHWAYS
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const villusHeightScale = celiac ? 0.32 : 1.0;
+        const entryY = lerp(-0.8, 1.9, Math.random()) * villusHeightScale;
+        const startX = side * (2.2 + Math.random() * 1.1);
+        const startY = entryY + 1.3 + Math.random() * 0.8;
+
+        if (blockedAtApical) {
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(startX, startY, 0.35),
+                new THREE.Vector3(side * 1.48, entryY, 0.35), // Hits microvilli border
+                new THREE.Vector3(side * 2.55, entryY + 0.95, 0.55) // Bounces back unabsorbed!
+            ]);
+            calloutText = noAtp ? '✕ No ATP (Active Transport Halted!)' : '✕ Reduced Surface Area';
+        } else if (type === 'lipid') {
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(startX, startY, 0.25),
+                new THREE.Vector3(side * 1.42, entryY, 0.18), // Simple Diffusion across brush border
+                new THREE.Vector3(side * 1.15, entryY, 0.12), // Inside Enterocyte -> Chylomicron!
+                new THREE.Vector3(0.0, entryY - 0.15, 0.05),  // Exocytosis into Central Lacteal!
+                new THREE.Vector3(0.0, -3.65, 0.05),          // Drains down Central Lacteal
+                new THREE.Vector3(2.8, -3.66, 0.05)           // Submucosal Lymphatic Trunk!
+            ]);
+            morphAtU = 0.36;
+            calloutText = isManualClick ? 'Simple Diffusion → Chylomicron → Lacteal' : '';
+        } else {
+            // Glucose, Amino Acid, or Water -> Capillary Basketwork -> Hepatic Portal Venule!
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(startX, startY, 0.32),
+                new THREE.Vector3(side * 1.42, entryY, 0.28), // Brush Border Entry
+                new THREE.Vector3(side * 0.76, entryY, 0.28), // Enters Villus Blood Capillary!
+                new THREE.Vector3(0.76, -1.55, 0.32),         // Swept down Venous Limb
+                new THREE.Vector3(0.68, -3.82, 0.85),         // Enters Hepatic Portal Venule
+                new THREE.Vector3(3.4, -3.82, 0.95)           // Flows to Liver!
+            ]);
+            if (isManualClick) {
+                calloutText = type === 'water' ? 'Osmosis → Blood Capillary' : (noAtp ? 'Passive Diffusion Only' : 'Na⁺ Active Transport → Capillary');
+            }
+        }
+    } else {
+        // 2000× BRUSH-BORDER & ENTEROCYTE MOLECULAR PATHWAYS
+        const startY = 3.35 + Math.random() * 0.45;
+        if (blockedAtApical) {
+            const sx = -0.85 + (Math.random() - 0.5) * 0.8;
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(sx, startY, 0.35),
+                new THREE.Vector3(sx, 2.25, 0.35),
+                new THREE.Vector3(sx - 0.8, 3.35, 0.45)
+            ]);
+            calloutText = noAtp ? '✕ SGLT1 Halted (No ATP for Na⁺ Pump!)' : '✕ Malabsorption';
+        } else if (type === 'lipid') {
+            // Fatty Acid Micelle -> Simple Diffusion -> Smooth ER -> Golgi -> Chylomicron -> Exocytosis -> Right Lacteal!
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0.95 + (Math.random() - 0.5) * 0.5, startY, 0.25),
+                new THREE.Vector3(0.92, 2.05, 0.20),  // Diffuses straight across Microvilli Lipid Bilayer!
+                new THREE.Vector3(0.88, 0.85, 0.16),  // Smooth ER (Triglyceride re-synthesis)
+                new THREE.Vector3(0.85, 0.02, 0.20),  // Golgi Apparatus (Chylomicron packaging!)
+                new THREE.Vector3(1.15, -1.45, 0.15), // Basolateral Exocytosis
+                new THREE.Vector3(1.65, -2.50, 0.10), // Enters Open-Flap Central Lacteal!
+                new THREE.Vector3(4.15, -2.65, 0.02)  // To Thoracic Lymphatic Duct!
+            ]);
+            morphAtU = 0.46;
+            calloutText = isManualClick ? 'Golgi Chylomicron → Exocytosis → Lacteal' : '';
+        } else {
+            // Glucose, Amino Acid, or Water -> SGLT1 / Aquaporin -> Enterocyte -> Basolateral GLUT2 -> Left Blood Capillary!
+            const chanX = type === 'water' ? 0.22 : (-0.88 + (Math.random() - 0.5) * 0.55);
+            pathCurve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(chanX, startY, 0.32),
+                new THREE.Vector3(chanX, 1.92, 0.28),  // Passes SGLT1 Symporter or Aquaporin
+                new THREE.Vector3(chanX - 0.25, 0.15, 0.22),
+                new THREE.Vector3(-1.15, -1.48, 0.18), // Basolateral Carrier Exit
+                new THREE.Vector3(-1.55, -2.40, 0.10), // Enters Fenestrated Blood Capillary!
+                new THREE.Vector3(-4.15, -2.42, 0.02)  // To Hepatic Portal Vein → Liver!
+            ]);
+            if (isManualClick) {
+                calloutText = type === 'water' ? 'Aquaporin Osmosis → Capillary' : 'SGLT1 Active Co-Transport → Capillary';
+            }
+            // Trigger golden ATP spark on Mitochondria when Active Transport fires!
+            if (!noAtp && (type === 'glucose' || type === 'amino')) {
+                mitoMeshes.forEach(m => { m.mat.emissiveIntensity = 1.35; });
+            }
+        }
+    }
+
+    activeNutrients.push({
+        type,
+        mesh,
+        parentWorld,
+        curve: pathCurve,
+        u: 0.0,
+        speed: blockedAtApical ? 0.52 : (type === 'lipid' ? 0.30 : 0.36),
+        blocked: blockedAtApical,
+        morphAtU,
+        morphed: false,
+        calloutText,
+        calloutShown: false,
+        colorHex: blockedAtApical ? '#FB7185' : proto.colorHex
+    });
+}
+
+function updateActiveNutrients(dt) {
+    for (let i = activeNutrients.length - 1; i >= 0; i--) {
+        const p = activeNutrients[i];
+        p.u += p.speed * dt;
+
+        if (p.u >= 1.0) {
+            p.parentWorld.remove(p.mesh);
+            activeNutrients.splice(i, 1);
+            if (!p.blocked) {
+                state.counts[p.type]++;
+                document.getElementById(`stat-${p.type}`).textContent = state.counts[p.type];
+            }
+            continue;
+        }
+
+        const pos = p.curve.getPointAt(p.u);
+        p.mesh.position.copy(pos);
+        p.mesh.rotation.x += dt * 2.2;
+        p.mesh.rotation.y += dt * 2.6;
+
+        // Trigger Mechanism Callout Pill when crossing Microvilli Brush Border!
+        if (!p.calloutShown && p.calloutText && p.u >= 0.24) {
+            p.calloutShown = true;
+            if (p.parentWorld.visible) {
+                spawnFloatingCallout(p.calloutText, pos, p.colorHex);
+            }
+        }
+
+        // Morph Fatty Acid Micelle into Pearly-Gold Lipoprotein Chylomicron inside Enterocyte Golgi!
+        if (p.morphAtU > 0 && !p.morphed && p.u >= p.morphAtU) {
+            p.morphed = true;
+            const chylo = getNutrientProto('chylomicron');
+            p.mesh.geometry = chylo.geo;
+            p.mesh.material = chylo.mat;
+        }
+    }
+
+    // Update Floating HTML Callout Pills
+    const viewport = document.getElementById('three-viewport');
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    const proj = new THREE.Vector3();
+
+    for (let i = floatingCallouts.length - 1; i >= 0; i--) {
+        const fc = floatingCallouts[i];
+        fc.age += dt;
+        if (fc.age >= fc.maxAge) {
+            fc.el.remove();
+            floatingCallouts.splice(i, 1);
+            continue;
+        }
+        fc.pos.y += dt * 0.35;
+        proj.copy(fc.pos).project(camera);
+        const x = (proj.x * 0.5 + 0.5) * w;
+        const y = (-proj.y * 0.5 + 0.5) * h;
+        fc.el.style.left = `${x}px`;
+        fc.el.style.top  = `${y}px`;
+        fc.el.style.opacity = String(1 - Math.pow(fc.age / fc.maxAge, 2));
+    }
+}
+
+// ============================================================================
+// 7. UI PINS, STRUCTURE INSPECTOR, PATHOLOGY MORPHING & SCALE SWITCHING
+// ============================================================================
+function setupPinsAndChips() {
+    const pinsContainer = document.getElementById('pins-container');
+    const chipsGrid = document.getElementById('structureChips');
+
+    Object.values(STRUCTURES_DB).forEach(item => {
+        // Sidebar Quick-Jump Chip
+        const chip = document.createElement('button');
+        chip.dataset.id = item.id;
+        chip.className = 'struct-chip px-2 py-1 rounded-md border border-slate-800 bg-slate-950/65 hover:bg-slate-800/80 text-[10px] font-semibold text-slate-300 transition truncate';
+        chip.textContent = item.short;
+        chip.addEventListener('click', () => selectStructure(item.id, true));
+        chipsGrid.appendChild(chip);
+
+        // 3D Viewport Pin
+        const pin = document.createElement('div');
+        pin.className = 'anat-pin';
+        pin.innerHTML = `<span class="anat-pin-tag"><span class="anat-pin-dot" style="background:${item.accent};box-shadow:0 0 6px ${item.accent}"></span>${item.short}</span>`;
+        pin.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectStructure(item.id, false);
+        });
+        pinsContainer.appendChild(pin);
+        pinRegistry.push({ item, el: pin });
+    });
+}
+
+function selectStructure(id, autoSwitchScale = false) {
+    const item = STRUCTURES_DB[id] || STRUCTURES_DB.epithelium;
+    state.selectedId = item.id;
+
+    // If user clicks an organelle chip (Mitochondria or SER/Golgi) while in 100x Villus view, smoothly switch to 2000x Cell Zoom!
+    if (autoSwitchScale) {
+        if (state.scaleMode === 'villus' && !item.pinVillus && item.pinCell) {
+            setScaleMode('cell');
+        } else if (state.scaleMode === 'cell' && !item.pinCell && item.pinVillus) {
+            setScaleMode('villus');
+        }
+    }
+
+    document.getElementById('inspAccent').style.backgroundColor = item.accent;
+    document.getElementById('inspCategory').textContent = item.category;
+    const badge = document.getElementById('inspBadge');
+    badge.textContent = item.badge;
+    badge.style.color = item.accent;
+    badge.style.borderColor = `${item.accent}55`;
+    badge.style.backgroundColor = `${item.accent}1A`;
+
+    const title = document.getElementById('inspTitle');
+    title.textContent = item.title;
+    title.style.color = item.accent;
+
+    document.getElementById('inspDesc').textContent = item.desc;
+    document.getElementById('inspExam').innerHTML = `<strong class="text-amber-300">Exam Key:</strong> ${item.exam}`;
+
+    document.querySelectorAll('.struct-chip').forEach(btn => {
+        const active = btn.dataset.id === item.id;
+        btn.className = active
+            ? 'struct-chip px-2 py-1 rounded-md border text-[10px] font-bold bg-slate-800 text-white shadow transition truncate'
+            : 'struct-chip px-2 py-1 rounded-md border border-slate-800 bg-slate-950/65 hover:bg-slate-800/80 text-[10px] font-semibold text-slate-300 transition truncate';
+        if (active) btn.style.borderColor = item.accent;
+    });
+
+    pinRegistry.forEach(p => p.el.classList.toggle('active', p.item.id === item.id));
+
+    Object.entries(structHighlightMats).forEach(([k, mats]) => {
+        mats.forEach(m => {
+            if (k === item.id) {
+                m.emissive.set(item.accent);
+                m.emissiveIntensity = 0.65;
+            } else {
+                m.emissive.setHex(m.userData.origEmissive);
+                m.emissiveIntensity = m.userData.origEmissiveInt;
+            }
+        });
+    });
+}
+
+function setScaleMode(mode) {
+    state.scaleMode = mode;
+    const isVillus = (mode === 'villus');
+
+    // Clear in-flight particles from previous scale so scene transitions cleanly
+    activeNutrients.forEach(p => p.parentWorld.remove(p.mesh));
+    activeNutrients.length = 0;
+
+    villusWorld.visible = isVillus;
+    cellWorld.visible   = !isVillus;
+
+    document.getElementById('scaleVillusBtn').className = isVillus
+        ? 'px-3 py-1.5 rounded-md text-xs font-extrabold bg-orange-500/25 text-orange-200 border border-orange-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition';
+    document.getElementById('scaleCellBtn').className = !isVillus
+        ? 'px-3 py-1.5 rounded-md text-xs font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800 transition';
+
+    document.getElementById('view-context-title').textContent = isVillus
+        ? 'Ileum Mucosa • 110° 3D Cellular Villus & Crypt Cutaway'
+        : '2000× Brush-Border Enterocyte • Organelles & Vessel Pores';
+    document.getElementById('view-context-sub').textContent = isVillus
+        ? 'Top: Intestinal Lumen (Chyme) • Base: Submucosa → Hepatic Portal & Lymph'
+        : 'Left Vessel: Fenestrated Blood Capillary • Right Vessel: Open-Flap Central Lacteal';
+
+    const preset = CAM_GOALS[mode];
+    camGoalPos.copy(preset.pos);
+    camGoalTarget.copy(preset.target);
+    camGliding = true;
+}
+
+function applyConditionVisuals() {
+    const cond = state.condition;
+    const areaBadge = document.getElementById('area-badge');
+    const note      = document.getElementById('conditionNote');
+
+    if (cond === 'no_atp') {
+        areaBadge.textContent = 'ATP: 0% (Inhibited!)';
+        areaBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        note.innerHTML = `<strong class="text-rose-400">Cyanide / No ATP:</strong> Mitochondria are inhibited! Active transport of <strong>Glucose &amp; Amino Acids</strong> stalls (~80% bounce off), whereas <strong>Fatty Acids (Simple Diffusion)</strong> still absorb freely!`;
+        selectStructure('mitochondria', false);
+    } else if (cond === 'celiac') {
+        areaBadge.textContent = 'Area: ~18% (Atrophy!)';
+        areaBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        note.innerHTML = `<strong class="text-amber-300">Celiac Villous Atrophy:</strong> Autoimmune inflammation flattens the 3D villi and blunts brush-border microvilli—slashing absorptive surface area and causing malabsorption!`;
+    } else {
+        areaBadge.textContent = 'Area: 100% (~250 m²)';
+        areaBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        note.innerHTML = `Enterocyte mitochondria supply <strong>ATP</strong> to Na⁺/K⁺ pumps, allowing 100% uptake of glucose &amp; amino acids even against steep concentration gradients.`;
+    }
+}
+
+const _projPin = new THREE.Vector3();
+function update3DPins() {
+    const viewport = document.getElementById('three-viewport');
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    const isVillus = (state.scaleMode === 'villus');
+
+    pinRegistry.forEach(({ item, el }) => {
+        const localPos = isVillus ? item.pinVillus : item.pinCell;
+        if (!state.showPins || !localPos) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        _projPin.copy(localPos);
+        if (isVillus && item.id !== 'crypt' && item.id !== 'submucosa') {
+            // Track Celiac Villous Atrophy height morphing on villus shaft pins!
+            _projPin.y = -1.95 + (_projPin.y - (-1.95)) * heroVillusMorphGroup.scale.y;
+        }
+        _projPin.project(camera);
+        if (_projPin.z > 1 || _projPin.z < -1) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        const x = (_projPin.x * 0.5 + 0.5) * w;
+        const y = (-_projPin.y * 0.5 + 0.5) * h;
+        if (x < 42 || x > w - 42 || y < 32 || y > h - 32) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        el.classList.remove('pin-hidden');
+        el.style.left = `${x}px`;
+        el.style.top  = `${y}px`;
+    });
+}
+
+function bindCanvasPicking(viewport) {
+    let downX = 0, downY = 0;
+    const mouse = new THREE.Vector2();
+
+    viewport.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    viewport.addEventListener('pointermove', e => {
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const pool = state.scaleMode === 'villus' ? pickableVillus : pickableCell;
+        viewport.style.cursor = raycaster.intersectObjects(pool, false).length > 0 ? 'pointer' : 'grab';
+    });
+    viewport.addEventListener('pointerup', e => {
+        if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const pool = state.scaleMode === 'villus' ? pickableVillus : pickableCell;
+        const hits = raycaster.intersectObjects(pool, false);
+        if (hits.length > 0 && hits[0].object.userData.structId) {
+            selectStructure(hits[0].object.userData.structId, false);
+        }
+    });
+}
+
+function bindUIControls() {
+    document.querySelectorAll('.spawn-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const type = btn.dataset.spawn;
+            // Spawn a clear burst of 3 molecules with mechanism label on first!
+            spawnNutrientMolecule(type, true);
+            setTimeout(() => spawnNutrientMolecule(type, false), 180);
+            setTimeout(() => spawnNutrientMolecule(type, false), 360);
+        });
+    });
+
+    document.getElementById('autoFeedToggle').addEventListener('change', e => {
+        state.autoFeed = e.target.checked;
+    });
+
+    document.getElementById('conditionSelect').addEventListener('change', e => {
+        state.condition = e.target.value;
+        applyConditionVisuals();
+    });
+
+    document.getElementById('scaleVillusBtn').addEventListener('click', () => setScaleMode('villus'));
+    document.getElementById('scaleCellBtn').addEventListener('click', () => setScaleMode('cell'));
+
+    document.getElementById('resetCamBtn').addEventListener('click', () => {
+        const preset = CAM_GOALS[state.scaleMode];
+        camGoalPos.copy(preset.pos);
+        camGoalTarget.copy(preset.target);
+        camGliding = true;
+    });
+
+    document.getElementById('gradientToggle').addEventListener('change', e => {
+        state.showGradient = e.target.checked;
+        villusGradientDome.visible = state.showGradient;
+        cellGradientPlane.visible  = state.showGradient;
+    });
+
+    document.getElementById('pinsToggle').addEventListener('change', e => {
+        state.showPins = e.target.checked;
+    });
+
+    const modal = document.getElementById('examModal');
+    document.getElementById('openTableBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('closeTableBtn').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+}
+
+// ============================================================================
+// 8. MAIN RENDER LOOP (VILLUS SWAYING, RBC FLOW, LACTEAL CHYLE & AUTO-FEED)
+// ============================================================================
+const clock = new THREE.Clock();
+const _rbcPos = new THREE.Vector3();
+const _rbcTan = new THREE.Vector3();
+const _upAxis = new THREE.Vector3(0, 1, 0);
+const AUTO_TYPES = ['glucose', 'amino', 'lipid', 'water'];
+let autoTypeIdx = 0;
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const elapsed = clock.getElapsedTime();
+
+    // 1. Auto-Feed Mixed Meal Monomers into Lumen
+    if (state.autoFeed) {
+        state.autoSpawnTimer += dt;
+        if (state.autoSpawnTimer >= 0.62) {
+            state.autoSpawnTimer = 0;
+            spawnNutrientMolecule(AUTO_TYPES[autoTypeIdx % 4], false);
+            autoTypeIdx++;
+        }
+    }
+
+    // 2. Smooth Celiac Villous Atrophy & Microvilli Blunting Morph!
+    const targetVillusH = (state.condition === 'celiac') ? 0.32 : 1.0;
+    heroVillusMorphGroup.scale.y = lerp(heroVillusMorphGroup.scale.y, targetVillusH, 0.08);
+    // Anchor base at y = -1.95 during vertical scaling so villus flattens downward onto crypt floor!
+    heroVillusMorphGroup.position.y = -1.95 * (1.0 - heroVillusMorphGroup.scale.y);
+    bgVilliGroup.scale.y = heroVillusMorphGroup.scale.y;
+    bgVilliGroup.position.y = heroVillusMorphGroup.position.y;
+
+    const targetMvScale = (state.condition === 'celiac') ? 0.22 : 1.0;
+    cellMicrovilliGroup.scale.y = lerp(cellMicrovilliGroup.scale.y, targetMvScale, 0.08);
+    cellMicrovilliGroup.position.y = 1.55 * (1.0 - cellMicrovilliGroup.scale.y);
+
+    // Subtle rhythmic muscularis mucosae villus swaying (pumps milky chyle down the Central Lacteal!)
+    heroVillusMorphGroup.rotation.z = Math.sin(elapsed * 1.2) * 0.022;
+
+    // 3. Mitochondria ATP Glow (Bright pulsing crimson-gold normally; dim grey-rose under Cyanide!)
+    const noAtp = (state.condition === 'no_atp');
+    mitoMeshes.forEach((m, idx) => {
+        m.cristae.visible = !noAtp;
+        if (noAtp) {
+            m.mat.color.setHex(0x64748B);
+            m.mat.emissiveIntensity = lerp(m.mat.emissiveIntensity, 0.05, 0.1);
+        } else {
+            m.mat.color.setHex(0xF43F5E);
+            const targetGlow = 0.52 + Math.sin(elapsed * 3.5 + idx) * 0.16;
+            m.mat.emissiveIntensity = lerp(m.mat.emissiveIntensity, targetGlow, 0.1);
+        }
+    });
+
+    // 4. Animate Flowing 3D Biconcave RBCs & Central Lacteal Chyle Droplets
+    if (villusWorld.visible) {
+        villusRBCs.forEach(r => {
+            r.t = (r.t + dt * 0.22) % 1.0;
+            r.curve.getPointAt(r.t, _rbcPos);
+            r.curve.getTangentAt(r.t, _rbcTan);
+            r.mesh.position.copy(_rbcPos);
+            r.mesh.quaternion.setFromUnitVectors(_upAxis, _rbcTan);
+        });
+
+        lactealChyleOrbs.forEach(orb => {
+            const p = (elapsed * 0.18 + orb.offset) % 1.0;
+            orb.mesh.position.set(orb.rx, lerp(2.35, -3.55, p), orb.rz);
+        });
+    } else {
+        cellRBCs.forEach(r => {
+            r.t = (r.t + dt * 0.28) % 1.0;
+            r.curve.getPointAt(r.t, _rbcPos);
+            r.curve.getTangentAt(r.t, _rbcTan);
+            r.mesh.position.copy(_rbcPos);
+            r.mesh.quaternion.setFromUnitVectors(_upAxis, _rbcTan);
+        });
+    }
+
+    // 5. Step All Active 3D Nutrient Molecules & Camera Glide
+    updateActiveNutrients(dt);
+
+    if (camGliding) {
+        camera.position.lerp(camGoalPos, 0.085);
+        controls.target.lerp(camGoalTarget, 0.085);
+        if (camera.position.distanceTo(camGoalPos) < 0.06) camGliding = false;
+    }
+    controls.update();
+
+    update3DPins();
+    renderer.render(scene, camera);
+}
+
+window.onload = function () {
+    initThreeScene();
+    bindUIControls();
+    applyConditionVisuals();
+    selectStructure('epithelium', false);
+    animate();
+};
+</script>
 </body>
 </html>
