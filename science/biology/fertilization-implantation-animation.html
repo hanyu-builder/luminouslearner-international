@@ -4,800 +4,2290 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
-    <meta name="description" content="Fertilization to Implantation Simulator - Interactive biology virtual lab simulating embryogenesis, cleavage, blastocyst hatching, and hormonal feedback.">
-    <title>From Fertilization to Implantation | Biology Virtual Labs</title>
-    
+    <meta name="description" content="Interactive 3D Fertilization to Implantation Simulator. Explore sperm acrosome & cortical reactions, pronuclear syngamy, 2/4/8-cell cleavage, morula compaction, blastocyst zona hatching, endometrial invasion, and hCG corpus luteum rescue.">
+    <title>3D Fertilization to Implantation Lab | Luminous Learner</title>
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
-    <!-- FontAwesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- PixiJS for High-Performance 2D WebGL Rendering -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
-    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js Core & Self-Contained OrbitControls (100% immune to school firewall / secondary CDN blocks) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'function') {
+            THREE.OrbitControls = function (object, domElement) {
+                this.object = object;
+                this.domElement = domElement || document;
+                this.enabled = true;
+                this.target = new THREE.Vector3();
+                this.enableDamping = true;
+                this.dampingFactor = 0.06;
+                this.enableZoom = true;
+                this.zoomSpeed = 1.0;
+                this.enableRotate = true;
+                this.rotateSpeed = 0.9;
+                this.enablePan = true;
+                this.panSpeed = 0.85;
+                this.minDistance = 2.5;
+                this.maxDistance = 30.0;
+                this.minPolarAngle = 0.08;
+                this.maxPolarAngle = Math.PI - 0.08;
+
+                const scope = this;
+                const listeners = {};
+                const spherical = new THREE.Spherical();
+                const sphericalDelta = new THREE.Spherical(0, 0, 0);
+                const panOffset = new THREE.Vector3();
+                const offset = new THREE.Vector3();
+                let scale = 1.0;
+                let mode = 'none';
+                const prevPointer = new THREE.Vector2();
+                let prevPinchDist = 0;
+
+                this.addEventListener = function (type, fn) {
+                    if (!listeners[type]) listeners[type] = [];
+                    if (!listeners[type].includes(fn)) listeners[type].push(fn);
+                };
+                this.dispatchEvent = function (event) {
+                    const arr = listeners[event.type];
+                    if (arr) arr.forEach(fn => fn.call(scope, event));
+                };
+
+                function applyPan(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    const dist = scope.object.position.distanceTo(scope.target);
+                    const targetDist = dist * Math.tan((scope.object.fov * 0.5) * Math.PI / 180.0);
+                    const vLeft = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 0)
+                        .multiplyScalar(-(2 * dx * targetDist / height) * scope.panSpeed);
+                    const vUp = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 1)
+                        .multiplyScalar((2 * dy * targetDist / height) * scope.panSpeed);
+                    panOffset.add(vLeft).add(vUp);
+                }
+                function applyRotate(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    sphericalDelta.theta -= (2 * Math.PI * dx / height) * scope.rotateSpeed;
+                    sphericalDelta.phi   -= (2 * Math.PI * dy / height) * scope.rotateSpeed;
+                }
+
+                function onMouseDown(e) {
+                    if (!scope.enabled) return;
+                    if (e.button === 0 && !e.shiftKey) mode = 'rotate';
+                    else if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) mode = 'pan';
+                    else return;
+                    prevPointer.set(e.clientX, e.clientY);
+                    window.addEventListener('mousemove', onMouseMove);
+                    window.addEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'start' });
+                }
+                function onMouseMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    const dx = e.clientX - prevPointer.x;
+                    const dy = e.clientY - prevPointer.y;
+                    prevPointer.set(e.clientX, e.clientY);
+                    if (mode === 'rotate') applyRotate(dx, dy);
+                    else if (mode === 'pan') applyPan(dx, dy);
+                }
+                function onMouseUp() {
+                    mode = 'none';
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onWheel(e) {
+                    if (!scope.enabled || !scope.enableZoom) return;
+                    e.preventDefault();
+                    scope.dispatchEvent({ type: 'start' });
+                    const zf = Math.pow(0.92, scope.zoomSpeed);
+                    if (e.deltaY < 0) scale *= zf; else if (e.deltaY > 0) scale /= zf;
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onTouchStart(e) {
+                    if (!scope.enabled) return;
+                    if (e.touches.length === 1) {
+                        mode = 'rotate';
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                        scope.dispatchEvent({ type: 'start' });
+                    } else if (e.touches.length === 2) {
+                        mode = 'pinch';
+                        prevPinchDist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        prevPointer.set(
+                            0.5 * (e.touches[0].pageX + e.touches[1].pageX),
+                            0.5 * (e.touches[0].pageY + e.touches[1].pageY)
+                        );
+                        scope.dispatchEvent({ type: 'start' });
+                    }
+                }
+                function onTouchMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    e.preventDefault();
+                    if (mode === 'rotate' && e.touches.length === 1) {
+                        applyRotate(e.touches[0].pageX - prevPointer.x, e.touches[0].pageY - prevPointer.y);
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                    } else if (mode === 'pinch' && e.touches.length === 2) {
+                        const dist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        if (prevPinchDist > 0 && dist > 0) scale *= (prevPinchDist / dist);
+                        prevPinchDist = dist;
+                        const mx = 0.5 * (e.touches[0].pageX + e.touches[1].pageX);
+                        const my = 0.5 * (e.touches[0].pageY + e.touches[1].pageY);
+                        applyPan(mx - prevPointer.x, my - prevPointer.y);
+                        prevPointer.set(mx, my);
+                    }
+                }
+                function onTouchEnd() { mode = 'none'; scope.dispatchEvent({ type: 'end' }); }
+
+                this.domElement.addEventListener('contextmenu', e => e.preventDefault());
+                this.domElement.addEventListener('mousedown', onMouseDown);
+                this.domElement.addEventListener('wheel', onWheel, { passive: false });
+                this.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+                this.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+                this.domElement.addEventListener('touchend', onTouchEnd);
+
+                this.update = function () {
+                    offset.copy(scope.object.position).sub(scope.target);
+                    spherical.setFromVector3(offset);
+                    const damp = scope.enableDamping ? scope.dampingFactor * 1.8 : 1.0;
+                    spherical.theta += sphericalDelta.theta * damp;
+                    spherical.phi   += sphericalDelta.phi   * damp;
+                    spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+                    spherical.makeSafe();
+                    spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius * scale));
+                    scope.target.addScaledVector(panOffset, damp);
+                    offset.setFromSpherical(spherical);
+                    scope.object.position.copy(scope.target).add(offset);
+                    scope.object.lookAt(scope.target);
+
+                    const decay = scope.enableDamping ? Math.max(0, 1 - damp) : 0;
+                    sphericalDelta.theta *= decay;
+                    sphericalDelta.phi   *= decay;
+                    panOffset.multiplyScalar(decay);
+                    scale = 1.0;
+                    scope.dispatchEvent({ type: 'change' });
+                    return false;
+                };
+                this.update();
+            };
+        }
+    </script>
+
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #0F172A; /* Deep slate */
+            background-color: #060913;
             color: #F8FAFC;
-            overflow: hidden;
-            touch-action: none;
-            user-select: none;
+            margin: 0;
         }
-        .glass-panel {
-            background: rgba(30, 41, 59, 0.85);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
         }
-        
-        /* Custom UI Scrollbar */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #64748B; }
+        .panel {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(51, 65, 85, 0.85);
+            backdrop-filter: blur(14px);
+        }
 
-        /* Custom Range Slider for Timeline */
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.8); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 1); }
+
+        /* Day Scrubber */
         input[type=range] {
             -webkit-appearance: none;
+            appearance: none;
             width: 100%;
             background: transparent;
         }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 20px;
-            width: 20px;
+            height: 19px;
+            width: 19px;
             border-radius: 50%;
-            background: #F472B6; /* Pink 400 */
+            background: #F8FAFC;
+            border: 3px solid #F472B6;
             cursor: pointer;
-            margin-top: -8px;
-            box-shadow: 0 0 15px rgba(244, 114, 182, 0.6);
-            border: 2px solid #fff;
-            transition: transform 0.1s;
+            margin-top: -6.5px;
+            box-shadow: 0 0 12px rgba(244, 114, 182, 0.8);
+            transition: transform 0.12s ease;
         }
-        input[type=range]::-webkit-slider-thumb:active {
-            transform: scale(1.2);
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
         }
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%;
-            height: 4px;
+            height: 6px;
             cursor: pointer;
-            background: linear-gradient(90deg, #38BDF8, #8B5CF6, #EC4899, #EF4444);
-            border-radius: 2px;
+            background: linear-gradient(90deg, #38BDF8 0%, #818CF8 32%, #C084FC 55%, #EC4899 76%, #10B981 100%);
+            border-radius: 999px;
+        }
+        input[type=range]::-moz-range-thumb {
+            height: 19px;
+            width: 19px;
+            border-radius: 50%;
+            background: #F8FAFC;
+            border: 3px solid #F472B6;
+            cursor: pointer;
+        }
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: linear-gradient(90deg, #38BDF8 0%, #818CF8 32%, #C084FC 55%, #EC4899 76%, #10B981 100%);
+            border-radius: 999px;
         }
         input[type=range]:focus { outline: none; }
 
-        /* Custom Toggle Switch */
-        .toggle-checkbox:checked { right: 0; border-color: #F472B6; }
-        .toggle-checkbox:checked + .toggle-label { background-color: #F472B6; }
+        /* Toggle Switch */
+        .switch-input:checked + .switch-slider {
+            background-color: #DB2777;
+            border-color: #F472B6;
+        }
+        .switch-input:checked + .switch-slider::before {
+            transform: translateX(14px);
+            background-color: #FFFFFF;
+        }
+        .switch-slider::before {
+            content: "";
+            position: absolute;
+            height: 12px;
+            width: 12px;
+            left: 2px;
+            top: 2px;
+            background-color: #94A3B8;
+            border-radius: 50%;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
 
-        /* Canvas Wrapper */
-        #pixi-container {
+        /* 3D Viewport */
+        #three-viewport {
             width: 100%;
             height: 100%;
             border-radius: 0.75rem;
-            background: radial-gradient(circle at 70% 30%, #1E293B 0%, #020617 100%);
-            box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
+            background: radial-gradient(circle at 50% 45%, #271326 0%, #101326 56%, #050711 100%);
+            box-shadow: inset 0 0 85px rgba(0, 0, 0, 0.92);
             position: relative;
             overflow: hidden;
+            cursor: grab;
+            touch-action: none;
         }
-        canvas {
-            display: block;
-            width: 100%;
-            height: 100%;
-            outline: none;
+        #three-viewport:active {
+            cursor: grabbing;
         }
-        
-        .pulse-bg {
-            animation: pulseBg 2s infinite alternate;
+
+        /* Floating 3D Clickable Pins */
+        .anat-pin {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.2s ease, transform 0.15s ease;
         }
-        @keyframes pulseBg {
-            from { background-color: rgba(236, 72, 153, 0.1); }
-            to { background-color: rgba(236, 72, 153, 0.3); }
+        .anat-pin:hover {
+            transform: translate(-50%, -50%) scale(1.08);
+            z-index: 30;
+        }
+        .anat-pin-tag {
+            background: rgba(8, 12, 24, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            backdrop-filter: blur(6px);
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: #F1F5F9;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .anat-pin.active .anat-pin-tag {
+            background: rgba(219, 39, 119, 0.94);
+            border-color: #FBCFE8;
+            color: #FFFFFF;
+            box-shadow: 0 0 16px rgba(236, 72, 153, 0.65);
+        }
+        .anat-pin-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 9999px;
+            flex-shrink: 0;
+        }
+        .pin-hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scale(0.75);
         }
     </style>
 </head>
-<body class="h-screen w-screen flex flex-col items-center justify-center p-2 sm:p-4">
+<body class="min-h-screen lg:h-screen w-full flex flex-col lg:overflow-hidden select-none">
 
-    <!-- Main Container -->
-    <div class="w-full max-w-[1450px] h-full max-h-[920px] flex flex-col gap-4 bg-[#0F172A] rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.7)] border border-slate-700/50 relative overflow-hidden">
-        
-        <!-- Header -->
-        <header class="flex justify-between items-center bg-slate-800/80 backdrop-blur rounded-xl p-4 shadow-lg border-b border-slate-700 shrink-0">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-pink-500 flex items-center gap-2">
-                    <i class="fa-solid fa-person-pregnant text-pink-500"></i> Fertilization to Implantation
-                </h1>
-                <p class="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Spatiotemporal Embryogenesis & Endocrinology</p>
+    <!-- Main Container (Guaranteed fit inside 800px iframes, 768p Chromebooks & Desktop Monitors) -->
+    <div class="w-full max-w-[1440px] mx-auto flex-1 min-h-0 flex flex-col gap-2.5 p-2.5 sm:p-3.5">
+
+        <!-- TOP HEADER: Title, Biometric Telemetry, Day Readout & Reference Table -->
+        <header class="panel rounded-xl px-4 py-2.5 flex flex-wrap justify-between items-center gap-3 shrink-0 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-pink-500/25 to-sky-500/25 border border-pink-400/40 flex items-center justify-center shrink-0">
+                    <svg class="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9"/>
+                        <circle cx="9.5" cy="10.5" r="2.5"/>
+                        <circle cx="14.5" cy="13.5" r="2.5"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-pink-200 to-emerald-300 bg-clip-text text-transparent">
+                        3D Fertilization to Implantation Lab
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-medium">Acrosome &amp; Cortical Reactions, Cleavage, Zona Hatching &amp; hCG Corpus Luteum Rescue</p>
+                </div>
             </div>
-            
-            <div class="flex gap-4 border-l border-slate-600 pl-4 items-center bg-slate-900 px-4 py-2 rounded-xl shadow-inner border border-slate-800">
-                <div class="text-right flex items-center gap-4">
-                    <div class="text-[10px] text-slate-400 uppercase tracking-widest font-bold text-right leading-tight">
-                        Development<br>Day
+
+            <!-- Live Ploidy / Cell Count / Location Telemetry + Day Counter + Reference Modal -->
+            <div class="flex flex-wrap items-center gap-2.5">
+                <div class="hidden xl:flex items-center gap-3 bg-slate-950/90 px-3.5 py-1.5 rounded-lg border border-slate-700/90">
+                    <div>
+                        <div class="text-[9px] text-slate-400 uppercase tracking-wider font-bold">Anatomical Site</div>
+                        <div id="hud-location" class="text-xs font-bold text-emerald-300">Ampulla (Oviduct)</div>
                     </div>
-                    <div class="text-3xl md:text-4xl font-black text-pink-400 tracking-widest min-w-[80px] text-right font-mono drop-shadow-[0_0_8px_rgba(244,114,182,0.5)]" id="dayDisplay">
-                        0.0
+                    <div class="w-px h-6 bg-slate-800"></div>
+                    <div>
+                        <div class="text-[9px] text-slate-400 uppercase tracking-wider font-bold">Cell Count &amp; Size</div>
+                        <div id="hud-cells" class="text-xs font-mono-tech font-bold text-sky-300">Gametes (~120 µm)</div>
+                    </div>
+                    <div class="w-px h-6 bg-slate-800"></div>
+                    <div>
+                        <div class="text-[9px] text-slate-400 uppercase tracking-wider font-bold">Stem Potency</div>
+                        <div id="hud-potency" class="text-xs font-bold text-pink-300">Haploid (n) → 2n</div>
                     </div>
                 </div>
+
+                <!-- Day Readout -->
+                <div class="bg-slate-950/90 px-3.5 py-1.5 rounded-lg border border-pink-500/40 flex items-center gap-2.5">
+                    <div class="text-[9px] text-slate-400 uppercase tracking-widest font-bold leading-tight text-right">
+                        Post-Ovulation<br>Timeline
+                    </div>
+                    <div class="text-xl sm:text-2xl font-mono-tech font-extrabold text-pink-400 min-w-[78px] text-right">
+                        Day <span id="dayDisplay">0.0</span>
+                    </div>
+                </div>
+
+                <button id="openTableBtn" class="px-3 py-2 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold border border-indigo-400/40 shadow flex items-center gap-1.5 transition">
+                    <span>📊 Day 0–9 Exam Table</span>
+                </button>
             </div>
         </header>
 
-        <!-- Main Workspace -->
-        <div class="flex flex-col lg:flex-row flex-1 gap-4 min-h-0 p-2 md:p-0 md:px-4 md:pb-4">
-            
-            <!-- Left Controls Panel -->
-            <aside class="w-full lg:w-[400px] flex flex-col gap-4 shrink-0 overflow-y-auto custom-scrollbar">
-                
-                <!-- Spatiotemporal Controls -->
-                <div class="panel rounded-xl p-5 shrink-0 shadow-lg border-t-4 border-t-pink-500">
-                    <h2 class="text-xs font-black text-white border-b border-slate-600 pb-2 mb-4 uppercase tracking-widest flex items-center gap-2">
-                        <i class="fa-solid fa-clock text-pink-400"></i> Timeline Controls
-                    </h2>
-                    
-                    <!-- Day Slider -->
-                    <div class="mb-5">
-                        <input type="range" id="timelineSlider" min="0" max="9" value="0" step="0.05">
-                        <div class="flex justify-between mt-2 text-[9px] text-slate-400 font-bold uppercase tracking-widest px-1">
-                            <span>Ampulla</span>
-                            <span>Fallopian Tube</span>
-                            <span>Uterus</span>
+        <!-- MAIN WORKSPACE -->
+        <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
+
+            <!-- LEFT SIDEBAR: Timeline Scrubber, Endocrine Scenario & Cellular Inspector -->
+            <aside class="lg:col-span-4 flex flex-col gap-2.5 lg:min-h-0 lg:overflow-y-auto custom-scrollbar pr-0.5">
+
+                <!-- 1. Spatiotemporal Timeline & Quick-Jump Stages -->
+                <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[11px] font-bold text-pink-300 uppercase tracking-wider">1. Embryogenesis Scrubber</span>
+                        <div class="flex items-center gap-1">
+                            <button id="stepBackBtn" class="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10.5px] font-bold text-slate-300 transition" title="Step back 0.5 days">
+                                −0.5d
+                            </button>
+                            <button id="playBtn" class="px-3 py-1 rounded bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white text-xs font-bold shadow flex items-center gap-1 transition">
+                                <span id="playIcon">▶</span>
+                                <span id="playText">Auto-Play</span>
+                            </button>
+                            <button id="stepFwdBtn" class="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10.5px] font-bold text-slate-300 transition" title="Step forward 0.5 days">
+                                +0.5d
+                            </button>
                         </div>
                     </div>
 
-                    <!-- Action Buttons -->
-                    <div class="space-y-3">
-                        <button id="autoPlayBtn" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold transition-colors border border-slate-500 flex justify-center items-center gap-2 shadow-md">
-                            <i class="fa-solid fa-play"></i> Auto-Play Timeline
-                        </button>
-                        <button id="implantBtn" disabled class="w-full py-3.5 bg-pink-600 disabled:bg-slate-800 text-white disabled:text-slate-500 rounded-lg font-black transition-all border border-pink-500 disabled:border-slate-700 shadow-[0_0_15px_rgba(236,72,153,0.4)] disabled:shadow-none flex justify-center items-center gap-2">
-                            <i class="fa-solid fa-anchor"></i> Trigger Implantation
-                        </button>
+                    <div class="px-0.5 mb-2">
+                        <input type="range" id="timelineSlider" min="0" max="9.5" value="0" step="0.02">
+                        <div class="flex justify-between text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-1">
+                            <span class="text-sky-400">Ampulla (D0)</span>
+                            <span class="text-indigo-400">Oviduct (D1–3)</span>
+                            <span class="text-fuchsia-400">Cavity (D5–6)</span>
+                            <span class="text-emerald-400">Uterus Wall (D7–9)</span>
+                        </div>
+                    </div>
+
+                    <!-- 7 Textbook Stage Quick-Jump Chips -->
+                    <div class="grid grid-cols-4 gap-1 pt-2 border-t border-slate-800">
+                        <button data-day="0.15" class="stage-chip py-1 px-1.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-200 border border-sky-400/50 transition truncate">D0 Sperm</button>
+                        <button data-day="0.65" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D0.7 Zygote</button>
+                        <button data-day="1.4" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D1.5 2-Cell</button>
+                        <button data-day="2.2" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D2.2 4-Cell</button>
+                        <button data-day="3.9" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D4 Morula</button>
+                        <button data-day="5.2" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D5 Blastocyst</button>
+                        <button data-day="6.25" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D6 Hatching</button>
+                        <button data-day="8.8" class="stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate">D9 Implant</button>
                     </div>
                 </div>
 
-                <!-- ENDOCRINE TELEMETRY (NEW) -->
-                <div class="panel rounded-xl p-4 shrink-0 shadow-lg border border-slate-700">
-                    <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2 border-b border-slate-700 pb-1.5">
-                        <i class="fa-solid fa-chart-line text-emerald-400"></i> Hormone Telemetry
-                    </h3>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700/50">
-                            <div class="text-[9px] text-slate-400 uppercase font-bold mb-1">hCG Level</div>
-                            <div class="flex items-baseline gap-1">
-                                <span id="hcgVal" class="text-xl font-black font-mono text-emerald-400">0</span>
-                                <span class="text-[9px] text-slate-500 font-bold">mIU/mL</span>
+                <!-- 2. Endocrine Feedback & Implantation Outcome Simulator -->
+                <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">2. Implantation &amp; Hormone Curve</span>
+                        <span id="cl-status-badge" class="text-[9.5px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            Corpus Luteum Active
+                        </span>
+                    </div>
+
+                    <!-- Physiological Scenario Toggle (Compare Normal Implantation vs. Failed Implantation!) -->
+                    <div class="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 mb-2">
+                        <button id="scenarioSuccessBtn" class="py-1 px-2 rounded text-[10.5px] font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 transition">
+                            ✓ Normal Implantation
+                        </button>
+                        <button id="scenarioFailBtn" class="py-1 px-2 rounded text-[10.5px] font-bold text-slate-400 hover:text-white border border-transparent transition" title="Simulate what happens to Progesterone & Endometrium if implantation fails!">
+                            ✕ Failed (No hCG)
+                        </button>
+                    </div>
+
+                    <!-- Live Hormone Chart (hCG & Progesterone Day 0 -> 9.5) + Digital Readouts -->
+                    <div class="flex items-center gap-2.5 bg-slate-950/90 p-2 rounded-lg border border-slate-800">
+                        <canvas id="hormone-chart" width="165" height="62" class="rounded bg-slate-950 shrink-0"></canvas>
+                        <div class="flex-1 space-y-1.5 min-w-0">
+                            <div>
+                                <div class="flex justify-between text-[10px]">
+                                    <span class="font-bold text-emerald-400">hCG</span>
+                                    <span id="hcgVal" class="font-mono-tech font-bold text-emerald-300">0 mIU/mL</span>
+                                </div>
+                                <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-0.5">
+                                    <div id="hcgBar" class="h-full bg-emerald-400 transition-all duration-150" style="width: 0%"></div>
+                                </div>
                             </div>
-                            <div class="w-full bg-slate-950 h-1.5 rounded-full mt-2 overflow-hidden border border-slate-800">
-                                <div id="hcgBar" class="bg-emerald-400 h-full w-0 transition-all duration-300"></div>
-                            </div>
-                        </div>
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700/50">
-                            <div class="text-[9px] text-slate-400 uppercase font-bold mb-1">Progesterone</div>
-                            <div class="flex items-baseline gap-1">
-                                <span id="progVal" class="text-xl font-black font-mono text-sky-400">18.5</span>
-                                <span class="text-[9px] text-slate-500 font-bold">ng/mL</span>
-                            </div>
-                            <div class="w-full bg-slate-950 h-1.5 rounded-full mt-2 overflow-hidden border border-slate-800">
-                                <div id="progBar" class="bg-sky-400 h-full w-[60%] transition-all duration-300"></div>
+                            <div>
+                                <div class="flex justify-between text-[10px]">
+                                    <span class="font-bold text-sky-400">Progesterone</span>
+                                    <span id="progVal" class="font-mono-tech font-bold text-sky-300">18.0 ng/mL</span>
+                                </div>
+                                <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-0.5">
+                                    <div id="progBar" class="h-full bg-sky-400 transition-all duration-150" style="width: 60%"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    <p id="hormoneDesc" class="text-[9px] text-slate-500 mt-2 leading-tight italic">
-                        Awaiting implantation. If hCG is not produced to rescue the corpus luteum, progesterone will fall and menstruation will occur.
-                    </p>
+                    <p id="hormoneNarrative" class="text-[10.5px] text-slate-300 mt-1.5 leading-snug"></p>
                 </div>
 
-                <!-- Visualization Settings & Info -->
-                <div class="panel rounded-xl p-5 flex-1 flex flex-col shadow-lg border-t-4 border-t-sky-500 relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-1 h-full bg-sky-500" id="infoAccent"></div>
-                    
-                    <div class="flex items-center justify-between border-b border-slate-600 pb-2 mb-3">
-                        <h3 class="text-xs font-black text-white uppercase tracking-widest">Morphology</h3>
-                        
-                        <!-- Cross Section Toggle -->
-                        <div class="flex items-center bg-slate-900 px-2 py-1 rounded border border-slate-700">
-                            <span class="text-[9px] font-bold text-slate-400 mr-2 uppercase tracking-wider" id="crossSectionLabel">Surface View</span>
-                            <div class="relative inline-block w-8 align-middle select-none">
-                                <input type="checkbox" id="crossSectionToggle" class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 appearance-none cursor-pointer z-10"/>
-                                <label for="crossSectionToggle" class="toggle-label block overflow-hidden h-4 rounded-full bg-slate-600 cursor-pointer transition-colors"></label>
-                            </div>
-                        </div>
+                <!-- 3. Stage & 3D Cellular Structure Inspector -->
+                <div class="panel rounded-xl p-3.5 flex-1 flex flex-col min-h-[215px] relative overflow-hidden shadow-md">
+                    <div id="inspAccent" class="absolute top-0 left-0 w-1 h-full bg-sky-500 transition-colors"></div>
+
+                    <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                        <span id="inspSubtitle" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Stage Overview</span>
+                        <span id="inspPotency" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                            Totipotent (2n)
+                        </span>
                     </div>
-                    
-                    <div class="flex-1 overflow-y-auto pr-1 mt-1 custom-scrollbar">
-                        <div class="flex justify-between items-start mb-1">
-                            <h4 id="stageTitle" class="text-lg font-black text-sky-400">Zygote (Day 0)</h4>
-                            <span id="potencyBadge" class="bg-sky-950 text-sky-300 border border-sky-800 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest mt-1">Totipotent</span>
-                        </div>
-                        <p id="stageDesc" class="text-xs text-slate-300 leading-relaxed mb-4">
-                            Fertilization occurs in the ampulla of the fallopian tube. The sperm and egg pronuclei fuse to form a single diploid cell called a zygote.
-                        </p>
-                        
-                        <div class="bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 mt-auto">
-                            <h5 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-800 pb-1">Cellular Anatomy</h5>
-                            <ul id="anatomyList" class="text-[10px] space-y-2 font-mono font-bold text-slate-300">
-                                <!-- Injected via JS -->
-                            </ul>
-                        </div>
+
+                    <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col">
+                        <h3 id="stageTitle" class="text-sm sm:text-base font-extrabold text-sky-300 mb-1">
+                            Fertilization &amp; Cortical Reaction (Day 0)
+                        </h3>
+                        <p id="stageDesc" class="text-xs text-slate-300 leading-relaxed mb-2.5"></p>
+
+                        <div id="examTipBox" class="mt-auto bg-slate-950/85 border border-slate-700/80 rounded-lg p-2.5 text-[11px] text-amber-200/95 leading-snug"></div>
                     </div>
                 </div>
             </aside>
 
-            <!-- Center Visual Canvas Area -->
-            <main class="flex-1 flex flex-col panel rounded-xl p-1 relative shadow-2xl">
-                <div id="pixi-container">
-                    <!-- PixiJS Injects Canvas Here -->
-                </div>
-                
-                <!-- Zoom overlay indicator -->
-                <div class="absolute top-4 left-4 bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-xs text-slate-300 shadow-xl font-bold flex flex-col gap-1 pointer-events-none backdrop-blur-sm">
-                    <span class="text-[9px] uppercase tracking-widest text-slate-500 border-b border-slate-700 pb-1">Microscope Telemetry</span>
-                    <span class="flex items-center gap-2"><i class="fa-solid fa-magnifying-glass text-sky-400"></i> View: <span class="text-pink-400">400x Mag Tracking</span></span>
-                    <span class="flex items-center gap-2"><i class="fa-solid fa-location-dot text-emerald-400"></i> Loc: <span id="locDisplay" class="text-emerald-300">Fallopian Tube</span></span>
+            <!-- RIGHT 3D DUAL-SCALE VIEWPORT -->
+            <section class="lg:col-span-8 panel rounded-xl p-2 flex flex-col min-h-[500px] sm:min-h-[560px] lg:min-h-0 relative shadow-xl">
+
+                <!-- Top Viewport Toolbar: Scale Switcher (400x Cellular 3D vs 3D Organ Tract) & Cutaway Controls -->
+                <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800 flex flex-wrap items-center justify-between gap-2 mb-2 shrink-0 z-20">
+                    <!-- Scale Mode Switcher -->
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <button id="viewMicroBtn" class="px-3 py-1 rounded-md text-xs font-extrabold bg-pink-500/25 text-pink-200 border border-pink-400/50 shadow transition">
+                            🔬 400× Cellular 3D
+                        </button>
+                        <button id="viewMacroBtn" class="px-3 py-1 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition" title="View full 3D Ovary, Corpus Luteum, Fallopian Tube & Uterus">
+                            🧬 3D Organ Tract &amp; Ovary
+                        </button>
+                        <button id="resetCamBtn" class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition">
+                            Reset Angle
+                        </button>
+                    </div>
+
+                    <!-- 3D Equatorial Cross-Section Slicer & Pins Toggles -->
+                    <div class="flex items-center gap-3 text-[11px]">
+                        <label class="flex items-center gap-1.5 cursor-pointer" title="Slice open the 3D Zona Pellucida, Blastocyst & Endometrium to inspect Pronuclei, ICM, Blastocoel & Bilaminar Disc!">
+                            <span class="font-bold text-pink-300">🔪 3D Cutaway</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="cutawayToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+
+                        <label class="flex items-center gap-1.5 pl-2.5 border-l border-slate-800 cursor-pointer">
+                            <span class="font-semibold text-slate-300">3D Pins</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="pinsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+                    </div>
                 </div>
 
-                <div class="absolute bottom-4 right-4 bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-700 text-[10px] text-slate-400 shadow-xl pointer-events-none backdrop-blur-sm">
-                    Toggle <strong class="text-pink-400">Cross-Section</strong> to view internal cellular structures.
+                <!-- 3D WebGL Canvas Container -->
+                <div id="three-viewport" class="flex-1 min-h-0">
+                    <!-- Dynamic Clickable 3D Anatomical Pins -->
+                    <div id="pins-container" class="absolute inset-0 overflow-hidden pointer-events-none z-20"></div>
+
+                    <!-- Live Picture-in-Picture Spatiotemporal Tract Tracker (Top-Left Overlay in 400x Mode!) -->
+                    <div id="pip-tract-card" class="absolute top-3 left-3 bg-slate-950/88 backdrop-blur-md p-2.5 rounded-xl border border-slate-700/80 shadow-xl z-20 w-[188px] cursor-pointer hover:border-pink-400/60 transition" title="Click to switch to Full 3D Organ Tract View">
+                        <div class="flex items-center justify-between text-[9.5px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                            <span>Tract Position</span>
+                            <span class="text-pink-400">3D Map ↗</span>
+                        </div>
+                        <canvas id="pip-tract-canvas" width="166" height="68" class="w-full h-auto rounded bg-slate-900/80 border border-slate-800"></canvas>
+                        <div id="pip-loc-label" class="text-[10px] font-semibold text-emerald-300 mt-1 truncate text-center">
+                            Ampulla of Fallopian Tube
+                        </div>
+                    </div>
+
+                    <!-- Fixed Zona Volume Pedagogical Callout (Top-Right Badge) -->
+                    <div id="volume-badge" class="absolute top-3 right-3 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-sky-500/35 text-[10.5px] text-slate-200 pointer-events-none z-15 hidden sm:block shadow-lg">
+                        <span class="text-sky-300 font-bold">Outer Ø:</span>
+                        <span id="hud-diameter" class="font-mono-tech font-bold text-white">120 µm</span>
+                        <span id="hud-zona-state" class="text-slate-400 ml-1">(Zona Intact)</span>
+                    </div>
+
+                    <!-- Bottom Interactive Hint -->
+                    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-slate-700/80 text-[11px] text-slate-300 pointer-events-none flex items-center gap-2 shadow-lg z-15 whitespace-nowrap">
+                        <span class="w-2 h-2 rounded-full bg-pink-400 inline-block"></span>
+                        <span>Drag to Orbit 360° &bull; Click Any 3D Cell Layer or Pin &bull; Compare <strong>Normal vs. Failed Implantation</strong></span>
+                    </div>
                 </div>
-            </main>
+            </section>
+        </div>
+    </div>
+
+    <!-- ==================================================================== -->
+    <!-- MODAL: DAY 0 TO DAY 9 EMBRYOGENESIS, POTENCY & ENDOCRINE EXAM TABLE  -->
+    <!-- ==================================================================== -->
+    <div id="examModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6">
+        <div class="panel rounded-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-600">
+            <div class="px-5 py-3.5 bg-slate-900/95 border-b border-slate-700 flex items-center justify-between shrink-0">
+                <div>
+                    <h2 class="text-base sm:text-lg font-extrabold text-white">From Fertilization to Implantation: Complete Exam Reference</h2>
+                    <p class="text-xs text-slate-400">Click any row below to jump directly to that developmental day in the 3D microscope.</p>
+                </div>
+                <button id="closeTableBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition">
+                    ✕ Close
+                </button>
+            </div>
+
+            <div class="p-4 sm:p-5 overflow-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-[10.5px] uppercase tracking-wider text-slate-400 bg-slate-900/60">
+                            <th class="p-2.5 font-bold">Day &amp; Stage</th>
+                            <th class="p-2.5 font-bold">Anatomical Location</th>
+                            <th class="p-2.5 font-bold">Cells &amp; Ploidy</th>
+                            <th class="p-2.5 font-bold">Stem Cell Potency</th>
+                            <th class="p-2.5 font-bold">Zona Pellucida &amp; Key Biological Mechanism</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800 text-slate-200">
+                        <tr data-jump-day="0.18" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-sky-300">Day 0.0–0.4: Fertilization</td>
+                            <td class="p-2.5">Ampulla of Fallopian Tube</td>
+                            <td class="p-2.5 font-mono-tech">n + n → 2n</td>
+                            <td class="p-2.5 text-slate-400">Gametes → Zygote</td>
+                            <td class="p-2.5">Acrosomal enzymes digest path through Zona; <strong>Cortical Reaction</strong> hardens Zona to block polyspermy.</td>
+                        </tr>
+                        <tr data-jump-day="0.72" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-cyan-300">Day 0.5–0.9: Zygote (Syngamy)</td>
+                            <td class="p-2.5">Ampulla</td>
+                            <td class="p-2.5 font-mono-tech">1 cell (2n = 46)</td>
+                            <td class="p-2.5 font-bold text-sky-300">Totipotent</td>
+                            <td class="p-2.5">Intact (~120 µm). Male &amp; female pronuclei fuse chromosomes; 2nd polar body extruded after Meiosis II completes.</td>
+                        </tr>
+                        <tr data-jump-day="2.2" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-indigo-300">Days 1–3: Cleavage (2 → 4 → 8)</td>
+                            <td class="p-2.5">Fallopian Tube (Cilia + Peristalsis)</td>
+                            <td class="p-2.5 font-mono-tech">2 → 4 → 8 cells (2n)</td>
+                            <td class="p-2.5 font-bold text-sky-300">Totipotent</td>
+                            <td class="p-2.5"><strong>Intact (Constant total volume!):</strong> Mitosis without cell growth shrinks blastomere size; prevents ectopic tubal implantation!</td>
+                        </tr>
+                        <tr data-jump-day="4.0" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-violet-300">Day 4: Compacted Morula</td>
+                            <td class="p-2.5">Uterotubal Junction → Uterus</td>
+                            <td class="p-2.5 font-mono-tech">16 – 32 cells (2n)</td>
+                            <td class="p-2.5 font-bold text-violet-300">Totipotent → Lineage Split</td>
+                            <td class="p-2.5">Intact but thinning. Tight junctions compact solid mulberry ball; outer vs. inner cell polarity established.</td>
+                        </tr>
+                        <tr data-jump-day="5.2" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-fuchsia-300">Day 5: Early Blastocyst</td>
+                            <td class="p-2.5">Uterine Cavity</td>
+                            <td class="p-2.5 font-mono-tech">~70–100 cells (2n)</td>
+                            <td class="p-2.5 font-bold text-pink-300">ICM = Pluripotent</td>
+                            <td class="p-2.5">Osmotic fluid creates <strong>Blastocoel</strong>; differentiates outer <strong>Trophoblast</strong> (placenta) &amp; <strong>Inner Cell Mass</strong> (embryo).</td>
+                        </tr>
+                        <tr data-jump-day="6.25" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-pink-300">Day 6: Zona Hatching</td>
+                            <td class="p-2.5">Uterine Cavity</td>
+                            <td class="p-2.5 font-mono-tech">~120+ cells (2n)</td>
+                            <td class="p-2.5 font-bold text-pink-300">ICM = Pluripotent</td>
+                            <td class="p-2.5"><strong>Breached &amp; Shed!</strong> Proteases digest hole in Zona; blastocyst squeezes out so sticky trophoblast can touch endometrium.</td>
+                        </tr>
+                        <tr data-jump-day="8.8" class="hover:bg-slate-800/70 cursor-pointer transition">
+                            <td class="p-2.5 font-bold text-emerald-300">Days 7–9: Implantation &amp; hCG</td>
+                            <td class="p-2.5">Maternal Endometrial Wall</td>
+                            <td class="p-2.5 font-mono-tech">Bilaminar Disc (2n)</td>
+                            <td class="p-2.5 font-bold text-emerald-300">Pluripotent → Multipotent</td>
+                            <td class="p-2.5"><strong>Syncytiotrophoblast</strong> invades endometrium &amp; secretes <strong>hCG</strong> → rescues ovarian <strong>Corpus Luteum</strong> to sustain Progesterone!</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
 <script>
 /**
- * FERTILIZATION TO IMPLANTATION SIMULATOR
- * Pedagogically Upgraded: Features distinct cleavage geometry (2, 4, 8 cells), 
- * Hatching animation, and an interactive Endocrine (hCG) tracking dashboard.
+ * ============================================================================
+ * LUMINOUS LEARNER — 3D FERTILIZATION TO IMPLANTATION ENGINE
+ * ============================================================================
+ * Visual & Pedagogical Architecture:
+ * 1. 400× 3D Cellular Microscope World (`microWorld`):
+ *    - Glassy Fresnel 3D Zona Pellucida that physically breaches and opens at
+ *      Day 5.8–6.8 while the 3D Blastocyst squeezes out in an hourglass curve!
+ *    - Day 0 Fertilization: Corona Radiata cells, 8 flagellating 3D spermatozoa,
+ *      acrosomal penetration, 3D Cortical Granule Polyspermy Block wave, Polar
+ *      Bodies, and Male + Female Pronuclei with astral rays fusing in Syngamy!
+ *    - Deterministic, zero-jitter 3D Cleavage Blastomeres (2-cell, 4-cell,
+ *      8-cell, 26-cell compacted Morula) proving constant total volume inside
+ *      the Zona Pellucida!
+ *    - 3D Blastocyst (Trophoblast shell + sapphire Blastocoel + pluripotent
+ *      Inner Cell Mass) with real-time 3D Cutaway Slicer!
+ *    - Lush 3D Maternal Endometrial Wall (columnar epithelium, uterine glands,
+ *      pulsing spiral capillaries) invaded by 3D Syncytiotrophoblast roots
+ *      secreting glowing emerald hCG molecules + Bilaminar Disc (Epiblast & Hypoblast)!
+ * 2. 3D Pelvic Organ Tract World (`macroWorld`) + Live PiP Mini-Map:
+ *    - 3D Ovary with Follicle -> Golden Corpus Luteum (rescued by hCG or
+ *      degenerating into white Corpus Albicans in Failed Implantation mode!),
+ *      Fimbriae, Fallopian Tube, and Coronal Cutaway Uterus!
  */
 
-// --- Global State ---
-const state = {
-    day: 0.0,
-    isPlaying: false,
-    isCrossSection: false,
-    maxDays: 9.5,
-    playSpeed: 0.015, // days per frame
-    hasImplanted: false
-};
-
-// --- DOM Elements ---
-const timelineSlider = document.getElementById('timelineSlider');
-const dayDisplay = document.getElementById('dayDisplay');
-const autoPlayBtn = document.getElementById('autoPlayBtn');
-const implantBtn = document.getElementById('implantBtn');
-const crossSectionToggle = document.getElementById('crossSectionToggle');
-const crossSectionLabel = document.getElementById('crossSectionLabel');
-
-const stageTitle = document.getElementById('stageTitle');
-const stageDesc = document.getElementById('stageDesc');
-const potencyBadge = document.getElementById('potencyBadge');
-const anatomyList = document.getElementById('anatomyList');
-const infoAccent = document.getElementById('infoAccent');
-const locDisplay = document.getElementById('locDisplay');
-
-const hcgVal = document.getElementById('hcgVal');
-const hcgBar = document.getElementById('hcgBar');
-const progVal = document.getElementById('progVal');
-const progBar = document.getElementById('progBar');
-const hormoneDesc = document.getElementById('hormoneDesc');
-
-const container = document.getElementById('pixi-container');
-
-// --- Biological Stage Data ---
-const stagesData = [
-    { 
-        dayLimit: 1.0, 
-        title: "Zygote (Day 0)", loc: "Ampulla of Fallopian Tube", potency: "Totipotent", color: "#38bdf8",
-        desc: "Fertilization occurs. The male and female pronuclei fuse to form a single diploid cell (zygote).",
-        anatomy: [
-            { c: "bg-sky-400", t: "Zona Pellucida (Protective Glycoprotein Shell)" },
-            { c: "bg-indigo-400", t: "Single Diploid Cell (Zygote)" },
-            { c: "bg-slate-300", t: "Polar Body" }
-        ]
+// ============================================================================
+// 1. STAGE TIMELINE & CLICKABLE CELLULAR STRUCTURE DATABASE
+// ============================================================================
+const STAGES = [
+    {
+        maxDay: 0.45,
+        title: 'Fertilization & Cortical Reaction (Day 0.0–0.4)',
+        loc: 'Ampulla of Fallopian Tube',
+        cells: 'n + n Gametes',
+        diameter: '120 µm',
+        zonaState: '(Cortical Block!)',
+        potency: 'Haploid (n = 23)',
+        accent: '#38BDF8',
+        desc: 'Capacitated sperm release acrosomal enzymes to digest a path through the Corona Radiata and Zona Pellucida. The moment one sperm fuses with the oocyte membrane, cortical granules exocytose enzymes that harden the Zona Pellucida (Slow Block to Polyspermy) and trigger completion of Meiosis II.',
+        exam: 'Why is Polyspermy fatal? Entry of 2 sperm would create a triploid (3n = 69) zygote with abnormal chromosomal segregation!'
     },
-    { 
-        dayLimit: 3.0, 
-        title: "Cleavage (Days 1-3)", loc: "Fallopian Tube", potency: "Totipotent", color: "#6366f1",
-        desc: "The zygote undergoes rapid mitotic divisions called cleavage (2-cell, 4-cell, 8-cell). The cells (blastomeres) divide within the fixed volume of the Zona Pellucida.",
-        anatomy: [
-            { c: "bg-sky-400", t: "Zona Pellucida (Intact)" },
-            { c: "bg-indigo-500", t: "Blastomeres (Dividing without growth)" }
-        ]
+    {
+        maxDay: 0.98,
+        title: 'Pronuclear Migration & Zygote Syngamy (Day 0.5–0.9)',
+        loc: 'Ampulla of Fallopian Tube',
+        cells: '1 Diploid Zygote',
+        diameter: '120 µm',
+        zonaState: '(Zona Intact)',
+        potency: 'Totipotent (2n = 46)',
+        accent: '#22D3EE',
+        desc: 'Inside the fertilized ovum, sperm chromatin decondenses into the Male Pronucleus (n = 23) while the ovum forms the Female Pronucleus (n = 23) alongside two tiny Polar Bodies. Microtubule asters draw both pronuclei to the center where membranes dissolve (syngamy), restoring the diploid genome.',
+        exam: 'All mitochondrial DNA in the zygote comes exclusively from the maternal ovum—sperm midpiece mitochondria are tagged for destruction!'
     },
-    { 
-        dayLimit: 4.5, 
-        title: "Morula (Day 4)", loc: "Isthmus / Uterine Entry", potency: "Totipotent", color: "#8b5cf6",
-        desc: "Compaction occurs. The embryo is now a tightly packed solid ball of 16-32 cells resembling a mulberry.",
-        anatomy: [
-            { c: "bg-sky-400", t: "Zona Pellucida (Thinning)" },
-            { c: "bg-purple-500", t: "Compacted Blastomeres" }
-        ]
+    {
+        maxDay: 1.80,
+        title: 'First Mitotic Cleavage: 2-Cell Stage (Day 1.5)',
+        loc: 'Ampulla → Isthmus (Oviduct)',
+        cells: '2 Blastomeres (2n)',
+        diameter: '120 µm',
+        zonaState: '(Constant Volume)',
+        potency: 'Totipotent',
+        accent: '#6366F1',
+        desc: ' ~30 hours after fertilization, the zygote completes its first mitotic cleavage division into two equal diploid cells called blastomeres, while beating cilia and gentle smooth muscle peristalsis sweep it along the fallopian tube toward the uterus.',
+        exam: 'If these 2 totipotent blastomeres separate completely right now, each can form both fetus AND its own placenta (monozygotic dichorionic twins)!'
     },
-    { 
-        dayLimit: 5.8, 
-        title: "Early Blastocyst (Day 5)", loc: "Uterine Cavity", potency: "Pluripotent", color: "#d946ef",
-        desc: "Cells differentiate. The outer layer becomes the Trophoblast (forms placenta). The inner cluster becomes the Inner Cell Mass (ICM - forms fetus). Fluid pumps in to form the Blastocoel.",
-        anatomy: [
-            { c: "bg-sky-400", t: "Zona Pellucida" },
-            { c: "bg-fuchsia-400", t: "Trophoblast (Outer Layer)" },
-            { c: "bg-pink-400", t: "Inner Cell Mass (Embryoblast)" },
-            { c: "bg-blue-900", t: "Blastocoel (Fluid Cavity)" }
-        ]
+    {
+        maxDay: 2.65,
+        title: '4-Cell Cleavage Stage (Day 2.2)',
+        loc: 'Mid-Fallopian Tube',
+        cells: '4 Blastomeres (2n)',
+        diameter: '120 µm',
+        zonaState: '(Constant Volume)',
+        potency: 'Totipotent',
+        accent: '#818CF8',
+        desc: 'Rapid mitotic cell cycles skip the G₁/G₂ growth phases (DNA replication S-phase alternates directly with M-phase). Notice how each blastomere halves in cytoplasmic volume while the rigid Zona Pellucida keeps total embryo diameter fixed at ~120 µm!',
+        exam: 'Why MUST the Zona Pellucida stay intact in the Fallopian tube? It keeps the embryo non-sticky so it cannot implant prematurely (ectopic tubal pregnancy)!'
     },
-    { 
-        dayLimit: 6.9, 
-        title: "Hatching (Day 6)", loc: "Uterine Cavity", potency: "Pluripotent", color: "#ec4899",
-        desc: "Enzymes digest the Zona Pellucida. The blastocyst dynamically squeezes out (hatches) to expose the sticky trophoblast cells needed for implantation.",
-        anatomy: [
-            { c: "bg-slate-500", t: "Shed Zona Pellucida (Degrading)" },
-            { c: "bg-fuchsia-500", t: "Exposed Trophoblast" },
-            { c: "bg-pink-400", t: "Inner Cell Mass" }
-        ]
+    {
+        maxDay: 3.50,
+        title: '8-Cell Uncompacted Stage (Day 3.0)',
+        loc: 'Isthmus of Fallopian Tube',
+        cells: '8 Blastomeres (2n)',
+        diameter: '120 µm',
+        zonaState: '(Zona Intact)',
+        potency: 'Totipotent',
+        accent: '#A78BFA',
+        desc: 'Eight rounded blastomeres sit loosely inside the Zona Pellucida with distinct intercellular spaces. Embryonic genome activation switches on transcription of the embryo’s own DNA (including cell-adhesion proteins like E-cadherin).',
+        exam: 'At the 8-cell stage, individual blastomeres are still totipotent—one cell can be biopsied in IVF pre-implantation genetic testing (PGT) without harming development.'
     },
-    { 
-        dayLimit: 10.0, 
-        title: "Implantation (Days 7-9)", loc: "Maternal Endometrium", potency: "Pluripotent", color: "#ef4444",
-        desc: "The hatched blastocyst burrows into the vascular endometrium. The trophoblast differentiates into the Syncytiotrophoblast, invading maternal tissue and secreting hCG.",
-        anatomy: [
-            { c: "bg-rose-500", t: "Syncytiotrophoblast (Invading Roots)" },
-            { c: "bg-pink-500", t: "Bilaminar Disc (Epiblast/Hypoblast)" },
-            { c: "bg-red-600", t: "Maternal Endometrial Tissue" }
-        ]
+    {
+        maxDay: 4.60,
+        title: 'Compacted Morula (Day 4.0)',
+        loc: 'Uterotubal Entry → Uterine Cavity',
+        cells: '16–32 Cells (Morula)',
+        diameter: '125 µm',
+        zonaState: '(Zona Thinning)',
+        potency: 'Totipotent → Polarized',
+        accent: '#C084FC',
+        desc: 'Compaction pulls outer cells tightly together via tight junctions into a smooth mulberry-shaped sphere (morula) as it enters the uterine cavity. Inside cells vs. outside cells experience different microenvironments—initiating the very first cell-fate decision!',
+        exam: 'Outer polarized cells commit to becoming Trophoblast (extra-embryonic placenta), while inner apolar cells commit to becoming the Inner Cell Mass (embryo proper).'
+    },
+    {
+        maxDay: 5.80,
+        title: 'Cavitation: Early Blastocyst (Day 5.0)',
+        loc: 'Floating in Uterine Cavity',
+        cells: '~80–100 Cells',
+        diameter: '145 µm',
+        zonaState: '(Stretched Thin)',
+        potency: 'ICM = Pluripotent',
+        accent: '#E879F9',
+        desc: 'Outer trophoblast cells actively pump Na⁺ ions inward; water follows osmotically through aquaporins to carve out the fluid-filled Blastocoel cavity, pushing the pluripotent Inner Cell Mass (embryoblast) to one side (the embryonic pole).',
+        exam: 'Stem Cell Distinction: Embryonic stem cells harvested from the Inner Cell Mass are PLURIPOTENT (form all 3 body germ layers, but NOT placental trophoblast)!'
+    },
+    {
+        maxDay: 6.85,
+        title: 'Zona Pellucida Hatching! (Day 6.0–6.8)',
+        loc: 'Uterine Cavity (Near Fundus)',
+        cells: '~120+ Cells',
+        diameter: '180 µm',
+        zonaState: '(Hatched & Shed!)',
+        potency: 'ICM = Pluripotent',
+        accent: '#EC4899',
+        desc: 'Trophoblast cells secrete trypsin-like proteases (strypsin) that digest an opening in the thinned Zona Pellucida. Rhythmic expansion-contraction pulses squeeze the blastocyst in a figure-8 shape completely out of its glycoprotein shell!',
+        exam: 'Without Zona Hatching, exposed trophoblast cell-surface integrins could never touch the maternal uterine epithelium—implantation would be impossible!'
+    },
+    {
+        maxDay: 7.55,
+        title: 'Apposition & Endometrial Adhesion (Day 7.0–7.5)',
+        loc: 'Upper Posterior Endometrium',
+        cells: 'Hatched Blastocyst',
+        diameter: '210 µm',
+        zonaState: '(Shed)',
+        potency: 'Pluripotent',
+        accent: '#F43F5E',
+        desc: 'The hatched blastocyst orientates so its Embryonic Pole (Inner Cell Mass side) faces the receptive, progesterone-primed maternal endometrial epithelium. Pinopodes and L-selectin/integrin molecules lock the trophoblast onto the uterine wall.',
+        exam: 'Notice the Progesterone curve: around Day 7, the ovarian Corpus Luteum begins aging—it urgently needs an hCG rescue signal from implantation!'
+    },
+    {
+        maxDay: 10.0,
+        title: 'Implantation, Bilaminar Disc & hCG Rescue (Days 7.5–9.5)',
+        loc: 'Embedded in Maternal Endometrium',
+        cells: 'Bilaminar Disc + Trophoblast',
+        diameter: '~300 µm',
+        zonaState: '(Implanted)',
+        potency: 'Epiblast / Hypoblast',
+        accent: '#10B981',
+        desc: 'Trophoblast cells at the contact pole fuse into multinucleated Syncytiotrophoblast projections that enzymatically burrow into the vascular endometrium and secrete hCG into maternal spiral capillaries! Meanwhile, the ICM splits into the Bilaminar Disc (dorsal Epiblast + ventral Hypoblast).',
+        exam: 'hCG enters maternal blood → rescues the ovarian Corpus Luteum from degenerating → keeps Progesterone high so menstruation is prevented (basis of pregnancy tests)!'
     }
 ];
 
-// --- PixiJS Setup ---
-const app = new PIXI.Application({
-    resizeTo: container,
-    transparent: true,
-    antialias: true,
-    backgroundAlpha: 0 
-});
-container.appendChild(app.view);
-
-const world = new PIXI.Container();
-app.stage.addChild(world);
-
-let CW = app.screen.width;
-let CH = app.screen.height;
-
-window.addEventListener('resize', () => {
-    CW = app.screen.width;
-    CH = app.screen.height;
-    drawAnatomyBackground(); 
-});
-
-// --- Environmental Graphics (The Reproductive Tract) ---
-const backgroundLayer = new PIXI.Container();
-world.addChild(backgroundLayer);
-let bgGraphics = new PIXI.Graphics();
-backgroundLayer.addChild(bgGraphics);
-
-function drawAnatomyBackground() {
-    bgGraphics.clear();
-    const w = CW; const h = CH;
-
-    // 1. Ovary (Left)
-    bgGraphics.beginFill(0x831843, 0.5); // Pink-900
-    bgGraphics.lineStyle(4, 0x9D174D, 0.8);
-    bgGraphics.drawEllipse(w * 0.1, h * 0.8, w * 0.08, h * 0.15);
-    bgGraphics.endFill();
-    
-    // Maturing Follicle in Ovary
-    bgGraphics.beginFill(0xBE185D, 0.6);
-    bgGraphics.drawCircle(w * 0.12, h * 0.72, w * 0.02);
-    bgGraphics.endFill();
-
-    // 2. Fallopian Tube (Curved path)
-    bgGraphics.lineStyle(w * 0.1, 0x9D174D, 0.4); // Outer tissue
-    bgGraphics.moveTo(w * 0.1, h * 0.6); 
-    bgGraphics.bezierCurveTo(w * 0.1, h * 0.2, w * 0.4, h * 0.15, w * 0.65, h * 0.35);
-    
-    // Lumen (Inner pathway)
-    bgGraphics.lineStyle(w * 0.06, 0x831843, 0.6);
-    bgGraphics.moveTo(w * 0.1, h * 0.6);
-    bgGraphics.bezierCurveTo(w * 0.1, h * 0.2, w * 0.4, h * 0.15, w * 0.65, h * 0.35);
-
-    // 3. Uterus Cavity & Endometrium (Right side)
-    bgGraphics.beginFill(0x9F1239, 0.6); // Rose-800 Endometrium
-    bgGraphics.lineStyle(0);
-    bgGraphics.moveTo(w * 0.6, h * 0.3);
-    bgGraphics.quadraticCurveTo(w * 0.8, h * 0.25, w * 0.95, h * 0.1);
-    bgGraphics.lineTo(w, h * 0.1);
-    bgGraphics.lineTo(w, h);
-    bgGraphics.lineTo(w * 0.6, h);
-    bgGraphics.quadraticCurveTo(w * 0.85, h * 0.7, w * 0.6, h * 0.3); 
-    bgGraphics.endFill();
-    
-    // Blood vessels in endometrium (stylized lines)
-    bgGraphics.lineStyle(3, 0xE11D48, 0.5); 
-    for(let i=0; i<12; i++) {
-        bgGraphics.moveTo(w * 0.85 + Math.random()*w*0.1, h * 0.15 + i*h*0.07);
-        bgGraphics.quadraticCurveTo(w * 0.8, h * 0.2 + i*h*0.07, w * 0.75 + Math.random()*w*0.05, h * 0.2 + i*h*0.07 + Math.random()*20);
+const CELL_STRUCTURES = {
+    zona: {
+        title: 'Zona Pellucida (Glycoprotein Shell)',
+        potency: 'Acellular Matrix (ZP1–ZP4)',
+        accent: '#38BDF8',
+        desc: 'Translucent extracellular glycoprotein coat secreted around the growing oocyte. Binds species-specific sperm receptors (ZP3), hardens during the cortical reaction to prevent polyspermy, keeps blastomeres together during cleavage, and prevents premature tubal implantation until Day 6 hatching.',
+        exam: 'Two Exam Roles of Zona Pellucida: 1) Blocks polyspermy at Day 0; 2) Prevents ectopic implantation in the Fallopian tube during Days 1–5!'
+    },
+    sperm: {
+        title: 'Capacitated Spermatozoa & Acrosome',
+        potency: 'Haploid Male Gamete (n = 23)',
+        accent: '#7DD3FC',
+        desc: 'Equipped with a flagellum powered by midpiece mitochondria and an enzyme-filled cap (Acrosome) over its haploid nucleus. Acrosin and hyaluronidase digest a narrow path through Corona Radiata granulosa cells and the Zona Pellucida.',
+        exam: 'Hundreds of millions of sperm are deposited, only ~200 reach the ampulla, and the Cortical Reaction ensures strictly ONE fertilizes the oocyte!'
+    },
+    pronuclei: {
+        title: 'Male & Female Pronuclei + Polar Bodies',
+        potency: '2 × Haploid (n) → Diploid (2n = 46)',
+        accent: '#22D3EE',
+        desc: 'Sperm entry triggers the secondary oocyte (arrested in Metaphase II) to finish Meiosis II, extruding the tiny Second Polar Body (degenerating packet of excess chromosomes so the ovum retains 99% of cytoplasm/nutrients) before the two haploid pronuclei fuse.',
+        exam: 'Unequal cytokinesis in oogenesis concentrates nearly all yolk, mRNA, ribosomes, and mitochondria into ONE large ovum to fuel cleavage!'
+    },
+    blastomeres: {
+        title: 'Cleavage Blastomeres (Mitosis Without Growth)',
+        potency: 'Totipotent Cells (2n = 46)',
+        accent: '#818CF8',
+        desc: 'Genetically identical daughter cells produced by rapid mitotic cleavage divisions (2 → 4 → 8 → 16–32 morula). Because there is no net cytoplasmic growth phase between divisions, the nuclear-to-cytoplasmic ratio steadily increases.',
+        exam: 'Graph Question: From Day 0 to Day 4, Cell Number rises exponentially (1 → 32), DNA content per cell stays 2n, and Total Embryo Volume stays CONSTANT!'
+    },
+    trophoblast: {
+        title: 'Trophoblast (Outer Extra-Embryonic Layer)',
+        potency: 'Extra-Embryonic Lineage',
+        accent: '#E879F9',
+        desc: 'Flattened epithelial ring forming the outer wall of the blastocyst. Pumps Na⁺/water inward to inflate the blastocoel, hatches out of the Zona Pellucida, adheres to the endometrium, and forms the fetal chorion & placenta.',
+        exam: 'Trophoblast cells do NOT form any part of the baby’s body itself—they build the fetal half of the PLACENTA and secrete hCG!'
+    },
+    icm: {
+        title: 'Inner Cell Mass (Embryoblast) → Bilaminar Disc',
+        potency: 'Pluripotent Stem Cells',
+        accent: '#F472B6',
+        desc: 'Cluster of pluripotent stem cells at the embryonic pole inside the blastocyst. Around Day 8, it differentiates into a flat two-layered Bilaminar Embryonic Disc: dorsal columnar Epiblast (borders nascent amniotic cavity; forms all 3 germ layers!) and ventral cuboidal Hypoblast.',
+        exam: 'Why are ICM cells Pluripotent rather than Totipotent? They can differentiate into any of the ~200 fetal cell types, bit CANNOT form placental trophoblast!'
+    },
+    blastocoel: {
+        title: 'Blastocoel (Fluid-Filled Blastocyst Cavity)',
+        potency: 'Osmotic Fluid Cavity',
+        accent: '#3B82F6',
+        desc: 'Created on Day 5 when trophoblast basolateral Na⁺/K⁺-ATPase pumps sodium ions into intercellular spaces, drawing water across tight junctions by osmosis. Provides space for cell migration during subsequent gastrulation.',
+        exam: 'Appearance of the fluid-filled Blastocoel cavity marks the transition from a solid Morula (Day 4) to a hollow Blastocyst (Day 5)!'
+    },
+    syncytio: {
+        title: 'Syncytiotrophoblast & hCG Hormone Secretion',
+        potency: 'Invasive Endocrine Tissue',
+        accent: '#10B981',
+        desc: 'Upon contacting the endometrium on Day 7, trophoblast cells proliferate and fuse into a multinucleated invasive tissue (Syncytiotrophoblast) lacking cell boundaries. It secretes matrix metalloproteinases to burrow around maternal spiral vessels and releases hCG directly into maternal blood!',
+        exam: 'Home Pregnancy Tests use monoclonal antibodies to detect human Chorionic Gonadotropin (hCG) secreted by this Syncytiotrophoblast into maternal blood & urine!'
+    },
+    endometrium: {
+        title: 'Maternal Endometrium & Spiral Capillaries',
+        potency: 'Maternal Decidual Tissue (2n)',
+        accent: '#FB7185',
+        desc: 'Inner vascular lining of the uterus maintained in its lush secretory phase by Progesterone from the ovarian Corpus Luteum. Uterine glands secrete glycogen-rich histotroph ("uterine milk") before placental blood vessels establish maternal-fetal exchange.',
+        exam: 'Switch to "✕ Failed (No hCG)" on the left to watch what happens if no hCG arrives: Progesterone drops and spiral arteries constrict (Menstruation)!'
+    },
+    corpusLuteum: {
+        title: 'Ovarian Corpus Luteum ("Yellow Body")',
+        potency: 'Temporary Maternal Endocrine Gland',
+        accent: '#FBBF24',
+        desc: 'Formed in the ovary from the ruptured Graafian follicle right after ovulation under pituitary LH. Secretes high levels of Progesterone (and Estrogen) to keep the uterine endometrium thick, vascular, and non-contractile.',
+        exam: 'Without hCG rescue by Day 9–10, the Corpus Luteum undergoes luteolysis into scar tissue (Corpus Albicans), causing Progesterone to crash! Placenta takes over Progesterone at ~Week 10–12.'
     }
+};
 
-    // Uterine Cavity (Dark space)
-    bgGraphics.beginFill(0x4C0519, 0.7); 
-    bgGraphics.moveTo(w * 0.6, h * 0.3);
-    bgGraphics.quadraticCurveTo(w * 0.8, h * 0.25, w * 0.95, h * 0.1);
-    bgGraphics.lineTo(w * 0.95, 0);
-    bgGraphics.lineTo(w * 0.4, 0);
-    bgGraphics.endFill();
+// ============================================================================
+// 2. MATH UTILITIES & DETERMINISTIC 3D CELL COORDINATE GENERATORS
+// ============================================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+};
+
+// Precomputed deterministic Fibonacci Sphere directions (ZERO per-frame Math.random() flicker!)
+function fibonacciSpherePoints(count) {
+    const pts = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < count; i++) {
+        const y = 1 - (i / Math.max(1, count - 1)) * 2;
+        const r = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = golden * i;
+        pts.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r));
+    }
+    return pts;
 }
 
-// --- Embryo Procedural Generation ---
-const embryoContainer = new PIXI.Container();
-world.addChild(embryoContainer);
+// ============================================================================
+// 3. THREE.JS SCENE, DUAL-SCALE WORLDS (`microWorld` & `macroWorld`)
+// ============================================================================
+let scene, camera, renderer, controls, raycaster, cutPlane;
+let microWorld, macroWorld;
 
-const zonaPellucida = new PIXI.Graphics();
-const cellsContainer = new PIXI.Container();
-const syncytioContainer = new PIXI.Graphics(); // For invading roots
-embryoContainer.addChild(syncytioContainer);
-embryoContainer.addChild(zonaPellucida);
-embryoContainer.addChild(cellsContainer);
+// MicroWorld 400× Assemblies
+let zonaMesh, zonaGeoRest, corticalFlashMesh, coronaGroup;
+let spermGroup, winnerSperm, challengerSperms = [];
+let ooplasmMesh, pronucleusM, pronucleusF, polarBody1, polarBody2;
+let cleavageGroup, blastomereMeshes = [];
+let blastocystGroup, blastocoelMesh, trophoblastMeshes = [], icmMeshes = [];
+let bilaminarGroup, epiblastMeshes = [], hypoblastMeshes = [], amnionCavityMesh;
+let endoWallGroup, endoStromaMat, syncytioTubes = [], hcgParticles = [], spiralVesselMat;
 
-const EMBRYO_RADIUS = 32;
+// MacroWorld 3D Organ Tract Assemblies
+let macroConceptusMarker, macroCorpusLuteum, macroFollicle, macroEndoMat, macroHcgPulses = [];
+let macroTractCurve, macroHcgReturnCurve;
 
-function drawEmbryo(day, isCrossSection) {
-    cellsContainer.removeChildren(); 
-    zonaPellucida.clear();
-    syncytioContainer.clear();
+const pickableMicro = [];
+const pickableMacro = [];
+const pinRegistry = [];
 
-    // 1. ZONA PELLUCIDA (Shell) & HATCHING LOGIC
-    let shellOffsetX = 0;
-    let embryoOffsetX = 0;
-    let zpAlpha = 0.7;
+// Simulation State
+const state = {
+    day: 0.15,
+    isPlaying: false,
+    implantationSuccess: true, // true = Normal hCG Rescue, false = Failed Implantation (Luteolysis)
+    viewScale: 'micro',        // 'micro' (400x Cellular 3D) | 'macro' (3D Organ Tract & Ovary)
+    cutaway: true,
+    showPins: true,
+    customInspectKey: null     // null = show current stage overview; string = show clicked cell layer
+};
 
-    // Hatching mechanics (Day 5.8 to 6.5)
-    if (day >= 5.8 && day < 6.8) {
-        let hatchProgress = (day - 5.8) / 1.0;
-        shellOffsetX = -hatchProgress * 25; // Shell stays behind
-        embryoOffsetX = hatchProgress * 25; // Embryo squeezes out right
-        zpAlpha = 0.7 - (hatchProgress * 0.4);
-        
-        // Draw broken shell
-        zonaPellucida.lineStyle(5, 0x38BDF8, zpAlpha); 
-        zonaPellucida.beginFill(0x0284C7, zpAlpha * 0.1);
-        zonaPellucida.arc(shellOffsetX, 0, EMBRYO_RADIUS + 4, Math.PI * 0.3, Math.PI * 1.7); // Open on right
-        zonaPellucida.endFill();
-    } else if (day >= 6.8) {
-        // Discarded shell floats away and fades
-        zpAlpha = Math.max(0, 0.3 - (day - 6.8));
-        shellOffsetX = -25 - ((day - 6.8) * 20);
-        embryoOffsetX = 25;
-        
-        zonaPellucida.lineStyle(3, 0x64748B, zpAlpha); 
-        zonaPellucida.arc(shellOffsetX, 20, EMBRYO_RADIUS, Math.PI * 0.3, Math.PI * 1.7);
-    } else {
-        // Intact Shell
-        zonaPellucida.lineStyle(5, 0x38BDF8, zpAlpha); 
-        zonaPellucida.beginFill(0x0284C7, zpAlpha * 0.2);
-        zonaPellucida.drawCircle(0, 0, EMBRYO_RADIUS + 4);
-        zonaPellucida.endFill();
-    }
+const CAM_GOALS = {
+    microDefault: { pos: new THREE.Vector3(0.2, 0.35, 7.2),  target: new THREE.Vector3(0.35, 0.0, 0.0) },
+    microImplant: { pos: new THREE.Vector3(1.55, 0.35, 7.6), target: new THREE.Vector3(1.65, 0.0, 0.0) },
+    macroDefault: { pos: new THREE.Vector3(0.0, 0.2, 13.0),  target: new THREE.Vector3(0.0, 0.0, 0.0) }
+};
+let camGoalPos = CAM_GOALS.microDefault.pos.clone();
+let camGoalTarget = CAM_GOALS.microDefault.target.clone();
+let camGliding = false;
 
-    cellsContainer.x = embryoOffsetX;
-    syncytioContainer.x = embryoOffsetX;
-
-    // 2. PROCEDURAL CLEAVAGE (Days 0 to 4.0)
-    if (day < 4.0) {
-        let cellCount = 1;
-        if (day >= 1.0 && day < 2.0) cellCount = 2;
-        else if (day >= 2.0 && day < 3.0) cellCount = 4;
-        else if (day >= 3.0 && day < 4.0) cellCount = 8;
-        
-        let cellRadius = EMBRYO_RADIUS * (1 / Math.sqrt(cellCount)) * 0.85;
-        const positions = getCleavagePositions(cellCount, EMBRYO_RADIUS - cellRadius);
-        
-        positions.forEach(pos => {
-            let cell = new PIXI.Graphics();
-            cell.beginFill(0x6366F1); // Indigo 500
-            cell.lineStyle(2, 0x312E81); // Indigo 900
-            cell.drawCircle(pos.x, pos.y, cellRadius);
-            
-            // Add Pronuclei on Day 0
-            if (day < 1.0) {
-                cell.beginFill(0x38BDF8, 0.8); cell.drawCircle(pos.x - 8, pos.y, 4); // Male
-                cell.beginFill(0xF472B6, 0.8); cell.drawCircle(pos.x + 8, pos.y, 4); // Female
-            }
-            
-            cell.endFill();
-            cellsContainer.addChild(cell);
-        });
-    } 
-    // 3. MORULA (Day 4.0 to 5.0)
-    else if (day >= 4.0 && day < 5.0) {
-        const positions = getPackedPositions(24, EMBRYO_RADIUS - 6);
-        positions.forEach(pos => {
-            let cell = new PIXI.Graphics();
-            cell.beginFill(0x8B5CF6); // Violet 500
-            cell.lineStyle(1, 0x4C1D95);
-            cell.drawCircle(pos.x, pos.y, 6);
-            cell.endFill();
-            cellsContainer.addChild(cell);
-        });
-    }
-    // 4. BLASTOCYST & IMPLANTATION (Day 5.0+)
-    else {
-        // Trophoblast Base Radius
-        let currentRadius = day >= 5.8 ? EMBRYO_RADIUS + 5 : EMBRYO_RADIUS; // Expands slightly after hatching
-
-        if (!isCrossSection) {
-            // Surface View: Hollow ball
-            let cellCount = 36;
-            let tRadius = 6;
-            for(let i=0; i<cellCount; i++) {
-                let angle = (i / cellCount) * Math.PI * 2;
-                let r = currentRadius - tRadius + Math.sin(i*4)*1.5; 
-                let cell = new PIXI.Graphics();
-                cell.beginFill(0xD946EF); // Fuchsia 500
-                cell.lineStyle(1, 0x86198F);
-                cell.drawCircle(Math.cos(angle)*r, Math.sin(angle)*r, tRadius);
-                cell.endFill();
-                cellsContainer.addChild(cell);
-            }
-        } else {
-            // Cross-Section View
-            // Blastocoel
-            let cavity = new PIXI.Graphics();
-            cavity.beginFill(0x1E3A8A, 0.9); // Blue 900
-            cavity.drawCircle(0, 0, currentRadius - 5);
-            cavity.endFill();
-            cellsContainer.addChild(cavity);
-
-            // Trophoblast Ring
-            let cellCount = 24;
-            let tRadius = 5.5;
-            for(let i=0; i<cellCount; i++) {
-                let angle = (i / cellCount) * Math.PI * 2;
-                let r = currentRadius - tRadius;
-                let cell = new PIXI.Graphics();
-                cell.beginFill(0xD946EF); 
-                cell.lineStyle(1, 0x86198F);
-                cell.drawCircle(Math.cos(angle)*r, Math.sin(angle)*r, tRadius);
-                cell.endFill();
-                cellsContainer.addChild(cell);
-            }
-
-            // Inner Cell Mass (ICM) / Bilaminar Disc
-            const icmCount = 14;
-            for(let i=0; i<icmCount; i++) {
-                // Flattening out slightly by day 8 into a disc
-                let spread = day > 7.5 ? 20 : 12;
-                let cx = -10 + (Math.random()-0.5) * spread; 
-                let cy = -5 + (Math.random()-0.5) * 16;
-                
-                let cell = new PIXI.Graphics();
-                // Epiblast vs Hypoblast color differentiation late
-                let col = (day > 7.5 && cy > -5) ? 0xFBBF24 : 0xF472B6; // Yellow/Pink
-                cell.beginFill(col); 
-                cell.lineStyle(1, 0xBE185D); 
-                cell.drawCircle(cx, cy, 5.5);
-                cell.endFill();
-                cellsContainer.addChild(cell);
-            }
+function registerPick(worldType, obj, structKey) {
+    const arr = worldType === 'micro' ? pickableMicro : pickableMacro;
+    obj.traverse(ch => {
+        if (ch.isMesh) {
+            ch.userData.structKey = structKey;
+            arr.push(ch);
         }
-
-        // 5. SYNCYTIOTROPHOBLAST INVASION (Day 7.5+)
-        if(day >= 7.5) {
-            syncytioContainer.beginFill(0xE11D48, 0.85); // Rose 600
-            syncytioContainer.lineStyle(2, 0x9F1239);
-            
-            // Draw spreading root-like structures into the endometrium (Right side)
-            let spread = (day - 7.5) * 20; // Grows over time
-            
-            syncytioContainer.moveTo(currentRadius - 10, -20);
-            syncytioContainer.bezierCurveTo(currentRadius + spread, -30, currentRadius + spread*1.5, -10, currentRadius, -5);
-            syncytioContainer.bezierCurveTo(currentRadius + spread*2, 0, currentRadius + spread*1.8, 20, currentRadius, 15);
-            syncytioContainer.bezierCurveTo(currentRadius + spread, 30, currentRadius + spread*0.8, 40, currentRadius - 10, 25);
-            syncytioContainer.endFill();
-        }
-    }
+    });
 }
 
-// Geometric helpers for aesthetic cell cleavage diagrams
-function getCleavagePositions(count, r) {
-    if (count === 1) return [{x:0, y:0}];
-    if (count === 2) return [{x:-r*0.6, y:0}, {x:r*0.6, y:0}];
-    if (count === 4) return [
-        {x:-r*0.5, y:-r*0.5}, {x:r*0.5, y:-r*0.5}, 
-        {x:-r*0.5, y:r*0.5}, {x:r*0.5, y:r*0.5}
-    ];
-    if (count === 8) return [
-        {x:-r*0.6, y:-r*0.4}, {x:r*0.6, y:-r*0.4}, {x:0, y:-r*0.7}, {x:0, y:r*0.2}, // Back
-        {x:-r*0.4, y:r*0.6}, {x:r*0.4, y:r*0.6}, {x:-r*0.3, y:0}, {x:r*0.3, y:0}   // Front
-    ];
-    return [{x:0, y:0}];
+function initThreeScene() {
+    const viewport = document.getElementById('three-viewport');
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(39, viewport.clientWidth / viewport.clientHeight, 0.1, 120);
+    camera.position.copy(camGoalPos);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.localClippingEnabled = true;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.14;
+    viewport.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.copy(camGoalTarget);
+    controls.addEventListener('start', () => { camGliding = false; });
+
+    raycaster = new THREE.Raycaster();
+
+    // Equatorial 3D Cross-Section Plane: normal (0, 0, -1) clips front (+Z) half of outer shells when Cutaway is ON!
+    cutPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.08);
+
+    // Rich Biological Subsurface Studio Lighting
+    scene.add(new THREE.HemisphereLight(0xFFE4F0, 0x0F172A, 0.94));
+
+    const keyLight = new THREE.DirectionalLight(0xFFF7ED, 1.32);
+    keyLight.position.set(6, 9, 11);
+    scene.add(keyLight);
+
+    const rimPink = new THREE.DirectionalLight(0xF472B6, 1.05);
+    rimPink.position.set(-8, 5, -9);
+    scene.add(rimPink);
+
+    const rimCyan = new THREE.DirectionalLight(0x38BDF8, 0.72);
+    rimCyan.position.set(4, -8, -7);
+    scene.add(rimCyan);
+
+    microWorld = new THREE.Group();
+    macroWorld = new THREE.Group();
+    macroWorld.visible = false;
+    scene.add(microWorld, macroWorld);
+
+    buildMicroCellularWorld();
+    buildMacroReproductiveTract();
+    setup3DPins();
+    bindCanvasPicking(viewport);
+
+    window.addEventListener('resize', onWindowResize);
 }
 
-function getPackedPositions(count, maxRadius) {
-    let pos = [{x:0, y:0}];
-    for(let i=1; i<count; i++) {
-        let angle = i * 2.4; // Golden ratio approx scattering
-        let dist = Math.sqrt(i/count) * maxRadius; 
-        pos.push({ x: Math.cos(angle) * dist, y: Math.sin(angle) * dist });
-    }
-    return pos;
+function onWindowResize() {
+    const viewport = document.getElementById('three-viewport');
+    if (!viewport || viewport.clientWidth === 0 || viewport.clientHeight === 0) return;
+    camera.aspect = viewport.clientWidth / viewport.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
 }
 
-// --- Spatiotemporal Mapping ---
-function getPathCoordinates(day) {
-    const w = CW; const h = CH;
-    const pathNodes = [
-        [0.0, w*0.12, h*0.6],  // Fimbriae / Ampulla
-        [1.0, w*0.15, h*0.3],  // Up into tube
-        [2.0, w*0.28, h*0.2],  // Ampulla
-        [3.0, w*0.42, h*0.22], // Isthmus
-        [4.0, w*0.55, h*0.3],  // Entering Uterus
-        [5.0, w*0.65, h*0.4],  // Floating in Uterine Cavity
-        [6.0, w*0.70, h*0.45], // Apposition
-        [7.0, w*0.73, h*0.45], // Adhesion
-        [9.5, w*0.80, h*0.45]  // Implantation into Endometrium
-    ];
+// ============================================================================
+// 4. BUILD 400× 3D CELLULAR MICROSCOPE WORLD (`microWorld`)
+// ============================================================================
+function buildMicroCellularWorld() {
+    // 1. GLASSY 3D ZONA PELLUCIDA (Morphable vertex buffer so Day 6 Hatching opens a real 3D breach!)
+    const zonaGeo = new THREE.SphereGeometry(1.85, 52, 36);
+    zonaGeoRest = zonaGeo.attributes.position.array.slice();
+    const zonaMat = new THREE.MeshPhysicalMaterial({
+        color: 0x7DD3FC,
+        emissive: 0x0369A1,
+        emissiveIntensity: 0.24,
+        roughness: 0.16,
+        clearcoat: 0.9,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        clippingPlanes: [cutPlane],
+        side: THREE.DoubleSide
+    });
+    zonaMesh = new THREE.Mesh(zonaGeo, zonaMat);
+    microWorld.add(zonaMesh);
+    registerPick('micro', zonaMesh, 'zona');
 
-    for (let i = 0; i < pathNodes.length - 1; i++) {
-        let start = pathNodes[i];
-        let end = pathNodes[i+1];
-        if (day >= start[0] && day <= end[0]) {
-            let p = (day - start[0]) / (end[0] - start[0]);
-            // Use ease-in-out for smoother organic transit
-            let easeP = p * p * (3 - 2 * p); 
-            return { x: start[1] + (end[1] - start[1]) * easeP, y: start[2] + (end[2] - start[2]) * easeP };
-        }
+    // Cortical Granule Polyspermy-Block Wave Ring (flashes across Zona at Day 0.18–0.45!)
+    corticalFlashMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1.89, 36, 28),
+        new THREE.MeshBasicMaterial({ color: 0xFDE047, transparent: true, opacity: 0.0, wireframe: true, depthWrite: false })
+    );
+    microWorld.add(corticalFlashMesh);
+
+    // 2. CORONA RADIATA GRANULOSA CELLS (Days 0.0 – 1.3)
+    coronaGroup = new THREE.Group();
+    const coronaMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFBCFE8, emissive: 0x831843, emissiveIntensity: 0.25,
+        roughness: 0.45, transparent: true, opacity: 0.78, clippingPlanes: [cutPlane]
+    });
+    const coronaDirs = fibonacciSpherePoints(44);
+    coronaDirs.forEach((dir, idx) => {
+        const gc = new THREE.Mesh(new THREE.SphereGeometry(0.19 + (idx % 3) * 0.03, 12, 10), coronaMat);
+        gc.userData.dir = dir.clone();
+        gc.position.copy(dir).multiplyScalar(2.06);
+        coronaGroup.add(gc);
+    });
+    microWorld.add(coronaGroup);
+    registerPick('micro', coronaGroup, 'zona');
+
+    // 3. CAPACITATED 3D SPERMATOZOA (1 Fertilizing Winner + 7 Challengers Blocked by Cortical Reaction!)
+    spermGroup = new THREE.Group();
+    const spHeadGeo = new THREE.SphereGeometry(0.085, 14, 12);
+    spHeadGeo.scale(1.45, 0.68, 0.55); // Pointed along +X toward oocyte!
+    const spHeadMat = new THREE.MeshStandardMaterial({ color: 0xF8FAFC, emissive: 0x38BDF8, emissiveIntensity: 0.55 });
+    const spTailMat = new THREE.LineBasicMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.85 });
+
+    function make3DSperm() {
+        const g = new THREE.Group();
+        const head = new THREE.Mesh(spHeadGeo, spHeadMat);
+        // Acrosome glowing cap on anterior tip (+X)
+        const acro = new THREE.Mesh(
+            new THREE.SphereGeometry(0.055, 10, 8),
+            new THREE.MeshBasicMaterial({ color: 0x22D3EE })
+        );
+        acro.position.x = 0.085;
+        const tailGeo = new THREE.BufferGeometry();
+        tailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9 * 3), 3));
+        const tail = new THREE.Line(tailGeo, spTailMat);
+        g.add(head, acro, tail);
+        return { grp: g, tailGeo, acro };
     }
-    return { x: pathNodes[8][1], y: pathNodes[8][2] };
-}
 
-// --- Endocrine Math ---
-function updateHormones(day) {
-    // Progesterone is high post-ovulation, drops around day 6 unless rescued by hCG
-    let prog = 18.5 - (day * 0.5); 
-    let hcg = 0;
+    winnerSperm = make3DSperm();
+    spermGroup.add(winnerSperm.grp);
 
-    // hCG spikes exponentially starting day 7.5 due to syncytiotrophoblast
-    if (day >= 7.5) {
-        hcg = Math.pow((day - 7.5) * 5, 2.5); // Exponential curve
-        prog = 15.0 + (hcg * 0.05); // Rescued!
+    const chalAngles = [0.65, -0.72, 1.35, -1.42, 2.15, -2.25, 2.85];
+    chalAngles.forEach((ang, i) => {
+        const ch = make3DSperm();
+        ch.angle = ang;
+        ch.zOff = ((i % 3) - 1) * 0.45;
+        spermGroup.add(ch.grp);
+        challengerSperms.push(ch);
+    });
+    microWorld.add(spermGroup);
+    registerPick('micro', spermGroup, 'sperm');
+
+    // 4. SECONDARY OOCYTE / ZYGOTE CYTOPLASM, POLAR BODIES & MALE/FEMALE PRONUCLEI (Day 0.0 – 0.98)
+    const ooplasmMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFDA4AF, emissive: 0x881337, emissiveIntensity: 0.24,
+        roughness: 0.35, clearcoat: 0.4, transparent: true, opacity: 0.46,
+        depthWrite: false, clippingPlanes: [cutPlane], side: THREE.DoubleSide
+    });
+    ooplasmMesh = new THREE.Mesh(new THREE.SphereGeometry(1.52, 40, 32), ooplasmMat);
+    microWorld.add(ooplasmMesh);
+    registerPick('micro', ooplasmMesh, 'pronuclei');
+
+    // Male (Sky-Blue) & Female (Rose-Pink) Haploid Pronuclei + Chromatin Nucleoli!
+    function makePronucleus(colorHex, emissiveHex) {
+        const g = new THREE.Group();
+        const shell = new THREE.Mesh(
+            new THREE.SphereGeometry(0.36, 24, 20),
+            new THREE.MeshPhysicalMaterial({ color: colorHex, emissive: emissiveHex, emissiveIntensity: 0.52, roughness: 0.25, transparent: true, opacity: 0.9 })
+        );
+        // Internal condensed chromosome strands
+        const chrom = new THREE.Mesh(
+            new THREE.TorusKnotGeometry(0.14, 0.032, 36, 8, 2, 3),
+            new THREE.MeshBasicMaterial({ color: 0xFFFFFF })
+        );
+        g.add(shell, chrom);
+        return g;
     }
+    pronucleusM = makePronucleus(0x38BDF8, 0x0369A1);
+    pronucleusF = makePronucleus(0xF472B6, 0x9D174D);
+    microWorld.add(pronucleusM, pronucleusF);
+    registerPick('micro', pronucleusM, 'pronuclei');
+    registerPick('micro', pronucleusF, 'pronuclei');
 
-    prog = Math.max(2, Math.min(prog, 30)); // Clamps
-    hcg = Math.max(0, Math.min(hcg, 500));
+    // 1st & 2nd Polar Bodies tucked neatly in the Perivitelline Space (between ooplasm r=1.52 and Zona r=1.85)
+    const pbMat = new THREE.MeshStandardMaterial({ color: 0xE2E8F0, emissive: 0x475569, emissiveIntensity: 0.35, roughness: 0.4 });
+    polarBody1 = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 12), pbMat);
+    polarBody1.position.set(-0.18, 1.64, -0.08);
+    polarBody2 = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 12), pbMat);
+    polarBody2.position.set(0.16, 1.63, -0.08);
+    microWorld.add(polarBody1, polarBody2);
+    registerPick('micro', polarBody1, 'pronuclei');
+    registerPick('micro', polarBody2, 'pronuclei');
 
-    hcgVal.textContent = Math.floor(hcg);
-    hcgBar.style.width = `${(hcg / 500) * 100}%`;
-    
-    progVal.textContent = prog.toFixed(1);
-    progBar.style.width = `${(prog / 30) * 100}%`;
+    // 5. DETERMINISTIC 3D CLEAVAGE BLASTOMERES POOL (2 -> 4 -> 8 -> 26-Cell Compacted Morula!)
+    cleavageGroup = new THREE.Group();
+    const blastomereMat = new THREE.MeshPhysicalMaterial({
+        color: 0x818CF8, emissive: 0x312E81, emissiveIntensity: 0.34,
+        roughness: 0.32, clearcoat: 0.55
+    });
+    const blastNucleusMat = new THREE.MeshBasicMaterial({ color: 0xC7D2FE });
 
-    // Endocrine Narrative
-    if (day < 7.5) {
-        hormoneDesc.textContent = "Awaiting implantation. If hCG is not produced to rescue the corpus luteum, progesterone will fall and menstruation occurs.";
-        hormoneDesc.className = "text-[9px] text-slate-500 mt-2 leading-tight italic";
-    } else {
-        hormoneDesc.innerHTML = "<strong class='text-emerald-400'>Pregnancy Recognized!</strong> Syncytiotrophoblast is secreting hCG, signaling the ovaries to maintain life-sustaining Progesterone.";
-        hormoneDesc.className = "text-[10px] text-emerald-300 mt-2 leading-tight";
+    for (let i = 0; i < 26; i++) {
+        const cellGrp = new THREE.Group();
+        const membrane = new THREE.Mesh(new THREE.SphereGeometry(1.0, 24, 20), blastomereMat.clone());
+        const nuc = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), blastNucleusMat);
+        cellGrp.add(membrane, nuc);
+        cellGrp.visible = false;
+        cleavageGroup.add(cellGrp);
+        blastomereMeshes.push({ grp: cellGrp, mat: membrane.material });
     }
-}
+    microWorld.add(cleavageGroup);
+    registerPick('micro', cleavageGroup, 'blastomeres');
 
-// --- Interaction & UI Logic ---
-function updateSimulation() {
-    dayDisplay.textContent = state.day.toFixed(1);
-    timelineSlider.value = state.day;
+    // 6. 3D BLASTOCYST (TROPHOBLAST SHELL + BLASTOCOEL CAVITY + INNER CELL MASS + BILAMINAR DISC)
+    blastocystGroup = new THREE.Group();
+    blastocystGroup.visible = false;
+    microWorld.add(blastocystGroup);
 
-    let currentStage = stagesData.find(s => state.day <= s.dayLimit) || stagesData[stagesData.length-1];
-    
-    stageTitle.textContent = currentStage.title;
-    stageTitle.style.color = currentStage.color;
-    stageDesc.textContent = currentStage.desc;
-    infoAccent.style.backgroundColor = currentStage.color;
-    
-    potencyBadge.textContent = currentStage.potency;
-    locDisplay.textContent = currentStage.loc;
+    // Fluid-filled Blastocoel Cavity
+    blastocoelMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1.42, 36, 28),
+        new THREE.MeshPhysicalMaterial({
+            color: 0x1D4ED8, emissive: 0x1E3A8A, emissiveIntensity: 0.35,
+            roughness: 0.2, transparent: true, opacity: 0.32, depthWrite: false,
+            clippingPlanes: [cutPlane], side: THREE.BackSide
+        })
+    );
+    blastocystGroup.add(blastocoelMesh);
+    registerPick('micro', blastocoelMesh, 'blastocoel');
 
-    anatomyList.innerHTML = '';
-    currentStage.anatomy.forEach(item => {
-        let li = document.createElement('li');
-        li.className = "flex items-center gap-2";
-        li.innerHTML = `<span class="w-3 h-3 rounded-full ${item.c} border border-slate-700/50 shadow-sm"></span> ${item.t}`;
-        anatomyList.appendChild(li);
+    // 72 Cushion-shaped Trophoblast Epithelial Cells tiling the outer Blastocyst Perimeter
+    const trophMat = new THREE.MeshPhysicalMaterial({
+        color: 0xD946EF, emissive: 0x701A75, emissiveIntensity: 0.32,
+        roughness: 0.36, clearcoat: 0.45
+    });
+    const trophDirs = fibonacciSpherePoints(72);
+    trophDirs.forEach(dir => {
+        const tCell = new THREE.Mesh(new THREE.SphereGeometry(0.31, 16, 12), trophMat);
+        tCell.userData.dir = dir.clone();
+        tCell.position.copy(dir).multiplyScalar(1.48);
+        tCell.lookAt(0, 0, 0);
+        tCell.scale.set(1.12, 1.12, 0.58);
+        blastocystGroup.add(tCell);
+        trophoblastMeshes.push(tCell);
+    });
+    trophoblastMeshes.forEach(m => registerPick('micro', m, 'trophoblast'));
+
+    // 20 Pluripotent Inner Cell Mass (Embryoblast) Cells clustered at the +X Embryonic Pole!
+    const icmMat = new THREE.MeshPhysicalMaterial({
+        color: 0xF472B6, emissive: 0x9D174D, emissiveIntensity: 0.40,
+        roughness: 0.30, clearcoat: 0.5
+    });
+    const icmDirs = fibonacciSpherePoints(20);
+    icmDirs.forEach((d, idx) => {
+        const icmCell = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 14), icmMat);
+        // Pack snugly inside the +X embryonic pole (x in +0.55..+1.15)
+        const rad = idx < 5 ? 0.24 : 0.52;
+        icmCell.userData.basePos = new THREE.Vector3(
+            0.84 + d.x * rad * 0.55,
+            d.y * rad * 0.92,
+            d.z * rad * 0.75 - 0.12 // Slightly posterior so 3D Cutaway always reveals full ICM!
+        );
+        icmCell.position.copy(icmCell.userData.basePos);
+        blastocystGroup.add(icmCell);
+        icmMeshes.push(icmCell);
+        registerPick('micro', icmCell, 'icm');
     });
 
-    // Implantation Button Logic
-    if (state.day >= 6.5 && state.day < 7.5 && !state.hasImplanted) {
-        implantBtn.disabled = false;
-        implantBtn.classList.replace('bg-slate-800', 'bg-pink-600');
-        implantBtn.classList.replace('text-slate-500', 'text-white');
-        implantBtn.innerHTML = "🧬 Trigger Implantation";
-        container.classList.add('pulse-bg');
-    } else if (state.day >= 7.5) {
-        implantBtn.disabled = true;
-        implantBtn.classList.replace('bg-pink-600', 'bg-emerald-600');
-        implantBtn.innerHTML = "✅ Implantation Successful";
-        container.classList.remove('pulse-bg');
-    } else {
-        implantBtn.disabled = true;
-        implantBtn.classList.replace('bg-pink-600', 'bg-slate-800');
-        implantBtn.classList.replace('bg-emerald-600', 'bg-slate-800');
-        implantBtn.classList.replace('text-white', 'text-slate-500');
-        implantBtn.innerHTML = "🔒 Waiting to hatch...";
-        container.classList.remove('pulse-bg');
+    // Bilaminar Embryonic Disc (Days 7.6 – 9.5: Dorsal Sky-Blue Epiblast + Ventral Gold Hypoblast + Amniotic Cavity!)
+    bilaminarGroup = new THREE.Group();
+    bilaminarGroup.visible = false;
+    const epiblastMat = new THREE.MeshPhysicalMaterial({ color: 0x38BDF8, emissive: 0x0369A1, emissiveIntensity: 0.45, roughness: 0.3 });
+    const hypoblastMat = new THREE.MeshPhysicalMaterial({ color: 0xFBBF24, emissive: 0x92400E, emissiveIntensity: 0.42, roughness: 0.35 });
+
+    for (let row = -3; row <= 3; row++) {
+        for (let zCol = -2; zCol <= 0; zCol++) {
+            const py = row * 0.21;
+            const pz = zCol * 0.22 - 0.06;
+            // Columnar Epiblast Cell (+X embryonic pole side, x = +0.92)
+            const epi = new THREE.Mesh(new THREE.SphereGeometry(0.125, 12, 10), epiblastMat);
+            epi.scale.set(1.45, 0.9, 0.9);
+            epi.position.set(0.92, py, pz);
+            bilaminarGroup.add(epi);
+            epiblastMeshes.push(epi);
+
+            // Cuboidal Hypoblast Cell (facing Blastocoel / Primitive Yolk Sac, x = +0.66)
+            const hyp = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), hypoblastMat);
+            hyp.position.set(0.66, py * 0.95, pz);
+            bilaminarGroup.add(hyp);
+            hypoblastMeshes.push(hyp);
+        }
+    }
+    // Small Translucent Amniotic Cavity forming between Epiblast and Cytotrophoblast!
+    amnionCavityMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.46, 20, 16),
+        new THREE.MeshPhysicalMaterial({ color: 0xBAE6FD, transparent: true, opacity: 0.34, depthWrite: false })
+    );
+    amnionCavityMesh.scale.set(0.55, 1.35, 0.95);
+    amnionCavityMesh.position.set(1.22, 0, -0.18);
+    bilaminarGroup.add(amnionCavityMesh);
+    blastocystGroup.add(bilaminarGroup);
+    registerPick('micro', bilaminarGroup, 'icm');
+
+    // 7. 3D MATERNAL ENDOMETRIAL WALL, SPIRAL CAPILLARIES, SYNCYTIOTROPHOBLAST ROOTS & hCG STREAM!
+    endoWallGroup = new THREE.Group();
+    endoWallGroup.position.set(6.8, 0, 0); // Glides in smoothly to x = 3.55 as Day 6.2 -> 7.2 approaches!
+    microWorld.add(endoWallGroup);
+
+    endoStromaMat = new THREE.MeshPhysicalMaterial({
+        color: 0xBE123C, emissive: 0x4C0519, emissiveIntensity: 0.32,
+        roughness: 0.48, clearcoat: 0.35
+    });
+    const stromaBlock = new THREE.Mesh(new THREE.BoxGeometry(2.8, 6.4, 3.4, 12, 24, 12), endoStromaMat);
+    // Sculpt organic wavy uterine mucosal surface on the -X face (x = -1.4)
+    const sPos = stromaBlock.geometry.attributes.position;
+    for (let i = 0; i < sPos.count; i++) {
+        let sx = sPos.getX(i), sy = sPos.getY(i), sz = sPos.getZ(i);
+        if (sx < -1.0) {
+            sx += Math.sin(sy * 2.2) * Math.cos(sz * 1.8) * 0.12;
+        }
+        sPos.setXYZ(i, sx + 1.4, sy, sz - 0.35);
+    }
+    stromaBlock.geometry.computeVertexNormals();
+    endoWallGroup.add(stromaBlock);
+
+    // Maternal Columnar Endometrial Epithelial Cells lining x = 0 surface
+    const epiWallMat = new THREE.MeshPhysicalMaterial({ color: 0xFDA4AF, emissive: 0x881337, emissiveIntensity: 0.26, roughness: 0.4 });
+    for (let iy = -10; iy <= 10; iy++) {
+        for (let iz = -4; iz <= 1; iz++) {
+            const ec = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), epiWallMat);
+            ec.scale.set(1.4, 0.95, 0.95);
+            ec.position.set(0.02, iy * 0.28, iz * 0.34 - 0.15);
+            endoWallGroup.add(ec);
+        }
     }
 
-    let coords = getPathCoordinates(state.day);
-    embryoContainer.x = coords.x;
-    embryoContainer.y = coords.y;
-    
-    drawEmbryo(state.day, state.isCrossSection);
-    updateHormones(state.day);
+    // Coiled Maternal Spiral Arteries / Capillaries inside Endometrial Stroma!
+    spiralVesselMat = new THREE.MeshStandardMaterial({ color: 0xFB2C4C, emissive: 0x991B1B, emissiveIntensity: 0.55, roughness: 0.3 });
+    [-1.4, 0.0, 1.4].forEach((yBase, vIdx) => {
+        const spPts = [];
+        for (let k = 0; k <= 18; k++) {
+            const t = k / 18;
+            spPts.push(new THREE.Vector3(
+                2.5 - t * 2.05,
+                yBase + Math.sin(t * Math.PI * 5 + vIdx) * 0.24,
+                -0.18 + Math.cos(t * Math.PI * 5 + vIdx) * 0.22
+            ));
+        }
+        const spTube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(spPts), 36, 0.075, 10, false), spiralVesselMat);
+        endoWallGroup.add(spTube);
+    });
+    registerPick('micro', endoWallGroup, 'endometrium');
+
+    // Multinucleated Invading 3D Syncytiotrophoblast Roots (extend from Blastocyst +X pole into Endometrium!)
+    const syncytioMat = new THREE.MeshPhysicalMaterial({
+        color: 0x9F1239, emissive: 0x831843, emissiveIntensity: 0.52, roughness: 0.35, clearcoat: 0.5
+    });
+    const rootSpecs = [
+        [new THREE.Vector3(1.15,  0.65, -0.10), new THREE.Vector3(2.15,  1.15, -0.18), new THREE.Vector3(3.05,  1.35, -0.15)],
+        [new THREE.Vector3(1.22,  0.22, -0.05), new THREE.Vector3(2.35,  0.35, -0.12), new THREE.Vector3(3.35,  0.20, -0.16)],
+        [new THREE.Vector3(1.22, -0.22, -0.08), new THREE.Vector3(2.38, -0.32, -0.16), new THREE.Vector3(3.30, -0.45, -0.18)],
+        [new THREE.Vector3(1.15, -0.65, -0.12), new THREE.Vector3(2.10, -1.08, -0.20), new THREE.Vector3(2.98, -1.32, -0.15)],
+        [new THREE.Vector3(1.18,  0.00, -0.38), new THREE.Vector3(2.25,  0.05, -0.55), new THREE.Vector3(3.15,  0.12, -0.48)]
+    ];
+    rootSpecs.forEach(pts => {
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const rMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 20, 0.14, 10, false), syncytioMat);
+        rMesh.visible = false;
+        blastocystGroup.add(rMesh);
+        syncytioTubes.push({ mesh: rMesh, curve });
+        registerPick('micro', rMesh, 'syncytio');
+    });
+
+    // Glowing Emerald hCG Hormone Molecules Streaming from Syncytiotrophoblast into Maternal Vessels!
+    const hcgGeo = new THREE.SphereGeometry(0.068, 10, 8);
+    const hcgMat = new THREE.MeshBasicMaterial({ color: 0x34D399 });
+    for (let i = 0; i < 24; i++) {
+        const hm = new THREE.Mesh(hcgGeo, hcgMat);
+        hm.visible = false;
+        microWorld.add(hm);
+        hcgParticles.push({
+            mesh: hm,
+            offset: (i / 24),
+            ySpread: ((i % 7) - 3) * 0.36,
+            zSpread: -0.15 + ((i % 3) - 1) * 0.14
+        });
+    }
 }
 
-timelineSlider.addEventListener('input', (e) => {
-    state.day = parseFloat(e.target.value);
-    if(state.day < 7.5) state.hasImplanted = false; // reset logic if scrubbing back
-    if(state.isPlaying) togglePlay();
-    updateSimulation();
-});
+// ============================================================================
+// 5. BUILD 3D PELVIC REPRODUCTIVE TRACT & CORPUS LUTEUM WORLD (`macroWorld`)
+// ============================================================================
+function buildMacroReproductiveTract() {
+    const myoMat = new THREE.MeshPhysicalMaterial({ color: 0xE15B76, emissive: 0x4C0D1D, emissiveIntensity: 0.25, roughness: 0.45 });
+    macroEndoMat = new THREE.MeshPhysicalMaterial({ color: 0xBE123C, emissive: 0x6B0F26, emissiveIntensity: 0.40, roughness: 0.36 });
+    const tubeBackMat = new THREE.MeshPhysicalMaterial({ color: 0xF46A85, emissive: 0x4C0D1D, emissiveIntensity: 0.28, roughness: 0.42, side: THREE.DoubleSide });
+    const tubeGlassMat = new THREE.MeshPhysicalMaterial({ color: 0xFDA4AF, roughness: 0.2, transparent: true, opacity: 0.22, depthWrite: false });
 
-crossSectionToggle.addEventListener('change', (e) => {
-    state.isCrossSection = e.target.checked;
-    crossSectionLabel.textContent = state.isCrossSection ? "Cross-Section View" : "Surface View";
-    crossSectionLabel.className = `text-[9px] uppercase tracking-wider font-bold mr-2 ${state.isCrossSection ? 'text-pink-400' : 'text-slate-400'}`;
-    updateSimulation();
-});
+    // 1. 3D Ovary + Rupturing Follicle -> Golden Corpus Luteum (or White Corpus Albicans if Failed!)
+    const ovaryPos = new THREE.Vector3(-4.15, -0.65, 0.0);
+    const ovaryMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.85, 28, 22),
+        new THREE.MeshPhysicalMaterial({ color: 0xFBCFE8, emissive: 0x4A1D2F, emissiveIntensity: 0.22, roughness: 0.5 })
+    );
+    ovaryMesh.scale.set(1.25, 0.78, 0.72);
+    ovaryMesh.position.copy(ovaryPos);
+    macroWorld.add(ovaryMesh);
 
-function togglePlay() {
-    state.isPlaying = !state.isPlaying;
-    if (state.isPlaying) {
-        autoPlayBtn.innerHTML = "⏸ Pause Timeline";
-        autoPlayBtn.classList.replace('bg-slate-700', 'bg-sky-600');
-        autoPlayBtn.classList.replace('hover:bg-slate-600', 'hover:bg-sky-500');
-        autoPlayBtn.classList.replace('border-slate-500', 'border-sky-500');
-        
-        if(state.day >= state.maxDays) state.day = 0;
-    } else {
-        autoPlayBtn.innerHTML = "<i class='fa-solid fa-play'></i> Auto-Play Timeline";
-        autoPlayBtn.classList.replace('bg-sky-600', 'bg-slate-700');
-        autoPlayBtn.classList.replace('hover:bg-sky-500', 'hover:bg-slate-600');
-        autoPlayBtn.classList.replace('border-sky-500', 'border-slate-500');
+    // Ovarian Ligament to Uterus
+    const ovLig = new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-3.15, -0.48, -0.08),
+            new THREE.Vector3(-1.35, -0.22, -0.08),
+            new THREE.Vector3( 0.45,  0.15, -0.08)
+        ]), 18, 0.075, 8, false),
+        myoMat
+    );
+    macroWorld.add(ovLig);
+
+    macroFollicle = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 18, 16),
+        new THREE.MeshPhysicalMaterial({ color: 0x60A5FA, emissive: 0x1D4ED8, emissiveIntensity: 0.45, transparent: true, opacity: 0.82 })
+    );
+    macroFollicle.position.set(-4.45, -0.22, 0.25);
+    macroWorld.add(macroFollicle);
+
+    macroCorpusLuteum = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.34, 1),
+        new THREE.MeshStandardMaterial({ color: 0xFBBF24, emissive: 0xB45309, emissiveIntensity: 0.52, roughness: 0.42 })
+    );
+    macroCorpusLuteum.position.copy(macroFollicle.position);
+    macroWorld.add(macroCorpusLuteum);
+    registerPick('macro', ovaryMesh, 'corpusLuteum');
+    registerPick('macro', macroCorpusLuteum, 'corpusLuteum');
+
+    // 2. Fallopian Tube Arch (Fimbriae -> Ampulla -> Isthmus -> Uterotubal Junction)
+    const fallopianCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-4.55,  0.22, 0.15), // Infundibulum / Fimbriae over Ovary
+        new THREE.Vector3(-4.25,  1.55, 0.12), // Distal Ampulla (Fertilization Day 0!)
+        new THREE.Vector3(-2.65,  2.25, 0.08), // Mid Ampulla (Day 1-2)
+        new THREE.Vector3(-0.85,  1.95, 0.04), // Isthmus (Day 3)
+        new THREE.Vector3( 0.72,  1.42, 0.02)  // Uterotubal Ostium (Day 4)
+    ]);
+    const tubeGlass = new THREE.Mesh(new THREE.TubeGeometry(fallopianCurve, 48, 0.34, 18, false), tubeGlassMat);
+    const tubeFloor = new THREE.Mesh(new THREE.TubeGeometry(fallopianCurve, 48, 0.32, 18, false), tubeBackMat);
+    tubeFloor.position.z = -0.12;
+    tubeFloor.scale.z = 0.35;
+    macroWorld.add(tubeFloor, tubeGlass);
+
+    // Waving Fimbriae Petals at (-4.55, 0.22, 0.15)
+    for (let f = 0; f < 10; f++) {
+        const ang = (f / 10) * Math.PI * 2;
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.48, 8), tubeBackMat);
+        cone.position.set(-4.55 + Math.cos(ang) * 0.24, 0.05, 0.15 + Math.sin(ang) * 0.22);
+        cone.rotation.z = 0.25 + Math.cos(ang) * 0.35;
+        macroWorld.add(cone);
+    }
+
+    // 3. Coronal Cutaway Uterus (Fundus, Thick Myometrium, Lush Vascular Endometrium & Uterine Cavity)
+    const utGroup = new THREE.Group();
+    utGroup.position.set(2.15, -0.35, 0);
+
+    const utOuter = new THREE.Mesh(
+        new THREE.LatheGeometry([
+            new THREE.Vector2(0.55, -2.55),
+            new THREE.Vector2(0.85, -1.25),
+            new THREE.Vector2(1.65,  0.45),
+            new THREE.Vector2(2.05,  1.65),
+            new THREE.Vector2(1.55,  2.35),
+            new THREE.Vector2(0.01,  2.55)
+        ], 36, Math.PI, Math.PI), // Posterior half-shell coronal cutaway!
+        myoMat
+    );
+    utOuter.scale.set(1.0, 1.0, 0.65);
+
+    const utEndo = new THREE.Mesh(
+        new THREE.LatheGeometry([
+            new THREE.Vector2(0.22, -2.50),
+            new THREE.Vector2(0.45, -1.15),
+            new THREE.Vector2(1.12,  0.55),
+            new THREE.Vector2(1.48,  1.58),
+            new THREE.Vector2(0.95,  1.95),
+            new THREE.Vector2(0.01,  2.02)
+        ], 36, Math.PI, Math.PI),
+        macroEndoMat
+    );
+    utEndo.scale.set(1.0, 1.0, 0.52);
+    utGroup.add(utOuter, utEndo);
+    macroWorld.add(utGroup);
+    registerPick('macro', utEndo, 'endometrium');
+
+    // Full Spatiotemporal Conceptus Curve (Day 0.0 -> Day 9.5)
+    macroTractCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-4.25,  1.55, 0.14), // D0: Ampulla (Fertilization)
+        new THREE.Vector3(-2.65,  2.25, 0.12), // D1.8: Ampulla
+        new THREE.Vector3(-0.85,  1.95, 0.08), // D3.0: Isthmus
+        new THREE.Vector3( 0.72,  1.42, 0.06), // D4.0: Uterotubal Entry (Morula)
+        new THREE.Vector3( 1.85,  0.85, 0.08), // D5.2: Floating in Uterine Cavity (Blastocyst)
+        new THREE.Vector3( 2.55,  0.62, 0.08), // D6.3: Hatching near Endometrium
+        new THREE.Vector3( 3.12,  0.58, 0.06), // D7.2: Apposition / Adhesion
+        new THREE.Vector3( 3.45,  0.58, 0.02)  // D8–9.5: Implanted inside Maternal Endometrium!
+    ]);
+
+    // Glowing Conceptus Locator Sphere + Pulsing Magnifier Ring in Macro 3D View!
+    macroConceptusMarker = new THREE.Group();
+    const coreDot = new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 16), new THREE.MeshBasicMaterial({ color: 0xF472B6 }));
+    const ringHalo = new THREE.Mesh(
+        new THREE.TorusGeometry(0.42, 0.04, 10, 28),
+        new THREE.MeshBasicMaterial({ color: 0x38BDF8 })
+    );
+    macroConceptusMarker.add(coreDot, ringHalo);
+    macroWorld.add(macroConceptusMarker);
+    registerPick('macro', macroConceptusMarker, 'icm');
+
+    // Endocrine Vascular Return Arc (Implanted Syncytiotrophoblast -> Maternal Bloodstream -> Ovarian Corpus Luteum!)
+    macroHcgReturnCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3( 3.45,  0.58, -0.15),
+        new THREE.Vector3( 1.25, -1.65, -0.35),
+        new THREE.Vector3(-1.85, -1.85, -0.25),
+        new THREE.Vector3(-4.35, -0.25,  0.15)
+    ]);
+    const hcgOrbGeo = new THREE.SphereGeometry(0.09, 10, 8);
+    const hcgOrbMat = new THREE.MeshBasicMaterial({ color: 0x34D399 });
+    for (let i = 0; i < 12; i++) {
+        const m = new THREE.Mesh(hcgOrbGeo, hcgOrbMat);
+        m.visible = false;
+        macroWorld.add(m);
+        macroHcgPulses.push({ mesh: m, offset: i / 12 });
     }
 }
-autoPlayBtn.addEventListener('click', togglePlay);
 
-implantBtn.addEventListener('click', () => {
-    if(state.day >= 6.5 && state.day < 7.5) {
-        state.hasImplanted = true;
-        if(!state.isPlaying) togglePlay(); 
+// ============================================================================
+// 6. DETERMINISTIC 3D CLEAVAGE PACKING COORDINATES (2, 4, 8, 26-CELL MORULA)
+// ============================================================================
+const CLEAVAGE_LAYOUTS = {
+    2: { r: 0.74, pts: [new THREE.Vector3(-0.62, 0, 0), new THREE.Vector3(0.62, 0, 0)] },
+    4: {
+        r: 0.62,
+        pts: [
+            new THREE.Vector3(-0.50,  0.46, -0.22),
+            new THREE.Vector3( 0.50,  0.46,  0.22),
+            new THREE.Vector3(-0.50, -0.46,  0.22),
+            new THREE.Vector3( 0.50, -0.46, -0.22)
+        ]
+    },
+    8: {
+        r: 0.49,
+        pts: [
+            new THREE.Vector3(-0.48,  0.48, -0.44), new THREE.Vector3( 0.48,  0.48, -0.44),
+            new THREE.Vector3(-0.48, -0.48, -0.44), new THREE.Vector3( 0.48, -0.48, -0.44),
+            new THREE.Vector3(-0.48,  0.48,  0.44), new THREE.Vector3( 0.48,  0.48,  0.44),
+            new THREE.Vector3(-0.48, -0.48,  0.44), new THREE.Vector3( 0.48, -0.48,  0.44)
+        ]
+    },
+    26: (() => {
+        const outer = fibonacciSpherePoints(20).map(v => v.multiplyScalar(0.98));
+        const inner = fibonacciSpherePoints(6).map(v => v.multiplyScalar(0.42));
+        return { r: 0.39, pts: [...inner, ...outer] };
+    })()
+};
+
+// ============================================================================
+// 7. UPDATE 3D MORPHOGENESIS, ZONA HATCHING, ENDOCRINE GRAPH & PIP MAP
+// ============================================================================
+function evaluateHormonesAtDay(d, success) {
+    // Post-ovulatory luteal Progesterone rises Days 0->5 (~12 -> 21 ng/mL), dips slightly Day 6.5.
+    // If hCG rescues Corpus Luteum at Day 7.3+, hCG surges exponentially & Progesterone climbs to ~28 ng/mL!
+    // If implantation fails, hCG = 0 and Progesterone crashes toward <3 ng/mL (luteolysis -> menstruation)!
+    let prog = 12.0 + Math.sin(clamp(d / 6.8, 0, 1) * Math.PI * 0.72) * 9.2;
+    let hcg = 0;
+
+    if (d >= 7.2) {
+        if (success) {
+            hcg = Math.pow((d - 7.2) * 5.8, 2.35);
+            prog = 18.2 + smoothstep(7.2, 9.5, d) * 10.5;
+        } else {
+            hcg = 0;
+            prog = lerp(18.0, 2.4, smoothstep(7.0, 9.5, d));
+        }
     }
-});
+    return { hcg: clamp(hcg, 0, 320), prog: clamp(prog, 2.0, 30.0) };
+}
 
-// --- Main Render Loop ---
-app.ticker.add((delta) => {
+function renderHormoneChartCanvas() {
+    const cvs = document.getElementById('hormone-chart');
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    const w = cvs.width, h = cvs.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Subtle Day 7 Implantation Window vertical guide
+    const xImp = (7.2 / 9.5) * (w - 10) + 5;
+    ctx.strokeStyle = 'rgba(244, 114, 182, 0.28)';
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(xImp, 4); ctx.lineTo(xImp, h - 4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 1. Progesterone Curve (Sky Blue)
+    ctx.strokeStyle = '#38BDF8';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    for (let px = 5; px <= w - 5; px += 2) {
+        const dSample = ((px - 5) / (w - 10)) * 9.5;
+        const { prog } = evaluateHormonesAtDay(dSample, state.implantationSuccess);
+        const py = (h - 6) - (prog / 31) * (h - 12);
+        if (px === 5) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // 2. hCG Curve (Emerald Green)
+    ctx.strokeStyle = '#34D399';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    for (let px = 5; px <= w - 5; px += 2) {
+        const dSample = ((px - 5) / (w - 10)) * 9.5;
+        const { hcg } = evaluateHormonesAtDay(dSample, state.implantationSuccess);
+        const py = (h - 6) - (hcg / 320) * (h - 12);
+        if (px === 5) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Current Day Cursor Dots
+    const cx = (state.day / 9.5) * (w - 10) + 5;
+    const cur = evaluateHormonesAtDay(state.day, state.implantationSuccess);
+    const pyP = (h - 6) - (cur.prog / 31) * (h - 12);
+    const pyH = (h - 6) - (cur.hcg / 320) * (h - 12);
+
+    ctx.fillStyle = '#38BDF8';
+    ctx.beginPath(); ctx.arc(cx, pyP, 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#34D399';
+    ctx.beginPath(); ctx.arc(cx, pyH, 3.2, 0, Math.PI * 2); ctx.fill();
+}
+
+function renderPiPTractMap() {
+    const cvs = document.getElementById('pip-tract-canvas');
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    const w = cvs.width, h = cvs.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Stylized Fallopian Tube Arch + Ovary + Uterine Cavity
+    // Ovary & Corpus Luteum
+    ctx.fillStyle = (state.day >= 7.5 && !state.implantationSuccess) ? '#94A3B8' : '#FBBF24';
+    ctx.beginPath(); ctx.ellipse(24, 48, 12, 8, -0.2, 0, Math.PI * 2); ctx.fill();
+
+    // Fallopian Tube Curve
+    ctx.strokeStyle = 'rgba(244, 114, 182, 0.45)';
+    ctx.lineWidth = 9;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(24, 38);
+    ctx.bezierCurveTo(22, 12, 72, 10, 106, 26);
+    ctx.stroke();
+
+    // Uterine Cavity & Endometrial Wall (Right)
+    ctx.fillStyle = (state.day >= 8.0 && !state.implantationSuccess) ? 'rgba(127, 29, 29, 0.45)' : 'rgba(225, 29, 72, 0.55)';
+    ctx.beginPath();
+    ctx.moveTo(106, 18);
+    ctx.quadraticCurveTo(148, 14, 156, 58);
+    ctx.lineTo(118, 62);
+    ctx.quadraticCurveTo(112, 35, 106, 18);
+    ctx.fill();
+
+    // Map Day (0..9.5) to PiP 2D Path
+    const u = clamp(state.day / 9.5, 0, 1);
+    const pts = [
+        [28, 25], [52, 14], [80, 17], [104, 25], [122, 34], [134, 38], [142, 39]
+    ];
+    const segF = u * (pts.length - 1);
+    const i0 = Math.min(pts.length - 2, Math.floor(segF));
+    const frac = segF - i0;
+    const ex = lerp(pts[i0][0], pts[i0 + 1][0], frac);
+    const ey = lerp(pts[i0][1], pts[i0 + 1][1], frac);
+
+    // Glowing Embryo Position Dot
+    ctx.fillStyle = '#38BDF8';
+    ctx.beginPath(); ctx.arc(ex, ey, 5.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, Math.PI * 2); ctx.fill();
+}
+
+function getStageForDay(d) {
+    for (let st of STAGES) {
+        if (d <= st.maxDay) return st;
+    }
+    return STAGES[STAGES.length - 1];
+}
+
+function updateSimulation(elapsed = 0) {
+    const d = clamp(state.day, 0, 9.5);
+    const stage = getStageForDay(d);
+
+    // 1. Update Header & Scrubber Readouts
+    document.getElementById('dayDisplay').textContent = d.toFixed(1);
+    document.getElementById('timelineSlider').value = d;
+    document.getElementById('hud-location').textContent = stage.loc;
+    document.getElementById('pip-loc-label').textContent = stage.loc;
+    document.getElementById('hud-cells').textContent = `${stage.cells} (${stage.diameter})`;
+    document.getElementById('hud-potency').textContent = stage.potency;
+    document.getElementById('hud-diameter').textContent = stage.diameter;
+    document.getElementById('hud-zona-state').textContent = stage.zonaState;
+
+    // Highlight active quick-jump chip
+    document.querySelectorAll('.stage-chip').forEach(btn => {
+        const bDay = parseFloat(btn.dataset.day);
+        const active = Math.abs(d - bDay) < 0.45;
+        btn.className = active
+            ? 'stage-chip py-1 px-1.5 rounded text-[10px] font-bold bg-pink-500/25 text-pink-200 border border-pink-400/60 transition truncate'
+            : 'stage-chip py-1 px-1.5 rounded text-[10px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition truncate';
+    });
+
+    // 2. Update Endocrine Telemetry & Narrative
+    const { hcg, prog } = evaluateHormonesAtDay(d, state.implantationSuccess);
+    document.getElementById('hcgVal').textContent = `${Math.round(hcg)} mIU/mL`;
+    document.getElementById('hcgBar').style.width = `${(hcg / 320) * 100}%`;
+    document.getElementById('progVal').textContent = `${prog.toFixed(1)} ng/mL`;
+    document.getElementById('progBar').style.width = `${(prog / 30) * 100}%`;
+
+    const clBadge = document.getElementById('cl-status-badge');
+    const hNarr   = document.getElementById('hormoneNarrative');
+
+    if (d < 7.2) {
+        clBadge.textContent = 'Corpus Luteum Active';
+        clBadge.className = 'text-[9.5px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30';
+        hNarr.innerHTML = 'Post-ovulatory <strong>Corpus Luteum</strong> secretes Progesterone to prime the uterine lining, awaiting an hCG rescue signal by Day 8.';
+    } else if (state.implantationSuccess) {
+        clBadge.textContent = '✓ Rescued by hCG!';
+        clBadge.className = 'text-[9.5px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        hNarr.innerHTML = '<strong class="text-emerald-300">Pregnancy Established:</strong> Invading Syncytiotrophoblast secretes <strong>hCG</strong> into maternal blood, rescuing the Corpus Luteum so Progesterone stays high!';
+    } else {
+        clBadge.textContent = '✕ Luteolysis (No hCG)';
+        clBadge.className = 'text-[9.5px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        hNarr.innerHTML = '<strong class="text-rose-300">Implantation Failed:</strong> With zero hCG produced, the Corpus Luteum degenerates into Corpus Albicans—Progesterone crashes and menstruation begins!';
+    }
+
+    renderHormoneChartCanvas();
+    renderPiPTractMap();
+
+    // 3. Update Inspector Card (either Clicked 3D Structure OR Active Timeline Stage!)
+    if (state.customInspectKey && CELL_STRUCTURES[state.customInspectKey]) {
+        const info = CELL_STRUCTURES[state.customInspectKey];
+        document.getElementById('inspAccent').style.backgroundColor = info.accent;
+        document.getElementById('inspSubtitle').innerHTML = `Structure Selected &bull; <button id="clearStructBtn" class="underline text-pink-300 hover:text-white">Back to Stage</button>`;
+        document.getElementById('inspPotency').textContent = info.potency;
+        const tEl = document.getElementById('stageTitle');
+        tEl.textContent = info.title;
+        tEl.style.color = info.accent;
+        document.getElementById('stageDesc').textContent = info.desc;
+        document.getElementById('examTipBox').innerHTML = `<strong class="text-amber-300">Exam Key:</strong> ${info.exam}`;
+        const clearBtn = document.getElementById('clearStructBtn');
+        if (clearBtn) clearBtn.onclick = () => { state.customInspectKey = null; updateSimulation(elapsed); };
+    } else {
+        document.getElementById('inspAccent').style.backgroundColor = stage.accent;
+        document.getElementById('inspSubtitle').textContent = `Day ${d.toFixed(1)} Stage Overview`;
+        document.getElementById('inspPotency').textContent = stage.potency;
+        const tEl = document.getElementById('stageTitle');
+        tEl.textContent = stage.title;
+        tEl.style.color = stage.accent;
+        document.getElementById('stageDesc').textContent = stage.desc;
+        document.getElementById('examTipBox').innerHTML = `<strong class="text-amber-300">Exam Key:</strong> ${stage.exam}`;
+    }
+
+    // 4. Configure 3D Cutaway Clipping Plane
+    cutPlane.constant = state.cutaway ? 0.08 : 25.0;
+
+    // ========================================================================
+    // 5. UPDATE 400× 3D CELLULAR MICROSCOPE WORLD (`microWorld`)
+    // ========================================================================
+
+    // A. Glassy 3D Zona Pellucida & Day 5.8–6.8 Hatching Breach Deformation!
+    const hatchT = clamp((d - 5.8) / 1.0, 0, 1);
+    const postHatch = clamp((d - 6.8) / 1.2, 0, 1);
+
+    zonaMesh.visible = d < 8.1;
+    if (zonaMesh.visible) {
+        const zPos = zonaMesh.geometry.attributes.position;
+        const breachCos = lerp(1.02, 0.35, hatchT); // Expands circular hole on +X side!
+        for (let i = 0; i < zPos.count; i++) {
+            const rx = zonaGeoRest[i * 3];
+            const ry = zonaGeoRest[i * 3 + 1];
+            const rz = zonaGeoRest[i * 3 + 2];
+            const nx = rx / 1.85;
+
+            if (nx > breachCos) {
+                // Peel & retract breached glycoprotein lip outward/backward
+                const peel = (nx - breachCos) / Math.max(0.05, 1.0 - breachCos);
+                zPos.setXYZ(i, rx - peel * 0.65, ry * (1 + peel * 0.28), rz * (1 + peel * 0.28));
+            } else {
+                // Slight thinning/stretching at Day 5 before hatching
+                const stretch = 1.0 + smoothstep(4.6, 5.8, d) * 0.06;
+                zPos.setXYZ(i, rx * stretch, ry * stretch, rz * stretch);
+            }
+        }
+        zPos.needsUpdate = true;
+        zonaMesh.geometry.computeVertexNormals();
+        // Empty Zona Pellucida drifts left (-X) and dissolves after blastocyst hatches out (+X)!
+        zonaMesh.position.x = -hatchT * 0.85 - postHatch * 1.65;
+        zonaMesh.position.y = -postHatch * 0.45;
+        zonaMesh.material.opacity = lerp(0.35, 0.04, postHatch);
+    }
+
+    // Cortical Granule Polyspermy-Block Flash Wave (Day 0.16 – 0.46)
+    if (d >= 0.16 && d <= 0.48) {
+        const cf = (d - 0.16) / 0.32;
+        corticalFlashMesh.visible = true;
+        corticalFlashMesh.scale.setScalar(0.86 + cf * 0.22);
+        corticalFlashMesh.material.opacity = Math.sin(cf * Math.PI) * 0.65;
+    } else {
+        corticalFlashMesh.visible = false;
+    }
+
+    // B. Corona Radiata Granulosa Cells (Disperse smoothly Days 0.2 -> 1.3)
+    coronaGroup.visible = d < 1.35;
+    if (coronaGroup.visible) {
+        const disp = smoothstep(0.25, 1.35, d);
+        coronaGroup.children.forEach((gc, idx) => {
+            // Hide front cells when 3D Cutaway is ON so oocyte interior is crystal clear!
+            const dir = gc.userData.dir;
+            gc.visible = !(state.cutaway && dir.z > 0.22);
+            gc.position.copy(dir).multiplyScalar(2.06 + disp * 1.45);
+            gc.scale.setScalar(Math.max(0.01, 1.0 - disp));
+        });
+    }
+
+    // C. Capacitated 3D Spermatozoa (Day 0.0 – 0.95)
+    spermGroup.visible = d < 0.95;
+    if (spermGroup.visible) {
+        // Animate sinusoidal flagella
+        const allSp = [winnerSperm, ...challengerSperms];
+        allSp.forEach((sp, idx) => {
+            const mot = (idx === 0 && d > 0.22) ? 0.0 : (d > 0.35 ? 0.25 : 1.0);
+            const arr = sp.tailGeo.attributes.position.array;
+            for (let s = 0; s < 9; s++) {
+                const f = s / 8;
+                arr[s * 3]     = -0.08 - f * 0.52;
+                arr[s * 3 + 1] = Math.sin(elapsed * 20 + idx - f * 5.5) * 0.08 * f * mot;
+                arr[s * 3 + 2] = Math.cos(elapsed * 20 + idx - f * 5.5) * 0.04 * f * mot;
+            }
+            sp.tailGeo.attributes.position.needsUpdate = true;
+        });
+
+        // Winner Sperm approaches (-3.2 -> -1.52) and fuses at Day 0.18!
+        const winP = clamp(d / 0.18, 0, 1);
+        winnerSperm.grp.visible = d < 0.38;
+        winnerSperm.grp.position.set(lerp(-3.2, -1.55, smoothstep(0, 1, winP)), 0.12, -0.05);
+
+        // Challenger Sperm halted outside hardened Zona Pellucida!
+        challengerSperms.forEach(ch => {
+            const rStop = 2.05 + smoothstep(0.22, 0.85, d) * 0.85;
+            const rCur = d < 0.20 ? lerp(3.4, 2.05, d / 0.20) : rStop;
+            ch.grp.position.set(Math.cos(ch.angle) * rCur, Math.sin(ch.angle) * rCur, ch.zOff);
+            ch.grp.rotation.z = ch.angle + Math.PI;
+        });
+    }
+
+    // D. Zygote Ooplasm, Polar Bodies & Pronuclear Syngamy (Day 0.0 – 0.98)
+    const isDay0 = d < 0.98;
+    ooplasmMesh.visible = isDay0;
+    pronucleusF.visible = isDay0;
+    pronucleusM.visible = d >= 0.18 && isDay0;
+    polarBody1.visible  = d < 3.5;
+    polarBody2.visible  = d >= 0.22 && d < 3.5;
+
+    if (isDay0) {
+        const synT = smoothstep(0.24, 0.82, d);
+        pronucleusM.position.set(lerp(-1.05, -0.06, synT), lerp(0.10, 0.0, synT), -0.05);
+        pronucleusF.position.set(lerp( 0.65,  0.06, synT), lerp(-0.12, 0.0, synT), -0.05);
+        const fuseScale = 1.0 + smoothstep(0.78, 0.95, d) * 0.22;
+        pronucleusM.scale.setScalar(fuseScale);
+        pronucleusF.scale.setScalar(fuseScale);
+    }
+
+    // E. Deterministic 3D Cleavage & Morula Compaction (Day 0.98 – 4.60)
+    cleavageGroup.visible = (d >= 0.98 && d < 4.60);
+    if (cleavageGroup.visible) {
+        let targetCount = 2;
+        if (d >= 1.80 && d < 2.65) targetCount = 4;
+        else if (d >= 2.65 && d < 3.50) targetCount = 8;
+        else if (d >= 3.50) targetCount = 26;
+
+        const layout = CLEAVAGE_LAYOUTS[targetCount];
+        // Compaction pulls 26-cell Morula tightly inward around Day 3.8–4.5!
+        const compactPull = targetCount === 26 ? lerp(1.05, 0.86, smoothstep(3.6, 4.4, d)) : 1.0;
+
+        blastomereMeshes.forEach((bm, idx) => {
+            if (idx < targetCount) {
+                const pt = layout.pts[idx];
+                // In 3D Cutaway mode for 26-cell Morula, hide outer front-Z cells so inner compacted cells show!
+                const hideFront = (targetCount === 26 && state.cutaway && pt.z > 0.35);
+                bm.grp.visible = !hideFront;
+                bm.grp.position.copy(pt).multiplyScalar(compactPull);
+                const pulse = 1.0 + Math.sin(elapsed * 2.2 + idx) * 0.018;
+                bm.grp.scale.setScalar(layout.r * pulse);
+                bm.mat.color.setHex(targetCount === 26 ? 0xA855F7 : 0x818CF8);
+            } else {
+                bm.grp.visible = false;
+            }
+        });
+    }
+
+    // F. 3D Blastocyst, Figure-8 Zona Hatching, Endometrial Invasion & Bilaminar Disc (Day 4.60 – 9.5)
+    blastocystGroup.visible = (d >= 4.60);
+    endoWallGroup.visible   = (d >= 5.60);
+    hcgParticles.forEach(hp => { hp.mesh.visible = false; });
+
+    if (blastocystGroup.visible) {
+        // Blastocyst translates out of Zona (+X) during Hatching (5.8->6.8) and embeds into Endometrial Wall (7.2->9.0)!
+        let bx = 0.0;
+        if (d >= 5.8 && d < 6.8) {
+            bx = smoothstep(5.8, 6.8, d) * 1.45;
+        } else if (d >= 6.8) {
+            bx = state.implantationSuccess
+                ? lerp(1.45, 2.35, smoothstep(6.9, 8.8, d))
+                : lerp(1.45, 1.15, smoothstep(7.2, 9.2, d)); // Drifts unattached if Failed Implantation!
+        }
+        blastocystGroup.position.x = bx;
+        blastocystGroup.position.y = (!state.implantationSuccess && d > 7.4) ? -(d - 7.4) * 0.45 : 0;
+
+        // Expansion after hatching + Figure-8 Hourglass Squeeze while passing Zona breach around Day 6.25!
+        const postExpand = 1.0 + smoothstep(6.2, 7.2, d) * 0.14;
+        const squeezeWindow = Math.sin(clamp((d - 5.85) / 0.85, 0, 1) * Math.PI);
+
+        trophoblastMeshes.forEach(tCell => {
+            const dir = tCell.userData.dir;
+            // When 3D Cutaway is ON, slice open the front (+Z > 0.12) trophoblast wall so ICM & Blastocoel are 100% visible!
+            tCell.visible = !(state.cutaway && dir.z > 0.12);
+
+            let rLocal = 1.48 * postExpand;
+            // Authentic figure-8 hourglass pinch near middle of hatching blastocyst!
+            const pinchZone = Math.exp(-Math.pow((dir.x - 0.15) / 0.38, 2));
+            const radialFactor = 1.0 - squeezeWindow * pinchZone * 0.28;
+            tCell.position.set(
+                dir.x * rLocal * (1.0 + squeezeWindow * 0.16),
+                dir.y * rLocal * radialFactor,
+                dir.z * rLocal * radialFactor
+            );
+        });
+
+        blastocoelMesh.scale.setScalar(postExpand * (0.65 + smoothstep(4.6, 5.4, d) * 0.35));
+
+        // Transition Pluripotent ICM Cluster (Days 4.6–7.6) -> Bilaminar Embryonic Disc (Epiblast + Hypoblast, Days 7.6–9.5)!
+        const showBilaminar = state.implantationSuccess && d >= 7.65;
+        bilaminarGroup.visible = showBilaminar;
+        icmMeshes.forEach(m => {
+            m.visible = !showBilaminar;
+            m.position.copy(m.userData.basePos).multiplyScalar(postExpand);
+        });
+
+        // Maternal 3D Endometrial Wall Position & Health (Lush Crimson vs. Pale/Sloughing if No hCG!)
+        const wallTargetX = lerp(6.6, 3.15, smoothstep(5.6, 7.1, d));
+        endoWallGroup.position.x = wallTargetX;
+
+        if (!state.implantationSuccess && d >= 7.5) {
+            const wilt = smoothstep(7.5, 9.5, d);
+            endoStromaMat.color.setRGB(lerp(0.75, 0.32, wilt), lerp(0.07, 0.12, wilt), lerp(0.24, 0.22, wilt));
+            spiralVesselMat.emissiveIntensity = lerp(0.55, 0.08, wilt);
+        } else {
+            endoStromaMat.color.setHex(0xBE123C);
+            spiralVesselMat.emissiveIntensity = 0.55 + smoothstep(7.5, 9.5, d) * 0.35;
+        }
+
+        // Invading 3D Syncytiotrophoblast Roots & Emerald hCG Hormone Secretion into Maternal Vessels!
+        const invProgress = state.implantationSuccess ? smoothstep(7.3, 9.2, d) : 0.0;
+        syncytioTubes.forEach(st => {
+            st.mesh.visible = invProgress > 0.02;
+            st.mesh.scale.set(invProgress, invProgress, invProgress);
+        });
+
+        if (invProgress > 0.12) {
+            hcgParticles.forEach(hp => {
+                hp.mesh.visible = true;
+                const p = (elapsed * 0.55 + hp.offset) % 1.0;
+                hp.mesh.position.set(
+                    bx + 1.15 + p * 2.85,
+                    hp.ySpread + Math.sin(p * Math.PI * 2 + hp.offset * 6) * 0.12,
+                    hp.zSpread
+                );
+                hp.mesh.scale.setScalar(Math.sin(p * Math.PI) * 1.15);
+            });
+        }
+    }
+
+    // ========================================================================
+    // 6. UPDATE 3D ORGAN TRACT & CORPUS LUTEUM WORLD (`macroWorld`)
+    // ========================================================================
+    if (macroWorld) {
+        const uTract = clamp(d / 9.5, 0, 1);
+        macroConceptusMarker.position.copy(macroTractCurve.getPointAt(uTract));
+        macroConceptusMarker.children[1].scale.setScalar(1.0 + Math.sin(elapsed * 4) * 0.15);
+
+        macroFollicle.visible = d < 0.25;
+        macroCorpusLuteum.visible = d >= 0.25;
+        if (macroCorpusLuteum.visible) {
+            if (!state.implantationSuccess && d >= 7.3) {
+                // Degenerates into shrunken white Corpus Albicans!
+                const deg = smoothstep(7.3, 9.5, d);
+                macroCorpusLuteum.scale.setScalar(lerp(1.0, 0.48, deg));
+                macroCorpusLuteum.material.color.setRGB(lerp(0.98, 0.85, deg), lerp(0.75, 0.88, deg), lerp(0.14, 0.92, deg));
+                macroCorpusLuteum.material.emissiveIntensity = lerp(0.52, 0.05, deg);
+                macroEndoMat.color.setHex(0x64748B);
+            } else {
+                // Plump Golden Corpus Luteum rescued by hCG!
+                const rescueBoost = (d >= 7.3) ? smoothstep(7.3, 9.2, d) * 0.26 : 0;
+                macroCorpusLuteum.scale.setScalar(0.95 + rescueBoost);
+                macroCorpusLuteum.material.color.setHex(0xFBBF24);
+                macroCorpusLuteum.material.emissiveIntensity = 0.50 + rescueBoost * 0.8;
+                macroEndoMat.color.setHex(0xBE123C);
+            }
+        }
+
+        const sendMacroHcg = state.implantationSuccess && d >= 7.35;
+        macroHcgPulses.forEach(mp => {
+            mp.mesh.visible = sendMacroHcg;
+            if (sendMacroHcg) {
+                const t = (elapsed * 0.45 + mp.offset) % 1.0;
+                mp.mesh.position.copy(macroHcgReturnCurve.getPointAt(t));
+            }
+        });
+    }
+}
+
+// ============================================================================
+// 8. DYNAMIC 3D CLICKABLE ANATOMICAL PINS
+// ============================================================================
+function addPin(id, label, dotHex, structKey, posEvaluator, validCheck) {
+    const container = document.getElementById('pins-container');
+    const el = document.createElement('div');
+    el.className = 'anat-pin';
+    el.innerHTML = `<span class="anat-pin-tag"><span class="anat-pin-dot" style="background:${dotHex};box-shadow:0 0 6px ${dotHex}"></span>${label}</span>`;
+    el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.customInspectKey = structKey;
+        updateSimulation(clock.getElapsedTime());
+    });
+    container.appendChild(el);
+    pinRegistry.push({ id, el, structKey, posEvaluator, validCheck });
+}
+
+function setup3DPins() {
+    // 400× Microscope View Pins
+    addPin('p_sperm', 'Acrosome & Sperm (n)', '#7DD3FC', 'sperm',
+        () => new THREE.Vector3(-2.15, 0.55, 0.2),
+        () => state.viewScale === 'micro' && state.day < 0.75);
+
+    addPin('p_pronuc', 'Male & Female Pronuclei', '#22D3EE', 'pronuclei',
+        () => new THREE.Vector3(0.0, -0.45, 0.1),
+        () => state.viewScale === 'micro' && state.day >= 0.2 && state.day < 0.98 && state.cutaway);
+
+    addPin('p_pb', 'Polar Bodies', '#CBD5E1', 'pronuclei',
+        () => new THREE.Vector3(0.0, 1.72, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 0.22 && state.day < 1.8);
+
+    addPin('p_zona', 'Zona Pellucida', '#38BDF8', 'zona',
+        () => new THREE.Vector3(zonaMesh.position.x - 1.55, 1.15, 0.0),
+        () => state.viewScale === 'micro' && state.day < 7.4);
+
+    addPin('p_blast', 'Totipotent Blastomeres', '#818CF8', 'blastomeres',
+        () => new THREE.Vector3(0.25, -0.55, 0.35),
+        () => state.viewScale === 'micro' && state.day >= 1.0 && state.day < 4.6);
+
+    addPin('p_troph', 'Trophoblast (Future Placenta)', '#E879F9', 'trophoblast',
+        () => new THREE.Vector3(blastocystGroup.position.x - 1.15, -1.25, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 4.6);
+
+    addPin('p_icm', 'Inner Cell Mass (Pluripotent)', '#F472B6', 'icm',
+        () => new THREE.Vector3(blastocystGroup.position.x + 0.85, 0.72, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 4.6 && state.day < 7.65 && state.cutaway);
+
+    addPin('p_bilam', 'Bilaminar Disc (Epiblast/Hypoblast)', '#38BDF8', 'icm',
+        () => new THREE.Vector3(blastocystGroup.position.x + 0.82, 0.85, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 7.65 && state.implantationSuccess && state.cutaway);
+
+    addPin('p_coel', 'Blastocoel Cavity', '#60A5FA', 'blastocoel',
+        () => new THREE.Vector3(blastocystGroup.position.x - 0.55, 0.15, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 4.7 && state.cutaway);
+
+    addPin('p_syncytio', 'Syncytiotrophoblast + hCG', '#10B981', 'syncytio',
+        () => new THREE.Vector3(blastocystGroup.position.x + 1.95, 1.05, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 7.4 && state.implantationSuccess);
+
+    addPin('p_endo', 'Maternal Endometrium & Vessels', '#FB7185', 'endometrium',
+        () => new THREE.Vector3(endoWallGroup.position.x + 1.05, -1.55, 0.0),
+        () => state.viewScale === 'micro' && state.day >= 6.2);
+
+    // 3D Macro Organ Tract View Pins
+    addPin('m_cl', 'Ovarian Corpus Luteum', '#FBBF24', 'corpusLuteum',
+        () => new THREE.Vector3(-4.35, -1.15, 0.25),
+        () => state.viewScale === 'macro');
+
+    addPin('m_emb', 'Traveling Conceptus (Click for 400×)', '#38BDF8', 'icm',
+        () => macroConceptusMarker.position.clone().add(new THREE.Vector3(0, 0.65, 0)),
+        () => state.viewScale === 'macro');
+
+    addPin('m_ut', 'Vascular Endometrium', '#FB7185', 'endometrium',
+        () => new THREE.Vector3(3.45, -1.25, 0.1),
+        () => state.viewScale === 'macro');
+}
+
+const _projPin = new THREE.Vector3();
+function update3DPins() {
+    const viewport = document.getElementById('three-viewport');
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+
+    pinRegistry.forEach(p => {
+        p.el.classList.toggle('active', state.customInspectKey === p.structKey);
+        if (!state.showPins || !p.validCheck()) {
+            p.el.classList.add('pin-hidden');
+            return;
+        }
+        _projPin.copy(p.posEvaluator());
+        _projPin.project(camera);
+        if (_projPin.z > 1 || _projPin.z < -1) {
+            p.el.classList.add('pin-hidden');
+            return;
+        }
+        const x = (_projPin.x * 0.5 + 0.5) * w;
+        const y = (-_projPin.y * 0.5 + 0.5) * h;
+        if (x < 42 || x > w - 42 || y < 32 || y > h - 32) {
+            p.el.classList.add('pin-hidden');
+            return;
+        }
+        p.el.classList.remove('pin-hidden');
+        p.el.style.left = `${x}px`;
+        p.el.style.top  = `${y}px`;
+    });
+}
+
+function bindCanvasPicking(viewport) {
+    let downX = 0, downY = 0;
+    const mouse = new THREE.Vector2();
+
+    viewport.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    viewport.addEventListener('pointerup', e => {
+        if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+
+        const pool = (state.viewScale === 'micro' ? pickableMicro : pickableMacro)
+            .filter(m => m.visible && (!m.parent || m.parent.visible));
+        const hits = raycaster.intersectObjects(pool, false);
+        for (let h of hits) {
+            if (state.viewScale === 'micro' && state.cutaway && h.object.material.clippingPlanes && cutPlane.distanceToPoint(h.point) < -0.05) {
+                continue;
+            }
+            // Clicking the Conceptus Marker in Macro Organ view zooms smoothly into 400x Microscope view!
+            if (state.viewScale === 'macro' && h.object.parent === macroConceptusMarker) {
+                setViewScale('micro');
+                return;
+            }
+            if (h.object.userData.structKey) {
+                state.customInspectKey = h.object.userData.structKey;
+                updateSimulation(clock.getElapsedTime());
+                break;
+            }
+        }
+    });
+}
+
+// ============================================================================
+// 9. UI CONTROLS, VIEW SWITCHING & PLAYBACK LOOP
+// ============================================================================
+function setViewScale(scaleMode) {
+    state.viewScale = scaleMode;
+    const isMicro = (scaleMode === 'micro');
+    microWorld.visible = isMicro;
+    macroWorld.visible = !isMicro;
+
+    document.getElementById('pip-tract-card').classList.toggle('hidden', !isMicro);
+    document.getElementById('volume-badge').classList.toggle('sm:block', isMicro);
+    if (!isMicro) document.getElementById('volume-badge').classList.add('hidden');
+
+    document.getElementById('viewMicroBtn').className = isMicro
+        ? 'px-3 py-1 rounded-md text-xs font-extrabold bg-pink-500/25 text-pink-200 border border-pink-400/50 shadow transition'
+        : 'px-3 py-1 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition';
+    document.getElementById('viewMacroBtn').className = !isMicro
+        ? 'px-3 py-1 rounded-md text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition'
+        : 'px-3 py-1 rounded-md text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition';
+
+    const preset = !isMicro ? CAM_GOALS.macroDefault : (state.day >= 6.0 ? CAM_GOALS.microImplant : CAM_GOALS.microDefault);
+    camGoalPos.copy(preset.pos);
+    camGoalTarget.copy(preset.target);
+    camGliding = true;
+}
+
+function setPlaying(playing) {
+    state.isPlaying = playing;
+    document.getElementById('playIcon').textContent = playing ? '⏸' : '▶';
+    document.getElementById('playText').textContent = playing ? 'Pause' : 'Auto-Play';
+}
+
+function bindUIControls() {
+    const slider = document.getElementById('timelineSlider');
+    slider.addEventListener('input', e => {
+        setPlaying(false);
+        state.customInspectKey = null;
+        state.day = parseFloat(e.target.value);
+        if (state.viewScale === 'micro') {
+            const preset = state.day >= 6.0 ? CAM_GOALS.microImplant : CAM_GOALS.microDefault;
+            camGoalTarget.copy(preset.target);
+            camGoalPos.copy(preset.pos);
+            camGliding = true;
+        }
+    });
+
+    document.getElementById('playBtn').addEventListener('click', () => {
+        if (!state.isPlaying && state.day >= 9.45) state.day = 0.0;
+        state.customInspectKey = null;
+        setPlaying(!state.isPlaying);
+    });
+
+    document.getElementById('stepBackBtn').addEventListener('click', () => {
+        setPlaying(false);
+        state.customInspectKey = null;
+        state.day = clamp(state.day - 0.5, 0, 9.5);
+    });
+    document.getElementById('stepFwdBtn').addEventListener('click', () => {
+        setPlaying(false);
+        state.customInspectKey = null;
+        state.day = clamp(state.day + 0.5, 0, 9.5);
+    });
+
+    document.querySelectorAll('.stage-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setPlaying(false);
+            state.customInspectKey = null;
+            state.day = parseFloat(btn.dataset.day);
+            if (state.viewScale === 'micro') {
+                const preset = state.day >= 6.0 ? CAM_GOALS.microImplant : CAM_GOALS.microDefault;
+                camGoalPos.copy(preset.pos);
+                camGoalTarget.copy(preset.target);
+                camGliding = true;
+            }
+        });
+    });
+
+    // Implantation Scenario Buttons (Normal hCG Rescue vs. Failed Implantation Luteolysis!)
+    const btnOk = document.getElementById('scenarioSuccessBtn');
+    const btnFail = document.getElementById('scenarioFailBtn');
+    btnOk.addEventListener('click', () => {
+        state.implantationSuccess = true;
+        btnOk.className = 'py-1 px-2 rounded text-[10.5px] font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 transition';
+        btnFail.className = 'py-1 px-2 rounded text-[10.5px] font-bold text-slate-400 hover:text-white border border-transparent transition';
+    });
+    btnFail.addEventListener('click', () => {
+        state.implantationSuccess = false;
+        if (state.day < 7.4) state.day = 8.4; // Jump right into window if early so student immediately sees endocrine impact!
+        btnFail.className = 'py-1 px-2 rounded text-[10.5px] font-extrabold bg-rose-500/25 text-rose-200 border border-rose-400/50 transition';
+        btnOk.className = 'py-1 px-2 rounded text-[10.5px] font-bold text-slate-400 hover:text-white border border-transparent transition';
+    });
+
+    // View Scale & Cutaway Toggles
+    document.getElementById('viewMicroBtn').addEventListener('click', () => setViewScale('micro'));
+    document.getElementById('viewMacroBtn').addEventListener('click', () => setViewScale('macro'));
+    document.getElementById('pip-tract-card').addEventListener('click', () => setViewScale('macro'));
+
+    document.getElementById('resetCamBtn').addEventListener('click', () => {
+        const preset = state.viewScale === 'macro'
+            ? CAM_GOALS.macroDefault
+            : (state.day >= 6.0 ? CAM_GOALS.microImplant : CAM_GOALS.microDefault);
+        camGoalPos.copy(preset.pos);
+        camGoalTarget.copy(preset.target);
+        camGliding = true;
+    });
+
+    document.getElementById('cutawayToggle').addEventListener('change', e => {
+        state.cutaway = e.target.checked;
+    });
+    document.getElementById('pinsToggle').addEventListener('change', e => {
+        state.showPins = e.target.checked;
+    });
+
+    // Reference Table Modal
+    const modal = document.getElementById('examModal');
+    document.getElementById('openTableBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('closeTableBtn').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+
+    document.querySelectorAll('[data-jump-day]').forEach(row => {
+        row.addEventListener('click', () => {
+            setPlaying(false);
+            state.customInspectKey = null;
+            state.day = parseFloat(row.dataset.jumpDay);
+            setViewScale('micro');
+            modal.classList.add('hidden');
+        });
+    });
+}
+
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const elapsed = clock.getElapsedTime();
+
     if (state.isPlaying) {
-        state.day += state.playSpeed * delta;
-        
-        // Block progression if implantation isn't triggered
-        if(state.day > 7.4 && state.day < 7.5 && !state.hasImplanted) {
-             state.day = 7.4;
-             togglePlay(); 
+        state.day += dt * 0.48; // ~20 seconds for full Day 0.0 -> Day 9.5 journey
+        if (state.viewScale === 'micro' && state.day > 5.9 && state.day < 6.1) {
+            camGoalPos.copy(CAM_GOALS.microImplant.pos);
+            camGoalTarget.copy(CAM_GOALS.microImplant.target);
+            camGliding = true;
         }
-        
-        if (state.day >= state.maxDays) {
-            state.day = state.maxDays;
-            togglePlay(); 
+        if (state.day >= 9.5) {
+            state.day = 9.5;
+            setPlaying(false);
         }
-        updateSimulation();
     }
-    
-    // Organic floating animation
-    if(!state.isPlaying && state.day < 7.5) {
-        let float = Math.sin(Date.now() / 400) * 0.8;
-        embryoContainer.y += float;
+
+    // Gentle oviductal buoyancy before implantation
+    if (state.day < 7.2) {
+        microWorld.position.y = Math.sin(elapsed * 1.3) * 0.07;
+    } else {
+        microWorld.position.y = lerp(microWorld.position.y, 0, 0.1);
     }
-});
 
-drawAnatomyBackground();
-updateSimulation();
+    if (camGliding) {
+        camera.position.lerp(camGoalPos, 0.08);
+        controls.target.lerp(camGoalTarget, 0.08);
+        if (camera.position.distanceTo(camGoalPos) < 0.06) camGliding = false;
+    }
+    controls.update();
 
+    updateSimulation(elapsed);
+    update3DPins();
+
+    renderer.render(scene, camera);
+}
+
+window.onload = function () {
+    initThreeScene();
+    bindUIControls();
+    updateSimulation(0);
+    animate();
+};
 </script>
 </body>
 </html>
