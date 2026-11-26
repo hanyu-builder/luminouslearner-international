@@ -2,1013 +2,2065 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
-    <meta name="description" content="Interactive 3D mapping of the Endocrine System. Visualize HPT, HPA, and HPG axes, hormonal cascades, and detailed gland anatomy.">
-    <title>Biology Virtual Labs - The Endocrine System</title>
-    
+    <meta name="description" content="Interactive 3D Endocrine System & Homeostasis Simulator. Explore sculpted hypothalamus, bilobed pituitary, thyroid & parathyroids, adrenals on kidneys, pancreas islets, gonads, vascular hormone cascades, negative feedback, insulin vs. glucagon, ADH osmoregulation, and goiter/diabetes disorders.">
+    <title>3D Endocrine System &amp; Homeostasis Lab | Luminous Learner</title>
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome for Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Babylon.js for 3D Rendering -->
-    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js Core & Self-Contained OrbitControls (100% immune to school firewall / secondary CDN blocks) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'function') {
+            THREE.OrbitControls = function (object, domElement) {
+                this.object = object;
+                this.domElement = domElement || document;
+                this.enabled = true;
+                this.target = new THREE.Vector3();
+                this.enableDamping = true;
+                this.dampingFactor = 0.06;
+                this.enableZoom = true;
+                this.zoomSpeed = 1.0;
+                this.enableRotate = true;
+                this.rotateSpeed = 0.9;
+                this.enablePan = true;
+                this.panSpeed = 0.85;
+                this.minDistance = 2.8;
+                this.maxDistance = 28.0;
+                this.minPolarAngle = 0.08;
+                this.maxPolarAngle = Math.PI - 0.08;
+
+                const scope = this;
+                const listeners = {};
+                const spherical = new THREE.Spherical();
+                const sphericalDelta = new THREE.Spherical(0, 0, 0);
+                const panOffset = new THREE.Vector3();
+                const offset = new THREE.Vector3();
+                let scale = 1.0;
+                let mode = 'none';
+                const prevPointer = new THREE.Vector2();
+                let prevPinchDist = 0;
+
+                this.addEventListener = function (type, fn) {
+                    if (!listeners[type]) listeners[type] = [];
+                    if (!listeners[type].includes(fn)) listeners[type].push(fn);
+                };
+                this.dispatchEvent = function (event) {
+                    const arr = listeners[event.type];
+                    if (arr) arr.forEach(fn => fn.call(scope, event));
+                };
+
+                function applyPan(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    const dist = scope.object.position.distanceTo(scope.target);
+                    const targetDist = dist * Math.tan((scope.object.fov * 0.5) * Math.PI / 180.0);
+                    const vLeft = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 0)
+                        .multiplyScalar(-(2 * dx * targetDist / height) * scope.panSpeed);
+                    const vUp = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 1)
+                        .multiplyScalar((2 * dy * targetDist / height) * scope.panSpeed);
+                    panOffset.add(vLeft).add(vUp);
+                }
+                function applyRotate(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    sphericalDelta.theta -= (2 * Math.PI * dx / height) * scope.rotateSpeed;
+                    sphericalDelta.phi   -= (2 * Math.PI * dy / height) * scope.rotateSpeed;
+                }
+
+                function onMouseDown(e) {
+                    if (!scope.enabled) return;
+                    if (e.button === 0 && !e.shiftKey) mode = 'rotate';
+                    else if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) mode = 'pan';
+                    else return;
+                    prevPointer.set(e.clientX, e.clientY);
+                    window.addEventListener('mousemove', onMouseMove);
+                    window.addEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'start' });
+                }
+                function onMouseMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    const dx = e.clientX - prevPointer.x;
+                    const dy = e.clientY - prevPointer.y;
+                    prevPointer.set(e.clientX, e.clientY);
+                    if (mode === 'rotate') applyRotate(dx, dy);
+                    else if (mode === 'pan') applyPan(dx, dy);
+                }
+                function onMouseUp() {
+                    mode = 'none';
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onWheel(e) {
+                    if (!scope.enabled || !scope.enableZoom) return;
+                    e.preventDefault();
+                    scope.dispatchEvent({ type: 'start' });
+                    const zf = Math.pow(0.92, scope.zoomSpeed);
+                    if (e.deltaY < 0) scale *= zf; else if (e.deltaY > 0) scale /= zf;
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onTouchStart(e) {
+                    if (!scope.enabled) return;
+                    if (e.touches.length === 1) {
+                        mode = 'rotate';
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                        scope.dispatchEvent({ type: 'start' });
+                    } else if (e.touches.length === 2) {
+                        mode = 'pinch';
+                        prevPinchDist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        prevPointer.set(
+                            0.5 * (e.touches[0].pageX + e.touches[1].pageX),
+                            0.5 * (e.touches[0].pageY + e.touches[1].pageY)
+                        );
+                        scope.dispatchEvent({ type: 'start' });
+                    }
+                }
+                function onTouchMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    e.preventDefault();
+                    if (mode === 'rotate' && e.touches.length === 1) {
+                        applyRotate(e.touches[0].pageX - prevPointer.x, e.touches[0].pageY - prevPointer.y);
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                    } else if (mode === 'pinch' && e.touches.length === 2) {
+                        const dist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        if (prevPinchDist > 0 && dist > 0) scale *= (prevPinchDist / dist);
+                        prevPinchDist = dist;
+                        const mx = 0.5 * (e.touches[0].pageX + e.touches[1].pageX);
+                        const my = 0.5 * (e.touches[0].pageY + e.touches[1].pageY);
+                        applyPan(mx - prevPointer.x, my - prevPointer.y);
+                        prevPointer.set(mx, my);
+                    }
+                }
+                function onTouchEnd() { mode = 'none'; scope.dispatchEvent({ type: 'end' }); }
+
+                this.domElement.addEventListener('contextmenu', e => e.preventDefault());
+                this.domElement.addEventListener('mousedown', onMouseDown);
+                this.domElement.addEventListener('wheel', onWheel, { passive: false });
+                this.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+                this.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+                this.domElement.addEventListener('touchend', onTouchEnd);
+
+                this.update = function () {
+                    offset.copy(scope.object.position).sub(scope.target);
+                    spherical.setFromVector3(offset);
+                    const damp = scope.enableDamping ? scope.dampingFactor * 1.8 : 1.0;
+                    spherical.theta += sphericalDelta.theta * damp;
+                    spherical.phi   += sphericalDelta.phi   * damp;
+                    spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+                    spherical.makeSafe();
+                    spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius * scale));
+                    scope.target.addScaledVector(panOffset, damp);
+                    offset.setFromSpherical(spherical);
+                    scope.object.position.copy(scope.target).add(offset);
+                    scope.object.lookAt(scope.target);
+
+                    const decay = scope.enableDamping ? Math.max(0, 1 - damp) : 0;
+                    sphericalDelta.theta *= decay;
+                    sphericalDelta.phi   *= decay;
+                    panOffset.multiplyScalar(decay);
+                    scale = 1.0;
+                    scope.dispatchEvent({ type: 'change' });
+                    return false;
+                };
+                this.update();
+            };
+        }
+    </script>
 
     <style>
         body {
-            background-color: #0F172A; /* Deep Slate */
+            font-family: 'Inter', sans-serif;
+            background-color: #050811;
             color: #F8FAFC;
-            font-family: 'Inter', system-ui, sans-serif;
-            overflow: hidden;
-            user-select: none;
-            touch-action: none;
+            margin: 0;
+        }
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .panel {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(51, 65, 85, 0.85);
+            backdrop-filter: blur(14px);
         }
 
         /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1E293B; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.8); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 1); }
 
-        /* Canvas Wrapper */
-        #renderCanvas {
+        /* Cascade Timeline Scrubber */
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #F8FAFC;
+            border: 3px solid #10B981;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 12px rgba(16, 185, 129, 0.75);
+            transition: transform 0.12s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: linear-gradient(90deg, #22D3EE 0%, #A855F7 35%, #10B981 70%, #F43F5E 100%);
+            border-radius: 999px;
+        }
+        input[type=range]::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #F8FAFC;
+            border: 3px solid #10B981;
+            cursor: pointer;
+        }
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 999px;
+        }
+        input[type=range]:focus { outline: none; }
+
+        /* Toggle Switch */
+        .switch-input:checked + .switch-slider {
+            background-color: #0D9488;
+            border-color: #2DD4BF;
+        }
+        .switch-input:checked + .switch-slider::before {
+            transform: translateX(14px);
+            background-color: #FFFFFF;
+        }
+        .switch-slider::before {
+            content: "";
+            position: absolute;
+            height: 12px;
+            width: 12px;
+            left: 2px;
+            top: 2px;
+            background-color: #94A3B8;
+            border-radius: 50%;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
+
+        /* 3D Viewport */
+        #three-viewport {
             width: 100%;
             height: 100%;
-            touch-action: none;
-            outline: none;
-        }
-        #canvas-wrapper {
-            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #050811 100%);
             border-radius: 0.75rem;
+            background: radial-gradient(circle at 50% 42%, #132238 0%, #0A1122 58%, #04060E 100%);
+            box-shadow: inset 0 0 85px rgba(0, 0, 0, 0.92);
             position: relative;
             overflow: hidden;
-            box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
+            cursor: grab;
+            touch-action: none;
+        }
+        #three-viewport:active {
+            cursor: grabbing;
         }
 
-        /* Buttons & Tabs */
-        .tab-btn {
-            transition: all 0.3s ease;
+        /* Floating 3D Clickable Gland Pins */
+        .anat-pin {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.2s ease, transform 0.15s ease;
         }
-        .tab-btn.active {
-            background-color: #38BDF8;
-            color: #0F172A;
-            box-shadow: 0 2px 5px rgba(56, 189, 248, 0.4);
+        .anat-pin:hover {
+            transform: translate(-50%, -50%) scale(1.08);
+            z-index: 30;
         }
-        .axis-btn, .gland-btn {
-            transition: all 0.2s ease;
+        .anat-pin-tag {
+            background: rgba(8, 12, 24, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            backdrop-filter: blur(6px);
+            padding: 2.5px 8px;
+            border-radius: 9999px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: #F1F5F9;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
-        .axis-btn.active, .gland-btn.active {
-            background-color: rgba(30, 41, 59, 0.9) !important;
-            border-color: var(--active-color) !important;
-            box-shadow: inset 4px 0 0 var(--active-color);
+        .anat-pin.active .anat-pin-tag {
+            background: rgba(14, 165, 233, 0.94);
+            border-color: #BAE6FD;
+            color: #FFFFFF;
+            box-shadow: 0 0 16px rgba(56, 189, 248, 0.65);
         }
-
-        /* Tracker Step Animations */
-        .step-item {
-            opacity: 0.4;
-            transition: all 0.3s ease;
+        .anat-pin-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 9999px;
+            flex-shrink: 0;
         }
-        .step-item.active-step {
-            opacity: 1;
-            transform: translateX(4px);
-            background-color: rgba(255, 255, 255, 0.05);
-            border-left: 2px solid var(--step-color);
+        .pin-hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scale(0.75);
         }
     </style>
 </head>
-<body class="h-screen w-screen flex justify-center items-center p-2 md:p-4">
+<body class="min-h-screen lg:h-screen w-full flex flex-col lg:overflow-hidden select-none">
 
-    <!-- Main Container -->
-    <div class="w-full h-full max-w-[1450px] max-h-[950px] flex flex-col bg-slate-900 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden border border-slate-700/50 relative">
-        
-        <!-- Header -->
-        <header class="p-4 md:px-6 border-b border-slate-700 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-sm z-10 shrink-0 gap-4 md:gap-0">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-sky-500 flex items-center gap-3">
-                    <i class="fa-solid fa-network-wired text-emerald-400"></i> The Endocrine System
-                </h1>
-                <p class="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Hormonal Cascades & Glandular Anatomy</p>
+    <!-- Main Container (Guaranteed fit inside 800px iframes, 768p Chromebooks & Desktop Monitors) -->
+    <div class="w-full max-w-[1440px] mx-auto flex-1 min-h-0 flex flex-col gap-2.5 p-2.5 sm:p-3.5">
+
+        <!-- TOP HEADER: Title, Subject Sex Toggle, Mode Switcher & Master Hormone Table -->
+        <header class="panel rounded-xl px-4 py-2.5 flex flex-wrap justify-between items-center gap-3 shrink-0 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500/25 to-sky-500/25 border border-emerald-400/40 flex items-center justify-center shrink-0">
+                    <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-300 via-sky-200 to-purple-300 bg-clip-text text-transparent">
+                        3D Endocrine System &amp; Homeostasis Lab
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-medium">Vascular Hormone Cascades, Negative Feedback Loops, Antagonistic Pairs &amp; Gland Anatomy</p>
+                </div>
             </div>
-            
-            <!-- View Mode Tabs -->
-            <div class="flex bg-slate-950 p-1.5 rounded-xl border border-slate-700 shadow-inner items-center w-full md:w-auto">
-                <button id="tab-cascades" onclick="switchTab('cascades')" class="tab-btn active flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider">
-                    <i class="fa-solid fa-play mr-2"></i> Hormonal Cascades
-                </button>
-                <button id="tab-anatomy" onclick="switchTab('anatomy')" class="tab-btn flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 uppercase tracking-wider">
-                    <i class="fa-solid fa-microscope mr-2"></i> Gland Anatomy
+
+            <!-- Subject Sex Switch + Dual Mode Tabs + Master Table Trigger -->
+            <div class="flex flex-wrap items-center gap-2">
+                <!-- Female / Male Subject Toggle (Always accessible in both modes!) -->
+                <div class="flex bg-slate-950/90 p-1 rounded-lg border border-slate-700/90 gap-1">
+                    <button id="btnSexFemale" class="px-2.5 py-1.5 rounded text-xs font-extrabold bg-pink-500/25 text-pink-200 border border-pink-400/50 transition">
+                        ♀ Female
+                    </button>
+                    <button id="btnSexMale" class="px-2.5 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition">
+                        ♂ Male
+                    </button>
+                </div>
+
+                <!-- Primary Mode Switcher -->
+                <div class="flex bg-slate-950/90 p-1 rounded-lg border border-slate-700/90 gap-1">
+                    <button id="tabCascadesBtn" class="px-3 py-1.5 rounded text-xs font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 shadow transition">
+                        ⚡ Hormonal Cascades
+                    </button>
+                    <button id="tabAnatomyBtn" class="px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition">
+                        🔬 3D Gland Anatomy
+                    </button>
+                </div>
+
+                <button id="openMasterTableBtn" class="px-3 py-1.5 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold border border-indigo-400/40 shadow flex items-center gap-1.5 transition">
+                    <span>📊 Master Hormone Table</span>
                 </button>
             </div>
         </header>
 
-        <!-- Main Workspace -->
-        <main class="flex flex-col md:flex-row flex-1 overflow-hidden relative z-0">
-            
-            <!-- Controls Sidebar (Left) -->
-            <aside class="w-full md:w-[450px] flex flex-col gap-4 p-5 shrink-0 h-full overflow-y-auto bg-slate-800/40 border-r border-slate-700 relative">
-                
-                <!-- ========================================== -->
-                <!-- VIEW 1: HORMONAL CASCADES (AXES)           -->
-                <!-- ========================================== -->
-                <div id="view-cascades" class="flex flex-col gap-4 h-full">
-                    
-                    <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg relative overflow-hidden flex flex-col shrink-0">
-                        <div class="absolute top-0 left-0 w-1 h-full bg-slate-500 transition-colors duration-500" id="axis-info-accent"></div>
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Pathway Inspector</h3>
-                        <h2 id="axis-info-title" class="text-lg font-black text-white flex items-center gap-2 mb-2">System Overview</h2>
-                        <p id="axis-info-desc" class="text-xs text-slate-300 leading-relaxed min-h-[50px]">
-                            The endocrine system relies on multi-glandular cascades and negative feedback loops to maintain homeostasis. Select an axis below to visualize the chain reaction.
-                        </p>
-                    </div>
+        <!-- MAIN WORKSPACE -->
+        <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
 
-                    <!-- Gender Toggle -->
-                    <div class="flex bg-slate-900 p-1 rounded-lg border border-slate-700 shrink-0">
-                        <button onClick="setGender('female')" id="btn-gender-female" class="flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all bg-pink-600 text-white shadow">
-                            <i class="fa-solid fa-venus"></i> Female Subject
-                        </button>
-                        <button onClick="setGender('male')" id="btn-gender-male" class="flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all text-slate-400 hover:text-white">
-                            <i class="fa-solid fa-mars"></i> Male Subject
-                        </button>
-                    </div>
+            <!-- LEFT SIDEBAR: Switches smoothly between Mode 1 (Hormonal Cascades) & Mode 2 (Gland Anatomy) -->
+            <aside class="lg:col-span-4 flex flex-col gap-2.5 lg:min-h-0 lg:overflow-y-auto custom-scrollbar pr-0.5">
 
-                    <!-- Axis Directory -->
-                    <div class="flex flex-col gap-2 shrink-0">
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1 border-b border-slate-700 pb-1">Endocrine Axes</h3>
-                        <div class="flex flex-col gap-2" id="axis-list">
-                            <!-- Buttons injected via JS -->
+                <!-- ======================================================== -->
+                <!-- MODE 1 PANEL: HORMONAL CASCADES & NEGATIVE FEEDBACK LAB  -->
+                <!-- ======================================================== -->
+                <div id="panel-cascades" class="flex flex-col gap-2.5 flex-1 min-h-0">
+
+                    <!-- 1. Select Physiological Feedback Loop (5 Core Exam Axes) -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">1. Select Feedback Axis</span>
+                            <span id="loop-type-badge" class="text-[9.5px] font-mono-tech font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                3-Tier Tropic Loop
+                            </span>
+                        </div>
+
+                        <div id="axis-grid" class="grid grid-cols-2 gap-1.5 mb-2">
+                            <!-- Populated by JS: HPT, Glucose, HPA, HPG, ADH -->
+                        </div>
+
+                        <!-- Dynamic Sub-Scenario / Pathology Selector (e.g. High vs. Low Glucose, Goiter, Type 1 Diabetes!) -->
+                        <div id="scenario-box" class="pt-2 border-t border-slate-800">
+                            <div class="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider mb-1" id="scenario-label">
+                                Physiological Condition / Pathology
+                            </div>
+                            <div id="scenario-buttons" class="grid grid-cols-2 gap-1.5"></div>
                         </div>
                     </div>
 
-                    <!-- Action Controls & Live Telemetry -->
-                    <div class="bg-slate-900/80 rounded-xl p-4 border border-slate-700 shadow-inner flex flex-col gap-4 flex-1 relative overflow-hidden">
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Live Telemetry</h3>
-                        <button id="btn-release" onclick="triggerCascade()" class="w-full bg-slate-700 text-slate-400 py-3.5 rounded-xl text-sm font-black transition-all border border-slate-600 flex justify-center items-center gap-2 pointer-events-none opacity-50">
-                            <i class="fa-solid fa-satellite-dish"></i> Select an Axis
-                        </button>
-                        <div id="steps-tracker" class="flex flex-col gap-1 mt-2 overflow-y-auto pr-1 pb-4 custom-scrollbar">
-                            <!-- Steps injected here -->
+                    <!-- 2. Interactive Bloodstream Cascade Scrubber & Live Hormone Curve -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center gap-2 mb-2">
+                            <button id="playCascadeBtn" class="flex-1 py-2 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-1.5 transition active:scale-95">
+                                <span id="playCascadeIcon">▶</span>
+                                <span id="playCascadeText">Simulate Cascade</span>
+                            </button>
+                            <button id="speedCascadeBtn" class="px-2.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-mono-tech font-bold text-slate-200 transition">
+                                1×
+                            </button>
+                            <button id="resetCascadeBtn" class="px-2.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-slate-300 transition">
+                                Reset
+                            </button>
+                        </div>
+
+                        <div class="mb-2">
+                            <div class="flex justify-between text-[10px] font-bold text-slate-400 mb-0.5">
+                                <span>Scrub Cascade &amp; Feedback</span>
+                                <span id="cascadeStageReadout" class="text-emerald-300 font-mono-tech">Step 1 / 4</span>
+                            </div>
+                            <input type="range" id="cascadeSlider" min="0" max="100" step="0.2" value="0">
+                        </div>
+
+                        <!-- Live Blood Hormone Concentration Canvas -->
+                        <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800 flex items-center gap-2.5">
+                            <canvas id="cascade-chart" width="150" height="52" class="rounded bg-slate-950 shrink-0"></canvas>
+                            <div class="text-[10px] leading-snug text-slate-300 min-w-0">
+                                <div id="chart-legend-1" class="font-bold text-purple-300 truncate">● TSH (Tropic)</div>
+                                <div id="chart-legend-2" class="font-bold text-emerald-300 truncate">● Thyroxine (T₄)</div>
+                                <div id="chart-status" class="text-[9.5px] text-slate-400 mt-0.5 leading-tight">Negative feedback restores baseline</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3. Step-by-Step Pathway Telemetry Cards -->
+                    <div class="panel rounded-xl p-3.5 flex-1 flex flex-col min-h-[215px] overflow-hidden shadow-md">
+                        <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cascade Sequence (Click Step to Jump)</span>
+                            <span class="text-[9.5px] font-semibold text-rose-300">⊖ = Negative Feedback</span>
+                        </div>
+                        <div id="cascade-steps-list" class="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-1.5"></div>
+                    </div>
+                </div>
+
+                <!-- ======================================================== -->
+                <!-- MODE 2 PANEL: 3D GLAND ANATOMY & RECEPTOR INSPECTOR      -->
+                <!-- ======================================================== -->
+                <div id="panel-anatomy" class="hidden flex-col gap-2.5 flex-1 min-h-0">
+
+                    <!-- Quick 9-Gland Selector Grid -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[11px] font-bold text-sky-300 uppercase tracking-wider">Select 3D Endocrine Gland</span>
+                            <span class="text-[9.5px] text-slate-400">Auto-Zooms 3D Camera</span>
+                        </div>
+                        <div id="gland-chips-grid" class="grid grid-cols-3 gap-1.5"></div>
+                    </div>
+
+                    <!-- Detailed Gland Card (Structure, Hormones, Chemical Class & Exam Key) -->
+                    <div class="panel rounded-xl p-4 flex-1 flex flex-col min-h-[300px] relative overflow-hidden shadow-md">
+                        <div id="gland-accent" class="absolute top-0 left-0 w-1 h-full bg-cyan-400 transition-colors"></div>
+
+                        <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                            <span id="gland-region" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Diencephalon (Brain)</span>
+                            <span id="gland-chem-class" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                                Neuroendocrine Bridge
+                            </span>
+                        </div>
+
+                        <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col gap-2.5">
+                            <div>
+                                <h2 id="gland-title" class="text-base sm:text-lg font-extrabold text-cyan-300 mb-1">Hypothalamus</h2>
+                                <p id="gland-desc" class="text-xs text-slate-300 leading-relaxed"></p>
+                            </div>
+
+                            <div>
+                                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Secreted Hormones &amp; Target Receptors</div>
+                                <div id="gland-hormones-list" class="space-y-1.5"></div>
+                            </div>
+
+                            <div id="gland-exam-box" class="mt-auto bg-slate-950/85 border border-slate-700/80 rounded-lg p-2.5 text-[11px] text-amber-200/95 leading-snug">
+                            </div>
                         </div>
                     </div>
                 </div>
-
-                <!-- ========================================== -->
-                <!-- VIEW 2: GLAND ANATOMY (INFOGRAPHIC)        -->
-                <!-- ========================================== -->
-                <div id="view-anatomy" class="hidden flex-col gap-4 h-full">
-                    
-                    <div class="bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg relative overflow-hidden shrink-0">
-                        <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Select a Gland</h3>
-                        
-                        <!-- NEW: Dropdown Selector -->
-                        <select id="anatomy-gland-select" onchange="handleGlandDropdown(this.value)" class="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-sm text-white font-bold outline-none focus:ring-2 focus:ring-sky-500 cursor-pointer shadow-inner mb-3">
-                            <option value="" disabled selected>-- Choose a Gland to Inspect --</option>
-                            <!-- Options populated dynamically based on gender -->
-                        </select>
-                        
-                        <p class="text-[11px] text-slate-400 leading-relaxed italic">
-                            You can also click directly on any glowing gland within the 3D body map on the right.
-                        </p>
-                    </div>
-
-                    <!-- Dynamic Gland Content Injected Here -->
-                    <div id="gland-detail-container" class="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-col gap-4">
-                        <!-- Placeholder rendered via JS -->
-                    </div>
-
-                </div>
-
             </aside>
 
-            <!-- 3D Canvas Area (Right) -->
-            <section class="flex-1 p-3 md:p-5 bg-slate-950 flex flex-col relative overflow-hidden">
-                <div id="canvas-wrapper" class="w-full h-full border border-slate-700 shadow-inner rounded-2xl relative">
-                    <!-- Babylon.js Canvas -->
-                    <canvas id="renderCanvas"></canvas>
-                    
-                    <!-- Labels Overlay -->
-                    <div class="absolute bottom-6 left-6 pointer-events-none z-10 flex flex-col gap-2 bg-slate-900/80 px-4 py-3 rounded-xl backdrop-blur-md border border-slate-700 shadow-lg">
-                        <div class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1 border-b border-slate-700 pb-1">Anatomical Legend</div>
-                        <div class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]"></div> Hypothalamus
-                        </div>
-                        <div class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]"></div> Pituitary Gland
-                        </div>
-                        <div class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></div> Thyroid Gland
-                        </div>
-                        <div class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-amber-500 shadow-[0_0_8px_#f59e0b]"></div> Adrenal Glands
-                        </div>
-                        <div class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-sky-400 shadow-[0_0_8px_#38bdf8]"></div> Pancreas
-                        </div>
-                        <div id="legend-gonads" class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                            <div class="w-3 h-3 rounded-full bg-pink-500 shadow-[0_0_8px_#ec4899]"></div> Ovaries
+            <!-- RIGHT 3D ANATOMICAL & VASCULAR VIEWPORT -->
+            <section class="lg:col-span-8 panel rounded-xl p-2 flex flex-col min-h-[500px] sm:min-h-[560px] lg:min-h-0 relative shadow-xl">
+
+                <!-- Top Camera Focus & Layer Switches Bar (shrink-0 prevents clipping) -->
+                <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800 flex flex-wrap items-center justify-between gap-2 mb-2 shrink-0 z-20">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">Zoom:</span>
+                        <button data-cam="full" class="cam-btn px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 text-emerald-300 border border-emerald-500/40 transition">
+                            Full Body
+                        </button>
+                        <button data-cam="brain" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-800 transition" title="Zoom into Brain, Hypothalamus, Infundibular Stalk, Bilobed Pituitary & Pineal">
+                            Brain &amp; Pituitary
+                        </button>
+                        <button data-cam="neck" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800 transition" title="Zoom into Larynx, Trachea, Butterfly Thyroid & 4 Posterior Parathyroids">
+                            Thyroid &amp; Neck
+                        </button>
+                        <button data-cam="abdomen" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-800 transition" title="Zoom into Liver, Pancreas Islets, Kidneys & Adrenal Caps">
+                            Adrenals &amp; Pancreas
+                        </button>
+                        <button data-cam="pelvis" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-pink-300 border border-slate-800 transition">
+                            Pelvis (Gonads)
+                        </button>
+                    </div>
+
+                    <!-- Layer Toggles: Vascular Tree, Context Viscera, 3D Pins -->
+                    <div class="flex items-center gap-2.5 text-[11px]">
+                        <label class="flex items-center gap-1.5 cursor-pointer" title="Show 3D Bloodstream Network carrying hormones throughout the body">
+                            <span class="font-semibold text-rose-300">Blood Vessels</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="vesselsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+
+                        <label class="flex items-center gap-1.5 pl-2 border-l border-slate-800 cursor-pointer" title="Show Brain, Trachea, Heart, Liver & Kidneys anatomical landmarks">
+                            <span class="font-semibold text-slate-300">Organs</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="organsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+
+                        <label class="flex items-center gap-1.5 pl-2 border-l border-slate-800 cursor-pointer">
+                            <span class="font-semibold text-slate-300">Pins</span>
+                            <span class="relative inline-block w-8 h-4">
+                                <input type="checkbox" id="pinsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 3D WebGL Viewport -->
+                <div id="three-viewport" class="flex-1 min-h-0">
+                    <!-- Dynamic Clickable 3D Gland Pins -->
+                    <div id="pins-container" class="absolute inset-0 overflow-hidden pointer-events-none z-20"></div>
+
+                    <!-- Floating Active Hormone Packet Badge during Cascades -->
+                    <div id="hormone-float-badge" class="hidden absolute transform -translate-x-1/2 -translate-y-full pb-3 pointer-events-none z-30">
+                        <div id="hormone-badge-box" class="bg-slate-950/92 border border-emerald-400/80 px-2.5 py-1 rounded-lg shadow-xl text-center whitespace-nowrap">
+                            <div id="hormone-badge-title" class="text-[10.5px] font-extrabold text-emerald-300 uppercase tracking-wider">TSH</div>
+                            <div id="hormone-badge-sub" class="text-[9.5px] text-slate-300 font-medium">Bloodstream Transport</div>
                         </div>
                     </div>
 
-                    <!-- 3D Controls hint -->
-                    <div class="absolute bottom-6 right-6 pointer-events-none z-10 bg-slate-900/60 px-3 py-1.5 rounded-lg backdrop-blur-md border border-slate-700 shadow-md">
-                        <span class="text-[10px] text-slate-400 font-medium">🖱️ Drag to rotate | Scroll to zoom</span>
+                    <!-- Top-Left Context Indicator -->
+                    <div class="absolute top-3 left-3 bg-slate-950/82 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 text-[10.5px] pointer-events-none z-15 shadow-lg">
+                        <div id="viewport-status-title" class="font-extrabold text-emerald-300 uppercase tracking-wider">Thyroid Metabolic Axis (HPT)</div>
+                        <div id="viewport-status-sub" class="text-[10px] text-slate-400">Hormones travel in blood; only cells with specific receptors respond</div>
                     </div>
 
+                    <!-- Bottom Interactive Hint -->
+                    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-slate-700/80 text-[11px] text-slate-300 pointer-events-none flex items-center gap-2 shadow-lg z-15 whitespace-nowrap">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                        <span>Click Any 3D Gland to Inspect &bull; Drag to Rotate 360° (Rotate Neck to Spot Parathyroids!)</span>
+                    </div>
                 </div>
             </section>
-        </main>
+        </div>
     </div>
 
-    <!-- Application Script -->
-    <script>
-        /**
-         * THE ENDOCRINE SYSTEM SIMULATOR - DUAL MODE
-         * Merges 3D Pathway animations with 2D comprehensive organ data.
-         */
-
-        // ==========================================
-        // BIOLOGICAL DATABASES
-        // ==========================================
-        
-        // 1. Detailed Gland Anatomy (Micro View)
-        const GLAND_DATA = {
-            'hypothalamus': {
-                id: 'hypothalamus', name: 'Hypothalamus', color: '#22d3ee', border: 'border-cyan-500', text: 'text-cyan-400',
-                icon: 'brain',
-                desc: 'The crucial link between the nervous and endocrine systems. It directs the pituitary gland.',
-                hormones: [
-                    { name: 'Releasing Hormones (TRH, CRH, GnRH)', target: 'Pituitary Gland', func: 'Stimulates or inhibits the release of specific pituitary hormones.' }
-                ]
-            },
-            'pituitary': {
-                id: 'pituitary', name: 'Pituitary Gland', color: '#a855f7', border: 'border-purple-500', text: 'text-purple-400',
-                icon: 'brain',
-                desc: 'Known as the "Master Gland". It regulates growth, metabolism, and reproduction by sending signals to other endocrine glands.',
-                hormones: [
-                    { name: 'Growth Hormone (GH)', target: 'Bones & Muscles', func: 'Promotes structural growth and cell reproduction.' },
-                    { name: 'Antidiuretic Hormone (ADH)', target: 'Kidneys', func: 'Promotes water reabsorption to maintain blood volume.' },
-                    { name: 'Tropic Hormones (TSH, ACTH, FSH, LH)', target: 'Other Endocrine Glands', func: 'Commands the thyroid, adrenals, and gonads to act.' }
-                ]
-            },
-            'thyroid': {
-                id: 'thyroid', name: 'Thyroid Gland', color: '#10b981', border: 'border-emerald-500', text: 'text-emerald-400',
-                icon: 'lungs',
-                desc: 'A butterfly-shaped gland in the neck that dictates the basal metabolic rate (how fast the body burns energy).',
-                hormones: [
-                    { name: 'Thyroxine (T4) & T3', target: 'All Body Cells', func: 'Increases basal metabolic rate, heat production, and oxygen consumption.' }
-                ]
-            },
-            'adrenal': {
-                id: 'adrenal', name: 'Adrenal Glands', color: '#f59e0b', border: 'border-amber-500', text: 'text-amber-400',
-                icon: 'bolt',
-                desc: 'Located atop the kidneys. They manage acute stress (fight or flight) and chronic stress responses.',
-                hormones: [
-                    { name: 'Adrenaline (Epinephrine)', target: 'Heart, Liver, Lungs', func: 'Acute stress: Increases heart rate, dilates airways, releases glucose.' },
-                    { name: 'Cortisol', target: 'Systemic', func: 'Chronic stress: Mobilizes energy reserves, suppresses immune system.' }
-                ]
-            },
-            'pancreas': {
-                id: 'pancreas', name: 'Pancreas', color: '#38bdf8', border: 'border-sky-500', text: 'text-sky-400',
-                icon: 'water',
-                desc: 'Functions in both the digestive and endocrine systems. It acts as the body\'s blood glucose thermostat.',
-                hormones: [
-                    { name: 'Insulin', target: 'Liver & Body Cells', func: 'Lowers blood sugar by forcing cells to absorb glucose from the blood.' },
-                    { name: 'Glucagon', target: 'Liver', func: 'Raises blood sugar by triggering the breakdown of stored glycogen.' }
-                ]
-            },
-            'ovaries': {
-                id: 'ovaries', name: 'Ovaries', color: '#ec4899', border: 'border-pink-500', text: 'text-pink-400',
-                icon: 'venus', gender: 'female',
-                desc: 'Female reproductive glands. Responsible for the menstrual cycle and secondary sexual characteristics.',
-                hormones: [
-                    { name: 'Estrogen', target: 'Uterus & Body', func: 'Develops female characteristics and proliferates the uterine lining.' },
-                    { name: 'Progesterone', target: 'Uterus', func: 'Maintains the uterine lining for potential pregnancy.' }
-                ]
-            },
-            'testes': {
-                id: 'testes', name: 'Testes', color: '#3b82f6', border: 'border-blue-500', text: 'text-blue-400',
-                icon: 'mars', gender: 'male',
-                desc: 'Male reproductive glands. Responsible for sperm production and secondary sexual characteristics.',
-                hormones: [
-                    { name: 'Testosterone', target: 'Systemic', func: 'Promotes muscle mass, bone density, and male secondary characteristics.' }
-                ]
-            }
-        };
-
-        // 2. Cascade Pathways (Macro View)
-        const AXIS_DATA = {
-            'hpt': { 
-                id: 'hpt', name: 'Thyroid Axis (HPT)', color: '#10b981', // Emerald
-                desc: 'Regulates basal metabolic rate. The Hypothalamus initiates a cascade that stimulates the Thyroid, governed by strict negative feedback.',
-                steps: [
-                    { from: 'hypothalamus', to: 'pituitary', hormone: 'TRH', color: '#22d3ee', desc: 'Hypothalamus releases Thyrotropin-Releasing Hormone.' },
-                    { from: 'pituitary', to: 'thyroid', hormone: 'TSH', color: '#a855f7', desc: 'Anterior Pituitary releases Thyroid-Stimulating Hormone.' },
-                    { from: 'thyroid', to: 'body', hormone: 'Thyroxine (T4)', color: '#10b981', desc: 'Thyroid releases T4 to elevate cellular metabolism body-wide.' },
-                    { from: 'thyroid', to: 'hypothalamus', hormone: 'Negative Feedback', color: '#f43f5e', desc: 'High T4 levels circulate back to the brain to inhibit further TRH/TSH release.' }
-                ]
-            },
-            'hpa': { 
-                id: 'hpa', name: 'Adrenal Stress Axis (HPA)', color: '#f59e0b', // Amber
-                desc: 'The body\'s primary stress response system. Triggers the release of cortisol to mobilize energy reserves during prolonged stress.',
-                steps: [
-                    { from: 'hypothalamus', to: 'pituitary', hormone: 'CRH', color: '#22d3ee', desc: 'Hypothalamus detects stress, releases Corticotropin-Releasing Hormone.' },
-                    { from: 'pituitary', to: 'adrenal', hormone: 'ACTH', color: '#a855f7', desc: 'Pituitary secretes Adrenocorticotropic Hormone into blood.' },
-                    { from: 'adrenal', to: 'heart', hormone: 'Cortisol', color: '#f59e0b', desc: 'Adrenal cortex releases Cortisol to mobilize glucose and increase heart rate.' },
-                    { from: 'adrenal', to: 'hypothalamus', hormone: 'Negative Feedback', color: '#f43f5e', desc: 'Cortisol binds to brain receptors to shut down the stress response.' }
-                ]
-            },
-            'hpg': { 
-                id: 'hpg', name: 'Gonadal Axis (HPG)', color: '#ec4899', // Pink (Default female, updates dynamically)
-                desc: 'Controls reproductive function. The cascade regulates the menstrual cycle in females and spermatogenesis in males.',
-                steps: [
-                    { from: 'hypothalamus', to: 'pituitary', hormone: 'GnRH', color: '#22d3ee', desc: 'Hypothalamus releases Gonadotropin-Releasing Hormone.' },
-                    { from: 'pituitary', to: 'gonads', hormone: 'FSH / LH', color: '#a855f7', desc: 'Pituitary secretes Follicle Stimulating & Luteinizing Hormones.' },
-                    { from: 'gonads', to: 'body', hormone: 'Sex Steroids', color: '#ec4899', desc: 'Gonads release Estrogen/Testosterone to drive reproductive maturation.' },
-                    { from: 'gonads', to: 'hypothalamus', hormone: 'Negative Feedback', color: '#f43f5e', desc: 'Sex steroids inhibit further GnRH release to maintain homeostasis.' }
-                ]
-            },
-            'glucose': { 
-                id: 'glucose', name: 'Blood Glucose Regulation', color: '#38bdf8', // Sky
-                desc: 'A direct-response system (no pituitary involvement). The pancreas directly detects blood sugar levels and commands the liver.',
-                steps: [
-                    { from: 'pancreas', to: 'liver', hormone: 'Insulin', color: '#38bdf8', desc: 'Pancreatic Beta cells detect high glucose, release Insulin.' },
-                    { from: 'liver', to: 'body', hormone: 'Glucose Uptake', color: '#f8fafc', desc: 'Liver converts glucose to glycogen. Body cells rapidly absorb glucose from blood.' }
-                ]
-            }
-        };
-
-        // ==========================================
-        // STATE MANAGEMENT
-        // ==========================================
-        let currentTab = 'cascades'; // 'cascades' or 'anatomy'
-        let currentGender = 'female';
-        
-        let canvas, engine, scene, camera, hlLayer;
-        let nodes = {}; // Stores all 3D mesh references for pathing
-        let activeAxisId = null;
-        let activeGlandId = null;
-        let isAnimating = false;
-        let activeParticles = []; 
-
-        // UI DOM Elements
-        const DOM = {
-            viewCascades: document.getElementById('view-cascades'),
-            viewAnatomy: document.getElementById('view-anatomy'),
-            tabCascades: document.getElementById('tab-cascades'),
-            tabAnatomy: document.getElementById('tab-anatomy'),
-            
-            axisList: document.getElementById('axis-list'),
-            axisInfoTitle: document.getElementById('axis-info-title'),
-            axisInfoDesc: document.getElementById('axis-info-desc'),
-            axisInfoAccent: document.getElementById('axis-info-accent'),
-            btnRelease: document.getElementById('btn-release'),
-            stepsTracker: document.getElementById('steps-tracker'),
-
-            glandDetailContainer: document.getElementById('gland-detail-container'),
-            glandSelect: document.getElementById('anatomy-gland-select'),
-            legendGonads: document.getElementById('legend-gonads')
-        };
-
-        // ==========================================
-        // UI LOGIC & TAB SWITCHING
-        // ==========================================
-
-        function switchTab(tabId) {
-            if (isAnimating) return; // Prevent switching mid-animation
-
-            currentTab = tabId;
-            
-            // Toggle Tab Buttons
-            DOM.tabCascades.className = tabId === 'cascades' 
-                ? "tab-btn active flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider"
-                : "tab-btn flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 uppercase tracking-wider";
-                
-            DOM.tabAnatomy.className = tabId === 'anatomy' 
-                ? "tab-btn active flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider"
-                : "tab-btn flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-200 uppercase tracking-wider";
-
-            // Toggle Views
-            if (tabId === 'cascades') {
-                DOM.viewCascades.classList.remove('hidden');
-                DOM.viewCascades.classList.add('flex');
-                DOM.viewAnatomy.classList.remove('flex');
-                DOM.viewAnatomy.classList.add('hidden');
-                
-                // Reset Highlights
-                if (hlLayer) hlLayer.removeAllMeshes();
-                activeGlandId = null;
-                if (activeAxisId) selectAxis(activeAxisId); // Restore axis highlight
-                
-            } else {
-                DOM.viewAnatomy.classList.remove('hidden');
-                DOM.viewAnatomy.classList.add('flex');
-                DOM.viewCascades.classList.remove('flex');
-                DOM.viewCascades.classList.add('hidden');
-
-                // Render detail view if a gland is already selected
-                if (hlLayer) hlLayer.removeAllMeshes();
-                activeAxisId = null;
-                if (activeGlandId) {
-                    renderGlandDetail(activeGlandId);
-                } else {
-                    DOM.glandDetailContainer.innerHTML = getAnatomyPlaceholder();
-                }
-            }
-        }
-
-        function setGender(gender) {
-            if (isAnimating) return;
-            currentGender = gender;
-            
-            // UI Toggles
-            document.getElementById('btn-gender-female').className = gender === 'female'
-                ? "flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all bg-pink-600 text-white shadow"
-                : "flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all text-slate-400 hover:text-white";
-                
-            document.getElementById('btn-gender-male').className = gender === 'male'
-                ? "flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all bg-blue-600 text-white shadow"
-                : "flex-1 py-2 text-xs font-bold rounded-md flex items-center justify-center gap-2 transition-all text-slate-400 hover:text-white";
-
-            // Update 3D Meshes
-            if (nodes['ovaries']) nodes['ovaries'].parent.isEnabled(gender === 'female');
-            if (nodes['testes']) nodes['testes'].parent.isEnabled(gender === 'male');
-            if (nodes['uterus']) nodes['uterus'].isEnabled(gender === 'female');
-
-            // Update Legend
-            DOM.legendGonads.innerHTML = gender === 'female'
-                ? `<div class="w-3 h-3 rounded-full bg-pink-500 shadow-[0_0_8px_#ec4899]"></div> Ovaries`
-                : `<div class="w-3 h-3 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]"></div> Testes`;
-
-            // Update Axis Data dynamically
-            if (gender === 'female') {
-                AXIS_DATA['hpg'].color = '#ec4899'; // Pink
-                AXIS_DATA['hpg'].steps[2].color = '#ec4899';
-                AXIS_DATA['hpg'].steps[2].desc = 'Ovaries release Estrogen to drive reproductive maturation and uterine cycles.';
-            } else {
-                AXIS_DATA['hpg'].color = '#3b82f6'; // Blue
-                AXIS_DATA['hpg'].steps[2].color = '#3b82f6';
-                AXIS_DATA['hpg'].steps[2].desc = 'Testes release Testosterone to drive muscle growth and spermatogenesis.';
-            }
-
-            buildAxisList(); // Re-render buttons to catch color changes
-            populateAnatomyDropdown(); // Refresh dropdown options
-            
-            // If HPG is currently selected, re-select to update UI colors
-            if (activeAxisId === 'hpg') selectAxis('hpg');
-
-            // If a gonad is selected in Anatomy mode, switch to the correct one
-            if (currentTab === 'anatomy') {
-                if (gender === 'female' && activeGlandId === 'testes') renderGlandDetail('ovaries');
-                if (gender === 'male' && activeGlandId === 'ovaries') renderGlandDetail('testes');
-            }
-        }
-
-        // ==========================================
-        // BABYLON.JS 3D ENGINE
-        // ==========================================
-        
-        function initEngine() {
-            canvas = document.getElementById("renderCanvas");
-            engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
-            
-            scene = new BABYLON.Scene(engine);
-            scene.clearColor = new BABYLON.Color4(0, 0, 0, 0); 
-
-            camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 2.5, 38, new BABYLON.Vector3(0, 4, 0), scene);
-            camera.attachControl(canvas, true);
-            camera.wheelPrecision = 20;
-            camera.lowerRadiusLimit = 15;
-            camera.upperRadiusLimit = 60;
-
-            const hemiLight = new BABYLON.HemisphericLight("hemiLight", new BABYLON.Vector3(0, 1, 0), scene);
-            hemiLight.intensity = 0.5;
-            
-            const dirLight = new BABYLON.DirectionalLight("dirLight", new BABYLON.Vector3(0, 0, 1), scene);
-            dirLight.intensity = 0.6;
-
-            hlLayer = new BABYLON.HighlightLayer("hl1", scene);
-
-            buildAnatomy();
-            buildAxisList();
-            populateAnatomyDropdown();
-
-            // Interactivity: Clicking a gland in 3D
-            scene.onPointerDown = (evt, pickResult) => {
-                if (pickResult.hit && pickResult.pickedMesh && pickResult.pickedMesh.isGland) {
-                    if (!isAnimating) {
-                        // Switch to Anatomy Tab and show details
-                        if (currentTab !== 'anatomy') switchTab('anatomy');
-                        renderGlandDetail(pickResult.pickedMesh.glandId);
-                    }
-                }
-            };
-
-            // Change cursor on hover
-            scene.onPointerMove = (evt, pickResult) => {
-                if (pickResult.hit && pickResult.pickedMesh && pickResult.pickedMesh.isGland) {
-                    canvas.style.cursor = "pointer";
-                } else {
-                    canvas.style.cursor = "grab";
-                }
-            };
-
-            scene.onBeforeRenderObservable.add(() => {
-                updateHormoneParticles();
-            });
-
-            engine.runRenderLoop(() => {
-                scene.render();
-            });
-
-            window.addEventListener("resize", () => {
-                engine.resize();
-            });
-        }
-
-        function buildAnatomy() {
-            // --- 1. Stylized Human Body Outline ---
-            const glassMat = new BABYLON.StandardMaterial("glass", scene);
-            glassMat.alpha = 0.08;
-            glassMat.diffuseColor = new BABYLON.Color3(0.5, 0.7, 1);
-            glassMat.specularColor = new BABYLON.Color3(1, 1, 1);
-            glassMat.ambientColor = new BABYLON.Color3(0.2, 0.2, 0.4);
-
-            const bodyGroup = new BABYLON.TransformNode("body", scene);
-
-            const head = BABYLON.MeshBuilder.CreateSphere("head", {diameter: 4, segments: 16}, scene);
-            head.position.y = 12;
-            head.material = glassMat;
-            head.parent = bodyGroup;
-
-            const torso = BABYLON.MeshBuilder.CreateCapsule("torso", {height: 14, radius: 4.5}, scene);
-            torso.position.y = 3;
-            torso.material = glassMat;
-            torso.parent = bodyGroup;
-            nodes['body'] = torso; // Generic body target
-
-            // Helpers
-            const makeNodeMat = (hex) => {
-                const mat = new BABYLON.StandardMaterial("mat", scene);
-                mat.diffuseColor = BABYLON.Color3.FromHexString(hex);
-                mat.emissiveColor = BABYLON.Color3.FromHexString(hex).scale(0.4);
-                return mat;
-            };
-
-            const makeGland = (name, id, mesh, colorHex) => {
-                mesh.material = makeNodeMat(colorHex);
-                mesh.isGland = true;
-                mesh.glandId = id;
-                nodes[id] = mesh;
-                return mesh;
-            }
-
-            // --- 2. Glands ---
-            
-            // Hypothalamus
-            const hypo = BABYLON.MeshBuilder.CreateSphere("hypo", {diameter: 0.6}, scene);
-            hypo.position.set(0, 12.3, 0.5);
-            makeGland('Hypothalamus', 'hypothalamus', hypo, GLAND_DATA.hypothalamus.color);
-
-            // Pituitary
-            const pit = BABYLON.MeshBuilder.CreateSphere("pit", {diameter: 0.5}, scene);
-            pit.position.set(0, 11.5, 0.8);
-            makeGland('Pituitary', 'pituitary', pit, GLAND_DATA.pituitary.color);
-
-            // Thyroid
-            const thy = BABYLON.MeshBuilder.CreateSphere("thyroid", {diameter: 1.4}, scene);
-            thy.scaling.set(1.4, 0.5, 0.5);
-            thy.position.set(0, 9.0, 2.5);
-            makeGland('Thyroid', 'thyroid', thy, GLAND_DATA.thyroid.color);
-
-            // Adrenals (On top of imaginary kidneys)
-            const adrL = BABYLON.MeshBuilder.CreateCylinder("adrL", {height: 0.8, diameterTop: 0, diameterBottom: 1.5, tessellation: 6}, scene);
-            adrL.position.set(-2, 4.2, 0.5);
-            adrL.rotation.z = -0.2;
-            const adrR = BABYLON.MeshBuilder.CreateCylinder("adrR", {height: 0.8, diameterTop: 0, diameterBottom: 1.5, tessellation: 6}, scene);
-            adrR.position.set(2, 4.2, 0.5);
-            adrR.rotation.z = 0.2;
-            
-            const adrMat = makeNodeMat(GLAND_DATA.adrenal.color);
-            adrL.material = adrMat; adrR.material = adrMat;
-            adrL.isGland = true; adrL.glandId = 'adrenal';
-            adrR.isGland = true; adrR.glandId = 'adrenal';
-            nodes['adrenal'] = adrL; // Use left for path routing
-            nodes['adrenal_R'] = adrR;
-
-            // Pancreas
-            const pan = BABYLON.MeshBuilder.CreateSphere("pancreas", {diameter: 1.5}, scene);
-            pan.scaling.set(3.0, 0.6, 0.6);
-            pan.position.set(0, 1.5, 1.5);
-            makeGland('Pancreas', 'pancreas', pan, GLAND_DATA.pancreas.color);
-
-            // Ovaries (Female)
-            const ovGroup = new BABYLON.TransformNode("ovGroup", scene);
-            const ovL = BABYLON.MeshBuilder.CreateSphere("ovL", {diameter: 1.0}, scene);
-            ovL.scaling.set(1.2, 0.8, 0.8); ovL.position.set(-1.8, -1.0, 1.0); ovL.rotation.z = -0.3;
-            const ovR = BABYLON.MeshBuilder.CreateSphere("ovR", {diameter: 1.0}, scene);
-            ovR.scaling.set(1.2, 0.8, 0.8); ovR.position.set(1.8, -1.0, 1.0); ovR.rotation.z = 0.3;
-            
-            const ovMat = makeNodeMat(GLAND_DATA.ovaries.color);
-            ovL.material = ovMat; ovR.material = ovMat;
-            ovL.parent = ovGroup; ovR.parent = ovGroup;
-            ovL.isGland = true; ovL.glandId = 'ovaries';
-            ovR.isGland = true; ovR.glandId = 'ovaries';
-            nodes['ovaries'] = ovL; // Primary route target
-            nodes['ovaries_R'] = ovR;
-
-            // Testes (Male)
-            const teGroup = new BABYLON.TransformNode("teGroup", scene);
-            const teL = BABYLON.MeshBuilder.CreateSphere("teL", {diameter: 1.2}, scene);
-            teL.scaling.set(0.8, 1.2, 0.8); teL.position.set(-0.7, -3.0, 1.5);
-            const teR = BABYLON.MeshBuilder.CreateSphere("teR", {diameter: 1.2}, scene);
-            teR.scaling.set(0.8, 1.2, 0.8); teR.position.set(0.7, -3.0, 1.5);
-            
-            const teMat = makeNodeMat(GLAND_DATA.testes.color);
-            teL.material = teMat; teR.material = teMat;
-            teL.parent = teGroup; teR.parent = teGroup;
-            teL.isGland = true; teL.glandId = 'testes';
-            teR.isGland = true; teR.glandId = 'testes';
-            nodes['testes'] = teL; // Primary route target
-            nodes['testes_R'] = teR;
-
-            // Initial visibility state based on default gender
-            teGroup.isEnabled(false);
-
-            // --- 3. Target Organs ---
-            const livMat = makeNodeMat('#9a3412'); livMat.alpha = 0.3; livMat.emissiveIntensity = 0;
-            const liver = BABYLON.MeshBuilder.CreateSphere("liver", {diameter: 3.5}, scene);
-            liver.scaling.set(1.2, 0.8, 1); liver.position.set(2.5, 3.5, 1.5); liver.rotation.z = 0.3;
-            liver.material = livMat;
-            nodes['liver'] = liver;
-
-            const heartMat = makeNodeMat('#ef4444'); heartMat.alpha = 0.3; heartMat.emissiveIntensity = 0;
-            const heart = BABYLON.MeshBuilder.CreateSphere("heart", {diameter: 2.2}, scene);
-            heart.scaling.set(1, 1.2, 0.8); heart.position.set(-1.2, 5.5, 1.8);
-            heart.material = heartMat;
-            nodes['heart'] = heart;
-
-            // Uterus target (for Female HPG)
-            const utMat = makeNodeMat('#f472b6'); utMat.alpha = 0.3; utMat.emissiveIntensity = 0;
-            const uterus = BABYLON.MeshBuilder.CreateCylinder("uterus", {height: 2, diameterTop: 2.5, diameterBottom: 0.5, tessellation: 3}, scene);
-            uterus.scaling.set(1, 1, 0.5); uterus.position.set(0, -1.0, 1.5);
-            uterus.material = utMat;
-            nodes['uterus'] = uterus;
-
-            // Create abstract alias for HPG axis target based on gender
-            Object.defineProperty(nodes, 'gonads', {
-                get: function() { return currentGender === 'female' ? this.ovaries : this.testes; }
-            });
-
-            // Move scene down slightly to center in viewport
-            scene.rootNodes.forEach(node => {
-                if (node.name !== 'camera' && node.name !== 'hemiLight' && node.name !== 'dirLight') {
-                    node.position.y -= 4.5;
-                }
-            });
-        }
-
-
-        // ==========================================
-        // MACRO VIEW: HORMONAL CASCADES
-        // ==========================================
-        function buildAxisList() {
-            DOM.axisList.innerHTML = '';
-            Object.keys(AXIS_DATA).forEach(id => {
-                const data = AXIS_DATA[id];
-                const btn = document.createElement('button');
-                btn.id = `btn-axis-${id}`;
-                btn.className = `axis-btn w-full text-left p-3.5 rounded-xl border border-slate-700 bg-slate-800/40 transition-all text-xs font-bold text-slate-300 flex items-center gap-3`;
-                btn.style.setProperty('--active-color', data.color);
-                
-                btn.innerHTML = `
-                    <div class="w-4 h-4 rounded-full shadow-[0_0_8px_${data.color}]" style="background-color: ${data.color}"></div>
-                    ${data.name}
-                `;
-                
-                btn.onclick = () => selectAxis(id);
-                DOM.axisList.appendChild(btn);
-            });
-        }
-
-        function selectAxis(id) {
-            if (isAnimating) return;
-            activeAxisId = id;
-            const data = AXIS_DATA[id];
-
-            // UI Panel Updates
-            DOM.axisInfoAccent.style.backgroundColor = data.color;
-            DOM.axisInfoTitle.style.color = data.color;
-            DOM.axisInfoTitle.innerText = data.name;
-            DOM.axisInfoDesc.innerText = data.desc;
-
-            // Action Button Enable
-            DOM.btnRelease.classList.remove('opacity-50', 'pointer-events-none');
-            DOM.btnRelease.innerHTML = `<i class="fa-solid fa-play"></i> Trigger Cascade`;
-            DOM.btnRelease.className = `w-full text-slate-950 py-3.5 rounded-xl text-sm font-black transition-all border shadow-lg hover:scale-[0.98]`;
-            DOM.btnRelease.style.backgroundColor = data.color;
-            DOM.btnRelease.style.borderColor = data.color;
-            DOM.btnRelease.style.boxShadow = `0 0 20px ${data.color}60`;
-
-            // Highlight Sidebar List
-            document.querySelectorAll('.axis-btn').forEach(b => b.classList.remove('active'));
-            const btn = document.getElementById(`btn-axis-${id}`);
-            if(btn) btn.classList.add('active');
-
-            // Populate Steps Tracker (Inactive)
-            DOM.stepsTracker.innerHTML = '';
-            data.steps.forEach((step, idx) => {
-                const el = document.createElement('div');
-                el.id = `step-${idx}`;
-                el.className = `step-item p-2.5 rounded-lg border border-slate-700/50 bg-slate-800/30 pl-3`;
-                el.style.setProperty('--step-color', step.color);
-                
-                const icon = step.hormone === 'Negative Feedback' ? '<i class="fa-solid fa-ban text-rose-500 mr-1"></i>' : '';
-
-                el.innerHTML = `
-                    <div class="text-[10px] font-bold uppercase tracking-wider mb-1" style="color: ${step.color}">
-                        ${idx + 1}. ${step.from} ⟶ ${step.to}
-                    </div>
-                    <div class="text-[11px] text-white font-mono font-bold mb-1 bg-slate-900/50 inline-block px-2 py-0.5 rounded border border-slate-700">
-                        ${icon} ${step.hormone}
-                    </div>
-                    <div class="text-[10px] text-slate-400 leading-tight">${step.desc}</div>
-                `;
-                DOM.stepsTracker.appendChild(el);
-            });
-
-            hlLayer.removeAllMeshes();
-        }
-
-        async function triggerCascade() {
-            if (!activeAxisId || isAnimating) return;
-            isAnimating = true;
-            
-            // Lock UI
-            DOM.btnRelease.classList.add('opacity-50', 'pointer-events-none');
-            DOM.btnRelease.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Cascade Active...`;
-            document.querySelectorAll('.axis-btn, .tab-btn').forEach(b => b.classList.add('pointer-events-none'));
-
-            const data = AXIS_DATA[activeAxisId];
-
-            for (let i = 0; i < data.steps.length; i++) {
-                await playCascadeStep(data.steps[i], i);
-            }
-
-            // Cleanup
-            setTimeout(() => {
-                isAnimating = false;
-                document.querySelectorAll('.step-item').forEach(el => el.classList.remove('active-step'));
-                DOM.btnRelease.classList.remove('opacity-50', 'pointer-events-none');
-                DOM.btnRelease.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Re-Trigger Cascade`;
-                document.querySelectorAll('.axis-btn, .tab-btn').forEach(b => b.classList.remove('pointer-events-none'));
-                hlLayer.removeAllMeshes();
-            }, 1000);
-        }
-
-        function playCascadeStep(stepData, index) {
-            return new Promise((resolve) => {
-                document.querySelectorAll('.step-item').forEach(el => el.classList.remove('active-step'));
-                const stepEl = document.getElementById(`step-${index}`);
-                if (stepEl) stepEl.classList.add('active-step');
-
-                const sourceMesh = nodes[stepData.from];
-                const targetMesh = nodes[stepData.to];
-
-                if (!sourceMesh || !targetMesh) {
-                    console.error("Missing node mapping for:", stepData.from, "or", stepData.to);
-                    resolve(); return;
-                }
-
-                hlLayer.addMesh(sourceMesh, BABYLON.Color3.FromHexString(stepData.color));
-
-                const isFeedback = stepData.hormone === 'Negative Feedback';
-                const particle = BABYLON.MeshBuilder.CreateSphere("particle", {diameter: isFeedback ? 0.6 : 0.4}, scene);
-                const pMat = new BABYLON.StandardMaterial("pMat", scene);
-                pMat.emissiveColor = BABYLON.Color3.FromHexString(stepData.color);
-                pMat.disableLighting = true;
-                if (isFeedback) pMat.alpha = 0.8;
-                particle.material = pMat;
-
-                const p0 = sourceMesh.getAbsolutePosition().clone();
-                const p2 = targetMesh.getAbsolutePosition().clone();
-                const p1 = BABYLON.Vector3.Center(p0, p2);
-                
-                if (isFeedback) {
-                    p1.z += 8; p1.x -= 3;
-                } else {
-                    p1.z -= 4; p1.x += (Math.random() - 0.5) * 4;
-                }
-
-                activeParticles.push({
-                    mesh: particle, p0, p1, p2,
-                    progress: 0,
-                    speed: isFeedback ? 0.012 : 0.018, 
-                    onComplete: () => {
-                        particle.dispose();
-                        triggerTargetFlash(stepData.to, stepData.color);
-                        setTimeout(() => { if(!isAnimating) return; hlLayer.removeMesh(sourceMesh); }, 400);
-                        setTimeout(resolve, 600);
-                    }
-                });
-            });
-        }
-
-
-        // ==========================================
-        // MICRO VIEW: GLAND ANATOMY INFOGRAPHICS
-        // ==========================================
-        
-        function populateAnatomyDropdown() {
-            DOM.glandSelect.innerHTML = '<option value="" disabled selected>-- Choose a Gland to Inspect --</option>';
-            
-            Object.values(GLAND_DATA).forEach(gland => {
-                if (gland.gender && gland.gender !== currentGender) return; // Skip opposite sex
-                
-                const option = document.createElement('option');
-                option.value = gland.id;
-                option.textContent = gland.name;
-                DOM.glandSelect.appendChild(option);
-            });
-
-            // Resync value if active gland is still valid
-            if (activeGlandId && (!GLAND_DATA[activeGlandId].gender || GLAND_DATA[activeGlandId].gender === currentGender)) {
-                DOM.glandSelect.value = activeGlandId;
-            } else if (activeGlandId) {
-                // Was invalid due to gender swap
-                activeGlandId = null;
-                DOM.glandDetailContainer.innerHTML = getAnatomyPlaceholder();
-            }
-        }
-
-        function handleGlandDropdown(glandId) {
-            if (glandId) renderGlandDetail(glandId);
-        }
-
-        function getAnatomyPlaceholder() {
-            return `
-                <div class="flex-grow flex flex-col items-center justify-center text-center opacity-50 py-10">
-                    <i class="fa-solid fa-hand-pointer text-4xl text-slate-500 mb-4"></i>
-                    <h4 class="text-sm font-bold text-slate-300">Select a Gland</h4>
-                    <p class="text-xs text-slate-500 mt-2 max-w-[200px]">Use the dropdown above or interact with the 3D model to view detailed biological data.</p>
+    <!-- ==================================================================== -->
+    <!-- MODAL: MASTER HUMAN ENDOCRINE GLANDS, HORMONES & DISORDERS TABLE     -->
+    <!-- ==================================================================== -->
+    <div id="masterModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6">
+        <div class="panel rounded-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-600">
+            <div class="px-5 py-3.5 bg-slate-900/95 border-b border-slate-700 flex items-center justify-between shrink-0">
+                <div>
+                    <h2 class="text-base sm:text-lg font-extrabold text-white">Master Endocrine Reference: Glands, Hormones, Classes &amp; Disorders</h2>
+                    <p class="text-xs text-slate-400">Click any row below to zoom directly to that 3D endocrine gland.</p>
                 </div>
-            `;
+                <button id="closeMasterTableBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition">
+                    ✕ Close
+                </button>
+            </div>
+
+            <div class="p-4 sm:p-5 overflow-auto custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-[10.5px] uppercase tracking-wider text-slate-400 bg-slate-900/60">
+                            <th class="p-2.5 font-bold">Endocrine Gland</th>
+                            <th class="p-2.5 font-bold">Key Hormones</th>
+                            <th class="p-2.5 font-bold">Chemical Class</th>
+                            <th class="p-2.5 font-bold">Target Organ &amp; Action</th>
+                            <th class="p-2.5 font-bold">Clinical Imbalance / Disorder</th>
+                        </tr>
+                    </thead>
+                    <tbody id="masterTableBody" class="divide-y divide-slate-800 text-slate-200"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * ============================================================================
+ * LUMINOUS LEARNER — 3D ENDOCRINE SYSTEM, VASCULAR CASCADES & FEEDBACK ENGINE
+ * ============================================================================
+ * Anatomical & Pedagogical Upgrades:
+ * 1. Sculpted 3D Human Silhouette + Brain, Trachea, Heart, Liver, Kidneys &
+ *    3D Systemic Bloodstream Network (replacing the "sphere-on-capsule snowman"!).
+ * 2. 9 Anatomically Accurate 3D Endocrine Glands:
+ *    - Hypothalamus + Infundibular Stalk
+ *    - Bilobed Pituitary Gland (Anterior Adenohypophysis + Posterior Neurohypophysis)
+ *    - Pineal Gland (Epithalamus — Melatonin circadian rhythm)
+ *    - Butterfly Thyroid Gland (Left/Right Lobes + Isthmus on Trachea; swells in Goiter!)
+ *    - 4 Posterior Parathyroid Glands (PTH vs. Calcitonin Ca2+ homeostasis!)
+ *    - Paired Pyramidal Adrenal Glands (Cortex + Medulla) crowning Bean-Shaped Kidneys!
+ *    - Lobulated Pancreas studded with glowing Islets of Langerhans (Alpha & Beta cells)
+ *    - Female Ovaries (with Uterus & Tubes) OR Male Testes (in Scrotum with Epididymis)
+ * 3. Interactive Vascular Hormone Cascades with Scrubbing, Antagonistic Pairs
+ *    (Insulin vs. Glucagon), ADH Osmoregulation, and Goiter / Diabetes Pathologies!
+ */
+
+// ============================================================================
+// 1. COMPLETE 9-GLAND ANATOMICAL & BIOCHEMICAL DATABASE
+// ============================================================================
+const GLANDS_DB = {
+    hypothalamus: {
+        id: 'hypothalamus', short: 'Hypothalamus', name: 'Hypothalamus (Neuroendocrine Control Center)',
+        region: 'Diencephalon (Forebrain)', chemClass: 'Peptide Neurohormones', color: '#22D3EE', cam: 'brain',
+        pinPos: new THREE.Vector3(-0.35, 5.26, 0.22),
+        disorder: 'Diabetes insipidus (if ADH neurons damaged); hypothalamic amenorrhea',
+        desc: 'Master bridge linking the Nervous System and Endocrine System! Specialized neurosecretory neurons monitor blood temperature, osmolarity, and hormone levels—sending releasing/inhibiting hormones down the hypophyseal portal blood vessels to the Anterior Pituitary, and synthesizing ADH & Oxytocin for the Posterior Pituitary.',
+        hormones: [
+            { name: 'TRH, CRH, GnRH, GHRH', target: 'Anterior Pituitary', func: 'Portal tropic signals commanding TSH, ACTH, FSH/LH, and GH secretion.' },
+            { name: 'ADH & Oxytocin (Synthesis)', target: 'Stored in Posterior Pituitary', func: 'Made in hypothalamic cell bodies and transported down axons via infundibular stalk.' }
+        ],
+        exam: 'Exam Trap: ADH and Oxytocin are SYNTHESIZED by neurosecretory cells in the Hypothalamus—the Posterior Pituitary only stores and releases them into blood!'
+    },
+    pituitary: {
+        id: 'pituitary', short: 'Pituitary (Ant/Post)', name: 'Pituitary Gland (Anterior & Posterior Lobes)',
+        region: 'Base of Brain (Sella Turcica)', chemClass: 'Peptide & Glycoprotein', color: '#A855F7', cam: 'brain',
+        pinPos: new THREE.Vector3(0.32, 4.68, 0.34),
+        disorder: 'Pituitary dwarfism / gigantism (GH); acromegaly; central diabetes insipidus',
+        desc: 'Pea-sized bilobed gland suspended from the hypothalamus by the infundibular stalk. The glandular Anterior Pituitary manufactures 6 hormones (TSH, ACTH, FSH, LH, GH, Prolactin), while the neural Posterior Pituitary releases hypothalamic ADH and Oxytocin.',
+        hormones: [
+            { name: 'TSH, ACTH, FSH & LH (Anterior)', target: 'Thyroid, Adrenals, Gonads', func: 'Tropic hormones governing downstream endocrine glands.' },
+            { name: 'Growth Hormone (GH) & Prolactin', target: 'Liver, Bones, Mammary Glands', func: 'Stimulates mitosis, epiphyseal bone growth, and milk synthesis.' },
+            { name: 'ADH / Vasopressin (Posterior)', target: 'Kidney Collecting Ducts', func: 'Inserts aquaporin-2 channels to reabsorb water and concentrate urine.' }
+        ],
+        exam: 'Distinguish Anterior vs. Posterior Pituitary: Anterior connects via PORTAL BLOOD VESSELS; Posterior connects via NEURON AXONS!'
+    },
+    pineal: {
+        id: 'pineal', short: 'Pineal Gland', name: 'Pineal Gland (Circadian Clock)',
+        region: 'Posterior Epithalamus', chemClass: 'Amine (Tryptophan-Derived)', color: '#818CF8', cam: 'brain',
+        pinPos: new THREE.Vector3(0.0, 5.32, -0.42),
+        disorder: 'Jet lag, shift-work insomnia & Seasonal Affective Disorder (SAD)',
+        desc: 'Tiny pinecone-shaped gland tucked posteriorly between the cerebral hemispheres. Receives indirect light/dark signals from retinal ganglion cells via the suprachiasmatic nucleus (SCN): darkness stimulates melatonin release, while daylight inhibits it.',
+        hormones: [
+            { name: 'Melatonin', target: 'Brainstem & Hypothalamus (SCN)', func: 'Rises at night to promote sleep onset and synchronize circadian rhythms.' }
+        ],
+        exam: 'Rotate the Brain view slightly to spot the Pineal Gland tucked behind the Hypothalamus!'
+    },
+    thyroid: {
+        id: 'thyroid', short: 'Thyroid Gland', name: 'Thyroid Gland (Butterfly Lobes & Isthmus)',
+        region: 'Anterior Neck (On Trachea)', chemClass: 'Iodinated Amine + Peptide', color: '#10B981', cam: 'neck',
+        pinPos: new THREE.Vector3(-0.48, 3.35, 0.45),
+        disorder: 'Graves’ hyperthyroidism; Iodine-deficient Goiter & Hypothyroidism (cretinism/myxedema)',
+        desc: 'Butterfly-shaped vascular gland wrapping anteriorly around the upper tracheal cartilage rings just below the larynx. Follicular cells use dietary IODINE to synthesize Thyroxine (T₄) and Triiodothyronine (T₃); parafollicular C-cells secrete Calcitonin.',
+        hormones: [
+            { name: 'Thyroxine (T₄) & T₃', target: 'Nearly All Body Cells', func: 'Enters cells to upregulate mitochondrial aerobic respiration, BMR, and body heat.' },
+            { name: 'Calcitonin', target: 'Bones (Osteoblasts)', func: 'Lowers high blood Ca²⁺ by promoting calcium deposition into bone matrix.' }
+        ],
+        exam: 'Why does dietary Iodine Deficiency cause a swollen neck GOITER? No iodine → no T₄ → zero negative feedback → pituitary floods thyroid with excess TSH, causing hypertrophy!'
+    },
+    parathyroid: {
+        id: 'parathyroid', short: 'Parathyroids (4)', name: 'Parathyroid Glands (4 Posterior Nodules)',
+        region: 'Posterior Thyroid Surface', chemClass: 'Peptide Hormone (PTH)', color: '#FACC15', cam: 'neckRear',
+        pinPos: new THREE.Vector3(0.45, 3.48, 0.12),
+        disorder: 'Hypoparathyroidism → low blood Ca²⁺ muscle tetany; Hyperparathyroidism → bone demineralization',
+        desc: 'Four tiny golden lentil-sized glands embedded on the BACK surface of the thyroid lobes. Chief cells directly sense falling blood Ca²⁺ concentration and secrete Parathyroid Hormone (PTH)—antagonistic to thyroid Calcitonin!',
+        hormones: [
+            { name: 'Parathyroid Hormone (PTH)', target: 'Bones, Kidneys & Intestine (Vit D)', func: 'Raises low blood Ca²⁺ via osteoclast bone release, renal reabsorption, and Vitamin D activation.' }
+        ],
+        exam: 'Antagonistic Calcium Pair: PTH RAISES blood Ca²⁺, whereas Thyroid Calcitonin LOWERS blood Ca²⁺ (humoral feedback—no pituitary needed!).'
+    },
+    adrenal: {
+        id: 'adrenal', short: 'Adrenal Glands', name: 'Adrenal (Suprarenal) Glands — Cortex & Medulla',
+        region: 'Superior Pole of Both Kidneys', chemClass: 'Steroid (Cortex) + Amine (Medulla)', color: '#F59E0B', cam: 'abdomen',
+        pinPos: new THREE.Vector3(-1.26, -0.15, -0.15),
+        disorder: 'Cushing’s syndrome (excess cortisol); Addison’s disease (adrenal insufficiency)',
+        desc: 'Pyramidal glands capping both kidneys—structurally two distinct glands in one! The outer Adrenal Cortex synthesizes lipid-soluble steroid hormones (Cortisol, Aldosterone) under pituitary ACTH, while the inner Adrenal Medulla is modified sympathetic tissue releasing Adrenaline.',
+        hormones: [
+            { name: 'Adrenaline / Epinephrine (Medulla)', target: 'Heart, Bronchioles, Liver, Arterioles', func: 'Fast sympathetic "Fight-or-Flight": ↑HR/BP, bronchodilation, glycogen → glucose.' },
+            { name: 'Cortisol (Cortex)', target: 'Liver, Muscle, Adipose, Immune Cells', func: 'Sustained stress: gluconeogenesis (amino acids/fats → glucose) & anti-inflammatory.' },
+            { name: 'Aldosterone (Cortex)', target: 'Kidney Distal Tubules', func: 'Mineralocorticoid: Na⁺ reabsorption and K⁺ excretion to raise blood pressure.' }
+        ],
+        exam: 'Compare Stress Speed: Adrenal MEDULLA is triggered by NERVES (instant seconds); Adrenal CORTEX is triggered by blood ACTH (slower, prolonged stress)!'
+    },
+    pancreas: {
+        id: 'pancreas', short: 'Pancreas (Islets)', name: 'Pancreas — Islets of Langerhans (α & β Cells)',
+        region: 'Retroperitoneal Abdomen', chemClass: 'Peptide Hormones', color: '#38BDF8', cam: 'abdomen',
+        pinPos: new THREE.Vector3(0.42, -0.56, 0.26),
+        disorder: 'Type 1 Diabetes (autoimmune β-cell loss); Type 2 Diabetes (target receptor insulin resistance)',
+        desc: 'Dual exocrine AND endocrine organ! While acinar cells send digestive enzymes into the duodenum via a duct, ~1 million microscopic endocrine clusters—Islets of Langerhans—secrete antagonistic Insulin (β-cells) and Glucagon (α-cells) directly into capillaries.',
+        hormones: [
+            { name: 'Insulin (from β-cells)', target: 'Liver, Skeletal Muscle & Adipose', func: 'Lowers blood glucose: inserts GLUT4 channels, drives glucose → glycogen & fat.' },
+            { name: 'Glucagon (from α-cells)', target: 'Liver Hepatocytes', func: 'Raises blood glucose during fasting: activates glycogenolysis (glycogen → glucose) & gluconeogenesis.' }
+        ],
+        exam: 'Why is the Pancreas a HETEROCRINE (mixed) gland? Exocrine acini use DUCTS (digestive juice); Endocrine Islets are DUCTLESS (hormones into blood)!'
+    },
+    ovaries: {
+        id: 'ovaries', short: 'Ovaries (♀)', name: 'Ovaries — Follicles & Corpus Luteum',
+        region: 'Female Pelvic Cavity', chemClass: 'Lipid-Soluble Steroids', color: '#EC4899', cam: 'pelvis', gender: 'female',
+        pinPos: new THREE.Vector3(-1.38, -3.12, 0.22),
+        disorder: 'Polycystic Ovary Syndrome (PCOS); menopausal estrogen decline → osteoporosis risk',
+        desc: 'Paired female gonads flanking the uterus. Under pituitary FSH, developing ovarian follicles secrete Estrogen; following the mid-cycle LH surge and ovulation, the ruptured follicle transforms into the Corpus Luteum, secreting Progesterone.',
+        hormones: [
+            { name: 'Estrogen (Estradiol)', target: 'Uterus Endometrium & Systemic', func: 'Rebuilds uterine lining post-menstruation; develops female secondary sex traits.' },
+            { name: 'Progesterone', target: 'Endometrium & Myometrium', func: 'Thickens & vascularizes endometrium for implantation; inhibits FSH/LH.' }
+        ],
+        exam: 'Steroid Mechanism: Because Estrogen & Progesterone are lipid-soluble (cholesterol-derived), they diffuse straight across plasma membranes to bind INTRACELLULAR receptors!'
+    },
+    testes: {
+        id: 'testes', short: 'Testes (♂)', name: 'Testes — Interstitial Leydig & Sertoli Cells',
+        region: 'External Scrotum (~35°C)', chemClass: 'Lipid-Soluble Steroid + Peptide', color: '#3B82F6', cam: 'pelvis', gender: 'male',
+        pinPos: new THREE.Vector3(-0.56, -4.65, 0.55),
+        disorder: 'Hypogonadism; synthetic anabolic steroid abuse → negative feedback testicular atrophy!',
+        desc: 'Paired male gonads housed in the scrotum. Pituitary LH stimulates interstitial Leydig cells (between seminiferous tubules) to secrete Testosterone, while FSH stimulates Sertoli nurse cells to support spermatogenesis and release Inhibin.',
+        hormones: [
+            { name: 'Testosterone (Leydig Cells)', target: 'Testes, Muscles, Bones, Larynx', func: 'Drives spermatogenesis, protein synthesis (muscle/bone growth), and male secondary traits.' },
+            { name: 'Inhibin (Sertoli Cells)', target: 'Anterior Pituitary', func: 'Selectively inhibits FSH secretion when sperm count is high.' }
+        ],
+        exam: 'Why does taking synthetic anabolic steroids shrink the testes? High blood androgens trigger NEGATIVE FEEDBACK, shutting off pituitary LH & FSH!'
+    }
+};
+
+// ============================================================================
+// 2. 5 PHYSIOLOGICAL FEEDBACK AXES + ANTAGONISTIC / DISORDER SCENARIOS
+// ============================================================================
+const AXES_DB = {
+    hpt: {
+        id: 'hpt', short: 'Thyroid (HPT)', title: 'Thyroid Metabolic Axis (HPT)', loopBadge: '3-Tier Negative Feedback', color: '#10B981',
+        scenarios: {
+            normal: {
+                label: '✓ Normal Euthyroid',
+                legend1: '● TSH (Pituitary)', legend2: '● Thyroxine T₄ (Thyroid)',
+                chartStatus: 'Rising T₄ inhibits TRH & TSH (Homeostasis)',
+                curveType: 'negative_feedback',
+                steps: [
+                    { from: 'hypothalamus', to: 'pituitary', hormone: 'TRH', color: '#22D3EE', desc: 'Cold / low BMR detected → Hypothalamus secretes TRH into hypophyseal portal vessels.' },
+                    { from: 'pituitary', to: 'thyroid', hormone: 'TSH', color: '#A855F7', desc: 'Anterior Pituitary secretes TSH via systemic bloodstream to bind thyroid follicle receptors.' },
+                    { from: 'thyroid', to: 'heart', hormone: 'Thyroxine (T₄/T₃)', color: '#10B981', desc: 'Thyroid uses iodine to release T₄/T₃ → increases cell aerobic respiration, BMR & heart rate!' },
+                    { from: 'thyroid', to: 'hypothalamus', hormone: '⊖ Negative Feedback', color: '#F43F5E', isFeedback: true, desc: 'Restored T₄ levels inhibit BOTH Hypothalamus (↓TRH) and Anterior Pituitary (↓TSH).' }
+                ]
+            },
+            goiter: {
+                label: '⚠ Iodine-Deficient Goiter',
+                legend1: '● Excess TSH (Runaway!)', legend2: '● T₄ (0% — No Iodine)',
+                chartStatus: 'No T₄ = Zero Negative Feedback → Thyroid Swells!',
+                curveType: 'goiter_runaway',
+                steps: [
+                    { from: 'hypothalamus', to: 'pituitary', hormone: 'High TRH', color: '#22D3EE', desc: 'Body cells lack metabolic heat → Hypothalamus strongly secretes TRH.' },
+                    { from: 'pituitary', to: 'thyroid', hormone: 'Excess TSH Surge!', color: '#A855F7', desc: 'Anterior Pituitary floods the bloodstream with massive TSH.' },
+                    { from: 'thyroid', to: 'thyroid', hormone: '✕ Zero T₄ Synthesis', color: '#F59E0B', desc: 'Without dietary IODINE, thyroid follicles cannot make T₄—instead excess TSH enlarges the gland (Goiter)!' },
+                    { from: 'thyroid', to: 'hypothalamus', hormone: '✕ Feedback Absent!', color: '#FB7185', isFeedback: true, isBroken: true, desc: 'Because blood T₄ stays near zero, negative feedback NEVER switches off TRH/TSH!' }
+                ]
+            }
         }
-        
-        function renderGlandDetail(glandId) {
-            activeGlandId = glandId;
-            const gland = GLAND_DATA[glandId];
-            
-            // Sync Dropdown
-            DOM.glandSelect.value = glandId;
-
-            // Highlight in 3D
-            hlLayer.removeAllMeshes();
-            const mesh = nodes[glandId];
-            if (mesh) hlLayer.addMesh(mesh, BABYLON.Color3.FromHexString(gland.color));
-            
-            // If paired organ, highlight the right side too
-            if (glandId === 'adrenal' && nodes['adrenal_R']) hlLayer.addMesh(nodes['adrenal_R'], BABYLON.Color3.FromHexString(gland.color));
-            if (glandId === 'ovaries' && nodes['ovaries_R']) hlLayer.addMesh(nodes['ovaries_R'], BABYLON.Color3.FromHexString(gland.color));
-            if (glandId === 'testes' && nodes['testes_R']) hlLayer.addMesh(nodes['testes_R'], BABYLON.Color3.FromHexString(gland.color));
-
-            // Build HTML
-            const hexBase = gland.color;
-            
-            let html = `
-                <div class="animate-in fade-in slide-in-from-bottom-4 duration-300">
-                    
-                    <!-- Hero Section -->
-                    <div class="p-6 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 shadow-2xl mb-6 relative overflow-hidden">
-                        <div class="absolute top-0 right-0 w-48 h-48 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 opacity-20" style="background-color: ${hexBase}"></div>
-                        
-                        <div class="relative z-10">
-                            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold border mb-3" style="color: ${hexBase}; border-color: ${hexBase}40; background-color: ${hexBase}10">
-                                <i class="fa-solid fa-${gland.icon}"></i> Endocrine Gland
-                            </div>
-                            <h1 class="text-3xl font-black text-white mb-2">${gland.name}</h1>
-                            <p class="text-sm text-slate-300 leading-relaxed">
-                                ${gland.desc}
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Hormones Grid -->
-                    <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-3 border-b border-slate-700 pb-1">Hormonal Secretions</h3>
-                    <div class="flex flex-col gap-4 mb-6">
-                        ${gland.hormones.map(h => `
-                            <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
-                                <div class="flex items-center gap-3 mb-2">
-                                    <div class="p-2 rounded-lg bg-slate-900 text-white shadow-inner" style="color: ${hexBase}; border: 1px solid ${hexBase}40">
-                                        <i class="fa-solid fa-flask"></i>
-                                    </div>
-                                    <div>
-                                        <h3 class="text-base font-bold text-white leading-tight">${h.name}</h3>
-                                        <div class="text-[10px] font-mono text-slate-400">Target: <span style="color: ${hexBase}">${h.target}</span></div>
-                                    </div>
-                                </div>
-                                <p class="text-xs text-slate-300 leading-relaxed pl-11">
-                                    ${h.func}
-                                </p>
-                            </div>
-                        `).join('')}
-                    </div>
-
-                    <!-- Negative Feedback Concept Block -->
-                    <div class="bg-slate-900/50 p-5 rounded-2xl border border-slate-700 shadow-inner">
-                        <h3 class="text-sm font-bold mb-3 flex items-center gap-2" style="color: ${hexBase}">
-                            <i class="fa-solid fa-arrows-spin"></i> Regulation Mechanism
-                        </h3>
-                        
-                        <div class="flex flex-col gap-2 text-xs text-slate-300 relative">
-                            
-                            <div class="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
-                                <div class="w-6 h-6 rounded bg-slate-900 flex items-center justify-center font-bold text-slate-500">1</div>
-                                <div><span class="font-bold text-white">Stimulus:</span> Change in internal environment detected.</div>
-                            </div>
-                            
-                            <div class="ml-4 w-0.5 h-3 bg-slate-700"></div>
-                            
-                            <div class="flex items-center gap-3 p-3 rounded-lg border shadow-lg" style="background-color: ${hexBase}15; border-color: ${hexBase}40">
-                                <div class="w-6 h-6 rounded bg-slate-900 flex items-center justify-center font-bold" style="color: ${hexBase}">2</div>
-                                <div><span class="font-bold text-white">${gland.name}:</span> Releases specific hormones into the blood.</div>
-                            </div>
-                            
-                            <div class="ml-4 w-0.5 h-3 bg-slate-700"></div>
-
-                            <div class="flex items-center gap-3 bg-slate-800/50 p-3 rounded-lg border border-slate-700">
-                                <div class="w-6 h-6 rounded bg-slate-900 flex items-center justify-center font-bold text-slate-500">3</div>
-                                <div><span class="font-bold text-white">Target Effect:</span> Homeostasis is restored, shutting off the initial stimulus (Negative Feedback).</div>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            DOM.glandDetailContainer.innerHTML = html;
+    },
+    glucose: {
+        id: 'glucose', short: 'Blood Glucose', title: 'Antagonistic Blood Glucose Loop', loopBadge: 'Direct Humoral Loop', color: '#38BDF8',
+        scenarios: {
+            high_glc: {
+                label: '🍰 High Glucose (Insulin)',
+                legend1: '● Blood Glucose (mg/dL)', legend2: '● Insulin (β-Cells)',
+                chartStatus: 'Insulin drives Glucose → Liver Glycogen (90 mg/dL)',
+                curveType: 'insulin_drop',
+                steps: [
+                    { from: 'pancreas', to: 'liver', hormone: 'Insulin (β-Cells)', color: '#38BDF8', desc: 'Meal raises blood glucose (>140 mg/dL) → Islet β-cells secrete Insulin directly into hepatic portal blood.' },
+                    { from: 'liver', to: 'heart', hormone: 'GLUT4 & Glycogenesis', color: '#34D399', desc: 'Hepatocytes convert glucose → insoluble Glycogen; muscle & fat cells insert GLUT4 channels to absorb glucose.' },
+                    { from: 'liver', to: 'pancreas', hormone: '⊖ Stimulus Removed', color: '#F43F5E', isFeedback: true, desc: 'Blood glucose returns to set-point (~90 mg/dL), halting further β-cell Insulin release!' }
+                ]
+            },
+            low_glc: {
+                label: '🏃 Fasting (Glucagon)',
+                legend1: '● Blood Glucose (Rising)', legend2: '● Glucagon (α-Cells)',
+                chartStatus: 'Glucagon hydrolyzes Liver Glycogen → Glucose!',
+                curveType: 'glucagon_rise',
+                steps: [
+                    { from: 'pancreas', to: 'liver', hormone: 'Glucagon (α-Cells)', color: '#F59E0B', desc: 'Fasting/exercise drops blood glucose (<70 mg/dL) → Islet α-cells secrete antagonistic Glucagon!' },
+                    { from: 'liver', to: 'hypothalamus', hormone: 'Glycogenolysis', color: '#FDE047', desc: 'Liver breaks down stored Glycogen → Glucose and releases it into blood to fuel the brain & muscles.' },
+                    { from: 'liver', to: 'pancreas', hormone: '⊖ Normoglycemia', color: '#F43F5E', isFeedback: true, desc: 'Restored blood glucose (~90 mg/dL) inhibits α-cell Glucagon secretion.' }
+                ]
+            },
+            diabetes1: {
+                label: '⚠ Type 1 Diabetes',
+                legend1: '● Hyperglycemia (High!)', legend2: '● Insulin (0% — No β-Cells)',
+                chartStatus: 'Autoimmune β-cell loss → Glucose stays dangerously high!',
+                curveType: 'diabetes_flat',
+                steps: [
+                    { from: 'pancreas', to: 'liver', hormone: '✕ Zero Insulin', color: '#FB7185', isBroken: true, desc: 'Autoimmune T-cells destroyed pancreatic β-cells—no Insulin can be secreted after a meal!' },
+                    { from: 'liver', to: 'kidneys', hormone: 'Hyperglycemia & Spillover', color: '#F43F5E', desc: 'Cells starve for glucose while excess blood glucose spills into kidney filtrate, drawing water out (polyuria).' }
+                ]
+            }
         }
+    },
+    hpa: {
+        id: 'hpa', short: 'Stress (HPA)', title: 'Adrenal Stress Response (HPA & SAM)', loopBadge: 'Endocrine + Neural Dual', color: '#F59E0B',
+        scenarios: {
+            cortisol: {
+                label: '⏳ Prolonged (Cortisol)',
+                legend1: '● ACTH (Pituitary)', legend2: '● Cortisol (Cortex)',
+                chartStatus: 'Cortisol mobilizes fuel & inhibits CRH/ACTH',
+                curveType: 'negative_feedback',
+                steps: [
+                    { from: 'hypothalamus', to: 'pituitary', hormone: 'CRH', color: '#22D3EE', desc: 'Stressors activate Hypothalamus to secrete Corticotropin-Releasing Hormone (CRH).' },
+                    { from: 'pituitary', to: 'adrenal', hormone: 'ACTH', color: '#A855F7', desc: 'Anterior Pituitary releases ACTH via bloodstream to the outer Adrenal Cortex.' },
+                    { from: 'adrenal', to: 'liver', hormone: 'Cortisol (Steroid)', color: '#F59E0B', desc: 'Adrenal Cortex secretes Cortisol → stimulates liver gluconeogenesis (amino acids/fat → glucose).' },
+                    { from: 'adrenal', to: 'hypothalamus', hormone: '⊖ Negative Feedback', color: '#F43F5E', isFeedback: true, desc: 'Elevated blood Cortisol binds receptors in Hypothalamus & Pituitary to dampen stress output.' }
+                ]
+            },
+            adrenaline: {
+                label: '⚡ Fight-or-Flight (Adrenaline)',
+                legend1: '● Sympathetic Impulse', legend2: '● Adrenaline (Medulla)',
+                chartStatus: 'Rapid neuro-hormonal surge boosts HR & Glucose!',
+                curveType: 'insulin_drop',
+                steps: [
+                    { from: 'hypothalamus', to: 'adrenal', hormone: '⚡ Sympathetic Nerve', color: '#FDE047', desc: 'Acute danger! Hypothalamus fires fast preganglionic sympathetic nerve impulses straight to Adrenal Medulla!' },
+                    { from: 'adrenal', to: 'heart', hormone: 'Adrenaline Surge', color: '#FB923C', desc: 'Adrenal Medulla floods blood with Adrenaline → ↑Heart rate, ↑stroke volume & bronchodilation!' },
+                    { from: 'adrenal', to: 'liver', hormone: 'Rapid Glycogenolysis', color: '#F59E0B', desc: 'Adrenaline simultaneously triggers liver glycogen → glucose burst for skeletal muscles.' }
+                ]
+            }
+        }
+    },
+    hpg: {
+        id: 'hpg', short: 'Gonadal (HPG)', title: 'Reproductive Gonadal Axis (HPG)', loopBadge: 'Sex Steroid Feedback', color: '#EC4899',
+        scenarios: {
+            normal: {
+                label: '✓ Normal Reproductive Axis',
+                legend1: '● FSH & LH (Pituitary)', legend2: '● Sex Steroids (Gonads)',
+                chartStatus: 'Sex steroids regulate GnRH, FSH & LH',
+                curveType: 'negative_feedback',
+                steps: [
+                    { from: 'hypothalamus', to: 'pituitary', hormone: 'GnRH Pulses', color: '#22D3EE', desc: 'Hypothalamus releases pulsatile Gonadotropin-Releasing Hormone (GnRH).' },
+                    { from: 'pituitary', to: 'gonads', hormone: 'FSH & LH', color: '#A855F7', desc: 'Anterior Pituitary secretes FSH (gametogenesis) and LH (sex steroid synthesis) into blood.' },
+                    { from: 'gonads', to: 'gonadTarget', hormone: 'Estrogen / Testosterone', color: '#EC4899', dynamicSex: true, desc: 'Gonads secrete steroid hormones targeting reproductive organs & systemic tissues.' },
+                    { from: 'gonads', to: 'hypothalamus', hormone: '⊖ Negative Feedback', color: '#F43F5E', isFeedback: true, desc: 'Circulating sex steroids & inhibin feed back to regulate Hypothalamus & Pituitary.' }
+                ]
+            }
+        }
+    },
+    adh: {
+        id: 'adh', short: 'Water (ADH)', title: 'Osmoregulation Water Balance (ADH)', loopBadge: 'Neurohypophyseal Loop', color: '#6366F1',
+        scenarios: {
+            dehydrated: {
+                label: '💧 Dehydration (High ADH)',
+                legend1: '● Blood Osmolarity', legend2: '● ADH (Post. Pituitary)',
+                chartStatus: 'ADH opens Kidney Aquaporins → Saves Water!',
+                curveType: 'insulin_drop',
+                steps: [
+                    { from: 'hypothalamus', to: 'pituitary', hormone: 'Axonal ADH Transport', color: '#22D3EE', desc: 'Sweating / low water intake lowers blood water potential → Hypothalamic osmoreceptors fire down stalk!' },
+                    { from: 'pituitary', to: 'kidneys', hormone: 'ADH (Vasopressin)', color: '#818CF8', desc: 'Posterior Pituitary releases ADH into bloodstream to Kidney collecting ducts.' },
+                    { from: 'kidneys', to: 'heart', hormone: 'Aquaporin H₂O Uptake', color: '#38BDF8', desc: 'Collecting ducts become permeable → water reabsorbed by osmosis into blood (small volume of concentrated urine)!' },
+                    { from: 'kidneys', to: 'hypothalamus', hormone: '⊖ Osmolarity Restored', color: '#F43F5E', isFeedback: true, desc: 'Normal blood water potential quiets hypothalamic osmoreceptors, reducing ADH.' }
+                ]
+            }
+        }
+    }
+};
 
-        // ==========================================
-        // SHARED ANIMATION UTILITIES
-        // ==========================================
+// ============================================================================
+// 3. THREE.JS SCENE, SCULPTED HUMAN BODY, VASCULAR TREE & 9 ENDOCRINE GLANDS
+// ============================================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+};
 
-        function updateHormoneParticles() {
-            for (let i = activeParticles.length - 1; i >= 0; i--) {
-                const anim = activeParticles[i];
-                anim.progress += anim.speed;
+let scene, camera, renderer, controls, raycaster;
+let worldRoot, vascularGroup, contextOrgansGroup;
+let femalePelvicGroup, malePelvicGroup, thyroidMorphGroup, heartTargetMesh;
 
-                if (anim.progress >= 1) {
-                    anim.onComplete();
-                    activeParticles.splice(i, 1);
-                } else {
-                    const t = anim.progress;
-                    const u = 1 - t;
-                    const x = (u*u)*anim.p0.x + 2*u*t*anim.p1.x + (t*t)*anim.p2.x;
-                    const y = (u*u)*anim.p0.y + 2*u*t*anim.p1.y + (t*t)*anim.p2.y;
-                    const z = (u*u)*anim.p0.z + 2*u*t*anim.p1.z + (t*t)*anim.p2.z;
-                    anim.mesh.position.set(x, y, z);
+// Spatial Anchor Map for Vascular Hormone Routing & Highlights
+const organAnchors = {};
+const glandHighlightMats = {};
+const pickableGlandMeshes = [];
+const pinList = [];
+
+// Active Cascade Particle Stream & Target Flash Ring
+let hormonePacketGroup, packetCoreMat, packetHaloMat, receptorRingMesh;
+let activeRouteCurve = null;
+
+// Application State
+const state = {
+    tab: 'cascades',          // 'cascades' | 'anatomy'
+    sex: 'female',            // 'female' | 'male'
+    axisId: 'hpt',
+    scenarioKey: 'normal',
+    progress: 0.0,            // 0.0 -> 1.0
+    isPlaying: false,
+    speedMult: 1.0,
+    selectedGlandId: 'hypothalamus',
+    showVessels: true,
+    showOrgans: true,
+    showPins: true
+};
+
+const CAM_VIEWS = {
+    full:     { pos: new THREE.Vector3(0.0, 0.55, 16.2),  target: new THREE.Vector3(0.0, 0.45, 0.0) },
+    brain:    { pos: new THREE.Vector3(1.15, 5.15, 4.35), target: new THREE.Vector3(0.0, 5.02, 0.05) },
+    neck:     { pos: new THREE.Vector3(0.45, 3.35, 3.95), target: new THREE.Vector3(0.0, 3.32, 0.25) },
+    neckRear: { pos: new THREE.Vector3(0.55, 3.45, -3.6), target: new THREE.Vector3(0.0, 3.35, 0.22) },
+    abdomen:  { pos: new THREE.Vector3(0.35, -0.45, 6.4), target: new THREE.Vector3(0.0, -0.55, 0.0) },
+    pelvis:   { pos: new THREE.Vector3(0.25, -3.55, 6.2), target: new THREE.Vector3(0.0, -3.65, 0.2) }
+};
+let camGoalPos = CAM_VIEWS.full.pos.clone();
+let camGoalTarget = CAM_VIEWS.full.target.clone();
+let camGliding = false;
+
+function registerGland(obj, glandId) {
+    obj.traverse(ch => {
+        if (ch.isMesh) {
+            ch.userData.glandId = glandId;
+            pickableGlandMeshes.push(ch);
+            if (ch.material && ch.material.emissive) {
+                if (!glandHighlightMats[glandId]) glandHighlightMats[glandId] = [];
+                if (!glandHighlightMats[glandId].includes(ch.material)) {
+                    ch.material.userData.baseEmissive = ch.material.emissive.getHex();
+                    ch.material.userData.baseEmissiveInt = ch.material.emissiveIntensity || 0.3;
+                    glandHighlightMats[glandId].push(ch.material);
                 }
             }
         }
+    });
+}
 
-        function triggerTargetFlash(targetId, hexColor) {
-            // Some targets map to complex logic
-            let targetMesh;
-            if (targetId === 'body' || targetId === 'heart' || targetId === 'liver') {
-                targetMesh = nodes[targetId];
-            } else if (targetId === 'gonads') {
-                targetMesh = nodes.gonads; // Dynamic getter based on gender
+function initThreeScene() {
+    const viewport = document.getElementById('three-viewport');
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(39, viewport.clientWidth / viewport.clientHeight, 0.1, 120);
+    camera.position.copy(camGoalPos);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.14;
+    viewport.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.copy(camGoalTarget);
+    controls.addEventListener('start', () => { camGliding = false; });
+
+    raycaster = new THREE.Raycaster();
+
+    // Biological Holographic + Wet Organ Studio Lighting
+    scene.add(new THREE.HemisphereLight(0xE0F2FE, 0x0F172A, 0.92));
+
+    const keyLight = new THREE.DirectionalLight(0xFFF7ED, 1.28);
+    keyLight.position.set(6, 10, 13);
+    scene.add(keyLight);
+
+    const rimEmerald = new THREE.DirectionalLight(0x34D399, 0.72);
+    rimEmerald.position.set(-9, 5, -10);
+    scene.add(rimEmerald);
+
+    const rimSky = new THREE.DirectionalLight(0x38BDF8, 0.65);
+    rimSky.position.set(9, -6, -9);
+    scene.add(rimSky);
+
+    worldRoot = new THREE.Group();
+    scene.add(worldRoot);
+
+    buildSculptedBodyAndContextOrgans();
+    buildVascularTree();
+    buildAllNineEndocrineGlands();
+    buildHormonePacketAndPins();
+    populateMasterModal();
+    bindCanvasPicking(viewport);
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+    const viewport = document.getElementById('three-viewport');
+    if (!viewport || viewport.clientWidth === 0 || viewport.clientHeight === 0) return;
+    camera.aspect = viewport.clientWidth / viewport.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+}
+
+// ============================================================================
+// 4. SCULPTED HUMAN GLASS SILHOUETTE & ANATOMICAL LANDMARK ORGANS
+// ============================================================================
+function buildSculptedBodyAndContextOrgans() {
+    // 1. Proportioned Human Glass Body Shell (Cranium -> Jaw -> Neck -> Shoulders -> Thorax -> Waist -> Pelvis -> Upper Thighs)
+    const bodyGlassMat = new THREE.MeshPhysicalMaterial({
+        color: 0x38BDF8,
+        emissive: 0x082F49,
+        emissiveIntensity: 0.22,
+        roughness: 0.22,
+        clearcoat: 0.85,
+        transparent: true,
+        opacity: 0.085,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
+
+    const profile = [
+        new THREE.Vector2(0.01, -5.65),
+        new THREE.Vector2(1.42, -5.35), // Upper thigh / hip base
+        new THREE.Vector2(1.98, -4.15), // Pelvis
+        new THREE.Vector2(1.68, -2.55), // Iliac waist
+        new THREE.Vector2(1.58, -1.15), // Mid-waist
+        new THREE.Vector2(1.92,  0.45), // Lower ribcage
+        new THREE.Vector2(2.28,  2.15), // Upper chest
+        new THREE.Vector2(2.42,  2.72), // Shoulder line
+        new THREE.Vector2(0.72,  3.15), // Base of neck
+        new THREE.Vector2(0.64,  3.98), // Upper neck
+        new THREE.Vector2(1.06,  4.48), // Jaw / Chin
+        new THREE.Vector2(1.24,  5.45), // Cranial temples
+        new THREE.Vector2(1.05,  6.25), // Forehead / Parietal dome
+        new THREE.Vector2(0.01,  6.62)  // Crown of skull
+    ];
+    const bodyMesh = new THREE.Mesh(new THREE.LatheGeometry(profile, 44), bodyGlassMat);
+    bodyMesh.scale.set(1.0, 1.0, 0.62); // Realistic antero-posterior human body depth!
+    worldRoot.add(bodyMesh);
+
+    // Subtle Deltoid Shoulder Caps for natural human silhouette
+    [-1, 1].forEach(s => {
+        const sh = new THREE.Mesh(new THREE.SphereGeometry(0.68, 18, 14), bodyGlassMat);
+        sh.scale.set(0.85, 1.35, 0.72);
+        sh.position.set(s * 2.38, 2.15, 0);
+        sh.rotation.z = s * 0.22;
+        worldRoot.add(sh);
+    });
+
+    // 2. Anatomical Context Organs Group (`contextOrgansGroup`: Brain, Trachea, Heart, Liver, Paired Kidneys)
+    contextOrgansGroup = new THREE.Group();
+    worldRoot.add(contextOrgansGroup);
+
+    // A. Translucent Cerebral Hemispheres, Cerebellum & Brainstem inside Cranium!
+    const brainMat = new THREE.MeshPhysicalMaterial({
+        color: 0xC4B5FD, emissive: 0x1E1B4B, emissiveIntensity: 0.18,
+        roughness: 0.4, transparent: true, opacity: 0.16, depthWrite: false
+    });
+    [-0.42, 0.42].forEach(bx => {
+        const hemi = new THREE.Mesh(new THREE.SphereGeometry(0.76, 24, 18), brainMat);
+        hemi.scale.set(0.76, 0.92, 1.22);
+        hemi.position.set(bx, 5.62, -0.04);
+        contextOrgansGroup.add(hemi);
+    });
+    const brainstem = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.14, 1.15, 14), brainMat);
+    brainstem.position.set(0, 4.48, -0.22);
+    brainstem.rotation.x = 0.18;
+    contextOrgansGroup.add(brainstem);
+
+    // B. Larynx (Thyroid Cartilage) & C-Ringed Trachea in Neck (Gives Thyroid & Parathyroids real context!)
+    const cartilageMat = new THREE.MeshPhysicalMaterial({
+        color: 0xBAE6FD, emissive: 0x0C4A6E, emissiveIntensity: 0.2,
+        roughness: 0.45, transparent: true, opacity: 0.36, depthWrite: false
+    });
+    const larynx = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.36, 6), cartilageMat);
+    larynx.position.set(0, 3.82, 0.22);
+    const tracheaTube = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 1.65, 18), cartilageMat);
+    tracheaTube.position.set(0, 2.85, 0.22);
+    contextOrgansGroup.add(larynx, tracheaTube);
+    for (let r = 0; r < 7; r++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.022, 6, 18), cartilageMat);
+        ring.rotation.x = Math.PI * 0.5;
+        ring.position.set(0, 3.55 - r * 0.21, 0.22);
+        contextOrgansGroup.add(ring);
+    }
+
+    // C. Beating Target Heart (Thorax Left `+X`)
+    const heartMat = new THREE.MeshPhysicalMaterial({
+        color: 0xEF4444, emissive: 0x7F1D1D, emissiveIntensity: 0.32,
+        roughness: 0.38, transparent: true, opacity: 0.48, depthWrite: false
+    });
+    heartTargetMesh = new THREE.Mesh(new THREE.SphereGeometry(0.56, 24, 20), heartMat);
+    heartTargetMesh.scale.set(0.88, 1.18, 0.82);
+    heartTargetMesh.position.set(0.42, 1.65, 0.34);
+    heartTargetMesh.rotation.z = -0.32;
+    contextOrgansGroup.add(heartTargetMesh);
+    organAnchors.heart = new THREE.Vector3(0.42, 1.65, 0.34);
+
+    // D. Bi-Lobed Target Liver (Right Upper Abdomen `-X`)
+    const liverMat = new THREE.MeshPhysicalMaterial({
+        color: 0xB91C1C, emissive: 0x450A0A, emissiveIntensity: 0.28,
+        roughness: 0.42, transparent: true, opacity: 0.42, depthWrite: false
+    });
+    const liverGrp = new THREE.Group();
+    const livRight = new THREE.Mesh(new THREE.SphereGeometry(0.78, 24, 18), liverMat);
+    livRight.scale.set(1.12, 0.85, 0.72);
+    livRight.position.set(-1.02, 0.22, 0.28);
+    const livLeft = new THREE.Mesh(new THREE.ConeGeometry(0.52, 1.15, 18), liverMat);
+    livLeft.rotation.z = -Math.PI * 0.46;
+    livLeft.scale.set(1.0, 1.0, 0.65);
+    livLeft.position.set(-0.22, 0.36, 0.34);
+    liverGrp.add(livRight, livLeft);
+    contextOrgansGroup.add(liverGrp);
+    organAnchors.liver = new THREE.Vector3(-0.92, 0.22, 0.32);
+
+    // E. Paired Bean-Shaped Retroperitoneal Kidneys (Crowned by Adrenal Glands & Target of ADH!)
+    const kidneyMat = new THREE.MeshPhysicalMaterial({
+        color: 0x9F1239, emissive: 0x4C0519, emissiveIntensity: 0.30,
+        roughness: 0.42, transparent: true, opacity: 0.56
+    });
+    [-1, 1].forEach(side => {
+        const kMesh = new THREE.Mesh(new THREE.SphereGeometry(0.42, 22, 18), kidneyMat);
+        kMesh.scale.set(0.78, 1.35, 0.65);
+        kMesh.position.set(side * 1.24, -0.92, -0.18);
+        kMesh.rotation.z = side * 0.16;
+        contextOrgansGroup.add(kMesh);
+    });
+    organAnchors.kidneys = new THREE.Vector3(-1.24, -0.92, -0.18);
+}
+
+// ============================================================================
+// 5. 3D SYSTEMIC BLOODSTREAM NETWORK (CARRYING HORMONES THROUGH VESSELS!)
+// ============================================================================
+function buildVascularTree() {
+    vascularGroup = new THREE.Group();
+    const arteryMat = new THREE.MeshBasicMaterial({ color: 0xF43F5E, transparent: true, opacity: 0.32 });
+    const veinMat   = new THREE.MeshBasicMaterial({ color: 0x38BDF8, transparent: true, opacity: 0.26 });
+
+    function addVessel(pts, rad, mat) {
+        const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p)));
+        vascularGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 28, rad, 8, false), mat));
+    }
+
+    // Central Descending Aorta & Inferior/Superior Vena Cava Spine
+    addVessel([[0.12, 4.70, 0.12], [0.12, 3.30, 0.12], [0.18, 1.85, 0.10], [0.08, -0.60, 0.02], [0.05, -2.85, 0.05]], 0.058, arteryMat);
+    addVessel([[-0.14, 4.70, 0.08], [-0.16, 3.30, 0.08], [-0.18, 1.85, 0.08], [-0.12, -0.60, 0.00], [-0.08, -2.85, 0.02]], 0.058, veinMat);
+
+    // Organ Vascular Branches (Thyroid, Liver/Hepatic Portal, Pancreas, Renal/Adrenal, Pelvic Iliac->Gonads)
+    addVessel([[0.12, 3.35, 0.12], [-0.38, 3.35, 0.34]], 0.032, arteryMat);
+    addVessel([[0.12, 3.35, 0.12], [ 0.38, 3.35, 0.34]], 0.032, arteryMat);
+    addVessel([[0.08, -0.58, 0.02], [0.35, -0.58, 0.18], [-0.92, 0.22, 0.30]], 0.036, veinMat); // Hepatic Portal Vein (Pancreas -> Liver!)
+    addVessel([[0.08, -0.35, 0.00], [-1.22, -0.22, -0.18]], 0.032, arteryMat); // Left Adrenal/Renal
+    addVessel([[0.08, -0.35, 0.00], [ 1.22, -0.22, -0.18]], 0.032, arteryMat); // Right Adrenal/Renal
+    addVessel([[0.08, -0.85, 0.00], [-1.24, -0.92, -0.18]], 0.035, arteryMat);
+    addVessel([[0.05, -2.85, 0.05], [-1.25, -3.15, 0.16]], 0.034, arteryMat);
+    addVessel([[0.05, -2.85, 0.05], [ 1.25, -3.15, 0.16]], 0.034, arteryMat);
+
+    worldRoot.add(vascularGroup);
+}
+
+// ============================================================================
+// 6. BUILD ALL 9 SCULPTED 3D ENDOCRINE GLANDS
+// ============================================================================
+function buildAllNineEndocrineGlands() {
+    function glandMat(hex, emissiveScale = 0.38) {
+        const c = new THREE.Color(hex);
+        return new THREE.MeshPhysicalMaterial({
+            color: c,
+            emissive: c.clone().multiplyScalar(emissiveScale),
+            emissiveIntensity: 0.65,
+            roughness: 0.32,
+            clearcoat: 0.65
+        });
+    }
+
+    // 1. HYPOTHALAMUS + INFUNDIBULAR STALK (`hypothalamus`)
+    const hypoGrp = new THREE.Group();
+    const hypoMat = glandMat(GLANDS_DB.hypothalamus.color);
+    const hypoCone = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.38, 20), hypoMat);
+    hypoCone.rotation.x = Math.PI; // Funnel tapering downward into pituitary stalk!
+    hypoCone.position.set(0, 5.24, 0.14);
+    const infundibulum = new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0, 5.08, 0.15),
+            new THREE.Vector3(0, 4.76, 0.24)
+        ]), 10, 0.038, 10, false),
+        hypoMat
+    );
+    hypoGrp.add(hypoCone, infundibulum);
+    worldRoot.add(hypoGrp);
+    registerGland(hypoGrp, 'hypothalamus');
+    organAnchors.hypothalamus = new THREE.Vector3(0, 5.24, 0.14);
+
+    // 2. BILOBED PITUITARY GLAND — ANTERIOR & POSTERIOR LOBES (`pituitary`)
+    const pitGrp = new THREE.Group();
+    const antPitMat  = glandMat('#A855F7');
+    const postPitMat = glandMat('#C084FC');
+    const antLobe = new THREE.Mesh(new THREE.SphereGeometry(0.145, 18, 16), antPitMat);
+    antLobe.scale.set(0.95, 1.15, 0.95);
+    antLobe.position.set(0.05, 4.68, 0.29);
+    const postLobe = new THREE.Mesh(new THREE.SphereGeometry(0.115, 16, 14), postPitMat);
+    postLobe.position.set(-0.04, 4.69, 0.16);
+    pitGrp.add(antLobe, postLobe);
+    worldRoot.add(pitGrp);
+    registerGland(pitGrp, 'pituitary');
+    organAnchors.pituitary = new THREE.Vector3(0.02, 4.68, 0.26);
+
+    // 3. PINEAL GLAND (`pineal`)
+    const pinealMesh = new THREE.Mesh(new THREE.SphereGeometry(0.10, 14, 12), glandMat(GLANDS_DB.pineal.color));
+    pinealMesh.scale.set(0.8, 0.9, 1.35);
+    pinealMesh.position.set(0, 5.30, -0.36);
+    worldRoot.add(pinealMesh);
+    registerGland(pinealMesh, 'pineal');
+    organAnchors.pineal = pinealMesh.position.clone();
+
+    // 4. BUTTERFLY THYROID GLAND (LEFT & RIGHT LOBES + CENTRAL ISTHMUS ON TRACHEA!) (`thyroid`)
+    thyroidMorphGroup = new THREE.Group();
+    thyroidMorphGroup.position.set(0, 3.32, 0.34);
+    const thyMat = glandMat(GLANDS_DB.thyroid.color);
+
+    [-1, 1].forEach(side => {
+        const lobe = new THREE.Mesh(new THREE.SphereGeometry(0.22, 22, 18), thyMat);
+        lobe.scale.set(0.78, 1.68, 0.72);
+        lobe.position.set(side * 0.28, 0.04, -0.02);
+        lobe.rotation.z = side * -0.18;
+        lobe.rotation.y = side * 0.35;
+        thyroidMorphGroup.add(lobe);
+    });
+    // Central Isthmus Band bridging anteriorly across Trachea!
+    const isthmus = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.16, 0.11), thyMat);
+    isthmus.position.set(0, -0.06, 0.11);
+    thyroidMorphGroup.add(isthmus);
+    worldRoot.add(thyroidMorphGroup);
+    registerGland(thyroidMorphGroup, 'thyroid');
+    organAnchors.thyroid = new THREE.Vector3(0, 3.32, 0.42);
+
+    // 5. FOUR POSTERIOR PARATHYROID GLANDS (`parathyroid` — Embedded on Back of Thyroid Lobes!)
+    const paraGrp = new THREE.Group();
+    const paraMat = glandMat(GLANDS_DB.parathyroid.color, 0.5);
+    [-0.29, 0.29].forEach(px => {
+        [3.48, 3.18].forEach(py => {
+            const nodule = new THREE.Mesh(new THREE.SphereGeometry(0.058, 12, 10), paraMat);
+            nodule.scale.set(1.0, 1.25, 0.7);
+            nodule.position.set(px, py, 0.16); // Posterior face of thyroid lobes!
+            paraGrp.add(nodule);
+        });
+    });
+    worldRoot.add(paraGrp);
+    registerGland(paraGrp, 'parathyroid');
+    organAnchors.parathyroid = new THREE.Vector3(0.29, 3.48, 0.16);
+
+    // 6. PAIRED PYRAMIDAL ADRENAL GLANDS CAPPING BOTH KIDNEYS (`adrenal`)
+    const adrGrp = new THREE.Group();
+    const adrMat = glandMat(GLANDS_DB.adrenal.color);
+    [-1, 1].forEach(side => {
+        // Sculpted Tricorn / Pyramidal Suprarenal Cap sitting flush atop Kidney superior pole!
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.38, 5), adrMat);
+        cap.scale.set(1.15, 1.0, 0.72);
+        cap.position.set(side * 1.18, -0.26, -0.16);
+        cap.rotation.z = side * 0.28;
+        adrGrp.add(cap);
+    });
+    worldRoot.add(adrGrp);
+    registerGland(adrGrp, 'adrenal');
+    organAnchors.adrenal = new THREE.Vector3(-1.18, -0.26, -0.16);
+
+    // 7. SCULPTED PANCREAS + GLOWING ISLETS OF LANGERHANS (`pancreas`)
+    const pancGrp = new THREE.Group();
+    const pancMat = glandMat('#0EA5E9', 0.32);
+    const pancCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.22, -0.76, 0.14), // Head of Pancreas
+        new THREE.Vector3( 0.38, -0.56, 0.18), // Neck & Body
+        new THREE.Vector3( 1.18, -0.35, 0.10)  // Tail pointing toward left kidney/spleen
+    ]);
+    const pancBody = new THREE.Mesh(new THREE.TubeGeometry(pancCurve, 28, 0.18, 14, false), pancMat);
+    const pancHeadBulb = new THREE.Mesh(new THREE.SphereGeometry(0.24, 18, 14), pancMat);
+    pancHeadBulb.position.set(-0.22, -0.76, 0.14);
+    pancGrp.add(pancBody, pancHeadBulb);
+
+    // 14 Glowing Micro-Spheres representing Endocrine Islets of Langerhans (α & β Cells)!
+    const isletMat = new THREE.MeshBasicMaterial({ color: 0xBAE6FD });
+    for (let i = 0; i < 14; i++) {
+        const pt = pancCurve.getPointAt((i + 0.5) / 14);
+        const islet = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 8), isletMat);
+        islet.position.set(
+            pt.x + Math.sin(i * 2.1) * 0.08,
+            pt.y + Math.cos(i * 1.7) * 0.08,
+            pt.z + 0.15
+        );
+        pancGrp.add(islet);
+    }
+    worldRoot.add(pancGrp);
+    registerGland(pancGrp, 'pancreas');
+    organAnchors.pancreas = new THREE.Vector3(0.38, -0.56, 0.24);
+
+    // 8. FEMALE PELVIC REPRODUCTIVE SYSTEM: OVARIES + PIRIFORM UTERUS & TUBES (`ovaries`)
+    femalePelvicGroup = new THREE.Group();
+    const ovMat = glandMat(GLANDS_DB.ovaries.color);
+    const utContextMat = new THREE.MeshPhysicalMaterial({
+        color: 0xF472B6, emissive: 0x831843, emissiveIntensity: 0.25,
+        roughness: 0.42, transparent: true, opacity: 0.45
+    });
+
+    // Piriform Uterus & Fallopian Tubes
+    const utPts = [
+        new THREE.Vector2(0.16, -3.85),
+        new THREE.Vector2(0.32, -3.45),
+        new THREE.Vector2(0.56, -2.85),
+        new THREE.Vector2(0.38, -2.68),
+        new THREE.Vector2(0.01, -2.65)
+    ];
+    const utMesh = new THREE.Mesh(new THREE.LatheGeometry(utPts, 24), utContextMat);
+    utMesh.scale.z = 0.58;
+    utMesh.position.z = 0.18;
+    femalePelvicGroup.add(utMesh);
+
+    [-1, 1].forEach(side => {
+        const fTube = new THREE.Mesh(
+            new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+                new THREE.Vector3(side * 0.46, -2.82, 0.18),
+                new THREE.Vector3(side * 1.05, -2.72, 0.18),
+                new THREE.Vector3(side * 1.42, -2.96, 0.18)
+            ]), 16, 0.055, 8, false),
+            utContextMat
+        );
+        femalePelvicGroup.add(fTube);
+
+        // Sculpted Almond Ovary
+        const ovary = new THREE.Mesh(new THREE.SphereGeometry(0.24, 20, 16), ovMat);
+        ovary.scale.set(1.25, 0.78, 0.72);
+        ovary.position.set(side * 1.35, -3.15, 0.18);
+        ovary.rotation.z = side * -0.22;
+        femalePelvicGroup.add(ovary);
+        registerGland(ovary, 'ovaries');
+    });
+    worldRoot.add(femalePelvicGroup);
+    organAnchors.ovaries = new THREE.Vector3(-1.35, -3.15, 0.18);
+    organAnchors.uterus  = new THREE.Vector3(0.0, -3.15, 0.22);
+
+    // 9. MALE PELVIC REPRODUCTIVE SYSTEM: SCROTUM, TESTES & EPIDIDYMIS (`testes`)
+    malePelvicGroup = new THREE.Group();
+    malePelvicGroup.visible = false;
+    const teMat = glandMat(GLANDS_DB.testes.color);
+    const scrotumMat = new THREE.MeshPhysicalMaterial({
+        color: 0x60A5FA, roughness: 0.4, transparent: true, opacity: 0.22, depthWrite: false
+    });
+
+    const scrotumPouch = new THREE.Mesh(new THREE.SphereGeometry(0.92, 24, 18), scrotumMat);
+    scrotumPouch.scale.set(1.05, 1.05, 0.78);
+    scrotumPouch.position.set(0, -4.62, 0.46);
+    malePelvicGroup.add(scrotumPouch);
+
+    [-1, 1].forEach(side => {
+        const testis = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 16), teMat);
+        testis.scale.set(0.82, 1.25, 0.92);
+        testis.position.set(side * 0.48, -4.65, 0.48);
+        malePelvicGroup.add(testis);
+        registerGland(testis, 'testes');
+
+        // Ascending Spermatic Cord / Vas Deferens context
+        const vas = new THREE.Mesh(
+            new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+                new THREE.Vector3(side * 0.52, -4.35, 0.45),
+                new THREE.Vector3(side * 0.75, -3.45, 0.35),
+                new THREE.Vector3(side * 0.35, -2.85, 0.12)
+            ]), 16, 0.038, 8, false),
+            scrotumMat
+        );
+        malePelvicGroup.add(vas);
+    });
+    worldRoot.add(malePelvicGroup);
+    organAnchors.testes = new THREE.Vector3(-0.48, -4.65, 0.48);
+}
+
+// ============================================================================
+// 7. VASCULAR HORMONE PACKET, TARGET RECEPTOR RING & 3D PINS
+// ============================================================================
+function buildHormonePacketAndPins() {
+    hormonePacketGroup = new THREE.Group();
+    packetCoreMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+    packetHaloMat = new THREE.MeshBasicMaterial({ color: 0x10B981, transparent: true, opacity: 0.55, depthWrite: false });
+
+    // Cluster of 5 glowing hormone molecules traveling together in blood
+    const offsets = [[0,0,0], [0.09,0.06,0], [-0.09,-0.05,0.04], [0.05,-0.08,-0.05], [-0.06,0.08,0.05]];
+    offsets.forEach(([ox, oy, oz], i) => {
+        const mol = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.09 : 0.055, 12, 10), packetCoreMat);
+        mol.position.set(ox, oy, oz);
+        hormonePacketGroup.add(mol);
+    });
+    const halo = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 14), packetHaloMat);
+    hormonePacketGroup.add(halo);
+    hormonePacketGroup.visible = false;
+    worldRoot.add(hormonePacketGroup);
+
+    // Target Receptor Binding Ring Flash
+    receptorRingMesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.36, 0.035, 10, 28),
+        new THREE.MeshBasicMaterial({ color: 0x34D399, transparent: true, opacity: 0.0 })
+    );
+    worldRoot.add(receptorRingMesh);
+
+    // Create Floating Clickable 3D Pins for All 9 Glands
+    const pinsContainer = document.getElementById('pins-container');
+    Object.values(GLANDS_DB).forEach(g => {
+        const el = document.createElement('div');
+        el.className = 'anat-pin';
+        el.innerHTML = `<span class="anat-pin-tag"><span class="anat-pin-dot" style="background:${g.color};box-shadow:0 0 6px ${g.color}"></span>${g.short}</span>`;
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            switchModeTab('anatomy');
+            selectGlandAnatomy(g.id, true);
+        });
+        pinsContainer.appendChild(el);
+        pinList.push({ gland: g, el });
+    });
+}
+
+function resolveAnchor(nodeKey) {
+    if (nodeKey === 'gonads') return state.sex === 'female' ? organAnchors.ovaries : organAnchors.testes;
+    if (nodeKey === 'gonadTarget') return state.sex === 'female' ? organAnchors.uterus : organAnchors.heart;
+    return organAnchors[nodeKey] || organAnchors.heart;
+}
+
+/**
+ * Builds an Anatomically Routed Bloodstream Curve between `fromKey` and `toKey`
+ * routing cleanly through the Central Aorta / Vena Cava spine (NEVER flying outside the body!)
+ */
+function buildBloodRouteCurve(fromKey, toKey, isFeedback) {
+    const pStart = resolveAnchor(fromKey).clone();
+    const pEnd   = resolveAnchor(toKey).clone();
+
+    if (pStart.distanceTo(pEnd) < 0.85) {
+        // Short portal / local path (e.g. Hypothalamus -> Pituitary stalk!)
+        const mid = pStart.clone().lerp(pEnd, 0.5);
+        mid.z += 0.08;
+        return new THREE.CatmullRomCurve3([pStart, mid, pEnd]);
+    }
+
+    // Route via Central Vascular Trunk (`x = ±0.14`, `z = 0.10`) so molecules travel INSIDE blood vessels!
+    const laneX = isFeedback ? -0.18 : 0.15; // Venous return lane vs. Arterial delivery lane!
+    const pEnterVessel = new THREE.Vector3(laneX, lerp(pStart.y, pEnd.y, 0.22), 0.14);
+    const pMidVessel   = new THREE.Vector3(laneX, lerp(pStart.y, pEnd.y, 0.68), 0.14);
+    return new THREE.CatmullRomCurve3([pStart, pEnterVessel, pMidVessel, pEnd]);
+}
+
+// ============================================================================
+// 8. CASCADE SIMULATION, HORMONE CONCENTRATION CHART & UI LOGIC
+// ============================================================================
+function getCurrentScenario() {
+    const axis = AXES_DB[state.axisId];
+    return axis.scenarios[state.scenarioKey] || Object.values(axis.scenarios)[0];
+}
+
+function getDynamicSteps() {
+    const scen = getCurrentScenario();
+    return scen.steps.map(st => {
+        if (st.dynamicSex) {
+            return state.sex === 'female'
+                ? { ...st, hormone: 'Estrogen & Progesterone', color: '#EC4899', desc: 'Ovaries secrete Estrogen & Progesterone → thicken uterine endometrium & drive female traits.' }
+                : { ...st, hormone: 'Testosterone', color: '#3B82F6', desc: 'Testes Leydig cells secrete Testosterone → drive spermatogenesis, muscle & bone growth.' };
+        }
+        return st;
+    });
+}
+
+function renderCascadeChart() {
+    const cvs = document.getElementById('cascade-chart');
+    if (!cvs) return;
+    const ctx = cvs.getContext('2d');
+    const w = cvs.width, h = cvs.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const scen = getCurrentScenario();
+    const axis = AXES_DB[state.axisId];
+
+    // Baseline homeostasis dashed line
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(0, h * 0.62); ctx.lineTo(w, h * 0.62); ctx.stroke();
+    ctx.setLineDash([]);
+
+    function evalCurves(u) {
+        if (scen.curveType === 'goiter_runaway') {
+            // TSH climbs relentlessly; T4 stays flat near bottom!
+            return { c1: 0.22 + 0.72 * smoothstep(0.05, 0.85, u), c2: 0.08 };
+        }
+        if (scen.curveType === 'insulin_drop') {
+            // Stimulus starts high and returns smoothly to baseline as hormone peaks
+            const c1 = lerp(0.88, 0.38, smoothstep(0.25, 0.92, u));
+            const c2 = 0.18 + 0.68 * Math.sin(clamp((u - 0.05) / 0.85, 0, 1) * Math.PI);
+            return { c1, c2 };
+        }
+        if (scen.curveType === 'glucagon_rise') {
+            // Low fasting glucose rises smoothly back to 90 mg/dL set-point
+            const c1 = lerp(0.15, 0.45, smoothstep(0.25, 0.92, u));
+            const c2 = 0.18 + 0.68 * Math.sin(clamp((u - 0.05) / 0.85, 0, 1) * Math.PI);
+            return { c1, c2 };
+        }
+        if (scen.curveType === 'diabetes_flat') {
+            return { c1: 0.88, c2: 0.06 };
+        }
+        // Standard 3-Tier Negative Feedback: Tropic peaks early, Effector rises & suppresses Tropic!
+        const c1 = 0.25 + 0.62 * Math.sin(clamp(u / 0.68, 0, 1) * Math.PI) * (1 - smoothstep(0.65, 1.0, u) * 0.5);
+        const c2 = 0.20 + 0.68 * Math.sin(clamp((u - 0.18) / 0.82, 0, 1) * Math.PI * 0.88);
+        return { c1, c2 };
+    }
+
+    // Curve 1
+    ctx.strokeStyle = '#C084FC';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    for (let px = 4; px <= w - 4; px += 2) {
+        const u = (px - 4) / (w - 8);
+        const py = (h - 5) - evalCurves(u).c1 * (h - 10);
+        if (px === 4) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Curve 2
+    ctx.strokeStyle = axis.color;
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    for (let px = 4; px <= w - 4; px += 2) {
+        const u = (px - 4) / (w - 8);
+        const py = (h - 5) - evalCurves(u).c2 * (h - 10);
+        if (px === 4) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // Current Scrubber Cursor
+    const cx = 4 + state.progress * (w - 8);
+    const cur = evalCurves(state.progress);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(cx, (h - 5) - cur.c2 * (h - 10), 3.0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+const _pktPos = new THREE.Vector3();
+function updateCascadeVisuals(elapsed) {
+    // 1. Goiter Thyroid Hypertrophy Morph (Swells visibly when Goiter pathology is active!)
+    const isGoiter = (state.axisId === 'hpt' && state.scenarioKey === 'goiter');
+    const targetThyScale = isGoiter ? (1.35 + state.progress * 0.42) : 1.0;
+    thyroidMorphGroup.scale.lerp(new THREE.Vector3(targetThyScale, targetThyScale * 0.95, targetThyScale), 0.08);
+
+    // 2. Heart Beat Speed (Faster during Fight-or-Flight Adrenaline or High Thyroxine!)
+    const hyperMetabolic = (state.axisId === 'hpa' && state.scenarioKey === 'adrenaline' && state.progress > 0.35) ||
+                           (state.axisId === 'hpt' && state.scenarioKey === 'normal' && state.progress > 0.5);
+    const beatFreq = hyperMetabolic ? 9.5 : 4.5;
+    const hPulse = 1.0 + Math.pow(Math.max(0, Math.sin(elapsed * beatFreq)), 4) * 0.08;
+    heartTargetMesh.scale.set(0.88 * hPulse, 1.18 * hPulse, 0.82 * hPulse);
+
+    if (state.tab !== 'cascades') {
+        hormonePacketGroup.visible = false;
+        receptorRingMesh.material.opacity = 0;
+        document.getElementById('hormone-float-badge').classList.add('hidden');
+        return;
+    }
+
+    const steps = getDynamicSteps();
+    const total = steps.length;
+    const u = clamp(state.progress, 0, 1);
+
+    renderCascadeChart();
+
+    if (u <= 0.003) {
+        hormonePacketGroup.visible = false;
+        receptorRingMesh.material.opacity = 0;
+        document.getElementById('hormone-float-badge').classList.add('hidden');
+        document.getElementById('cascadeStageReadout').textContent = `Ready (${total} Steps)`;
+        highlightGlandMeshes(null);
+        document.querySelectorAll('.cascade-step-card').forEach(el => el.classList.remove('ring-1', 'ring-emerald-400', 'bg-slate-800/90'));
+        return;
+    }
+
+    const scaled = Math.min(total - 0.0001, u * total);
+    const stepIdx = Math.floor(scaled);
+    const localT  = scaled - stepIdx;
+    const step    = steps[stepIdx];
+
+    document.getElementById('cascadeStageReadout').textContent = `Step ${stepIdx + 1} / ${total}`;
+
+    // Highlight active step card in sidebar
+    document.querySelectorAll('.cascade-step-card').forEach((el, idx) => {
+        if (idx === stepIdx) {
+            el.classList.add('ring-1', 'ring-emerald-400', 'bg-slate-800/90');
+        } else {
+            el.classList.remove('ring-1', 'ring-emerald-400', 'bg-slate-800/90');
+        }
+    });
+
+    // Highlight active source/target 3D gland
+    const resolvedFrom = step.from === 'gonads' ? (state.sex === 'female' ? 'ovaries' : 'testes') : step.from;
+    const resolvedTo   = step.to === 'gonads'   ? (state.sex === 'female' ? 'ovaries' : 'testes') : step.to;
+    highlightGlandMeshes(localT < 0.5 ? resolvedFrom : resolvedTo, step.color);
+
+    // Position 3D Hormone Packet along Bloodstream Route
+    activeRouteCurve = buildBloodRouteCurve(step.from, step.to, Boolean(step.isFeedback));
+    activeRouteCurve.getPointAt(localT, _pktPos);
+
+    hormonePacketGroup.visible = !step.isBroken;
+    hormonePacketGroup.position.copy(_pktPos);
+    hormonePacketGroup.rotation.y = elapsed * 2.5;
+    packetHaloMat.color.set(step.color);
+
+    // Pulse Target Receptor Binding Ring on arrival (localT > 0.72)
+    if (localT > 0.72 && !step.isBroken) {
+        const arrP = (localT - 0.72) / 0.28;
+        receptorRingMesh.position.copy(resolveAnchor(step.to));
+        receptorRingMesh.material.color.set(step.color);
+        receptorRingMesh.material.opacity = Math.sin(arrP * Math.PI) * 0.88;
+        receptorRingMesh.scale.setScalar(0.65 + arrP * 0.9);
+    } else {
+        receptorRingMesh.material.opacity = 0;
+    }
+
+    // Project Floating 3D Hormone Label Badge
+    const badge = document.getElementById('hormone-float-badge');
+    const viewport = document.getElementById('three-viewport');
+    const proj = _pktPos.clone().project(camera);
+    if (proj.z < 1 && proj.z > -1) {
+        const x = (proj.x * 0.5 + 0.5) * viewport.clientWidth;
+        const y = (-proj.y * 0.5 + 0.5) * viewport.clientHeight;
+        badge.classList.remove('hidden');
+        badge.style.left = `${x}px`;
+        badge.style.top  = `${y - 10}px`;
+        document.getElementById('hormone-badge-box').style.borderColor = step.color;
+        const tEl = document.getElementById('hormone-badge-title');
+        tEl.textContent = step.hormone;
+        tEl.style.color = step.color;
+        document.getElementById('hormone-badge-sub').textContent = step.isFeedback ? 'Feedback Inhibition' : `${resolvedFrom.toUpperCase()} → ${resolvedTo.toUpperCase()}`;
+    } else {
+        badge.classList.add('hidden');
+    }
+}
+
+function highlightGlandMeshes(activeId, accentHex = '#38BDF8') {
+    Object.entries(glandHighlightMats).forEach(([id, mats]) => {
+        mats.forEach(m => {
+            if (id === activeId) {
+                m.emissive.set(accentHex);
+                m.emissiveIntensity = 1.05;
             } else {
-                targetMesh = nodes[targetId];
+                m.emissive.setHex(m.userData.baseEmissive);
+                m.emissiveIntensity = m.userData.baseEmissiveInt;
             }
+        });
+    });
+}
 
-            if (!targetMesh) return;
+// ============================================================================
+// 9. UI BUILDERS, MODE TABS, SEX SWITCHER & MASTER HORMONE TABLE
+// ============================================================================
+function renderAxisButtonsAndSteps() {
+    const grid = document.getElementById('axis-grid');
+    grid.innerHTML = '';
 
-            // Apply highlight glow
-            hlLayer.addMesh(targetMesh, BABYLON.Color3.FromHexString(hexColor));
-            
-            // Temporary boost opacity for generic translucent organs
-            const isTranslucent = ['body', 'heart', 'liver', 'uterus'].includes(targetId);
-            let originalAlpha = 0.2;
+    // Dynamically color HPG axis by selected subject sex
+    AXES_DB.hpg.color = state.sex === 'female' ? '#EC4899' : '#3B82F6';
 
-            if (isTranslucent && targetMesh.material) {
-                originalAlpha = targetMesh.material.alpha;
-                targetMesh.material.alpha = 0.6;
-                targetMesh.material.emissiveColor = BABYLON.Color3.FromHexString(hexColor).scale(0.3);
-            }
+    Object.values(AXES_DB).forEach((ax, idx) => {
+        const active = ax.id === state.axisId;
+        const span2  = idx === 4 ? 'col-span-2' : '';
+        const btn = document.createElement('button');
+        btn.className = `${span2} py-1.5 px-2.5 rounded-lg border text-left text-xs font-bold flex items-center gap-2 transition ${
+            active ? 'bg-slate-800 text-white shadow' : 'bg-slate-950/65 hover:bg-slate-800/75 text-slate-300 border-slate-800'
+        }`;
+        if (active) btn.style.borderColor = ax.color;
+        btn.innerHTML = `<span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${ax.color};box-shadow:0 0 8px ${ax.color}"></span><span class="truncate">${ax.short}</span>`;
+        btn.addEventListener('click', () => {
+            setPlaying(false);
+            state.axisId = ax.id;
+            state.scenarioKey = Object.keys(ax.scenarios)[0];
+            state.progress = 0;
+            document.getElementById('cascadeSlider').value = 0;
+            renderAxisButtonsAndSteps();
+        });
+        grid.appendChild(btn);
+    });
 
-            setTimeout(() => {
-                if(!isAnimating && currentTab === 'cascades') hlLayer.removeMesh(targetMesh);
-                else if (isAnimating) hlLayer.removeMesh(targetMesh);
-                
-                if (isTranslucent && targetMesh.material) {
-                    targetMesh.material.alpha = originalAlpha;
-                    targetMesh.material.emissiveColor = new BABYLON.Color3(0,0,0);
-                }
-            }, 800);
+    const curAxis = AXES_DB[state.axisId];
+    const scenEntries = Object.entries(curAxis.scenarios);
+    const scenBox = document.getElementById('scenario-box');
+    const scenBtns = document.getElementById('scenario-buttons');
+    scenBtns.innerHTML = '';
+
+    if (scenEntries.length > 1) {
+        scenBox.classList.remove('hidden');
+        scenBtns.className = scenEntries.length === 3 ? 'grid grid-cols-3 gap-1' : 'grid grid-cols-2 gap-1.5';
+        scenEntries.forEach(([sKey, sObj]) => {
+            const active = sKey === state.scenarioKey;
+            const b = document.createElement('button');
+            b.className = `py-1.5 px-1.5 rounded text-[10px] font-bold border truncate transition ${
+                active ? 'bg-slate-800 text-white border-sky-400/60 shadow' : 'bg-slate-950/75 hover:bg-slate-900 text-slate-400 border-slate-800'
+            }`;
+            b.textContent = sObj.label;
+            b.addEventListener('click', () => {
+                setPlaying(false);
+                state.scenarioKey = sKey;
+                state.progress = 0;
+                document.getElementById('cascadeSlider').value = 0;
+                renderAxisButtonsAndSteps();
+            });
+            scenBtns.appendChild(b);
+        });
+    } else {
+        scenBox.classList.add('hidden');
+    }
+
+    const curScen = getCurrentScenario();
+    document.getElementById('loop-type-badge').textContent = curAxis.loopBadge;
+    document.getElementById('chart-legend-1').textContent  = curScen.legend1;
+    document.getElementById('chart-legend-2').textContent  = curScen.legend2;
+    document.getElementById('chart-legend-2').style.color  = curAxis.color;
+    document.getElementById('chart-status').textContent    = curScen.chartStatus;
+    document.getElementById('viewport-status-title').textContent = `${curAxis.title} — ${curScen.label}`;
+    document.getElementById('viewport-status-title').style.color = curAxis.color;
+
+    // Render Clickable Step Cards
+    const steps = getDynamicSteps();
+    const listEl = document.getElementById('cascade-steps-list');
+    listEl.innerHTML = '';
+    steps.forEach((st, idx) => {
+        const card = document.createElement('div');
+        card.className = 'cascade-step-card p-2 rounded-lg border border-slate-800 bg-slate-950/65 hover:bg-slate-900 cursor-pointer transition';
+        card.innerHTML = `
+            <div class="flex items-center justify-between text-[10px] font-bold mb-0.5">
+                <span style="color:${st.color}">${idx + 1}. ${st.hormone}</span>
+                <span class="text-[9px] font-mono-tech text-slate-400 uppercase">${st.from} → ${st.to}</span>
+            </div>
+            <p class="text-[10.5px] text-slate-300 leading-snug">${st.desc}</p>
+        `;
+        card.addEventListener('click', () => {
+            setPlaying(false);
+            state.progress = (idx + 0.5) / steps.length;
+            document.getElementById('cascadeSlider').value = (state.progress * 100).toFixed(1);
+        });
+        listEl.appendChild(card);
+    });
+
+    renderCascadeChart();
+}
+
+function renderGlandChips() {
+    const grid = document.getElementById('gland-chips-grid');
+    grid.innerHTML = '';
+    Object.values(GLANDS_DB).forEach(g => {
+        if (g.gender && g.gender !== state.sex) return;
+        const active = g.id === state.selectedGlandId;
+        const btn = document.createElement('button');
+        btn.className = `py-1.5 px-2 rounded-lg border text-[10.5px] font-bold truncate transition flex items-center gap-1.5 ${
+            active ? 'bg-slate-800 text-white shadow' : 'bg-slate-950/70 hover:bg-slate-800/80 text-slate-300 border-slate-800'
+        }`;
+        if (active) btn.style.borderColor = g.color;
+        btn.innerHTML = `<span class="w-2 h-2 rounded-full shrink-0" style="background:${g.color}"></span><span class="truncate">${g.short}</span>`;
+        btn.addEventListener('click', () => selectGlandAnatomy(g.id, true));
+        grid.appendChild(btn);
+    });
+}
+
+function selectGlandAnatomy(glandId, autoZoom = false) {
+    // Handle gender-specific gonad fallback cleanly
+    if (glandId === 'ovaries' && state.sex === 'male') glandId = 'testes';
+    if (glandId === 'testes' && state.sex === 'female') glandId = 'ovaries';
+
+    const g = GLANDS_DB[glandId] || GLANDS_DB.hypothalamus;
+    state.selectedGlandId = g.id;
+
+    document.getElementById('gland-accent').style.backgroundColor = g.color;
+    document.getElementById('gland-region').textContent = g.region;
+    const clsBadge = document.getElementById('gland-chem-class');
+    clsBadge.textContent = g.chemClass;
+    clsBadge.style.color = g.color;
+    clsBadge.style.borderColor = `${g.color}55`;
+    clsBadge.style.backgroundColor = `${g.color}1A`;
+
+    const titleEl = document.getElementById('gland-title');
+    titleEl.textContent = g.name;
+    titleEl.style.color = g.color;
+    document.getElementById('gland-desc').textContent = g.desc;
+
+    document.getElementById('gland-hormones-list').innerHTML = g.hormones.map(h => `
+        <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-2">
+            <div class="flex items-center justify-between gap-2 mb-0.5">
+                <span class="text-xs font-extrabold text-white">${h.name}</span>
+                <span class="text-[9.5px] font-mono-tech font-bold px-1.5 py-0.5 rounded bg-slate-900" style="color:${g.color}">Target: ${h.target}</span>
+            </div>
+            <p class="text-[10.5px] text-slate-300 leading-snug">${h.func}</p>
+        </div>
+    `).join('');
+
+    document.getElementById('gland-exam-box').innerHTML = `<strong class="text-amber-300">Exam Key:</strong> ${g.exam}`;
+
+    document.getElementById('viewport-status-title').textContent = `3D Gland Inspector • ${g.short}`;
+    document.getElementById('viewport-status-title').style.color = g.color;
+
+    renderGlandChips();
+    pinList.forEach(p => p.el.classList.toggle('active', state.tab === 'anatomy' && p.gland.id === g.id));
+    highlightGlandMeshes(g.id, g.color);
+
+    if (autoZoom && g.cam && CAM_VIEWS[g.cam]) {
+        glideToCamera(g.cam);
+    }
+}
+
+function switchModeTab(tabName) {
+    setPlaying(false);
+    state.tab = tabName;
+    const isCascades = (tabName === 'cascades');
+
+    document.getElementById('panel-cascades').classList.toggle('hidden', !isCascades);
+    document.getElementById('panel-cascades').classList.toggle('flex', isCascades);
+    document.getElementById('panel-anatomy').classList.toggle('hidden', isCascades);
+    document.getElementById('panel-anatomy').classList.toggle('flex', !isCascades);
+
+    document.getElementById('tabCascadesBtn').className = isCascades
+        ? 'px-3 py-1.5 rounded text-xs font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+    document.getElementById('tabAnatomyBtn').className = !isCascades
+        ? 'px-3 py-1.5 rounded text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+
+    if (isCascades) {
+        pinList.forEach(p => p.el.classList.remove('active'));
+        glideToCamera('full');
+        renderAxisButtonsAndSteps();
+    } else {
+        selectGlandAnatomy(state.selectedGlandId, true);
+    }
+}
+
+function setSubjectSex(sex) {
+    state.sex = sex;
+    const isF = (sex === 'female');
+    femalePelvicGroup.visible = isF;
+    malePelvicGroup.visible   = !isF;
+
+    document.getElementById('btnSexFemale').className = isF
+        ? 'px-2.5 py-1.5 rounded text-xs font-extrabold bg-pink-500/25 text-pink-200 border border-pink-400/50 transition'
+        : 'px-2.5 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+    document.getElementById('btnSexMale').className = !isF
+        ? 'px-2.5 py-1.5 rounded text-xs font-extrabold bg-blue-500/25 text-blue-200 border border-blue-400/50 transition'
+        : 'px-2.5 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+
+    if (state.tab === 'cascades') {
+        renderAxisButtonsAndSteps();
+    } else {
+        selectGlandAnatomy(state.selectedGlandId, false);
+    }
+}
+
+function populateMasterModal() {
+    const tbody = document.getElementById('masterTableBody');
+    tbody.innerHTML = '';
+    Object.values(GLANDS_DB).forEach(g => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-800/70 cursor-pointer transition';
+        const hNames = g.hormones.map(h => h.name).join('; ');
+        const hTargets = g.hormones.map(h => `${h.target}: ${h.func}`).join(' ');
+        tr.innerHTML = `
+            <td class="p-2.5 font-bold text-white whitespace-nowrap">
+                <span class="inline-block w-2.5 h-2.5 rounded-full mr-1.5" style="background:${g.color}"></span>${g.short}
+            </td>
+            <td class="p-2.5 font-semibold text-sky-200">${hNames}</td>
+            <td class="p-2.5 font-mono-tech text-[11px] text-slate-300">${g.chemClass}</td>
+            <td class="p-2.5 text-slate-300 max-w-xs leading-snug">${g.hormones[0].func}</td>
+            <td class="p-2.5 text-rose-300 max-w-xs leading-snug">${g.disorder}</td>
+        `;
+        tr.addEventListener('click', () => {
+            if (g.gender && g.gender !== state.sex) setSubjectSex(g.gender);
+            switchModeTab('anatomy');
+            selectGlandAnatomy(g.id, true);
+            document.getElementById('masterModal').classList.add('hidden');
+        });
+        tbody.appendChild(tr);
+    });
+}
+
+function glideToCamera(viewKey) {
+    const v = CAM_VIEWS[viewKey];
+    if (!v) return;
+    camGoalPos.copy(v.pos);
+    camGoalTarget.copy(v.target);
+    camGliding = true;
+
+    document.querySelectorAll('.cam-btn').forEach(b => {
+        const active = b.dataset.cam === viewKey;
+        b.className = active
+            ? 'cam-btn px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 text-emerald-300 border border-emerald-500/40 transition'
+            : 'cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition';
+    });
+}
+
+function setPlaying(playing) {
+    state.isPlaying = playing;
+    document.getElementById('playCascadeIcon').textContent = playing ? '⏸' : '▶';
+    document.getElementById('playCascadeText').textContent = playing
+        ? 'Pause Cascade'
+        : (state.progress > 0.01 && state.progress < 0.99 ? 'Resume Cascade' : 'Simulate Cascade');
+}
+
+const _projPin = new THREE.Vector3();
+function update3DPins() {
+    const viewport = document.getElementById('three-viewport');
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+
+    pinList.forEach(({ gland, el }) => {
+        if (!state.showPins || (gland.gender && gland.gender !== state.sex)) {
+            el.classList.add('pin-hidden');
+            return;
         }
+        // Hide posterior Parathyroid pin when looking strictly from the front so neck labels never overlap!
+        if (gland.id === 'parathyroid' && camera.position.z > 1.5) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        _projPin.copy(gland.pinPos);
+        _projPin.project(camera);
+        if (_projPin.z > 1 || _projPin.z < -1) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        const x = (_projPin.x * 0.5 + 0.5) * w;
+        const y = (-_projPin.y * 0.5 + 0.5) * h;
+        if (x < 42 || x > w - 42 || y < 32 || y > h - 32) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        el.classList.remove('pin-hidden');
+        el.style.left = `${x}px`;
+        el.style.top  = `${y}px`;
+    });
+}
 
-        // Bootstrap
-        window.onload = initEngine;
+function bindCanvasPicking(viewport) {
+    let downX = 0, downY = 0;
+    const mouse = new THREE.Vector2();
 
-    </script>
+    viewport.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    viewport.addEventListener('pointermove', e => {
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const activePool = pickableGlandMeshes.filter(m => {
+            const g = GLANDS_DB[m.userData.glandId];
+            return !g.gender || g.gender === state.sex;
+        });
+        viewport.style.cursor = raycaster.intersectObjects(activePool, false).length > 0 ? 'pointer' : 'grab';
+    });
+    viewport.addEventListener('pointerup', e => {
+        if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const activePool = pickableGlandMeshes.filter(m => {
+            const g = GLANDS_DB[m.userData.glandId];
+            return !g.gender || g.gender === state.sex;
+        });
+        const hits = raycaster.intersectObjects(activePool, false);
+        if (hits.length > 0 && hits[0].object.userData.glandId) {
+            switchModeTab('anatomy');
+            selectGlandAnatomy(hits[0].object.userData.glandId, true);
+        }
+    });
+}
+
+function bindUIControls() {
+    document.getElementById('btnSexFemale').addEventListener('click', () => setSubjectSex('female'));
+    document.getElementById('btnSexMale').addEventListener('click', () => setSubjectSex('male'));
+
+    document.getElementById('tabCascadesBtn').addEventListener('click', () => switchModeTab('cascades'));
+    document.getElementById('tabAnatomyBtn').addEventListener('click', () => switchModeTab('anatomy'));
+
+    const slider = document.getElementById('cascadeSlider');
+    document.getElementById('playCascadeBtn').addEventListener('click', () => {
+        if (!state.isPlaying && state.progress >= 0.99) {
+            state.progress = 0;
+            slider.value = 0;
+        }
+        setPlaying(!state.isPlaying);
+    });
+    document.getElementById('resetCascadeBtn').addEventListener('click', () => {
+        setPlaying(false);
+        state.progress = 0;
+        slider.value = 0;
+    });
+    document.getElementById('speedCascadeBtn').addEventListener('click', e => {
+        state.speedMult = state.speedMult === 1.0 ? 0.5 : 1.0;
+        e.currentTarget.textContent = `${state.speedMult}×`;
+    });
+    slider.addEventListener('input', e => {
+        setPlaying(false);
+        state.progress = parseFloat(e.target.value) / 100;
+    });
+
+    document.querySelectorAll('.cam-btn').forEach(btn => {
+        btn.addEventListener('click', () => glideToCamera(btn.dataset.cam));
+    });
+
+    document.getElementById('vesselsToggle').addEventListener('change', e => {
+        state.showVessels = e.target.checked;
+        vascularGroup.visible = state.showVessels;
+    });
+    document.getElementById('organsToggle').addEventListener('change', e => {
+        state.showOrgans = e.target.checked;
+        contextOrgansGroup.visible = state.showOrgans;
+    });
+    document.getElementById('pinsToggle').addEventListener('change', e => {
+        state.showPins = e.target.checked;
+    });
+
+    const modal = document.getElementById('masterModal');
+    document.getElementById('openMasterTableBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('closeMasterTableBtn').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+}
+
+// ============================================================================
+// 10. MAIN RENDER LOOP (STARTED ON WINDOW.ONLOAD)
+// ============================================================================
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const elapsed = clock.getElapsedTime();
+
+    if (state.isPlaying && state.tab === 'cascades') {
+        state.progress += dt * 0.115 * state.speedMult; // ~8.7s full cascade journey at 1×
+        if (state.progress >= 1.0) {
+            state.progress = 1.0;
+            setPlaying(false);
+        }
+        document.getElementById('cascadeSlider').value = (state.progress * 100).toFixed(1);
+    }
+
+    if (camGliding) {
+        camera.position.lerp(camGoalPos, 0.085);
+        controls.target.lerp(camGoalTarget, 0.085);
+        if (camera.position.distanceTo(camGoalPos) < 0.06) camGliding = false;
+    }
+    controls.update();
+
+    updateCascadeVisuals(elapsed);
+    update3DPins();
+
+    renderer.render(scene, camera);
+}
+
+window.onload = function () {
+    initThreeScene();
+    bindUIControls();
+    renderAxisButtonsAndSteps();
+    renderGlandChips();
+    animate();
+};
+</script>
 </body>
 </html>
