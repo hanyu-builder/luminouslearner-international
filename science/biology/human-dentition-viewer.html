@@ -4,648 +4,2294 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex">
-    <title>Human Dentition Virtual Lab</title>
-    <!-- SEO Keyword: Human Dentition -->
-    <meta name="description" content="Interactive 3D biology virtual lab visualizing Human Dentition. Compare deciduous and permanent teeth, explore the dental arcade, and calculate the dental formula.">
-    
-    <!-- Tailwind CSS for UI styling -->
+    <meta name="description" content="Interactive 3D Human Dentition & Tooth Anatomy Simulator. Compare deciduous (20) and permanent (32) dental arcades, hinged jaw occlusion, X-ray roots & tooth buds, internal enamel/dentine/pulp histology, and tooth decay.">
+    <title>3D Human Dentition &amp; Tooth Structure Lab | Luminous Learner</title>
+
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Three.js for High-Performance 3D Rendering -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js Core & Self-Contained OrbitControls (100% immune to school firewall / secondary CDN blocks) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    
+    <script>
+        if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'function') {
+            THREE.OrbitControls = function (object, domElement) {
+                this.object = object;
+                this.domElement = domElement || document;
+                this.enabled = true;
+                this.target = new THREE.Vector3();
+                this.enableDamping = true;
+                this.dampingFactor = 0.06;
+                this.enableZoom = true;
+                this.zoomSpeed = 1.0;
+                this.enableRotate = true;
+                this.rotateSpeed = 0.9;
+                this.enablePan = true;
+                this.panSpeed = 0.85;
+                this.minDistance = 4.0;
+                this.maxDistance = 26.0;
+                this.minPolarAngle = 0.06;
+                this.maxPolarAngle = Math.PI - 0.06;
+
+                const scope = this;
+                const listeners = {};
+                const spherical = new THREE.Spherical();
+                const sphericalDelta = new THREE.Spherical(0, 0, 0);
+                const panOffset = new THREE.Vector3();
+                const offset = new THREE.Vector3();
+                let scale = 1.0;
+                let mode = 'none';
+                const prevPointer = new THREE.Vector2();
+                let prevPinchDist = 0;
+
+                this.addEventListener = function (type, fn) {
+                    if (!listeners[type]) listeners[type] = [];
+                    if (!listeners[type].includes(fn)) listeners[type].push(fn);
+                };
+                this.dispatchEvent = function (event) {
+                    const arr = listeners[event.type];
+                    if (arr) arr.forEach(fn => fn.call(scope, event));
+                };
+
+                function applyPan(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    const dist = scope.object.position.distanceTo(scope.target);
+                    const targetDist = dist * Math.tan((scope.object.fov * 0.5) * Math.PI / 180.0);
+                    const vLeft = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 0)
+                        .multiplyScalar(-(2 * dx * targetDist / height) * scope.panSpeed);
+                    const vUp = new THREE.Vector3().setFromMatrixColumn(scope.object.matrix, 1)
+                        .multiplyScalar((2 * dy * targetDist / height) * scope.panSpeed);
+                    panOffset.add(vLeft).add(vUp);
+                }
+                function applyRotate(dx, dy) {
+                    const height = scope.domElement.clientHeight || window.innerHeight;
+                    sphericalDelta.theta -= (2 * Math.PI * dx / height) * scope.rotateSpeed;
+                    sphericalDelta.phi   -= (2 * Math.PI * dy / height) * scope.rotateSpeed;
+                }
+
+                function onMouseDown(e) {
+                    if (!scope.enabled) return;
+                    if (e.button === 0 && !e.shiftKey) mode = 'rotate';
+                    else if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) mode = 'pan';
+                    else return;
+                    prevPointer.set(e.clientX, e.clientY);
+                    window.addEventListener('mousemove', onMouseMove);
+                    window.addEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'start' });
+                }
+                function onMouseMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    const dx = e.clientX - prevPointer.x;
+                    const dy = e.clientY - prevPointer.y;
+                    prevPointer.set(e.clientX, e.clientY);
+                    if (mode === 'rotate') applyRotate(dx, dy);
+                    else if (mode === 'pan') applyPan(dx, dy);
+                }
+                function onMouseUp() {
+                    mode = 'none';
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onWheel(e) {
+                    if (!scope.enabled || !scope.enableZoom) return;
+                    e.preventDefault();
+                    scope.dispatchEvent({ type: 'start' });
+                    const zf = Math.pow(0.92, scope.zoomSpeed);
+                    if (e.deltaY < 0) scale *= zf; else if (e.deltaY > 0) scale /= zf;
+                    scope.dispatchEvent({ type: 'end' });
+                }
+                function onTouchStart(e) {
+                    if (!scope.enabled) return;
+                    if (e.touches.length === 1) {
+                        mode = 'rotate';
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                        scope.dispatchEvent({ type: 'start' });
+                    } else if (e.touches.length === 2) {
+                        mode = 'pinch';
+                        prevPinchDist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        prevPointer.set(
+                            0.5 * (e.touches[0].pageX + e.touches[1].pageX),
+                            0.5 * (e.touches[0].pageY + e.touches[1].pageY)
+                        );
+                        scope.dispatchEvent({ type: 'start' });
+                    }
+                }
+                function onTouchMove(e) {
+                    if (!scope.enabled || mode === 'none') return;
+                    e.preventDefault();
+                    if (mode === 'rotate' && e.touches.length === 1) {
+                        applyRotate(e.touches[0].pageX - prevPointer.x, e.touches[0].pageY - prevPointer.y);
+                        prevPointer.set(e.touches[0].pageX, e.touches[0].pageY);
+                    } else if (mode === 'pinch' && e.touches.length === 2) {
+                        const dist = Math.hypot(
+                            e.touches[0].pageX - e.touches[1].pageX,
+                            e.touches[0].pageY - e.touches[1].pageY
+                        );
+                        if (prevPinchDist > 0 && dist > 0) scale *= (prevPinchDist / dist);
+                        prevPinchDist = dist;
+                        const mx = 0.5 * (e.touches[0].pageX + e.touches[1].pageX);
+                        const my = 0.5 * (e.touches[0].pageY + e.touches[1].pageY);
+                        applyPan(mx - prevPointer.x, my - prevPointer.y);
+                        prevPointer.set(mx, my);
+                    }
+                }
+                function onTouchEnd() { mode = 'none'; scope.dispatchEvent({ type: 'end' }); }
+
+                this.domElement.addEventListener('contextmenu', e => e.preventDefault());
+                this.domElement.addEventListener('mousedown', onMouseDown);
+                this.domElement.addEventListener('wheel', onWheel, { passive: false });
+                this.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+                this.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+                this.domElement.addEventListener('touchend', onTouchEnd);
+
+                this.update = function () {
+                    offset.copy(scope.object.position).sub(scope.target);
+                    spherical.setFromVector3(offset);
+                    const damp = scope.enableDamping ? scope.dampingFactor * 1.8 : 1.0;
+                    spherical.theta += sphericalDelta.theta * damp;
+                    spherical.phi   += sphericalDelta.phi   * damp;
+                    spherical.phi = Math.max(scope.minPolarAngle, Math.min(scope.maxPolarAngle, spherical.phi));
+                    spherical.makeSafe();
+                    spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius * scale));
+                    scope.target.addScaledVector(panOffset, damp);
+                    offset.setFromSpherical(spherical);
+                    scope.object.position.copy(scope.target).add(offset);
+                    scope.object.lookAt(scope.target);
+
+                    const decay = scope.enableDamping ? Math.max(0, 1 - damp) : 0;
+                    sphericalDelta.theta *= decay;
+                    sphericalDelta.phi   *= decay;
+                    panOffset.multiplyScalar(decay);
+                    scale = 1.0;
+                    scope.dispatchEvent({ type: 'change' });
+                    return false;
+                };
+                this.update();
+            };
+        }
+    </script>
+
     <style>
-        /* Base Deep Slate Theme */
         body {
-            overflow: hidden;
-            background-color: #0F172A; 
-            background-image: radial-gradient(circle at 50% 50%, #1E293B 0%, #0F172A 100%);
-            font-family: 'Inter', system-ui, sans-serif;
+            font-family: 'Inter', sans-serif;
+            background-color: #060913;
             color: #F8FAFC;
+            margin: 0;
+        }
+        .font-mono-tech {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .panel {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(51, 65, 85, 0.85);
+            backdrop-filter: blur(14px);
         }
 
-        .glass-panel {
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(71, 85, 105, 0.8); border-radius: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 1); }
 
-        /* 3D Canvas Container */
-        #renderCanvas {
-            width: 100%;
-            height: 100%;
-            touch-action: none;
-            outline: none;
-            border-radius: 0.75rem;
-        }
-
-        /* Custom fractional math display */
+        /* Fractional Dental Formula Styling */
         .fraction {
             display: inline-flex;
             flex-direction: column;
             align-items: center;
             vertical-align: middle;
             font-family: 'JetBrains Mono', monospace;
-            font-weight: 700;
+            font-weight: 800;
+            line-height: 1.1;
         }
-        .fraction span.fdn {
+        .fraction .fdn {
             border-top: 2px solid #64748B;
             padding-top: 2px;
             margin-top: 2px;
-        }
-        .fraction span.fup {
-            padding-bottom: 2px;
-        }
-
-        /* Segmented Control for Toggle */
-        .segmented-control {
-            display: flex;
-            background-color: #0F172A;
-            border-radius: 0.5rem;
-            padding: 0.25rem;
-            border: 1px solid #334155;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
-        }
-        .segment-btn {
-            flex: 1;
+            min-width: 18px;
             text-align: center;
-            padding: 0.75rem 0.5rem;
-            font-size: 0.75rem;
-            font-weight: bold;
-            color: #64748B;
-            border-radius: 0.375rem;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
         }
-        .segment-btn.active {
-            background-color: #38BDF8;
-            color: #0F172A;
-            box-shadow: 0 2px 5px rgba(56, 189, 248, 0.4);
+        .fraction .fup {
+            min-width: 18px;
+            text-align: center;
         }
 
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        /* Range Sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #F8FAFC;
+            border: 3px solid #38BDF8;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.65);
+            transition: transform 0.12s ease;
+        }
+        input[type=range].caries-slider::-webkit-slider-thumb {
+            border-color: #F43F5E;
+            box-shadow: 0 0 12px rgba(244, 63, 94, 0.75);
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: linear-gradient(90deg, #0284C7 0%, #38BDF8 100%);
+            border-radius: 999px;
+        }
+        input[type=range].caries-slider::-webkit-slider-runnable-track {
+            background: linear-gradient(90deg, #10B981 0%, #FACC15 35%, #F97316 70%, #EF4444 100%);
+        }
+        input[type=range]::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #F8FAFC;
+            border: 3px solid #38BDF8;
+            cursor: pointer;
+        }
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 999px;
+        }
+        input[type=range]:focus { outline: none; }
+
+        /* Toggle Switch */
+        .switch-input:checked + .switch-slider {
+            background-color: #0284C7;
+            border-color: #38BDF8;
+        }
+        .switch-input:checked + .switch-slider::before {
+            transform: translateX(14px);
+            background-color: #FFFFFF;
+        }
+        .switch-slider::before {
+            content: "";
+            position: absolute;
+            height: 12px;
+            width: 12px;
+            left: 2px;
+            top: 2px;
+            background-color: #94A3B8;
+            border-radius: 50%;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
+
+        /* 3D Viewport */
+        #three-viewport {
+            width: 100%;
+            height: 100%;
+            border-radius: 0.75rem;
+            background: radial-gradient(circle at 50% 44%, #221626 0%, #0E1528 56%, #050811 100%);
+            box-shadow: inset 0 0 85px rgba(0, 0, 0, 0.92);
+            position: relative;
+            overflow: hidden;
+            cursor: grab;
+            touch-action: none;
+        }
+        #three-viewport.xray-bg {
+            background: radial-gradient(circle at 50% 44%, #0C2338 0%, #061222 58%, #02060F 100%);
+        }
+        #three-viewport:active {
+            cursor: grabbing;
+        }
+
+        /* Floating 3D Clickable Pins */
+        .anat-pin {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.2s ease, transform 0.15s ease;
+        }
+        .anat-pin:hover {
+            transform: translate(-50%, -50%) scale(1.08);
+            z-index: 30;
+        }
+        .anat-pin-tag {
+            background: rgba(8, 12, 24, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            backdrop-filter: blur(6px);
+            padding: 2.5px 8px;
+            border-radius: 9999px;
+            font-size: 10.5px;
+            font-weight: 600;
+            color: #F1F5F9;
+            white-space: nowrap;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .anat-pin.active .anat-pin-tag {
+            background: rgba(2, 132, 199, 0.94);
+            border-color: #BAE6FD;
+            color: #FFFFFF;
+            box-shadow: 0 0 16px rgba(56, 189, 248, 0.65);
+        }
+        .anat-pin-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 9999px;
+            flex-shrink: 0;
+        }
+        .pin-hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scale(0.75);
+        }
     </style>
 </head>
-<body class="h-screen max-h-[1000px] w-full flex flex-col lg:flex-row p-2 md:p-4 gap-4 box-border">
+<body class="min-h-screen lg:h-screen w-full flex flex-col lg:overflow-hidden select-none">
 
-    <!-- Left UI Panel: Controls & Information -->
-    <aside class="w-full lg:w-[420px] h-full glass-panel p-6 flex flex-col shadow-2xl z-20 overflow-y-auto rounded-2xl border border-slate-700 relative shrink-0">
-        <div class="mb-4 border-b border-slate-700 pb-4">
-            <h1 class="text-2xl font-bold text-sky-400 mb-1 leading-tight flex items-center gap-2">
-                🦷 Human Dentition
-            </h1>
-            <p class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Dental Arcade & Formula Map</p>
-        </div>
+    <!-- Main Container (Guaranteed fit inside 800px iframes, 768p Chromebooks & Desktop Monitors) -->
+    <div class="w-full max-w-[1440px] mx-auto flex-1 min-h-0 flex flex-col gap-2.5 p-2.5 sm:p-3.5">
 
-        <!-- Life Stage Selector -->
-        <div class="mb-5">
-            <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Developmental Stage</h3>
-            <div class="segmented-control">
-                <div id="btnDeciduous" class="segment-btn">Deciduous (Baby)</div>
-                <div id="btnPermanent" class="segment-btn active">Permanent (Adult)</div>
-            </div>
-            <p id="stage-desc" class="text-[11px] text-slate-400 mt-3 leading-relaxed bg-slate-900/50 p-3 rounded-lg border border-slate-800">
-                Adults have 32 permanent teeth. This set includes Premolars (bicuspids) and a third set of Molars (Wisdom Teeth), which are absent in childhood.
-            </p>
-        </div>
-
-        <!-- Dental Formula Calculator -->
-        <div class="bg-slate-900/80 p-5 rounded-xl border border-slate-700 shadow-lg mb-4">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
-                <h3 class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Standard Dental Formula</h3>
-                <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">Per Quadrant</span>
-            </div>
-            
-            <div class="flex justify-around items-center text-center">
-                <!-- Incisors -->
-                <div class="flex flex-col items-center">
-                    <span class="text-emerald-400 text-[10px] uppercase tracking-wider font-bold mb-1">Incisors</span>
-                    <div class="fraction text-xl text-slate-200">
-                        <span class="fup" id="f-u-i">2</span>
-                        <span class="fdn" id="f-l-i">2</span>
-                    </div>
+        <!-- TOP HEADER: Title, Primary Mode Switcher (3D Dental Arcade vs. 3D Tooth Structure) & Comparative Diet Modal -->
+        <header class="panel rounded-xl px-4 py-2.5 flex flex-wrap justify-between items-center gap-3 shrink-0 shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500/25 to-emerald-500/25 border border-sky-400/40 flex items-center justify-center shrink-0">
+                    <span class="text-lg">🦷</span>
                 </div>
-                <!-- Canines -->
-                <div class="flex flex-col items-center">
-                    <span class="text-yellow-400 text-[10px] uppercase tracking-wider font-bold mb-1">Canines</span>
-                    <div class="fraction text-xl text-slate-200">
-                        <span class="fup" id="f-u-c">1</span>
-                        <span class="fdn" id="f-l-c">1</span>
-                    </div>
-                </div>
-                <!-- Premolars -->
-                <div class="flex flex-col items-center">
-                    <span class="text-fuchsia-400 text-[10px] uppercase tracking-wider font-bold mb-1">Premolars</span>
-                    <div class="fraction text-xl text-slate-200 opacity-100 transition-opacity" id="f-p-group">
-                        <span class="fup" id="f-u-p">2</span>
-                        <span class="fdn" id="f-l-p">2</span>
-                    </div>
-                </div>
-                <!-- Molars -->
-                <div class="flex flex-col items-center">
-                    <span class="text-blue-400 text-[10px] uppercase tracking-wider font-bold mb-1">Molars</span>
-                    <div class="fraction text-xl text-slate-200">
-                        <span class="fup" id="f-u-m">3</span>
-                        <span class="fdn" id="f-l-m">3</span>
-                    </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-slate-100 to-emerald-300 bg-clip-text text-transparent">
+                        3D Human Dentition &amp; Tooth Structure Lab
+                    </h1>
+                    <p class="text-[11px] text-slate-400 font-medium">Sculpted Dental Arcade, Hinged Jaw Occlusion, X-Ray Roots, Internal Histology &amp; Tooth Decay</p>
                 </div>
             </div>
-            
-            <div class="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center">
-                <span class="text-xs text-slate-400 uppercase tracking-widest font-bold">Total Teeth Present:</span>
-                <div class="flex items-center gap-2">
-                    <span id="f-math" class="text-xs text-slate-500 font-mono">(16 × 2) =</span>
-                    <span id="f-total" class="text-2xl font-black text-sky-400 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]">32</span>
+
+            <!-- Dual Lab Mode Tabs + Comparative Exam Table Button -->
+            <div class="flex flex-wrap items-center gap-2">
+                <div class="flex bg-slate-950/90 p-1 rounded-lg border border-slate-700/90 gap-1">
+                    <button id="tabArcadeBtn" class="px-3 py-1.5 rounded text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition">
+                        🦷 3D Dental Arcade (Jaws)
+                    </button>
+                    <button id="tabSectionBtn" class="px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition">
+                        🔬 3D Tooth Cross-Section &amp; Decay
+                    </button>
                 </div>
+
+                <button id="openCompareBtn" class="px-3 py-1.5 rounded-lg bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-bold border border-indigo-400/40 shadow flex items-center gap-1.5 transition">
+                    <span>📊 Diet &amp; Exam Reference</span>
+                </button>
             </div>
-        </div>
+        </header>
 
-        <!-- Tooth Inspector (Hover Target) -->
-        <div class="bg-slate-800/80 p-5 rounded-xl border border-slate-600 shadow-inner flex-grow relative flex flex-col justify-center text-center transition-colors duration-300" id="inspector-panel">
-            <h3 class="absolute top-3 left-4 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Clinical Inspector</h3>
-            
-            <div id="inspector-content">
-                <div class="text-4xl mb-2 opacity-30">🖱️</div>
-                <h2 class="text-lg font-bold text-slate-300">Hover over a tooth</h2>
-                <p class="text-xs text-slate-500 mt-2">Click to extract it from the arcade.</p>
-            </div>
-        </div>
+        <!-- MAIN WORKSPACE -->
+        <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
 
-        <button id="reset-btn" class="w-full mt-4 py-3.5 bg-slate-700 hover:bg-slate-600 active:scale-[0.98] text-white rounded-xl transition-all font-bold shadow-lg border border-slate-500">
-            ⟲ Restore Full Dentition
-        </button>
-    </aside>
+            <!-- LEFT SIDEBAR: Switches smoothly between Mode 1 (Dental Arcade & Formula) and Mode 2 (Internal Tooth Histology & Decay) -->
+            <aside class="lg:col-span-4 flex flex-col gap-2.5 lg:min-h-0 lg:overflow-y-auto custom-scrollbar pr-0.5">
 
-    <!-- Right Simulation Panel (Three.js Canvas) -->
-    <main class="flex-grow h-full relative bg-slate-900 rounded-2xl border border-slate-800 shadow-inner flex flex-col p-2 overflow-hidden">
-        
-        <!-- Legend Overlay -->
-        <div class="absolute top-6 left-6 pointer-events-none z-10 bg-slate-900/80 px-5 py-4 rounded-xl backdrop-blur-md border border-slate-700 shadow-lg">
-            <h3 class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3 border-b border-slate-700 pb-1">Morphology & Function</h3>
-            <div class="flex flex-col gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-200">
-                <div class="flex items-center justify-between gap-4">
-                    <span class="flex items-center gap-2"><div class="w-3 h-3 rounded-sm bg-emerald-500 shadow-[0_0_8px_#10B981]"></div> Incisor</span>
-                    <span class="text-emerald-400/70 lowercase italic">Cutting</span>
-                </div>
-                <div class="flex items-center justify-between gap-4">
-                    <span class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-yellow-500 shadow-[0_0_8px_#EAB308]"></div> Canine</span>
-                    <span class="text-yellow-400/70 lowercase italic">Tearing</span>
-                </div>
-                <div class="flex items-center justify-between gap-4 transition-opacity duration-300" id="legend-premolar">
-                    <span class="flex items-center gap-2"><div class="w-3 h-3 rounded-md bg-fuchsia-500 shadow-[0_0_8px_#D946EF]"></div> Premolar</span>
-                    <span class="text-fuchsia-400/70 lowercase italic">Crushing</span>
-                </div>
-                <div class="flex items-center justify-between gap-4">
-                    <span class="flex items-center gap-2"><div class="w-3 h-3 rounded bg-blue-500 shadow-[0_0_8px_#3B82F6]"></div> Molar</span>
-                    <span class="text-blue-400/70 lowercase italic">Grinding</span>
-                </div>
-            </div>
-        </div>
+                <!-- ======================================================== -->
+                <!-- MODE 1 PANEL: 3D DENTAL ARCADE, JAW HINGE & FORMULA      -->
+                <!-- ======================================================== -->
+                <div id="panel-arcade" class="flex flex-col gap-2.5 flex-1 min-h-0">
 
-        <div class="absolute bottom-6 right-6 pointer-events-none z-10 bg-slate-900/80 px-4 py-2.5 rounded-lg backdrop-blur-md border border-slate-700 shadow-lg">
-            <span class="text-xs text-slate-300 font-medium flex items-center gap-2">
-                <span>🔄 Drag to rotate</span> | <span>🖱️ Click to Extract</span>
-            </span>
-        </div>
-
-        <!-- 3D Canvas -->
-        <div class="w-full h-full rounded-xl overflow-hidden cursor-crosshair">
-            <canvas id="renderCanvas"></canvas>
-        </div>
-        
-    </main>
-
-    <script>
-        /**
-         * EDUCATIONAL WEB SIMULATOR LOGIC
-         * Core Concept: Human Dentition, Formula, and Anatomical Morphology
-         * Engine: Three.js for interactive 3D rendering and raycasting.
-         */
-
-        // --- STATE MANAGEMENT ---
-        const state = {
-            dentition: 'permanent', // 'deciduous' or 'permanent'
-            total: 32,
-            extractingMeshes: [], // Meshes currently shrinking away
-            
-            // Formula represents one quadrant (Left or Right side of one jaw)
-            baseFormula: {
-                permanent: { i: 2, c: 1, p: 2, m: 3, total: 32 },
-                deciduous: { i: 2, c: 1, p: 0, m: 2, total: 20 }
-            },
-            
-            // Track missing teeth dynamically
-            extracted: {
-                upper: { i: 0, c: 0, p: 0, m: 0 },
-                lower: { i: 0, c: 0, p: 0, m: 0 }
-            }
-        };
-
-        // DOM Elements
-        const uiElements = {
-            u_i: document.getElementById('f-u-i'), l_i: document.getElementById('f-l-i'),
-            u_c: document.getElementById('f-u-c'), l_c: document.getElementById('f-l-c'),
-            u_p: document.getElementById('f-u-p'), l_p: document.getElementById('f-l-p'),
-            u_m: document.getElementById('f-u-m'), l_m: document.getElementById('f-l-m'),
-            p_group: document.getElementById('f-p-group'),
-            legend_p: document.getElementById('legend-premolar'),
-            total: document.getElementById('f-total'),
-            math: document.getElementById('f-math'),
-            inspectorPanel: document.getElementById('inspector-panel'),
-            inspectorContent: document.getElementById('inspector-content'),
-            resetBtn: document.getElementById('reset-btn'),
-            btnDeciduous: document.getElementById('btnDeciduous'),
-            btnPermanent: document.getElementById('btnPermanent'),
-            stageDesc: document.getElementById('stage-desc')
-        };
-
-        function updateFormulaUI() {
-            const base = state.baseFormula[state.dentition];
-            
-            // For the educational UI, we show the standard quadrant formula.
-            // If a tooth is extracted, we can't easily show a clean fraction since asymmetry exists.
-            // So we will display the "Expected Quadrant Formula" and update the Total counter.
-            
-            uiElements.u_i.innerText = base.i; uiElements.l_i.innerText = base.i;
-            uiElements.u_c.innerText = base.c; uiElements.l_c.innerText = base.c;
-            uiElements.u_p.innerText = base.p; uiElements.l_p.innerText = base.p;
-            uiElements.u_m.innerText = base.m; uiElements.l_m.innerText = base.m;
-
-            // Handle Premolar visibility
-            if (state.dentition === 'deciduous') {
-                uiElements.p_group.style.opacity = '0.2';
-                uiElements.legend_p.style.opacity = '0.2';
-            } else {
-                uiElements.p_group.style.opacity = '1';
-                uiElements.legend_p.style.opacity = '1';
-            }
-
-            // Calculate live total based on extractions
-            let currentTotal = base.total;
-            let ext = state.extracted;
-            let totalExtracted = ext.upper.i + ext.upper.c + ext.upper.p + ext.upper.m +
-                                 ext.lower.i + ext.lower.c + ext.lower.p + ext.lower.m;
-                                 
-            state.total = base.total - totalExtracted;
-
-            uiElements.total.innerText = state.total;
-            uiElements.math.innerText = `Total Remaining:`;
-            
-            if (totalExtracted > 0) {
-                uiElements.total.className = "text-2xl font-black text-rose-400 drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]";
-            } else {
-                uiElements.total.className = "text-2xl font-black text-sky-400 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]";
-            }
-        }
-
-        // --- THREE.JS SETUP ---
-        const canvas = document.getElementById('renderCanvas');
-        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        
-        const scene = new THREE.Scene();
-        
-        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-        camera.position.set(0, 8, 20);
-
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.minDistance = 5;
-        controls.maxDistance = 30;
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        scene.add(ambientLight);
-        
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
-        dirLight.position.set(5, 10, 5);
-        scene.add(dirLight);
-        
-        const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
-        fillLight.position.set(-5, -5, -5);
-        scene.add(fillLight);
-
-        // --- DENTAL ARCADE GENERATION ---
-        const teethMeshes = [];
-        let jawGroup = new THREE.Group();
-        scene.add(jawGroup);
-
-        // Tooth Type Definitions & Materials (Pedagogical Color Coding)
-        const T_TYPES = {
-            incisor: { color: 0x10B981, name: 'Incisor' },   // Emerald
-            canine:  { color: 0xEAB308, name: 'Canine' },    // Yellow
-            premolar:{ color: 0xD946EF, name: 'Premolar' },  // Fuchsia
-            molar:   { color: 0x3B82F6, name: 'Molar' }      // Blue
-        };
-
-        const materials = {
-            incisor: new THREE.MeshStandardMaterial({ color: T_TYPES.incisor.color, roughness: 0.2, metalness: 0.1 }),
-            canine: new THREE.MeshStandardMaterial({ color: T_TYPES.canine.color, roughness: 0.2, metalness: 0.1 }),
-            premolar: new THREE.MeshStandardMaterial({ color: T_TYPES.premolar.color, roughness: 0.2, metalness: 0.1 }),
-            molar: new THREE.MeshStandardMaterial({ color: T_TYPES.molar.color, roughness: 0.2, metalness: 0.1 }),
-            gum: new THREE.MeshStandardMaterial({ color: 0xBE123C, roughness: 0.6 }) // Rose-700
-        };
-
-        // Distribution logic for ONE quadrant (from front-center to back)
-        const adultDistribution = [
-            { type: 'incisor', angle: 0.08, desc: 'Central Incisor', letter: 'i' },
-            { type: 'incisor', angle: 0.25, desc: 'Lateral Incisor', letter: 'i' },
-            { type: 'canine', angle: 0.45, desc: 'Canine (Cuspid)', letter: 'c' },
-            { type: 'premolar', angle: 0.65, desc: '1st Premolar', letter: 'p' },
-            { type: 'premolar', angle: 0.85, desc: '2nd Premolar', letter: 'p' },
-            { type: 'molar', angle: 1.10, desc: '1st Molar', letter: 'm' },
-            { type: 'molar', angle: 1.35, desc: '2nd Molar', letter: 'm' },
-            { type: 'molar', angle: 1.60, desc: '3rd Molar (Wisdom)', letter: 'm' }
-        ];
-
-        const babyDistribution = [
-            { type: 'incisor', angle: 0.10, desc: 'Central Incisor', letter: 'i' },
-            { type: 'incisor', angle: 0.30, desc: 'Lateral Incisor', letter: 'i' },
-            { type: 'canine', angle: 0.55, desc: 'Canine', letter: 'c' },
-            { type: 'molar', angle: 0.85, desc: '1st Primary Molar', letter: 'm' },
-            { type: 'molar', angle: 1.15, desc: '2nd Primary Molar', letter: 'm' }
-        ];
-
-        // Anatomically representative geometries
-        function getToothGeometry(type, isBaby) {
-            const scale = isBaby ? 0.75 : 1.0; // Baby teeth are smaller
-            
-            if (type === 'incisor') {
-                // Flat, blade-like for cutting
-                return new THREE.BoxGeometry(0.8 * scale, 1.5 * scale, 0.4 * scale);
-            }
-            if (type === 'canine') {
-                // Pointed, conical for tearing
-                return new THREE.ConeGeometry(0.45 * scale, 1.8 * scale, 16);
-            }
-            if (type === 'premolar') {
-                // Transitional, bicuspid for crushing
-                return new THREE.CylinderGeometry(0.55 * scale, 0.4 * scale, 1.3 * scale, 8);
-            }
-            if (type === 'molar') {
-                // Large, blocky for grinding
-                return new THREE.BoxGeometry(1.2 * scale, 1.2 * scale, 1.1 * scale);
-            }
-        }
-
-        function buildJaw() {
-            // Clear existing
-            while(jawGroup.children.length > 0){ 
-                jawGroup.remove(jawGroup.children[0]); 
-            }
-            teethMeshes.length = 0;
-
-            const isAdult = state.dentition === 'permanent';
-            const distArray = isAdult ? adultDistribution : babyDistribution;
-            
-            const radiusX = isAdult ? 3.5 : 2.5;
-            const radiusZ = isAdult ? 4.5 : 3.5;
-
-            // Generate Gums (U-shape Torus approximation)
-            const gumGeo = new THREE.TorusGeometry(radiusX, 0.8, 16, 64, Math.PI);
-            
-            const upperGum = new THREE.Mesh(gumGeo, materials.gum);
-            upperGum.rotation.x = Math.PI / 2;
-            upperGum.position.y = 1.2;
-            jawGroup.add(upperGum);
-
-            const lowerGum = new THREE.Mesh(gumGeo, materials.gum);
-            lowerGum.rotation.x = -Math.PI / 2;
-            lowerGum.position.y = -1.2;
-            jawGroup.add(lowerGum);
-
-            // Generate Teeth
-            function createQuadrant(isUpper, isRight) {
-                const yPos = isUpper ? 0.8 : -0.8;
-                const jawStr = isUpper ? 'Maxillary' : 'Mandibular';
-                const sideStr = isRight ? 'Right' : 'Left';
-
-                distArray.forEach((tData) => {
-                    const geo = getToothGeometry(tData.type, !isAdult);
-                    const mesh = new THREE.Mesh(geo, materials[tData.type].clone());
-                    
-                    // Elliptical Arch Positioning
-                    let theta = tData.angle;
-                    if (isRight) theta = -theta;
-
-                    const x = Math.sin(theta) * radiusX;
-                    const z = Math.cos(theta) * radiusZ;
-                    
-                    mesh.position.set(x, yPos, z);
-
-                    // Orient tooth along the curve to face inward
-                    mesh.lookAt(0, yPos, 0);
-
-                    // Custom Data for Interaction
-                    mesh.userData = {
-                        jaw: isUpper ? 'upper' : 'lower',
-                        type: tData.type,
-                        letter: tData.letter,
-                        fullName: `${jawStr} ${sideStr} ${tData.desc}`,
-                        color: T_TYPES[tData.type].color,
-                        isExtracted: false
-                    };
-
-                    jawGroup.add(mesh);
-                    teethMeshes.push(mesh);
-                });
-            }
-
-            // Build all 4 quadrants
-            createQuadrant(true, false); // Upper Left
-            createQuadrant(true, true);  // Upper Right
-            createQuadrant(false, false);// Lower Left
-            createQuadrant(false, true); // Lower Right
-        }
-
-        // --- INTERACTION & RAYCASTING ---
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
-        let hoveredTooth = null;
-
-        function getCanvasRelativePosition(event) {
-            const rect = canvas.getBoundingClientRect();
-            return {
-                x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
-                y: -((event.clientY - rect.top) / rect.height) * 2 + 1
-            };
-        }
-
-        function onPointerMove(event) {
-            const pos = getCanvasRelativePosition(event);
-            mouse.x = pos.x;
-            mouse.y = pos.y;
-
-            raycaster.setFromCamera(mouse, camera);
-            // Only check non-extracted teeth
-            const activeTeeth = teethMeshes.filter(t => !t.userData.isExtracted);
-            const intersects = raycaster.intersectObjects(activeTeeth);
-
-            if (intersects.length > 0) {
-                const object = intersects[0].object;
-                
-                if (hoveredTooth !== object) {
-                    if (hoveredTooth) resetHover(hoveredTooth);
-                    hoveredTooth = object;
-                    
-                    // Highlight (Make it glow slightly)
-                    hoveredTooth.material.emissive.setHex(0x555555);
-                    canvas.style.cursor = 'crosshair';
-                    
-                    // Update UI Inspector
-                    const cHex = hoveredTooth.userData.color.toString(16).padStart(6,'0');
-                    uiElements.inspectorContent.innerHTML = `
-                        <h2 class="text-xl font-black mb-1 drop-shadow-md" style="color: #${cHex}">
-                            ${T_TYPES[hoveredTooth.userData.type].name}
-                        </h2>
-                        <p class="text-xs text-slate-200 font-bold mb-3">${hoveredTooth.userData.fullName}</p>
-                        
-                        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-slate-900/50" style="border-color: #${cHex}50">
-                            <span class="text-[10px] uppercase font-bold text-slate-400">Action</span>
-                            <span class="text-xs font-bold animate-pulse" style="color: #${cHex}">Click to Extract</span>
+                    <!-- 1. Dentition Stage & Hinged Jaw Articulation -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[11px] font-bold text-sky-300 uppercase tracking-wider">1. Stage &amp; Jaw Articulation</span>
+                            <span id="stage-badge" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                                Diphyodont: Set 2 of 2
+                            </span>
                         </div>
-                    `;
-                    uiElements.inspectorPanel.className = "bg-slate-800 p-5 rounded-xl border shadow-2xl flex-grow relative flex flex-col justify-center text-center transition-all duration-200 border-slate-400 transform scale-[1.02]";
-                }
+
+                        <!-- Deciduous vs. Permanent Switcher -->
+                        <div class="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 mb-2.5">
+                            <button id="btnDeciduous" class="py-1.5 px-2 rounded-md text-xs font-bold text-slate-400 hover:text-white border border-transparent transition">
+                                👶 Milk / Deciduous (20)
+                            </button>
+                            <button id="btnPermanent" class="py-1.5 px-2 rounded-md text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition">
+                                🧑 Permanent Adult (32)
+                            </button>
+                        </div>
+
+                        <!-- Interactive TMJ Jaw Opening Slider + Chew Cycle Button -->
+                        <div class="flex items-center justify-between text-[11px] mb-1">
+                            <span class="font-semibold text-slate-300">TMJ Jaw Opening Angle</span>
+                            <span id="jawAngleVal" class="font-mono-tech font-bold text-sky-300">24° (Open)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="jawSlider" min="0" max="38" step="0.5" value="24">
+                            <button id="chewBtn" class="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-amber-300 shrink-0 transition" title="Animate rhythmic mastication / bite occlusion">
+                                ▶ Chew
+                            </button>
+                        </div>
+                        <p id="stage-desc" class="text-[10.5px] text-slate-400 mt-2 leading-snug">
+                            Close jaw to <strong>0°</strong> to inspect scissor-like incisor overbite &amp; molar cusp interdigitation, or switch to <strong>Dental X-Ray</strong> to see roots!
+                        </p>
+                    </div>
+
+                    <!-- 2. Interactive Dental Formula & Live Tooth Inventory -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2.5">
+                            <span class="text-[10.5px] font-bold text-slate-300 uppercase tracking-wider">2. Dental Formula (Click Class to Highlight)</span>
+                            <span class="text-[9.5px] font-mono-tech text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">1 Quadrant (½ Jaw)</span>
+                        </div>
+
+                        <div class="grid grid-cols-4 gap-1.5 text-center">
+                            <button data-filter="incisor" class="formula-card p-1.5 rounded-lg bg-slate-950/75 hover:bg-slate-900 border border-emerald-500/35 transition flex flex-col items-center">
+                                <span class="text-[9.5px] font-extrabold text-emerald-400 uppercase">Incisors</span>
+                                <div class="fraction text-base text-slate-100 my-0.5">
+                                    <span class="fup" id="f-u-i">2</span>
+                                    <span class="fdn" id="f-l-i">2</span>
+                                </div>
+                                <span class="text-[9px] text-slate-400">Cutting</span>
+                            </button>
+
+                            <button data-filter="canine" class="formula-card p-1.5 rounded-lg bg-slate-950/75 hover:bg-slate-900 border border-amber-500/35 transition flex flex-col items-center">
+                                <span class="text-[9.5px] font-extrabold text-amber-400 uppercase">Canines</span>
+                                <div class="fraction text-base text-slate-100 my-0.5">
+                                    <span class="fup" id="f-u-c">1</span>
+                                    <span class="fdn" id="f-l-c">1</span>
+                                </div>
+                                <span class="text-[9px] text-slate-400">Tearing</span>
+                            </button>
+
+                            <button data-filter="premolar" id="f-p-card" class="formula-card p-1.5 rounded-lg bg-slate-950/75 hover:bg-slate-900 border border-fuchsia-500/35 transition flex flex-col items-center">
+                                <span class="text-[9.5px] font-extrabold text-fuchsia-400 uppercase">Premolars</span>
+                                <div class="fraction text-base text-slate-100 my-0.5">
+                                    <span class="fup" id="f-u-p">2</span>
+                                    <span class="fdn" id="f-l-p">2</span>
+                                </div>
+                                <span class="text-[9px] text-slate-400">Crushing</span>
+                            </button>
+
+                            <button data-filter="molar" class="formula-card p-1.5 rounded-lg bg-slate-950/75 hover:bg-slate-900 border border-sky-500/35 transition flex flex-col items-center">
+                                <span class="text-[9.5px] font-extrabold text-sky-400 uppercase">Molars</span>
+                                <div class="fraction text-base text-slate-100 my-0.5">
+                                    <span class="fup" id="f-u-m">3</span>
+                                    <span class="fdn" id="f-l-m">3</span>
+                                </div>
+                                <span class="text-[9px] text-slate-400">Grinding</span>
+                            </button>
+                        </div>
+
+                        <div class="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between">
+                            <div class="text-[11px] text-slate-300">
+                                <span id="f-equation" class="font-mono-tech text-slate-400">(8 upper + 8 lower) × 2 = 32</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] uppercase font-bold text-slate-400">In Mouth:</span>
+                                <span id="f-total" class="text-lg font-mono-tech font-extrabold text-sky-400">32 / 32</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3. Clinical Tooth & Root Morphology Inspector -->
+                    <div class="panel rounded-xl p-3.5 flex-1 flex flex-col min-h-[215px] relative overflow-hidden shadow-md">
+                        <div id="tooth-accent" class="absolute top-0 left-0 w-1 h-full bg-sky-500 transition-colors"></div>
+
+                        <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                            <span id="tooth-quadrant" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Maxillary Right Quadrant</span>
+                            <span id="tooth-roots-badge" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                                4 Cusps • 3 Roots
+                            </span>
+                        </div>
+
+                        <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col">
+                            <h2 id="tooth-title" class="text-sm sm:text-base font-extrabold text-sky-300 mb-1">
+                                Maxillary Right 1st Molar
+                            </h2>
+                            <p id="tooth-desc" class="text-xs text-slate-300 leading-relaxed mb-2.5"></p>
+
+                            <div class="mt-auto space-y-2">
+                                <div class="flex items-center gap-2">
+                                    <button id="extractSelectedBtn" class="flex-1 py-2 px-3 rounded-lg bg-rose-600/85 hover:bg-rose-500 text-white text-xs font-bold shadow transition active:scale-95">
+                                        🦷 Extract Tooth (Show Root &amp; Socket)
+                                    </button>
+                                    <button id="restoreAllBtn" class="py-2 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold transition" title="Restore all extracted teeth to sockets">
+                                        ⟲ Reset
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ======================================================== -->
+                <!-- MODE 2 PANEL: 3D TOOTH INTERNAL HISTOLOGY & CARIES LAB   -->
+                <!-- ======================================================== -->
+                <div id="panel-section" class="hidden flex-col gap-2.5 flex-1 min-h-0">
+
+                    <!-- 1. Interactive Dental Caries (Tooth Decay) Simulator -->
+                    <div class="panel rounded-xl p-3.5 shrink-0 shadow-md">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <span class="text-[11px] font-bold text-rose-300 uppercase tracking-wider">1. Tooth Decay (Caries) Progression</span>
+                            <span id="plaque-ph-badge" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                Plaque pH 6.8 (Safe)
+                            </span>
+                        </div>
+
+                        <input type="range" id="cariesSlider" class="caries-slider" min="0" max="100" step="1" value="0">
+                        <div class="flex justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400 mt-1 mb-2">
+                            <span class="text-emerald-400">Healthy</span>
+                            <span class="text-amber-300">Enamel Acid</span>
+                            <span class="text-orange-400">Dentine Pain</span>
+                            <span class="text-rose-400">Pulp Abscess</span>
+                        </div>
+
+                        <div class="bg-slate-950/85 rounded-lg p-2.5 border border-slate-800">
+                            <div class="flex justify-between items-center text-[10.5px] mb-1">
+                                <span id="cariesStageTitle" class="font-extrabold text-emerald-300">Stage 0: Intact Mineralized Enamel</span>
+                                <span id="nervePainBadge" class="font-mono-tech text-[9.5px] text-slate-400">Pain: None</span>
+                            </div>
+                            <p id="cariesStageDesc" class="text-[11px] text-slate-300 leading-snug">
+                                Drag the slider above to feed sucrose to plaque bacteria (<em>Streptococcus mutans</em>) and observe lactic acid erosion through enamel, dentine, and living pulp!
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- 2. 7-Layer Internal Tooth Histology Inspector -->
+                    <div class="panel rounded-xl p-3.5 flex-1 flex flex-col min-h-[280px] relative overflow-hidden shadow-md">
+                        <div id="layer-accent" class="absolute top-0 left-0 w-1 h-full bg-sky-400 transition-colors"></div>
+
+                        <div class="flex items-center justify-between border-b border-slate-700/80 pb-1.5 mb-2 shrink-0">
+                            <span id="layer-vitality" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Non-Living Acellular Cap</span>
+                            <span id="layer-mineral" class="text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                                ~96% Hydroxyapatite
+                            </span>
+                        </div>
+
+                        <div class="flex-1 overflow-y-auto custom-scrollbar pr-1 flex flex-col">
+                            <h2 id="layer-title" class="text-base sm:text-lg font-extrabold text-sky-300 mb-1.5">
+                                Enamel (Hardest Tissue in Body)
+                            </h2>
+                            <p id="layer-desc" class="text-xs text-slate-300 leading-relaxed mb-2.5"></p>
+
+                            <div id="layer-exam" class="mt-auto bg-slate-950/85 border border-slate-700/80 rounded-lg p-2.5 text-[11px] text-amber-200/95 leading-snug">
+                            </div>
+                        </div>
+
+                        <!-- Quick 7-Layer Jump Chips -->
+                        <div class="pt-2.5 mt-2.5 border-t border-slate-800 shrink-0">
+                            <div class="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Click Tissue Layer to Inspect</div>
+                            <div id="layerChipsGrid" class="grid grid-cols-3 gap-1"></div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- RIGHT 3D ANATOMICAL VIEWPORT -->
+            <section class="lg:col-span-8 panel rounded-xl p-2 flex flex-col min-h-[500px] sm:min-h-[560px] lg:min-h-0 relative shadow-xl">
+
+                <!-- Top Camera Presets & Shading Mode Toolbar (shrink-0 prevents clipping) -->
+                <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800 flex flex-wrap items-center justify-between gap-2 mb-2 shrink-0 z-20">
+                    <!-- Arcade Camera Presets (Visible in Arcade Mode) -->
+                    <div id="arcade-cam-bar" class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1 hidden sm:inline">View:</span>
+                        <button data-cam="front" class="cam-btn px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 text-sky-300 border border-sky-500/40 transition">
+                            Anterior Oblique
+                        </button>
+                        <button data-cam="bite" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition" title="Side profile showing scissor-like incisor overbite & molar occlusion">
+                            Side Bite Profile
+                        </button>
+                        <button data-cam="lowerOcc" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800 transition" title="Look straight down onto the Mandibular U-Arch to count quadrants!">
+                            Lower Arch (Top)
+                        </button>
+                        <button data-cam="upperOcc" class="cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-pink-300 border border-slate-800 transition" title="Look straight up at the Maxillary Arch & Hard Palate!">
+                            Upper Palate
+                        </button>
+                    </div>
+
+                    <!-- Arcade Shading Switcher (Natural Enamel | Color-Coded | Dental X-Ray) -->
+                    <div id="arcade-shade-bar" class="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px] font-bold">
+                        <button data-shade="natural" class="shade-btn px-2.5 py-1 rounded bg-slate-700 text-white transition">
+                            Natural Enamel
+                        </button>
+                        <button data-shade="coded" class="shade-btn px-2.5 py-1 rounded text-slate-400 hover:text-white transition" title="Color-code Incisors, Canines, Premolars & Molars">
+                            Color-Coded
+                        </button>
+                        <button data-shade="xray" class="shade-btn px-2.5 py-1 rounded text-cyan-300/80 hover:text-cyan-200 transition" title="Translucent X-Ray revealing single/double/triple roots & unerupted permanent tooth buds!">
+                            🦴 Dental X-Ray
+                        </button>
+                    </div>
+
+                    <!-- Section Toolbar (Visible in Mode 2) -->
+                    <div id="section-top-bar" class="hidden items-center justify-between w-full gap-2">
+                        <div class="text-xs font-bold text-sky-300">
+                            Sagittal Molar Cutaway • 2 Roots, Pulp Horns, Blood Vessels, Nerve &amp; Periodontal Ligament
+                        </div>
+                        <div class="flex items-center gap-2.5">
+                            <button id="resetSecCamBtn" class="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 border border-slate-700 transition">
+                                Reset Angle
+                            </button>
+                            <label class="flex items-center gap-1.5 cursor-pointer text-[11px]">
+                                <span class="font-semibold text-slate-300">3D Pins</span>
+                                <span class="relative inline-block w-8 h-4">
+                                    <input type="checkbox" id="pinsToggle" checked class="switch-input opacity-0 w-0 h-0">
+                                    <span class="switch-slider absolute inset-0 rounded-full bg-slate-700 border border-slate-600 transition"></span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3D WebGL Viewport -->
+                <div id="three-viewport" class="flex-1 min-h-0">
+                    <!-- Dynamic Clickable 3D Pins (Used in Cross-Section Mode & Quadrant Labels) -->
+                    <div id="pins-container" class="absolute inset-0 overflow-hidden pointer-events-none z-20"></div>
+
+                    <!-- Compact Functional Color Legend (Top-Left in Arcade Mode) -->
+                    <div id="arcade-legend" class="absolute top-3 left-3 bg-slate-950/84 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-700/80 text-[10.5px] pointer-events-none z-15 shadow-lg space-y-1">
+                        <div class="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Heterodont Classes</div>
+                        <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block"></span> <strong class="text-slate-200">Incisor:</strong> Chisel edge (1 root)</div>
+                        <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span> <strong class="text-slate-200">Canine:</strong> Pointed cusp (1 deep root)</div>
+                        <div id="legend-pm-row" class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-fuchsia-400 inline-block"></span> <strong class="text-slate-200">Premolar:</strong> 2 cusps / bicuspid</div>
+                        <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-sky-400 inline-block"></span> <strong class="text-slate-200">Molar:</strong> 4–5 cusps (2–3 roots)</div>
+                    </div>
+
+                    <!-- X-Ray Unerupted Buds Notice (Top-Right when Deciduous + X-Ray is active!) -->
+                    <div id="buds-callout" class="hidden absolute top-3 right-3 bg-cyan-950/90 backdrop-blur-md px-3 py-2 rounded-xl border border-cyan-400/50 text-[10.5px] text-cyan-200 max-w-[240px] pointer-events-none z-15 shadow-lg">
+                        <strong class="text-cyan-300 block uppercase text-[9.5px] tracking-wider">X-Ray Mixed Dentition Insight</strong>
+                        Glowing cyan crowns inside the jawbone are <strong>unerupted permanent tooth buds</strong> developing directly beneath baby roots!
+                    </div>
+
+                    <!-- Bottom Interactive Hint -->
+                    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-950/85 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-slate-700/80 text-[11px] text-slate-300 pointer-events-none flex items-center gap-2 shadow-lg z-15 whitespace-nowrap">
+                        <span class="w-2 h-2 rounded-full bg-sky-400 inline-block"></span>
+                        <span id="bottom-hint-text">Click Any 3D Tooth to Inspect Roots &amp; Cusps &bull; Drag to Orbit 360° &bull; Scroll to Zoom</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- ==================================================================== -->
+    <!-- MODAL: MAMMALIAN DIET ADAPTATIONS & EXAM COMPARISON REFERENCE        -->
+    <!-- ==================================================================== -->
+    <div id="compareModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6">
+        <div class="panel rounded-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-600">
+            <div class="px-5 py-3.5 bg-slate-900/95 border-b border-slate-700 flex items-center justify-between shrink-0">
+                <div>
+                    <h2 class="text-base sm:text-lg font-extrabold text-white">Dentition Exam Reference: Human Stages &amp; Mammalian Dietary Adaptations</h2>
+                    <p class="text-xs text-slate-400">Core syllabus comparison for IGCSE, IB, HKDSE, A-Level &amp; AP Biology.</p>
+                </div>
+                <button id="closeCompareBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition">
+                    ✕ Close
+                </button>
+            </div>
+
+            <div class="p-4 sm:p-5 overflow-auto custom-scrollbar space-y-5">
+                <!-- Table 1: Deciduous vs Permanent Human Dentition -->
+                <div>
+                    <h3 class="text-xs font-extrabold uppercase tracking-wider text-sky-300 mb-2">1. Human Diphyodont Dentition: Milk (Deciduous) vs. Permanent Teeth</h3>
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-[10.5px] uppercase tracking-wider text-slate-400 bg-slate-900/60">
+                                <th class="p-2.5 font-bold">Feature</th>
+                                <th class="p-2.5 font-bold text-amber-300">Milk / Deciduous Dentition (Child)</th>
+                                <th class="p-2.5 font-bold text-sky-300">Permanent Dentition (Adult)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 text-slate-200">
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Quadrant Dental Formula</td>
+                                <td class="p-2.5 font-mono-tech font-bold text-amber-200">i 2/2, c 1/1, pm 0/0, m 2/2 = 20 total</td>
+                                <td class="p-2.5 font-mono-tech font-bold text-sky-200">I 2/2, C 1/1, PM 2/2, M 3/3 = 32 total</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Premolars &amp; Wisdom Teeth</td>
+                                <td class="p-2.5"><strong>0 Premolars</strong> and no 3rd molars; baby molars are replaced by adult premolars!</td>
+                                <td class="p-2.5"><strong>8 Premolars</strong> (2 per quadrant) + <strong>12 Molars</strong> (including 3rd wisdom molars).</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Enamel &amp; Roots</td>
+                                <td class="p-2.5">Thinner enamel, relatively larger pulp chambers; flared roots resorb before shedding (~6–12 yrs).</td>
+                                <td class="p-2.5">Thicker heavily mineralized enamel; deep roots; cannot be naturally replaced if lost.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Table 2: Comparative Mammalian Dentition (Omnivore vs Herbivore vs Carnivore) -->
+                <div>
+                    <h3 class="text-xs font-extrabold uppercase tracking-wider text-emerald-300 mb-2">2. Comparative Mammalian Dentition &amp; Diet Adaptations</h3>
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-700 text-[10.5px] uppercase tracking-wider text-slate-400 bg-slate-900/60">
+                                <th class="p-2.5 font-bold">Tooth / Jaw Feature</th>
+                                <th class="p-2.5 font-bold text-sky-300">Omnivore (Human)</th>
+                                <th class="p-2.5 font-bold text-emerald-300">Herbivore (Sheep / Rabbit)</th>
+                                <th class="p-2.5 font-bold text-rose-300">Carnivore (Dog / Lion)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 text-slate-200">
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Incisors</td>
+                                <td class="p-2.5">Chisel-shaped for biting/cutting fruits, vegetables &amp; meat.</td>
+                                <td class="p-2.5">Crop grass against upper horny pad (sheep) or grow continuously (rodents/rabbits).</td>
+                                <td class="p-2.5">Small, pointed for nibbling meat cleanly off bones.</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Canines &amp; Diastema</td>
+                                <td class="p-2.5">Modest pointed cuspids flush with arch; <strong>no diastema gap</strong>.</td>
+                                <td class="p-2.5">Absent or incisor-like, leaving a wide toothless gap (<strong>Diastema</strong>) for tongue manipulation!</td>
+                                <td class="p-2.5"><strong>Long, curved dagger-like</strong> canines for seizing, stabbing &amp; tearing prey.</td>
+                            </tr>
+                            <tr>
+                                <td class="p-2.5 font-bold text-slate-300">Premolars &amp; Molars</td>
+                                <td class="p-2.5">Blunt rounded cusps (bunodont) for general crushing &amp; grinding.</td>
+                                <td class="p-2.5">Flat, broad with hard transverse <strong>enamel ridges</strong>; side-to-side jaw grinding ruptures cellulose walls.</td>
+                                <td class="p-2.5">Sharp jagged <strong>Carnassial teeth</strong> (upper PM4 + lower M1) slide past like scissor blades to slice flesh &amp; crack bone; vertical hinge jaw.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * ============================================================================
+ * LUMINOUS LEARNER — 3D HUMAN DENTITION, JAW OCCLUSION & TOOTH HISTOLOGY LAB
+ * ============================================================================
+ * Visual & Pedagogical Upgrades over Primitive Blocks/Cones:
+ * 1. Sculpted 3D Parabolic Maxilla (Hard Palate + Palatine Rugae + Gingiva)
+ *    and Hinged 3D Mandible (Mandibular Body, Chin, Ascending Rami, Coronoid &
+ *    Condylar TMJ Hinge) with interactive 0°–38° Bite/Chewing Articulation!
+ * 2. 4 Vertex-Sculpted Anatomical Tooth Classes + True Multi-Rooted Geometry:
+ *    - Incisors: Shovel-shaped crown, sharp incisal edge, lingual cingulum, 1 root.
+ *    - Canines: Prominent pointed cusp with labial ridge, 1 extra-long deep root.
+ *    - Premolars (Bicuspids): 2 distinct buccal/lingual cusps + central fissure, 1–2 roots.
+ *    - Molars: Broad quadrate crown with 4 rounded cusps + cruciform fissures,
+ *      3 diverging roots on Maxillary Molars & 2 curved roots on Mandibular Molars!
+ * 3. Natural Porcelain Enamel | Color-Coded Classes | Dental X-Ray Mode:
+ *    - X-Ray reveals embedded roots inside sockets AND glowing unerupted
+ *      permanent tooth buds inside the child's jaw in Deciduous Mode!
+ * 4. Dedicated 3D Sagittal Molar Cross-Section & Dental Caries (Decay) Lab:
+ *    - Enamel, Dentine Tubules, Pulp Cavity + Pulp Horns, Arteriole/Venule/Nerve,
+ *      Cementum, Periodontal Ligament, Gingiva & Alveolar Bone + Live Acid Decay!
+ */
+
+// ============================================================================
+// 1. BIOLOGICAL DATABASES (TOOTH MORPHOLOGY & 7 INTERNAL HISTOLOGY LAYERS)
+// ============================================================================
+const TOOTH_CLASSES = {
+    incisor: {
+        name: 'Incisor', colorHex: '#10B981', numColor: 0x10B981, role: 'Biting & Cutting (Scissor Action)',
+        morphology: 'Chisel-shaped crown with a thin, sharp horizontal incisal edge, convex labial face, and concave shovel-like lingual face with a basal cingulum.'
+    },
+    canine: {
+        name: 'Canine (Cuspid)', colorHex: '#F59E0B', numColor: 0xF59E0B, role: 'Piercing, Holding & Tearing',
+        morphology: 'Stout cornerstone tooth at the arch corner with a single pointed cusp for piercing tough food, anchored by the longest, deepest single root in the human jaw.'
+    },
+    premolar: {
+        name: 'Premolar (Bicuspid)', colorHex: '#D946EF', numColor: 0xD946EF, role: 'Crushing & Tearing',
+        morphology: 'Transitional posterior tooth bearing 2 distinct cusps (buccal & lingual cusps separated by a central groove). Absent in deciduous (milk) dentition!'
+    },
+    molar: {
+        name: 'Molar', colorHex: '#38BDF8', numColor: 0x38BDF8, role: 'Heavy Chewing & Grinding',
+        morphology: 'Broadest posterior chewing table sculpted with 4–5 rounded cusps and cruciform fissures to pulverize food boluses (increases surface area for salivary amylase!).'
+    }
+};
+
+const ADULT_QUADRANT = [
+    { type: 'incisor',  letter: 'i', sub: 0, x: 0.39, z:  3.08, scaleW: 1.04, desc: 'Central Incisor',        cusps: 'Incisal Edge', uRoots: 1, lRoots: 1 },
+    { type: 'incisor',  letter: 'i', sub: 1, x: 1.02, z:  2.84, scaleW: 0.88, desc: 'Lateral Incisor',        cusps: 'Incisal Edge', uRoots: 1, lRoots: 1 },
+    { type: 'canine',   letter: 'c', sub: 0, x: 1.56, z:  2.36, scaleW: 1.00, desc: 'Canine (Cuspid)',        cusps: '1 Pointed Cusp', uRoots: 1, lRoots: 1 },
+    { type: 'premolar', letter: 'p', sub: 0, x: 1.96, z:  1.68, scaleW: 0.98, desc: '1st Premolar (Bicuspid)',cusps: '2 Cusps', uRoots: 2, lRoots: 1 },
+    { type: 'premolar', letter: 'p', sub: 1, x: 2.22, z:  0.94, scaleW: 1.00, desc: '2nd Premolar (Bicuspid)',cusps: '2 Cusps', uRoots: 1, lRoots: 1 },
+    { type: 'molar',    letter: 'm', sub: 0, x: 2.45, z:  0.04, scaleW: 1.08, desc: '1st Molar (6-Yr Molar)', cusps: '4–5 Cusps', uRoots: 3, lRoots: 2 },
+    { type: 'molar',    letter: 'm', sub: 1, x: 2.58, z: -0.94, scaleW: 1.00, desc: '2nd Molar (12-Yr Molar)',cusps: '4 Cusps', uRoots: 3, lRoots: 2 },
+    { type: 'molar',    letter: 'm', sub: 2, x: 2.64, z: -1.86, scaleW: 0.92, desc: '3rd Molar (Wisdom Tooth)',cusps: '4 Cusps', uRoots: 3, lRoots: 2 }
+];
+
+const BABY_QUADRANT = [
+    { type: 'incisor', letter: 'i', sub: 0, x: 0.32, z: 2.32, scaleW: 0.84, desc: 'Primary Central Incisor', cusps: 'Incisal Edge', uRoots: 1, lRoots: 1, budType: 'incisor' },
+    { type: 'incisor', letter: 'i', sub: 1, x: 0.84, z: 2.10, scaleW: 0.74, desc: 'Primary Lateral Incisor', cusps: 'Incisal Edge', uRoots: 1, lRoots: 1, budType: 'incisor' },
+    { type: 'canine',  letter: 'c', sub: 0, x: 1.30, z: 1.66, scaleW: 0.82, desc: 'Primary Canine',          cusps: '1 Pointed Cusp', uRoots: 1, lRoots: 1, budType: 'canine' },
+    { type: 'molar',   letter: 'm', sub: 0, x: 1.66, z: 0.96, scaleW: 0.86, desc: '1st Primary Molar',       cusps: '4 Cusps', uRoots: 3, lRoots: 2, budType: 'premolar' },
+    { type: 'molar',   letter: 'm', sub: 1, x: 1.88, z: 0.08, scaleW: 0.94, desc: '2nd Primary Molar',       cusps: '4–5 Cusps', uRoots: 3, lRoots: 2, budType: 'premolar' }
+];
+
+const HISTOLOGY_LAYERS = {
+    enamel: {
+        id: 'enamel', short: '1. Enamel',
+        title: 'Enamel (Non-Living Mineralized Crown Cap)',
+        vitality: 'Non-Living • Acellular', mineral: '~96% Calcium Hydroxyapatite', color: '#38BDF8',
+        pinPos: new THREE.Vector3(-1.32, 1.95, 0.25),
+        desc: 'Hardest substance in the entire human body, covering the exposed crown above the gumline. Because enamel-forming cells (ameloblasts) die once the tooth erupts, enamel contains ZERO living cells, blood vessels, or nerves—it cannot regrow if eroded, though fluoride ions help remineralize microscopic acid damage.',
+        exam: 'Why is early enamel decay completely PAINLESS? Because enamel is non-living and has no sensory nerve endings!'
+    },
+    dentine: {
+        id: 'dentine', short: '2. Dentine',
+        title: 'Dentine (Living Tubule-Rich Core Tissue)',
+        vitality: 'Living Tissue (Odontoblasts)', mineral: '~70% Mineral • 30% Collagen/Water', color: '#FBBF24',
+        pinPos: new THREE.Vector3(1.22, 1.15, 0.25),
+        desc: 'Yellowish, bone-like living tissue forming the main bulk of both crown and roots. Softer and slightly more elastic than brittle enamel so it absorbs biting shock without shattering. Perforated by thousands of microscopic Dentinal Tubules radiating from living odontoblast cells lining the pulp.',
+        exam: 'Once plaque acid breaches enamel into Dentine, decay spreads MUCH faster (softer 70% mineral!) and hot/cold/sweet stimuli trigger sharp pain via dentinal tubules!'
+    },
+    pulp: {
+        id: 'pulp', short: '3. Pulp & Nerves',
+        title: 'Pulp Cavity, Root Canals, Vessels & Nerve',
+        vitality: 'Living Neurovascular Core', mineral: 'Soft Connective Tissue', color: '#F43F5E',
+        pinPos: new THREE.Vector3(0.05, 0.52, 0.30),
+        desc: 'Central chamber inside the tooth extending down narrow Root Canals to open at the root tips (Apical Foramen). Blood capillaries supply O₂ and nutrients (calcium/phosphate) to keep odontoblasts alive, while sensory trigeminal nerve fibers detect temperature, pressure, and pain.',
+        exam: 'Root Canal Therapy saves a badly decayed tooth by removing infected pulp tissue and sealing the canal—leaving the tooth functional bit non-living internally.'
+    },
+    cementum: {
+        id: 'cementum', short: '4. Cementum',
+        title: 'Cementum (Calcified Root Coating)',
+        vitality: 'Living Cellular Coat', mineral: '~50% Mineral (Bone-Like)', color: '#FDE68A',
+        pinPos: new THREE.Vector3(-1.26, -1.05, 0.25),
+        desc: 'Thin, pale-yellow bone-like layer covering the dentine of the root below the gumline (meeting enamel at the neck / cementoenamel junction). Provides the rough attachment surface into which collagen fibers of the periodontal ligament embed.',
+        exam: 'Receding gums expose root cementum—because cementum is much softer and thinner than crown enamel, exposed roots are sensitive and prone to abrasion.'
+    },
+    pdl: {
+        id: 'pdl', short: '5. Periodontal Lig.',
+        title: 'Periodontal Ligament / Membrane (Shock Absorber)',
+        vitality: 'Dense Collagen Fibers + Mechanoreceptors', mineral: 'Flexible Fibrous Sling', color: '#34D399',
+        pinPos: new THREE.Vector3(1.38, -1.45, 0.25),
+        desc: 'Tough bundle of collagen fibers (Sharpey’s fibers) suspending the root’s cementum inside the bony alveolar socket like a miniature trampoline. Cushions heavy biting forces so chewing does not crack the jawbone, and contains pressure receptors that prevent biting too hard!',
+        exam: 'Vitamin C deficiency (Scurvy) impairs collagen synthesis in the Periodontal Ligament & gums—causing bleeding gums and loose teeth!'
+    },
+    gingiva: {
+        id: 'gingiva', short: '6. Gingiva (Gum)',
+        title: 'Gingiva (Vascular Mucosal Gum Collar)',
+        vitality: 'Living Epithelium & Connective Tissue', mineral: 'Soft Protective Seal', color: '#FB7185',
+        pinPos: new THREE.Vector3(-1.95, 0.25, 0.25),
+        desc: 'Firm pink oral mucosa tightly cuffing the neck (cervix) of each tooth and covering the alveolar jawbone. Forms a protective epithelial seal preventing oral bacteria from invading the underlying periodontal ligament and bone.',
+        exam: 'Plaque buildup along the gumline causes Gingivitis (red, swollen, bleeding gums); untreated, it progresses to Periodontitis, destroying the ligament and bone socket!'
+    },
+    bone: {
+        id: 'bone', short: '7. Jawbone & Foramen',
+        title: 'Alveolar Jawbone & Apical Foramen Vessels',
+        vitality: 'Living Remodeling Bone', mineral: 'Trabecular & Compact Bone', color: '#94A3B8',
+        pinPos: new THREE.Vector3(1.85, -2.55, 0.25),
+        desc: 'Tooth-bearing ridge of the maxilla and mandible hollowed into sockets (alveoli). Notice the Inferior Alveolar Artery, Vein, and Nerve running through the jawbone below the roots and sending branches straight through each tiny Apical Foramen into the root canal!',
+        exam: 'Orthodontic braces work because steady pressure triggers osteoclasts and osteoblasts to remodel this living alveolar bone socket around the moving root!'
+    }
+};
+
+// ============================================================================
+// 2. MATH & PROCEDURAL HISTOLOGICAL TEXTURES
+// ============================================================================
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const smoothstep = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+};
+
+function createDentineTubuleTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#F3D69B';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = 'rgba(180, 120, 40, 0.28)';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 90; i++) {
+        const y = (i / 90) * 256;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.quadraticCurveTo(128, y - 10, 256, y);
+        ctx.stroke();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+}
+
+function createTrabecularBoneTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#CBD5E1';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = 'rgba(71, 85, 105, 0.35)';
+    for (let i = 0; i < 65; i++) {
+        const x = (i * 37) % 120 + 4;
+        const y = (i * 59) % 120 + 4;
+        ctx.beginPath();
+        ctx.arc(x, y, 3 + (i % 4), 0, Math.PI * 2);
+        ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 3);
+    return tex;
+}
+
+// ============================================================================
+// 3. VERTEX-SCULPTED 3D TOOTH CROWNS & MULTI-ROOTED GEOMETRY BUILDERS
+// ============================================================================
+const crownGeoCache = {};
+
+/**
+ * Builds an Anatomically Sculpted 3D Tooth Crown BufferGeometry in local space:
+ *  y = 0.0 (Cervical Neck / CEJ) -> y = +crownH (Incisal Edge or Occlusal Cusps!)
+ *  +Z = Labial/Buccal (Outer Lip/Cheek side) | -Z = Lingual/Palatal (Inner Tongue side)
+ *  ±X = Mesial / Distal width along dental arch
+ */
+function getSculptedCrownGeometry(type) {
+    if (crownGeoCache[type]) return crownGeoCache[type];
+
+    const geo = new THREE.SphereGeometry(1.0, 34, 28);
+    const pos = geo.attributes.position;
+
+    for (let i = 0; i < pos.count; i++) {
+        const nx = pos.getX(i);
+        const ny = pos.getY(i);
+        const nz = pos.getZ(i);
+        const v = (ny + 1.0) * 0.5; // 0 at cervical neck -> 1 at occlusal/incisal top!
+
+        let x = 0, y = 0, z = 0;
+
+        if (type === 'incisor') {
+            // Shovel-shaped Chisel Incisor: widens toward incisal edge while flattening into a sharp cutting blade!
+            const h = 0.88;
+            const neckPinch = 0.76 + 0.24 * smoothstep(0.0, 0.35, v);
+            const w = lerp(0.25, 0.33, Math.pow(v, 0.65)) * neckPinch;
+            const d = lerp(0.25, 0.048, Math.pow(v, 1.28)) * neckPinch;
+
+            x = nx * w;
+            y = v * h;
+            z = nz * d;
+
+            // Labial (+Z) gentle arch convexity & Lingual (-Z) shovel scoop + basal Cingulum bulge!
+            z += Math.sin(v * Math.PI) * 0.045;
+            if (nz < -0.15) {
+                const scoop = smoothstep(0.28, 0.85, v) * (1.0 - smoothstep(0.90, 1.0, v)) * 0.075;
+                const cingulum = Math.exp(-Math.pow((v - 0.18) / 0.14, 2)) * 0.055;
+                z += scoop - cingulum;
+            }
+            // Crisp straight horizontal incisal cutting edge at top!
+            if (ny > 0.65) {
+                y = lerp(y, h * 0.96, smoothstep(0.65, 1.0, ny) * 0.72);
+            }
+
+        } else if (type === 'canine') {
+            // Pointed Diamond Spear Cuspid (Tearing Tooth) with prominent labial ridge!
+            const h = 1.00;
+            const belly = 0.78 + 0.34 * Math.sin(Math.pow(v, 0.75) * Math.PI * 0.86);
+            const pointTaper = 1.0 - 0.68 * smoothstep(0.52, 1.0, v);
+            x = nx * 0.31 * belly * pointTaper;
+            z = nz * 0.29 * belly * (1.0 - 0.58 * smoothstep(0.55, 1.0, v));
+            y = v * h;
+
+            // Prominent central cusp peak at (nx=0, ny=1) + labial vertical ridge!
+            if (ny > 0.25) {
+                const cuspLift = Math.exp(-(nx * nx * 3.5 + nz * nz * 2.5)) * 0.14 * smoothstep(0.25, 0.95, ny);
+                y += cuspLift;
+            }
+            if (nz > 0.2) {
+                z += Math.exp(-Math.pow(nx / 0.35, 2)) * 0.035 * Math.sin(v * Math.PI);
+            }
+
+        } else if (type === 'premolar') {
+            // Bicuspid: Rounded barrel crown with 2 unmistakable Cusps (Buccal +Z & Lingual -Z) + Central Groove!
+            const h = 0.74;
+            const barrel = 0.78 + 0.28 * Math.sin(v * Math.PI * 0.82);
+            x = nx * 0.31 * barrel;
+            z = nz * 0.36 * barrel;
+            y = v * h;
+
+            if (ny > 0.20) {
+                const occWeight = smoothstep(0.20, 0.75, ny);
+                // Flatten occlusal table, then raise Buccal Cusp (+0.48) & Lingual Cusp (-0.48) with central fissure!
+                const baseTop = h * 0.84;
+                const buccalCusp  = Math.exp(-(nx * nx * 2.8 + Math.pow(nz - 0.52, 2) * 5.2)) * 0.19;
+                const lingualCusp = Math.exp(-(nx * nx * 3.0 + Math.pow(nz + 0.52, 2) * 5.5)) * 0.14;
+                const fissureDip  = Math.exp(-Math.pow(nz / 0.18, 2)) * (1.0 - nx * nx * 0.6) * 0.085;
+                y = lerp(y, baseTop + buccalCusp + lingualCusp - fissureDip, occWeight);
+            }
+
+        } else {
+            // Molar: Broad rounded-quadrate grinding block with 4 distinct Cusps + Cruciform (+) Central Fissures!
+            const h = 0.72;
+            const barrel = 0.80 + 0.26 * Math.sin(v * Math.PI * 0.82);
+            // Slightly square off circular cross-section into rounded molar rectangle
+            const sqX = Math.sign(nx) * Math.pow(Math.abs(nx), 0.82);
+            const sqZ = Math.sign(nz) * Math.pow(Math.abs(nz), 0.82);
+            x = sqX * 0.43 * barrel;
+            z = sqZ * 0.41 * barrel;
+            y = v * h;
+
+            if (ny > 0.18) {
+                const occWeight = smoothstep(0.18, 0.72, ny);
+                const baseTop = h * 0.83;
+                // 4 Corner Cusps at (±0.48, ±0.48)
+                const c1 = Math.exp(-(Math.pow(nx - 0.48, 2) + Math.pow(nz - 0.48, 2)) * 4.8) * 0.16;
+                const c2 = Math.exp(-(Math.pow(nx + 0.48, 2) + Math.pow(nz - 0.48, 2)) * 4.8) * 0.15;
+                const c3 = Math.exp(-(Math.pow(nx - 0.48, 2) + Math.pow(nz + 0.48, 2)) * 4.8) * 0.15;
+                const c4 = Math.exp(-(Math.pow(nx + 0.48, 2) + Math.pow(nz + 0.48, 2)) * 4.8) * 0.14;
+                // Cruciform developmental fissures along nx=0 and nz=0
+                const groove = (Math.exp(-Math.pow(nx / 0.15, 2)) + Math.exp(-Math.pow(nz / 0.15, 2))) * 0.055;
+                y = lerp(y, baseTop + c1 + c2 + c3 + c4 - groove, occWeight);
+            }
+        }
+
+        pos.setXYZ(i, x, y, z);
+    }
+
+    geo.computeVertexNormals();
+    crownGeoCache[type] = geo;
+    return geo;
+}
+
+/**
+ * Builds True Anatomical Root(s) extending in -Y from the Cervical Neck (y = 0.05 -> -rootLen)
+ *  1 Root (Incisors, Canines, Premolars), 2 Roots (Upper PM1 & Lower Molars), or 3 Roots (Upper Molars)!
+ */
+function buildAnatomicalRoots(numRoots, type, isBaby, rootMat) {
+    const grp = new THREE.Group();
+    const len = (type === 'canine' ? 1.38 : (type === 'molar' ? 1.06 : 1.02)) * (isBaby ? 0.76 : 1.0);
+    const flare = isBaby ? 1.35 : 1.0; // Baby molar roots flare wider around permanent premolar buds!
+
+    function addCurvedConicalRoot(pStart, pMid, pApex, rTop) {
+        const curve = new THREE.CatmullRomCurve3([pStart, pMid, pApex]);
+        const segs = 16, radSegs = 12;
+        const frames = curve.computeFrenetFrames(segs, false);
+        const pos = [], idx = [];
+        for (let i = 0; i <= segs; i++) {
+            const u = i / segs;
+            const pt = curve.getPointAt(u);
+            const r = lerp(rTop, 0.025, Math.pow(u, 0.85));
+            const N = frames.normals[i], B = frames.binormals[i];
+            for (let j = 0; j <= radSegs; j++) {
+                const th = (j / radSegs) * Math.PI * 2;
+                pos.push(
+                    pt.x + (N.x * Math.cos(th) + B.x * Math.sin(th)) * r,
+                    pt.y + (N.y * Math.cos(th) + B.y * Math.sin(th)) * r,
+                    pt.z + (N.z * Math.cos(th) + B.z * Math.sin(th)) * r
+                );
+            }
+        }
+        const row = radSegs + 1;
+        for (let i = 0; i < segs; i++) {
+            for (let j = 0; j < radSegs; j++) {
+                const a = i * row + j, b = a + 1, c = a + row, d = c + 1;
+                idx.push(a, b, d, a, d, c);
+            }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        grp.add(new THREE.Mesh(geo, rootMat));
+    }
+
+    if (numRoots === 1) {
+        const rBase = type === 'canine' ? 0.22 : 0.19;
+        addCurvedConicalRoot(
+            new THREE.Vector3(0, 0.06, 0),
+            new THREE.Vector3(-0.02, -len * 0.55, -0.02),
+            new THREE.Vector3(-0.05, -len, -0.04),
+            rBase
+        );
+    } else if (numRoots === 2) {
+        // Mesial & Distal (for Lower Molars) or Buccal & Palatal (for Upper 1st Premolar)
+        if (type === 'premolar') {
+            [-1, 1].forEach(s => {
+                addCurvedConicalRoot(
+                    new THREE.Vector3(0, 0.06, s * 0.08),
+                    new THREE.Vector3(0, -len * 0.52, s * 0.16),
+                    new THREE.Vector3(0, -len, s * 0.14),
+                    0.14
+                );
+            });
+        } else {
+            // Lower Mandibular Molar: 2 stout Mesial & Distal curved roots!
+            [-1, 1].forEach(s => {
+                addCurvedConicalRoot(
+                    new THREE.Vector3(s * 0.15, 0.06, 0),
+                    new THREE.Vector3(s * 0.24 * flare, -len * 0.55, 0),
+                    new THREE.Vector3(s * 0.18 * flare, -len, -0.03),
+                    0.165
+                );
+            });
+        }
+    } else {
+        // Upper Maxillary Molar: 3 classic diverging roots (Mesiobuccal, Distobuccal, + Large Palatal Root!)
+        addCurvedConicalRoot(
+            new THREE.Vector3(-0.14, 0.06, 0.12),
+            new THREE.Vector3(-0.22 * flare, -len * 0.55, 0.20 * flare),
+            new THREE.Vector3(-0.18 * flare, -len, 0.16 * flare),
+            0.14
+        );
+        addCurvedConicalRoot(
+            new THREE.Vector3(0.14, 0.06, 0.12),
+            new THREE.Vector3(0.22 * flare, -len * 0.55, 0.20 * flare),
+            new THREE.Vector3(0.18 * flare, -len, 0.16 * flare),
+            0.135
+        );
+        // Palatal (-Z) root
+        addCurvedConicalRoot(
+            new THREE.Vector3(0.0, 0.06, -0.14),
+            new THREE.Vector3(0.0, -len * 0.55, -0.26 * flare),
+            new THREE.Vector3(0.0, -len * 1.05, -0.22 * flare),
+            0.16
+        );
+    }
+    return grp;
+}
+
+// ============================================================================
+// 4. THREE.JS SCENE, DUAL MODES (`arcadeWorld` & `sectionWorld`)
+// ============================================================================
+let scene, camera, renderer, controls, raycaster;
+let arcadeWorld, maxillaGroup, mandiblePivot, toothBudsGroup;
+let sectionWorld, cariesLesionMesh, plaqueBiofilmMesh, abscessSacMesh, pulpNerveMat, pulpChamberMat;
+
+// Shared Arcade Materials for Natural / Color-Coded / Dental X-Ray Switching
+let matGumUpper, matGumLower, matPalate, matMandibleBone, matRootDentine, matSocketDark, matToothBud;
+const toothRecords = []; // Stores all 32 or 20 tooth assemblies & metadata
+const pickableArcade = [];
+const pickableSection = [];
+const sectionLayerMats = {};
+const sectionPins = [];
+
+// Application State
+const state = {
+    mode: 'arcade',          // 'arcade' | 'section'
+    dentition: 'permanent',  // 'permanent' | 'deciduous'
+    shade: 'natural',        // 'natural' | 'coded' | 'xray'
+    jawAngleDeg: 24,         // 0° (closed bite occlusion) -> 38° (wide open)
+    isChewing: false,
+    filterClass: null,       // null or 'incisor' | 'canine' | 'premolar' | 'molar'
+    selectedToothIdx: 5,     // Default: Maxillary Right 1st Molar
+    cariesPct: 0,            // 0 -> 100% decay progression
+    selectedLayerId: 'enamel',
+    showPins: true
+};
+
+const ARCADE_CAMS = {
+    front:    { pos: new THREE.Vector3(3.4, 2.2, 10.6),  target: new THREE.Vector3(0.0, -0.35, 0.35) },
+    bite:     { pos: new THREE.Vector3(10.8, 0.1, 1.4),  target: new THREE.Vector3(0.0, -0.25, 0.45) },
+    lowerOcc: { pos: new THREE.Vector3(0.0, 9.6, 3.2),   target: new THREE.Vector3(0.0, -1.2, 0.45) },
+    upperOcc: { pos: new THREE.Vector3(0.0, -8.8, 3.8),  target: new THREE.Vector3(0.0,  0.9, 0.45) }
+};
+const SECTION_CAM = { pos: new THREE.Vector3(0.0, 0.15, 9.2), target: new THREE.Vector3(0.0, -0.20, 0.0) };
+
+let camGoalPos = ARCADE_CAMS.front.pos.clone();
+let camGoalTarget = ARCADE_CAMS.front.target.clone();
+let camGliding = false;
+
+function initThreeScene() {
+    const viewport = document.getElementById('three-viewport');
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(38, viewport.clientWidth / viewport.clientHeight, 0.1, 120);
+    camera.position.copy(camGoalPos);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    viewport.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.copy(camGoalTarget);
+    controls.addEventListener('start', () => { camGliding = false; });
+
+    raycaster = new THREE.Raycaster();
+
+    // Dental Porcelain & Subsurface Gingival Studio Lighting
+    scene.add(new THREE.HemisphereLight(0xFFF5F5, 0x0F172A, 0.92));
+
+    const keyLight = new THREE.DirectionalLight(0xFFFDF9, 1.35);
+    keyLight.position.set(6, 9, 12);
+    scene.add(keyLight);
+
+    const rimPink = new THREE.DirectionalLight(0xFDA4AF, 0.78);
+    rimPink.position.set(-9, 4, -9);
+    scene.add(rimPink);
+
+    const occlusalFill = new THREE.DirectionalLight(0xBAE6FD, 0.62);
+    occlusalFill.position.set(0, -9, 7);
+    scene.add(occlusalFill);
+
+    arcadeWorld  = new THREE.Group();
+    sectionWorld = new THREE.Group();
+    sectionWorld.visible = false;
+    scene.add(arcadeWorld, sectionWorld);
+
+    initArcadeSharedMaterials();
+    buildDentalArcade();
+    buildInternalToothSectionWorld();
+    bindCanvasPicking(viewport);
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+    const viewport = document.getElementById('three-viewport');
+    if (!viewport || viewport.clientWidth === 0 || viewport.clientHeight === 0) return;
+    camera.aspect = viewport.clientWidth / viewport.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+}
+
+function initArcadeSharedMaterials() {
+    matGumUpper = new THREE.MeshPhysicalMaterial({
+        color: 0xE15B76, emissive: 0x4C0D1D, emissiveIntensity: 0.26,
+        roughness: 0.42, clearcoat: 0.65, clearcoatRoughness: 0.25, transparent: true, opacity: 1.0
+    });
+    matGumLower = matGumUpper.clone();
+
+    matPalate = new THREE.MeshPhysicalMaterial({
+        color: 0xD96B82, emissive: 0x3F0D1B, emissiveIntensity: 0.24,
+        roughness: 0.48, clearcoat: 0.5, transparent: true, opacity: 1.0, side: THREE.DoubleSide
+    });
+
+    matMandibleBone = new THREE.MeshPhysicalMaterial({
+        color: 0xEAE4D3, emissive: 0x1E1B18, emissiveIntensity: 0.18,
+        roughness: 0.46, clearcoat: 0.25, transparent: true, opacity: 1.0
+    });
+
+    matRootDentine = new THREE.MeshPhysicalMaterial({
+        color: 0xF3DCAB, emissive: 0x452708, emissiveIntensity: 0.22,
+        roughness: 0.42, clearcoat: 0.3
+    });
+
+    matSocketDark = new THREE.MeshStandardMaterial({
+        color: 0x4C0519, roughness: 0.8
+    });
+
+    matToothBud = new THREE.MeshPhysicalMaterial({
+        color: 0x38BDF8, emissive: 0x0284C7, emissiveIntensity: 0.75,
+        roughness: 0.2, transparent: true, opacity: 0.88
+    });
+}
+
+// ============================================================================
+// 5. BUILD 3D PARABOLIC MAXILLA, HINGED MANDIBLE & ALL TEETH WITH ROOTS
+// ============================================================================
+function buildArchCurvePoints(distArray, xzScale) {
+    const pts = [];
+    // Left posterior -> Left anterior -> Midline -> Right anterior -> Right posterior
+    for (let i = distArray.length - 1; i >= 0; i--) {
+        pts.push(new THREE.Vector3(-distArray[i].x * xzScale, 0, distArray[i].z * xzScale));
+    }
+    pts.push(new THREE.Vector3(0, 0, (distArray[0].z + 0.05) * xzScale));
+    for (let i = 0; i < distArray.length; i++) {
+        pts.push(new THREE.Vector3(distArray[i].x * xzScale, 0, distArray[i].z * xzScale));
+    }
+    return new THREE.CatmullRomCurve3(pts);
+}
+
+function buildDentalArcade() {
+    // Clear existing arcade meshes cleanly
+    while (arcadeWorld.children.length > 0) {
+        arcadeWorld.remove(arcadeWorld.children[0]);
+    }
+    toothRecords.length = 0;
+    pickableArcade.length = 0;
+
+    const isAdult = (state.dentition === 'permanent');
+    const distArray = isAdult ? ADULT_QUADRANT : BABY_QUADRANT;
+
+    maxillaGroup = new THREE.Group();
+    maxillaGroup.position.set(0, 0.72, 0); // Fixed Upper Jaw!
+    arcadeWorld.add(maxillaGroup);
+
+    // Mandibular Condylar Hinge Pivot at TMJ `(0, 0.72, -3.05)` so opening rotates anatomically!
+    mandiblePivot = new THREE.Group();
+    mandiblePivot.position.set(0, 0.72, -3.05);
+    arcadeWorld.add(mandiblePivot);
+
+    const mandibleContent = new THREE.Group();
+    mandibleContent.position.set(0, -1.44, 3.05); // Offsets lower alveolar ridge to y = -0.72 when jawAngle = 0°!
+    mandiblePivot.add(mandibleContent);
+
+    toothBudsGroup = new THREE.Group();
+    toothBudsGroup.visible = false;
+
+    // 1. Sculpted Upper Parabolic Alveolar Gingiva + Vaulted Hard Palate with Rugae!
+    const upperArchCurve = buildArchCurvePoints(distArray, 1.0);
+    const upperGumTube = new THREE.Mesh(new THREE.TubeGeometry(upperArchCurve, 64, isAdult ? 0.50 : 0.42, 18, false), matGumUpper);
+    upperGumTube.scale.set(1.0, 1.25, 1.0);
+    upperGumTube.position.y = 0.42;
+    maxillaGroup.add(upperGumTube);
+
+    // Vaulted Roof of Mouth (Hard Palate)
+    const palW = isAdult ? 2.45 : 1.75;
+    const palZFront = isAdult ? 2.95 : 2.20;
+    const palZBack  = isAdult ? -2.05 : 0.0;
+    const palShape = new THREE.Shape();
+    palShape.moveTo(-palW, palZBack);
+    palShape.quadraticCurveTo(-palW * 0.92, palZFront * 0.65, 0, palZFront);
+    palShape.quadraticCurveTo( palW * 0.92, palZFront * 0.65, palW, palZBack);
+    palShape.closePath();
+
+    const palGeo = new THREE.ShapeGeometry(palShape, 24);
+    palGeo.rotateX(Math.PI * 0.5);
+    // Dome center of hard palate upward for realistic palatal vault!
+    const pPos = palGeo.attributes.position;
+    for (let i = 0; i < pPos.count; i++) {
+        const px = pPos.getX(i), pz = pPos.getZ(i);
+        const dome = Math.max(0, 1 - Math.pow(px / palW, 2)) * 0.55;
+        const rugae = Math.sin(pz * 9.0) * 0.025 * smoothstep(0, palZFront, pz);
+        pPos.setY(i, 0.52 + dome + rugae);
+    }
+    palGeo.computeVertexNormals();
+    maxillaGroup.add(new THREE.Mesh(palGeo, matPalate));
+
+    // 2. Sculpted Lower Alveolar Gingiva + Anatomical Ivory Mandible Bone (Body, Chin, Rami, Coronoid & Condyle)!
+    const lowerXZScale = 0.94; // Realistic ~6% narrower lower arch for natural incisor overbite!
+    const lowerArchCurve = buildArchCurvePoints(distArray, lowerXZScale);
+    const lowerGumTube = new THREE.Mesh(new THREE.TubeGeometry(lowerArchCurve, 64, isAdult ? 0.46 : 0.39, 18, false), matGumLower);
+    lowerGumTube.scale.set(1.0, 1.22, 1.0);
+    lowerGumTube.position.y = -0.40;
+    mandibleContent.add(lowerGumTube);
+
+    // Ivory Mandibular Jawbone sweeping from Chin Symphysis back up into Bilateral Ascending Rami & TMJ Condyles!
+    const mandScale = isAdult ? 1.0 : 0.78;
+    const mandBodyCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-2.65 * mandScale, -1.18, -2.05 * mandScale),
+        new THREE.Vector3(-2.15 * mandScale, -1.25,  1.15 * mandScale),
+        new THREE.Vector3( 0.00,             -1.32,  3.02 * mandScale), // Mental Chin Symphysis!
+        new THREE.Vector3( 2.15 * mandScale, -1.25,  1.15 * mandScale),
+        new THREE.Vector3( 2.65 * mandScale, -1.18, -2.05 * mandScale)
+    ]);
+    const mandBodyMesh = new THREE.Mesh(new THREE.TubeGeometry(mandBodyCurve, 56, 0.42 * mandScale, 16, false), matMandibleBone);
+    mandBodyMesh.scale.set(0.88, 1.35, 0.92);
+    mandibleContent.add(mandBodyMesh);
+
+    // Bilateral Ascending Rami + Coronoid Process + TMJ Condylar Head!
+    [-1, 1].forEach(side => {
+        const ramusCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(side * 2.58 * mandScale, -1.22, -1.95 * mandScale), // Gonial Angle of Jaw
+            new THREE.Vector3(side * 2.75 * mandScale,  0.15, -2.55),
+            new THREE.Vector3(side * 2.82 * mandScale,  1.38, -3.02)              // Meets TMJ Hinge!
+        ]);
+        const ramusMesh = new THREE.Mesh(new THREE.TubeGeometry(ramusCurve, 18, 0.36 * mandScale, 12, false), matMandibleBone);
+        ramusMesh.scale.set(0.45, 1.0, 1.35);
+
+        const condyleHead = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), matMandibleBone);
+        condyleHead.scale.set(1.35, 0.75, 0.75);
+        condyleHead.position.set(side * 2.82 * mandScale, 1.42, -3.04);
+
+        const coronoidTip = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.65, 10), matMandibleBone);
+        coronoidTip.scale.set(0.45, 1.0, 1.2);
+        coronoidTip.position.set(side * 2.68 * mandScale, 1.15, -2.18);
+        coronoidTip.rotation.x = 0.22;
+
+        mandibleContent.add(ramusMesh, condyleHead, coronoidTip);
+    });
+
+    // 3. Populate All 4 Quadrants with Sculpted 3D Teeth, Scalloped Collars, Sockets & Roots!
+    const upY = new THREE.Vector3(0, 1, 0);
+    const dnY = new THREE.Vector3(0, -1, 0);
+
+    function populateQuadrant(isUpper, isPatientRight) {
+        // Patient's Right = Viewer's Left (-X); Patient's Left = Viewer's Right (+X)
+        const sideSign = isPatientRight ? -1 : 1;
+        const archScale = isUpper ? 1.0 : lowerXZScale;
+        const parentJaw = isUpper ? maxillaGroup : mandibleContent;
+        const jawLabel  = isUpper ? 'Maxillary (Upper)' : 'Mandibular (Lower)';
+        const sideLabel = isPatientRight ? 'Right' : 'Left';
+
+        distArray.forEach((td, idx) => {
+            const px = sideSign * td.x * archScale;
+            const pz = td.z * archScale;
+            const py = isUpper ? 0.06 : -0.06; // Gingival neck level
+
+            // Compute true outward labial/buccal normal perpendicular to parabolic arch!
+            let tangent;
+            if (idx === 0) {
+                tangent = new THREE.Vector3(
+                    sideSign * (distArray[1].x - td.x),
+                    0,
+                    distArray[1].z - td.z
+                ).normalize();
             } else {
-                if (hoveredTooth) {
-                    resetHover(hoveredTooth);
-                    hoveredTooth = null;
-                    canvas.style.cursor = 'grab';
-                    
-                    // Reset UI
-                    uiElements.inspectorContent.innerHTML = `
-                        <div class="text-4xl mb-2 opacity-30">🖱️</div>
-                        <h2 class="text-lg font-bold text-slate-300">Hover over a tooth</h2>
-                        <p class="text-xs text-slate-500 mt-2">Click to extract it from the arcade.</p>
-                    `;
-                    uiElements.inspectorPanel.className = "bg-slate-800/80 p-5 rounded-xl border border-slate-600 shadow-inner flex-grow relative flex flex-col justify-center text-center transition-all duration-300 transform scale-100";
-                }
+                tangent = new THREE.Vector3(
+                    sideSign * (td.x - distArray[idx - 1].x),
+                    0,
+                    td.z - distArray[idx - 1].z
+                ).normalize();
             }
-        }
+            // Outward normal pointing toward lips/cheeks (+Z anteriorly, ±X laterally)
+            const outwardNormal = new THREE.Vector3(
+                sideSign * (-tangent.z),
+                0,
+                sideSign * tangent.x
+            ).normalize();
 
-        function resetHover(mesh) {
-            mesh.material.emissive.setHex(0x000000);
-        }
+            // Proper Orthogonal Basis Matrix (det = +1 so normals are NEVER inside-out!)
+            const yAxis = isUpper ? dnY.clone() : upY.clone(); // Occlusal +Y points toward bite plane!
+            const zAxis = outwardNormal.clone();               // Labial/Buccal +Z points outward!
+            const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+            const rotMat = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
 
-        function onPointerDown(event) {
-            if (hoveredTooth) {
-                extractTooth(hoveredTooth);
-                hoveredTooth = null;
+            // Gingival Scallop Collar + Dark Alveolar Socket (visible when tooth is extracted!)
+            const collar = new THREE.Mesh(
+                new THREE.TorusGeometry(0.28 * td.scaleW, 0.075, 10, 20),
+                isUpper ? matGumUpper : matGumLower
+            );
+            collar.position.set(px, py, pz);
+            collar.rotation.x = Math.PI * 0.5;
+            parentJaw.add(collar);
+
+            const socketHole = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.22 * td.scaleW, 0.16 * td.scaleW, 0.45, 14),
+                matSocketDark
+            );
+            socketHole.position.set(px, py + (isUpper ? 0.20 : -0.20), pz);
+            parentJaw.add(socketHole);
+
+            // Tooth Assembly (`toothHolder`)
+            const toothHolder = new THREE.Group();
+            const restPos = new THREE.Vector3(px, py, pz);
+            toothHolder.position.copy(restPos);
+            toothHolder.setRotationFromMatrix(rotMat);
+
+            const babyScale = isAdult ? 1.0 : 0.80;
+            toothHolder.scale.set(td.scaleW * babyScale, babyScale, babyScale);
+
+            const crownMat = new THREE.MeshPhysicalMaterial({
+                color: 0xFAF7F0,
+                emissive: 0x000000,
+                emissiveIntensity: 0.0,
+                roughness: 0.18,
+                metalness: 0.02,
+                clearcoat: 0.88,
+                clearcoatRoughness: 0.14
+            });
+            const crownMesh = new THREE.Mesh(getSculptedCrownGeometry(td.type), crownMat);
+
+            const rootCount = isUpper ? td.uRoots : td.lRoots;
+            const rootsGrp = buildAnatomicalRoots(rootCount, td.type, !isAdult, matRootDentine);
+
+            toothHolder.add(crownMesh, rootsGrp);
+            parentJaw.add(toothHolder);
+
+            // In Deciduous (Child) Dentition, place Glowing Unerupted Permanent Tooth Bud deep beneath Baby Roots!
+            if (!isAdult && td.budType) {
+                const budMesh = new THREE.Mesh(getSculptedCrownGeometry(td.budType), matToothBud);
+                budMesh.position.set(px * 0.96, py + (isUpper ? 1.05 : -1.05), pz * 0.96);
+                budMesh.setRotationFromMatrix(rotMat);
+                budMesh.scale.setScalar(0.72);
+                parentJaw.add(budMesh);
+                toothBudsGroup.push ? null : null;
+                budMesh.userData.isBud = true;
+                budMesh.visible = (state.shade === 'xray');
             }
-        }
 
-        function extractTooth(mesh) {
-            mesh.userData.isExtracted = true;
-            resetHover(mesh);
-            
-            // Add to animation queue
-            state.extractingMeshes.push(mesh);
-
-            // Update State Math
-            const jaw = mesh.userData.jaw;
-            const letter = mesh.userData.letter;
-            state.extracted[jaw][letter]++;
-            
-            updateFormulaUI();
-            
-            // Briefly show explosion UI to prevent hovering a ghost
-            uiElements.inspectorContent.innerHTML = `
-                <div class="text-4xl mb-2 opacity-80">💥</div>
-                <h2 class="text-lg font-bold text-rose-400">Tooth Extracted</h2>
-            `;
-            uiElements.inspectorPanel.className = "bg-slate-900 p-5 rounded-xl border border-rose-500 shadow-inner flex-grow relative flex flex-col justify-center text-center transition-all duration-100";
-        }
-
-        // --- UI TOGGLES & BUTTONS ---
-
-        uiElements.resetBtn.addEventListener('click', () => {
-            state.extracted = {
-                upper: { i: 0, c: 0, p: 0, m: 0 },
-                lower: { i: 0, c: 0, p: 0, m: 0 }
+            const recIdx = toothRecords.length;
+            const rec = {
+                idx: recIdx,
+                holder: toothHolder,
+                crownMesh,
+                crownMat,
+                rootsGrp,
+                restPos,
+                occlusalDir: yAxis.clone(), // Extracting pulls tooth along occlusal direction out of socket!
+                extractAnim: 0.0,
+                extracted: false,
+                type: td.type,
+                letter: td.letter,
+                jaw: isUpper ? 'upper' : 'lower',
+                quadrantLabel: `${jawLabel} ${sideLabel} Quadrant`,
+                fullName: `${isUpper ? 'Maxillary' : 'Mandibular'} ${sideLabel} ${td.desc}`,
+                cuspsText: td.cusps,
+                rootCount
             };
-            updateFormulaUI();
-            buildJaw();
+            toothRecords.push(rec);
+
+            toothHolder.traverse(ch => {
+                if (ch.isMesh) {
+                    ch.userData.toothIdx = recIdx;
+                    pickableArcade.push(ch);
+                }
+            });
         });
+    }
 
-        function setDentition(type) {
-            if (state.dentition === type) return;
-            state.dentition = type;
-            
-            if (type === 'deciduous') {
-                uiElements.btnDeciduous.classList.add('active');
-                uiElements.btnPermanent.classList.remove('active');
-                uiElements.stageDesc.innerHTML = "Children have <strong>20 primary (baby) teeth</strong>. They lack premolars entirely, and only have two molars per quadrant.";
-            } else {
-                uiElements.btnPermanent.classList.add('active');
-                uiElements.btnDeciduous.classList.remove('active');
-                uiElements.stageDesc.innerHTML = "Adults have <strong>32 permanent teeth</strong>. This set includes Premolars (bicuspids) and a third set of Molars (Wisdom Teeth).";
-            }
+    populateQuadrant(true,  true);  // Q1: Maxillary Right (0..7 or 0..4)
+    populateQuadrant(true,  false); // Q2: Maxillary Left
+    populateQuadrant(false, false); // Q3: Mandibular Left
+    populateQuadrant(false, true);  // Q4: Mandibular Right
 
-            state.extracted = {
-                upper: { i: 0, c: 0, p: 0, m: 0 },
-                lower: { i: 0, c: 0, p: 0, m: 0 }
-            };
-            updateFormulaUI();
-            buildJaw();
-        }
+    // Default select Maxillary Right 1st Molar (idx 5 in Adult, idx 3 in Baby)
+    state.selectedToothIdx = isAdult ? 5 : 3;
+    applyArcadeShadingAndSelection();
+    updateFormulaAndInspectorUI();
+}
 
-        uiElements.btnDeciduous.addEventListener('click', () => setDentition('deciduous'));
-        uiElements.btnPermanent.addEventListener('click', () => setDentition('permanent'));
-
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerdown', onPointerDown);
-
-        // --- ANIMATION LOOP ---
-        function resize() {
-            const rect = canvas.parentElement.getBoundingClientRect();
-            renderer.setSize(rect.width, rect.height);
-            camera.aspect = rect.width / rect.height;
-            camera.updateProjectionMatrix();
-        }
-        window.addEventListener('resize', resize);
-        
-        // Boot sequence
-        buildJaw();
-        updateFormulaUI();
-        resize();
-
-        function animate() {
-            requestAnimationFrame(animate);
-
-            // Handle extraction animations (shrink and fly away)
-            for (let i = state.extractingMeshes.length - 1; i >= 0; i--) {
-                let m = state.extractingMeshes[i];
-                
-                // Fly up if upper jaw, down if lower jaw
-                const dir = m.userData.jaw === 'upper' ? 1 : -1;
-                m.position.y += 0.2 * dir;
-                m.scale.multiplyScalar(0.85); // Shrink to nothing
-                
-                if (m.scale.x < 0.01) {
-                    jawGroup.remove(m);
-                    state.extractingMeshes.splice(i, 1);
+// ============================================================================
+// 6. BUILD MODE 2: 3D INTERNAL TOOTH CROSS-SECTION & CARIES DECAY LAB
+// ============================================================================
+function registerSectionLayer(obj, layerId) {
+    obj.traverse(ch => {
+        if (ch.isMesh) {
+            ch.userData.layerId = layerId;
+            pickableSection.push(ch);
+            if (ch.material && ch.material.emissive) {
+                if (!sectionLayerMats[layerId]) sectionLayerMats[layerId] = [];
+                if (!sectionLayerMats[layerId].includes(ch.material)) {
+                    ch.material.userData.baseEmissive = ch.material.emissive.getHex();
+                    ch.material.userData.baseEmissiveInt = ch.material.emissiveIntensity || 0.2;
+                    sectionLayerMats[layerId].push(ch.material);
                 }
             }
+        }
+    });
+}
 
-            // Slowly rotate entire jaw for dramatic effect if not hovering
-            if (!hoveredTooth) {
-                jawGroup.rotation.y += 0.002;
-            }
+function makeMolarProfileShape(scaleX, scaleY, yShift = 0, cuspDepth = 0.34, rootPinch = 1.0) {
+    const s = new THREE.Shape();
+    // Trace clockwise sagittal 2-rooted molar silhouette:
+    // Left cusp -> Central occlusal fissure -> Right cusp -> Right crown bulge -> Neck -> Right root apex -> Furcation -> Left root apex -> Neck -> Left crown bulge
+    const cw = 1.48 * scaleX;
+    const nw = 1.12 * scaleX;
+    const ch = 2.25 * scaleY + yShift;
+    const rLen = -2.35 * rootPinch + yShift;
 
-            controls.update();
-            renderer.render(scene, camera);
+    s.moveTo(-cw * 0.68, ch); // Left (Mesial) Cusp Tip
+    s.quadraticCurveTo(0, ch - cuspDepth, cw * 0.68, ch); // Central Occlusal Fissure -> Right Cusp Tip
+    s.bezierCurveTo(cw * 1.06, ch - 0.35, cw * 1.02, 0.65 + yShift, nw, 0.10 + yShift); // Right Crown Convexity -> Neck
+    if (rootPinch > 0.2) {
+        s.bezierCurveTo(nw * 0.98, -0.85, nw * 0.85, rLen + 0.35, nw * 0.58, rLen); // Outer Right Root
+        s.quadraticCurveTo(nw * 0.42, rLen - 0.12, nw * 0.32, rLen + 0.25);         // Right Root Apex
+        s.quadraticCurveTo(0, -0.58 + yShift, -nw * 0.32, rLen + 0.25);             // Root Furcation Arch!
+        s.quadraticCurveTo(-nw * 0.42, rLen - 0.12, -nw * 0.58, rLen);              // Left Root Apex
+        s.bezierCurveTo(-nw * 0.85, rLen + 0.35, -nw * 0.98, -0.85, -nw, 0.10 + yShift);
+    } else {
+        s.lineTo(-nw, 0.10 + yShift);
+    }
+    s.bezierCurveTo(-cw * 1.02, 0.65 + yShift, -cw * 1.06, ch - 0.35, -cw * 0.68, ch);
+    return s;
+}
+
+function buildInternalToothSectionWorld() {
+    const dentineTex = createDentineTubuleTexture();
+    const boneTex    = createTrabecularBoneTexture();
+
+    // 7 Layered Extruded 3D Slabs staggered cleanly in Z so zero z-fighting occurs from any 360° angle!
+    function extrudeSlab(shape, depth, zFront, mat) {
+        const geo = new THREE.ExtrudeGeometry(shape, {
+            depth, bevelEnabled: true, bevelSegments: 3, bevelSize: 0.025, bevelThickness: 0.025
+        });
+        geo.translate(0, 0, zFront - depth);
+        return new THREE.Mesh(geo, mat);
+    }
+
+    // 1. ALVEOLAR JAWBONE SOCKET (`bone`, y = -3.15 to -0.25)
+    const boneShape = new THREE.Shape();
+    boneShape.moveTo(-2.55, -0.25);
+    boneShape.lineTo( 2.55, -0.25);
+    boneShape.lineTo( 2.55, -3.15);
+    boneShape.lineTo(-2.55, -3.15);
+    boneShape.closePath();
+    const boneMat = new THREE.MeshPhysicalMaterial({
+        map: boneTex, bumpMap: boneTex, bumpScale: 0.025,
+        color: 0xCBD5E1, emissive: 0x1E293B, emissiveIntensity: 0.2, roughness: 0.58
+    });
+    const boneSlab = extrudeSlab(boneShape, 0.95, 0.02, boneMat);
+    sectionWorld.add(boneSlab);
+    registerSectionLayer(boneSlab, 'bone');
+
+    // 2. GINGIVA / FLESHY GUM COLLARS (`gingiva`, flanking neck y = -0.30 to +0.52)
+    const gumMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFB7185, emissive: 0x881337, emissiveIntensity: 0.28, roughness: 0.40, clearcoat: 0.6
+    });
+    [-1, 1].forEach(side => {
+        const gShape = new THREE.Shape();
+        gShape.moveTo(side * 1.08, -0.28);
+        gShape.lineTo(side * 2.58, -0.28);
+        gShape.quadraticCurveTo(side * 2.55, 0.35, side * 1.95, 0.45);
+        gShape.quadraticCurveTo(side * 1.35, 0.56, side * 1.12, 0.28);
+        gShape.closePath();
+        const gMesh = extrudeSlab(gShape, 0.98, 0.05, gumMat);
+        sectionWorld.add(gMesh);
+        registerSectionLayer(gMesh, 'gingiva');
+    });
+
+    // 3. PERIODONTAL LIGAMENT / MEMBRANE (`pdl`, emerald shock-absorbing sling around roots)
+    const pdlMat = new THREE.MeshPhysicalMaterial({
+        color: 0x34D399, emissive: 0x065F46, emissiveIntensity: 0.38, roughness: 0.45
+    });
+    const pdlShape = makeMolarProfileShape(1.06, 0.12, -0.18, 0.05, 1.06);
+    const pdlMesh  = extrudeSlab(pdlShape, 0.88, 0.08, pdlMat);
+    sectionWorld.add(pdlMesh);
+    registerSectionLayer(pdlMesh, 'pdl');
+
+    // 4. CEMENTUM (`cementum`, pale calcified root coat inside PDL)
+    const cemMat = new THREE.MeshPhysicalMaterial({
+        color: 0xFDE68A, emissive: 0x78350F, emissiveIntensity: 0.26, roughness: 0.48
+    });
+    const cemShape = makeMolarProfileShape(1.00, 0.15, -0.12, 0.05, 1.01);
+    const cemMesh  = extrudeSlab(cemShape, 0.86, 0.11, cemMat);
+    sectionWorld.add(cemMesh);
+    registerSectionLayer(cemMesh, 'cementum');
+
+    // 5. ENAMEL CAP (`enamel`, thick pearly porcelain outer crown cap above gumline!)
+    const enamelMat = new THREE.MeshPhysicalMaterial({
+        color: 0xF8FAFC, emissive: 0x0C4A6E, emissiveIntensity: 0.22,
+        roughness: 0.14, clearcoat: 0.95, clearcoatRoughness: 0.1
+    });
+    const enamelShape = makeMolarProfileShape(1.03, 1.02, 0.0, 0.36, 0.0);
+    const enamelMesh  = extrudeSlab(enamelShape, 0.86, 0.12, enamelMat);
+    sectionWorld.add(enamelMesh);
+    registerSectionLayer(enamelMesh, 'enamel');
+
+    // 6. DENTINE CORE (`dentine`, golden tubule-rich bulk of crown & both roots!)
+    const dentineMat = new THREE.MeshPhysicalMaterial({
+        map: dentineTex, bumpMap: dentineTex, bumpScale: 0.02,
+        color: 0xF6D58E, emissive: 0x78350F, emissiveIntensity: 0.22, roughness: 0.42
+    });
+    const dentineShape = makeMolarProfileShape(0.84, 0.78, 0.0, 0.24, 0.96);
+    const dentineMesh  = extrudeSlab(dentineShape, 0.82, 0.15, dentineMat);
+    sectionWorld.add(dentineMesh);
+    registerSectionLayer(dentineMesh, 'dentine');
+
+    // 7. LIVING PULP CAVITY, PULP HORNS, ROOT CANALS & NEUROVASCULAR BUNDLE (`pulp`)
+    pulpChamberMat = new THREE.MeshPhysicalMaterial({
+        color: 0xE11D48, emissive: 0x881337, emissiveIntensity: 0.42, roughness: 0.38, clearcoat: 0.4
+    });
+    const pulpShape = makeMolarProfileShape(0.46, 0.46, 0.02, 0.26, 0.95);
+    const pulpMesh  = extrudeSlab(pulpShape, 0.76, 0.18, pulpChamberMat);
+    sectionWorld.add(pulpMesh);
+    registerSectionLayer(pulpMesh, 'pulp');
+
+    // Inferior Alveolar Artery (Red), Vein (Blue) & Sensory Nerve (Gold) entering both Apical Foramina!
+    const artMat = new THREE.MeshStandardMaterial({ color: 0xEF4444, emissive: 0x991B1B, emissiveIntensity: 0.55 });
+    const venMat = new THREE.MeshStandardMaterial({ color: 0x38BDF8, emissive: 0x1E3A8A, emissiveIntensity: 0.55 });
+    pulpNerveMat = new THREE.MeshStandardMaterial({ color: 0xFDE047, emissive: 0xCA8A04, emissiveIntensity: 0.75 });
+
+    // Horizontal jawbone neurovascular trunk at y = -2.85
+    [[-2.80, artMat], [-2.88, venMat], [-2.96, pulpNerveMat]].forEach(([ty, mat]) => {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 4.9, 12), mat);
+        trunk.rotation.z = Math.PI * 0.5;
+        trunk.position.set(0, ty, 0.22);
+        sectionWorld.add(trunk);
+        registerSectionLayer(trunk, 'bone');
+    });
+
+    // Ascending Root Canal Arteriole, Venule & Sensory Nerve twigs branching into Left & Right Pulp Horns!
+    [-1, 1].forEach(side => {
+        [[-0.03, artMat], [0.03, venMat], [0.0, pulpNerveMat]].forEach(([dx, mat], vIdx) => {
+            const c = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(side * 0.52 + dx, -2.85, 0.23 + vIdx * 0.015), // Enters Apical Foramen!
+                new THREE.Vector3(side * 0.62 + dx, -1.35, 0.23 + vIdx * 0.015), // Ascends Root Canal
+                new THREE.Vector3(side * 0.34 + dx,  0.35, 0.23 + vIdx * 0.015), // Pulp Chamber
+                new THREE.Vector3(side * 0.44 + dx,  0.92, 0.23 + vIdx * 0.015)  // Pulp Horn!
+            ]);
+            const vTube = new THREE.Mesh(new THREE.TubeGeometry(c, 24, 0.024, 8, false), mat);
+            sectionWorld.add(vTube);
+            registerSectionLayer(vTube, 'pulp');
+        });
+    });
+
+    // 8. DYNAMIC DENTAL CARIES (TOOTH DECAY) BIOFILM, ACID CAVITY & PERIAPICAL ABSCESS
+    plaqueBiofilmMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.45, 20, 14),
+        new THREE.MeshPhysicalMaterial({ color: 0xBEF264, emissive: 0x4D7C0F, emissiveIntensity: 0.45, roughness: 0.5, transparent: true, opacity: 0.0 })
+    );
+    plaqueBiofilmMesh.scale.set(1.35, 0.35, 0.65);
+    plaqueBiofilmMesh.position.set(0.0, 2.02, 0.22);
+    sectionWorld.add(plaqueBiofilmMesh);
+
+    // Inverted mushroom/cone dark necrotic caries cavity spreading from occlusal fissure down into dentine & pulp!
+    const cariesGeo = new THREE.ConeGeometry(0.62, 1.85, 20);
+    cariesGeo.translate(0, -0.75, 0);
+    cariesLesionMesh = new THREE.Mesh(
+        cariesGeo,
+        new THREE.MeshStandardMaterial({ color: 0x29150E, emissive: 0x451A03, emissiveIntensity: 0.45, roughness: 0.9 })
+    );
+    cariesLesionMesh.position.set(0.0, 2.02, 0.23);
+    cariesLesionMesh.visible = false;
+    sectionWorld.add(cariesLesionMesh);
+
+    // Inflamed Periapical Root Abscess Sac at Right Root Apex (Stage 3 Pulpitis -> Abscess!)
+    abscessSacMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.38, 20, 16),
+        new THREE.MeshPhysicalMaterial({ color: 0xEF4444, emissive: 0xDC2626, emissiveIntensity: 0.85, roughness: 0.35, transparent: true, opacity: 0.85 })
+    );
+    abscessSacMesh.position.set(0.55, -2.35, 0.20);
+    abscessSacMesh.visible = false;
+    sectionWorld.add(abscessSacMesh);
+
+    // Build 7 Clickable 3D Layer Pins & Sidebar Chips
+    const pinsContainer = document.getElementById('pins-container');
+    const chipsGrid = document.getElementById('layerChipsGrid');
+
+    Object.values(HISTOLOGY_LAYERS).forEach(layer => {
+        const chip = document.createElement('button');
+        chip.dataset.layer = layer.id;
+        chip.className = 'layer-chip py-1 px-1.5 rounded-md border border-slate-800 bg-slate-950/70 hover:bg-slate-800 text-[10px] font-semibold text-slate-300 transition truncate';
+        chip.textContent = layer.short;
+        chip.addEventListener('click', () => selectHistologyLayer(layer.id));
+        chipsGrid.appendChild(chip);
+
+        const pin = document.createElement('div');
+        pin.className = 'anat-pin pin-hidden';
+        pin.innerHTML = `<span class="anat-pin-tag"><span class="anat-pin-dot" style="background:${layer.color};box-shadow:0 0 6px ${layer.color}"></span>${layer.short}</span>`;
+        pin.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectHistologyLayer(layer.id);
+        });
+        pinsContainer.appendChild(pin);
+        sectionPins.push({ layer, el: pin });
+    });
+}
+
+// ============================================================================
+// 7. ARCADE SHADING, TOOTH SELECTION, EXTRACTION & FORMULA LOGIC
+// ============================================================================
+function applyArcadeShadingAndSelection() {
+    const isXray  = (state.shade === 'xray');
+    const isCoded = (state.shade === 'coded');
+
+    document.getElementById('three-viewport').classList.toggle('xray-bg', isXray);
+    document.getElementById('buds-callout').classList.toggle('hidden', !(isXray && state.dentition === 'deciduous'));
+
+    // Update Jawbone & Gingiva Translucency for Dental X-Ray Mode!
+    matGumUpper.opacity = isXray ? 0.20 : 1.0;
+    matGumUpper.depthWrite = !isXray;
+    matGumLower.opacity = isXray ? 0.20 : 1.0;
+    matGumLower.depthWrite = !isXray;
+    matPalate.opacity = isXray ? 0.12 : 1.0;
+    matPalate.depthWrite = !isXray;
+    matMandibleBone.opacity = isXray ? 0.18 : 1.0;
+    matMandibleBone.depthWrite = !isXray;
+    matMandibleBone.color.setHex(isXray ? 0x38BDF8 : 0xEAE4D3);
+
+    // Toggle Unerupted Permanent Tooth Buds inside Child Jaw in X-Ray Mode!
+    arcadeWorld.traverse(ch => {
+        if (ch.userData && ch.userData.isBud) {
+            ch.visible = isXray;
+        }
+    });
+
+    toothRecords.forEach(rec => {
+        const cls = TOOTH_CLASSES[rec.type];
+        const isSelected = (rec.idx === state.selectedToothIdx);
+        const matchesFilter = state.filterClass && rec.type === state.filterClass;
+
+        if (isCoded) {
+            rec.crownMat.color.setHex(cls.numColor);
+            rec.crownMat.opacity = 1.0;
+            rec.crownMat.transparent = false;
+        } else if (isXray) {
+            rec.crownMat.color.setHex(0xE0F2FE);
+            rec.crownMat.opacity = 0.78;
+            rec.crownMat.transparent = true;
+        } else {
+            // Natural Ivory Porcelain Enamel (subtle slightly warmer shade on canines like real human teeth!)
+            rec.crownMat.color.setHex(rec.type === 'canine' ? 0xF7EFE1 : 0xFAF8F2);
+            rec.crownMat.opacity = 1.0;
+            rec.crownMat.transparent = false;
         }
 
-        animate();
+        if (isSelected) {
+            rec.crownMat.emissive.setHex(cls.numColor);
+            rec.crownMat.emissiveIntensity = 0.48;
+        } else if (matchesFilter) {
+            rec.crownMat.emissive.setHex(cls.numColor);
+            rec.crownMat.emissiveIntensity = 0.32;
+        } else {
+            rec.crownMat.emissive.setHex(0x000000);
+            rec.crownMat.emissiveIntensity = 0.0;
+        }
+    });
+}
 
-    </script>
+function updateFormulaAndInspectorUI() {
+    const isAdult = (state.dentition === 'permanent');
+    const base = isAdult
+        ? { i: 2, c: 1, p: 2, m: 3, half: 16, total: 32 }
+        : { i: 2, c: 1, p: 0, m: 2, half: 10, total: 20 };
+
+    document.getElementById('f-u-i').textContent = base.i;
+    document.getElementById('f-l-i').textContent = base.i;
+    document.getElementById('f-u-c').textContent = base.c;
+    document.getElementById('f-l-c').textContent = base.c;
+    document.getElementById('f-u-p').textContent = base.p;
+    document.getElementById('f-l-p').textContent = base.p;
+    document.getElementById('f-u-m').textContent = base.m;
+    document.getElementById('f-l-m').textContent = base.m;
+
+    document.getElementById('f-p-card').style.opacity = isAdult ? '1' : '0.35';
+    document.getElementById('legend-pm-row').style.opacity = isAdult ? '1' : '0.35';
+    document.getElementById('stage-badge').textContent = isAdult ? 'Permanent (Set 2 of 2)' : 'Deciduous (Set 1 of 2)';
+    document.getElementById('f-equation').textContent = `(${base.half / 2} upper + ${base.half / 2} lower) × 2 = ${base.total}`;
+
+    const extractedCount = toothRecords.filter(r => r.extracted).length;
+    const remaining = base.total - extractedCount;
+    const totalEl = document.getElementById('f-total');
+    totalEl.textContent = `${remaining} / ${base.total}`;
+    totalEl.className = extractedCount > 0
+        ? 'text-lg font-mono-tech font-extrabold text-rose-400'
+        : 'text-lg font-mono-tech font-extrabold text-sky-400';
+
+    // Update Selected Tooth Inspector Card
+    const rec = toothRecords[state.selectedToothIdx] || toothRecords[0];
+    if (!rec) return;
+    const cls = TOOTH_CLASSES[rec.type];
+
+    document.getElementById('tooth-accent').style.backgroundColor = cls.colorHex;
+    document.getElementById('tooth-quadrant').textContent = rec.quadrantLabel;
+    const rootsBadge = document.getElementById('tooth-roots-badge');
+    rootsBadge.textContent = `${rec.cuspsText} • ${rec.rootCount} ${rec.rootCount === 1 ? 'Root' : 'Roots'}`;
+    rootsBadge.style.color = cls.colorHex;
+    rootsBadge.style.borderColor = `${cls.colorHex}55`;
+    rootsBadge.style.backgroundColor = `${cls.colorHex}1A`;
+
+    const titleEl = document.getElementById('tooth-title');
+    titleEl.textContent = rec.fullName;
+    titleEl.style.color = cls.colorHex;
+
+    document.getElementById('tooth-desc').innerHTML =
+        `<strong class="text-slate-100">Mechanical Role (${cls.role}):</strong> ${cls.morphology}`;
+
+    const extBtn = document.getElementById('extractSelectedBtn');
+    if (rec.extracted) {
+        extBtn.textContent = '↩ Re-Implant Tooth into Socket';
+        extBtn.className = 'flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition active:scale-95';
+    } else {
+        extBtn.textContent = '🦷 Extract Tooth (Inspect Roots!)';
+        extBtn.className = 'flex-1 py-2 px-3 rounded-lg bg-rose-600/85 hover:bg-rose-500 text-white text-xs font-bold shadow transition active:scale-95';
+    }
+}
+
+// ============================================================================
+// 8. HISTOLOGY LAYER INSPECTOR & DENTAL CARIES DECAY PROGRESSION
+// ============================================================================
+function selectHistologyLayer(layerId) {
+    const layer = HISTOLOGY_LAYERS[layerId] || HISTOLOGY_LAYERS.enamel;
+    state.selectedLayerId = layer.id;
+
+    document.getElementById('layer-accent').style.backgroundColor = layer.color;
+    document.getElementById('layer-vitality').textContent = layer.vitality;
+    const minBadge = document.getElementById('layer-mineral');
+    minBadge.textContent = layer.mineral;
+    minBadge.style.color = layer.color;
+    minBadge.style.borderColor = `${layer.color}55`;
+    minBadge.style.backgroundColor = `${layer.color}1A`;
+
+    const titleEl = document.getElementById('layer-title');
+    titleEl.textContent = layer.title;
+    titleEl.style.color = layer.color;
+    document.getElementById('layer-desc').textContent = layer.desc;
+    document.getElementById('layer-exam').innerHTML = `<strong class="text-amber-300">Exam Key:</strong> ${layer.exam}`;
+
+    document.querySelectorAll('.layer-chip').forEach(btn => {
+        const active = btn.dataset.layer === layer.id;
+        btn.className = active
+            ? 'layer-chip py-1 px-1.5 rounded-md border text-[10px] font-bold bg-slate-800 text-white shadow transition truncate'
+            : 'layer-chip py-1 px-1.5 rounded-md border border-slate-800 bg-slate-950/70 hover:bg-slate-800 text-[10px] font-semibold text-slate-300 transition truncate';
+        if (active) btn.style.borderColor = layer.color;
+    });
+
+    sectionPins.forEach(p => p.el.classList.toggle('active', p.layer.id === layer.id));
+
+    Object.entries(sectionLayerMats).forEach(([k, mats]) => {
+        mats.forEach(m => {
+            if (k === layer.id) {
+                m.emissive.set(layer.color);
+                m.emissiveIntensity = 0.68;
+            } else {
+                m.emissive.setHex(m.userData.baseEmissive);
+                m.emissiveIntensity = m.userData.baseEmissiveInt;
+            }
+        });
+    });
+}
+
+function updateCariesProgression(pct, elapsed = 0) {
+    state.cariesPct = pct;
+    const u = pct / 100;
+
+    const phBadge   = document.getElementById('plaque-ph-badge');
+    const stTitle   = document.getElementById('cariesStageTitle');
+    const stDesc    = document.getElementById('cariesStageDesc');
+    const painBadge = document.getElementById('nervePainBadge');
+
+    // Plaque Biofilm Opacity
+    plaqueBiofilmMesh.material.opacity = smoothstep(0.02, 0.25, u) * 0.78;
+
+    // Carious Acid Lesion Cone spreading downward from central occlusal fissure (y = 2.02)
+    cariesLesionMesh.visible = u > 0.08;
+    if (cariesLesionMesh.visible) {
+        // Widens laterally once it hits softer Dentine (u > 0.40)!
+        const dentineFlare = 0.28 + smoothstep(0.35, 0.85, u) * 0.85;
+        const depthScale   = 0.15 + u * 0.92;
+        cariesLesionMesh.scale.set(dentineFlare, depthScale, 0.55);
+    }
+
+    // Periapical Root Abscess Sac & Pulp Inflammation (u > 0.76)
+    abscessSacMesh.visible = u > 0.78;
+    if (abscessSacMesh.visible) {
+        const abScale = smoothstep(0.78, 1.0, u) * (0.95 + Math.sin(elapsed * 6) * 0.10);
+        abscessSacMesh.scale.setScalar(abScale);
+    }
+
+    if (u > 0.45) {
+        const painPulse = 0.6 + Math.abs(Math.sin(elapsed * (u > 0.75 ? 10 : 5))) * 1.4;
+        pulpNerveMat.emissiveIntensity = painPulse;
+        pulpChamberMat.emissiveIntensity = 0.45 + smoothstep(0.7, 1.0, u) * 0.65;
+    } else {
+        pulpNerveMat.emissiveIntensity = 0.55;
+        pulpChamberMat.emissiveIntensity = 0.42;
+    }
+
+    if (pct < 12) {
+        phBadge.textContent = 'Plaque pH 6.8 (Safe)';
+        phBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        stTitle.textContent = 'Stage 0: Healthy Mineralized Tooth';
+        stTitle.className = 'font-extrabold text-emerald-300';
+        painBadge.textContent = 'Pain: None';
+        painBadge.className = 'font-mono-tech text-[9.5px] text-slate-400';
+        stDesc.innerHTML = 'Saliva buffers oral pH (~6.8) and supplies Ca²⁺/PO₄³⁻ ions. Intact enamel shields living dentine and pulp.';
+    } else if (pct < 42) {
+        phBadge.textContent = 'Acid pH 4.9 (< 5.5!)';
+        phBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        stTitle.textContent = 'Stage 1: Plaque Acid & Enamel Demineralization';
+        stTitle.className = 'font-extrabold text-amber-300';
+        painBadge.textContent = 'Pain: 0% (No Nerves!)';
+        painBadge.className = 'font-mono-tech text-[9.5px] text-amber-200';
+        stDesc.innerHTML = 'Plaque bacteria respire sugars anaerobically into <strong>lactic acid</strong> (pH &lt; 5.5), dissolving calcium salts in the occlusal pit. <strong>Painless</strong> because enamel is non-living!';
+    } else if (pct < 76) {
+        phBadge.textContent = 'Acid pH 4.5 (Eroding)';
+        phBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40';
+        stTitle.textContent = 'Stage 2: Rapid Dentine Caries & Cold/Sweet Pain';
+        stTitle.className = 'font-extrabold text-orange-300';
+        painBadge.textContent = '⚡ Sharp Tubule Pain';
+        painBadge.className = 'font-mono-tech text-[9.5px] font-bold text-orange-300';
+        stDesc.innerHTML = 'Decay breaches the dentino-enamel junction and spreads laterally fast through softer <strong>Dentine</strong> (~70% mineral), stimulating sensory nerves via dentinal tubules!';
+    } else {
+        phBadge.textContent = 'Severe Acid + Infection';
+        phBadge.className = 'text-[10px] font-mono-tech font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        stTitle.textContent = 'Stage 3: Pulpitis & Periapical Root Abscess!';
+        stTitle.className = 'font-extrabold text-rose-400';
+        painBadge.textContent = '🔥 Severe Throbbing!';
+        painBadge.className = 'font-mono-tech text-[9.5px] font-bold text-rose-400';
+        stDesc.innerHTML = 'Bacteria invade the living <strong>Pulp Cavity</strong>, inflaming blood vessels &amp; nerves (toothache!) and tracking down the root canal to form a pus-filled <strong>Root Abscess</strong> in the jawbone!';
+    }
+}
+
+// ============================================================================
+// 9. POINTER PICKING (DRAG-SAFE!), PINS & UI BINDINGS
+// ============================================================================
+function bindCanvasPicking(viewport) {
+    let downX = 0, downY = 0;
+    const mouse = new THREE.Vector2();
+
+    viewport.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    viewport.addEventListener('pointermove', e => {
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const pool = state.mode === 'arcade' ? pickableArcade : pickableSection;
+        viewport.style.cursor = raycaster.intersectObjects(pool, false).length > 0 ? 'pointer' : 'grab';
+    });
+    viewport.addEventListener('pointerup', e => {
+        // Ignore orbit drags (> 6px movement) so rotating NEVER accidentally triggers clicks!
+        if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
+
+        const rect = viewport.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+
+        if (state.mode === 'arcade') {
+            const hits = raycaster.intersectObjects(pickableArcade, false);
+            if (hits.length > 0 && hits[0].object.userData.toothIdx !== undefined) {
+                state.selectedToothIdx = hits[0].object.userData.toothIdx;
+                state.filterClass = null;
+                applyArcadeShadingAndSelection();
+                updateFormulaAndInspectorUI();
+            }
+        } else {
+            const hits = raycaster.intersectObjects(pickableSection, false);
+            if (hits.length > 0 && hits[0].object.userData.layerId) {
+                selectHistologyLayer(hits[0].object.userData.layerId);
+            }
+        }
+    });
+}
+
+const _projVec = new THREE.Vector3();
+function updateSectionPins() {
+    const viewport = document.getElementById('three-viewport');
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+
+    sectionPins.forEach(({ layer, el }) => {
+        if (state.mode !== 'section' || !state.showPins) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        _projVec.copy(layer.pinPos).project(camera);
+        if (_projVec.z > 1 || _projVec.z < -1) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        const x = (_projVec.x * 0.5 + 0.5) * w;
+        const y = (-_projVec.y * 0.5 + 0.5) * h;
+        if (x < 42 || x > w - 42 || y < 32 || y > h - 32) {
+            el.classList.add('pin-hidden');
+            return;
+        }
+        el.classList.remove('pin-hidden');
+        el.style.left = `${x}px`;
+        el.style.top  = `${y}px`;
+    });
+}
+
+function switchPrimaryMode(mode) {
+    state.mode = mode;
+    const isArcade = (mode === 'arcade');
+    state.isChewing = false;
+    document.getElementById('chewBtn').textContent = '▶ Chew';
+
+    arcadeWorld.visible  = isArcade;
+    sectionWorld.visible = !isArcade;
+
+    document.getElementById('panel-arcade').classList.toggle('hidden', !isArcade);
+    document.getElementById('panel-arcade').classList.toggle('flex', isArcade);
+    document.getElementById('panel-section').classList.toggle('hidden', isArcade);
+    document.getElementById('panel-section').classList.toggle('flex', !isArcade);
+
+    document.getElementById('arcade-cam-bar').classList.toggle('hidden', !isArcade);
+    document.getElementById('arcade-shade-bar').classList.toggle('hidden', !isArcade);
+    document.getElementById('arcade-legend').classList.toggle('hidden', !isArcade);
+    document.getElementById('section-top-bar').classList.toggle('hidden', isArcade);
+    document.getElementById('section-top-bar').classList.toggle('flex', !isArcade);
+
+    if (!isArcade) {
+        document.getElementById('three-viewport').classList.remove('xray-bg');
+        document.getElementById('buds-callout').classList.add('hidden');
+    } else {
+        applyArcadeShadingAndSelection();
+    }
+
+    document.getElementById('tabArcadeBtn').className = isArcade
+        ? 'px-3 py-1.5 rounded text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+    document.getElementById('tabSectionBtn').className = !isArcade
+        ? 'px-3 py-1.5 rounded text-xs font-extrabold bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 shadow transition'
+        : 'px-3 py-1.5 rounded text-xs font-extrabold text-slate-400 hover:text-white border border-transparent transition';
+
+    document.getElementById('bottom-hint-text').textContent = isArcade
+        ? 'Click Any 3D Tooth to Inspect Roots & Cusps • Drag to Orbit 360° • Scroll to Zoom'
+        : 'Click Any of the 7 Tooth Layers • Drag Caries Slider to Test Acid Decay • Orbit 360°';
+
+    const targetCam = isArcade ? ARCADE_CAMS.front : SECTION_CAM;
+    camGoalPos.copy(targetCam.pos);
+    camGoalTarget.copy(targetCam.target);
+    camGliding = true;
+
+    if (!isArcade) selectHistologyLayer(state.selectedLayerId);
+}
+
+function glideArcadeCamera(camKey) {
+    const preset = ARCADE_CAMS[camKey];
+    if (!preset) return;
+    // Open jaw automatically if viewing Upper or Lower Occlusal Mirror so opposing jaw doesn't block view!
+    if ((camKey === 'lowerOcc' || camKey === 'upperOcc') && state.jawAngleDeg < 30) {
+        state.jawAngleDeg = 35;
+        document.getElementById('jawSlider').value = 35;
+        document.getElementById('jawAngleVal').textContent = '35° (Wide Open)';
+    }
+    if (camKey === 'bite' && state.jawAngleDeg > 6) {
+        state.jawAngleDeg = 2;
+        document.getElementById('jawSlider').value = 2;
+        document.getElementById('jawAngleVal').textContent = '2° (Closed Bite)';
+    }
+    camGoalPos.copy(preset.pos);
+    camGoalTarget.copy(preset.target);
+    camGliding = true;
+
+    document.querySelectorAll('.cam-btn').forEach(b => {
+        const active = b.dataset.cam === camKey;
+        b.className = active
+            ? 'cam-btn px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 text-sky-300 border border-sky-500/40 transition'
+            : 'cam-btn px-2.5 py-1 rounded text-[11px] font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition';
+    });
+}
+
+function bindUIControls() {
+    document.getElementById('tabArcadeBtn').addEventListener('click', () => switchPrimaryMode('arcade'));
+    document.getElementById('tabSectionBtn').addEventListener('click', () => switchPrimaryMode('section'));
+
+    // Dentition Stage Switcher (Deciduous 20 vs. Permanent 32)
+    const btnDec = document.getElementById('btnDeciduous');
+    const btnPerm = document.getElementById('btnPermanent');
+
+    btnDec.addEventListener('click', () => {
+        if (state.dentition === 'deciduous') return;
+        state.dentition = 'deciduous';
+        state.filterClass = null;
+        btnDec.className = 'py-1.5 px-2 rounded-md text-xs font-extrabold bg-amber-500/25 text-amber-200 border border-amber-400/50 shadow transition';
+        btnPerm.className = 'py-1.5 px-2 rounded-md text-xs font-bold text-slate-400 hover:text-white border border-transparent transition';
+        document.getElementById('stage-desc').innerHTML = 'Children have <strong>20 milk (deciduous) teeth</strong> with <strong>zero premolars</strong>. Switch to <strong>🦴 Dental X-Ray</strong> above to see adult tooth buds underneath!';
+        buildDentalArcade();
+    });
+
+    btnPerm.addEventListener('click', () => {
+        if (state.dentition === 'permanent') return;
+        state.dentition = 'permanent';
+        state.filterClass = null;
+        btnPerm.className = 'py-1.5 px-2 rounded-md text-xs font-extrabold bg-sky-500/25 text-sky-200 border border-sky-400/50 shadow transition';
+        btnDec.className = 'py-1.5 px-2 rounded-md text-xs font-bold text-slate-400 hover:text-white border border-transparent transition';
+        document.getElementById('stage-desc').innerHTML = 'Adults have <strong>32 permanent teeth</strong> including <strong>8 Premolars (bicuspids)</strong> and <strong>4 Wisdom Teeth</strong> (3rd molars).';
+        buildDentalArcade();
+    });
+
+    // Jaw Opening Slider & Chewing Animation
+    const jawSlider = document.getElementById('jawSlider');
+    jawSlider.addEventListener('input', e => {
+        state.isChewing = false;
+        document.getElementById('chewBtn').textContent = '▶ Chew';
+        state.jawAngleDeg = parseFloat(e.target.value);
+        document.getElementById('jawAngleVal').textContent = state.jawAngleDeg < 3
+            ? `${state.jawAngleDeg}° (Closed Bite)`
+            : `${Math.round(state.jawAngleDeg)}° (Open)`;
+    });
+
+    document.getElementById('chewBtn').addEventListener('click', e => {
+        state.isChewing = !state.isChewing;
+        e.currentTarget.textContent = state.isChewing ? '⏸ Stop' : '▶ Chew';
+    });
+
+    // Clickable Dental Formula Cards (Highlights all teeth of that functional class!)
+    document.querySelectorAll('.formula-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const cls = card.dataset.filter;
+            if (cls === 'premolar' && state.dentition === 'deciduous') return;
+            state.filterClass = (state.filterClass === cls) ? null : cls;
+            const match = toothRecords.find(r => r.type === cls);
+            if (match) state.selectedToothIdx = match.idx;
+            applyArcadeShadingAndSelection();
+            updateFormulaAndInspectorUI();
+        });
+    });
+
+    // Extract / Re-implant Selected Tooth & Restore All
+    document.getElementById('extractSelectedBtn').addEventListener('click', () => {
+        const rec = toothRecords[state.selectedToothIdx];
+        if (!rec) return;
+        rec.extracted = !rec.extracted;
+        updateFormulaAndInspectorUI();
+    });
+
+    document.getElementById('restoreAllBtn').addEventListener('click', () => {
+        toothRecords.forEach(r => { r.extracted = false; });
+        state.filterClass = null;
+        applyArcadeShadingAndSelection();
+        updateFormulaAndInspectorUI();
+    });
+
+    // Arcade Camera & Shading Buttons
+    document.querySelectorAll('.cam-btn').forEach(btn => {
+        btn.addEventListener('click', () => glideArcadeCamera(btn.dataset.cam));
+    });
+
+    document.querySelectorAll('.shade-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            state.shade = btn.dataset.shade;
+            document.querySelectorAll('.shade-btn').forEach(b => {
+                b.className = 'shade-btn px-2.5 py-1 rounded text-slate-400 hover:text-white transition';
+            });
+            btn.className = 'shade-btn px-2.5 py-1 rounded bg-slate-700 text-white transition';
+            applyArcadeShadingAndSelection();
+        });
+    });
+
+    // Mode 2: Caries Progression Slider & Camera Reset
+    document.getElementById('cariesSlider').addEventListener('input', e => {
+        updateCariesProgression(parseInt(e.target.value, 10), clock.getElapsedTime());
+    });
+
+    document.getElementById('resetSecCamBtn').addEventListener('click', () => {
+        camGoalPos.copy(SECTION_CAM.pos);
+        camGoalTarget.copy(SECTION_CAM.target);
+        camGliding = true;
+    });
+
+    document.getElementById('pinsToggle').addEventListener('change', e => {
+        state.showPins = e.target.checked;
+    });
+
+    // Comparative Diet & Exam Modal
+    const modal = document.getElementById('compareModal');
+    document.getElementById('openCompareBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('closeCompareBtn').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+}
+
+// ============================================================================
+// 10. MAIN RENDER LOOP (TMJ ARTICULATION, ROOT EXTRACTION LIFT & CARIES PULSE)
+// ============================================================================
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const elapsed = clock.getElapsedTime();
+
+    if (state.mode === 'arcade') {
+        // 1. Rhythmic Chewing Cycle (Mastication) + TMJ Hinge Rotation
+        if (state.isChewing) {
+            state.jawAngleDeg = 11 + Math.sin(elapsed * 4.2) * 11; // Smooth 0° closed bite <-> 22° open chew!
+            document.getElementById('jawSlider').value = state.jawAngleDeg.toFixed(1);
+            document.getElementById('jawAngleVal').textContent = state.jawAngleDeg < 2.5 ? 'Closed Bite!' : `${Math.round(state.jawAngleDeg)}° (Chew)`;
+        }
+        if (mandiblePivot) {
+            const targetRad = THREE.MathUtils.degToRad(state.jawAngleDeg);
+            mandiblePivot.rotation.x = lerp(mandiblePivot.rotation.x, targetRad, 0.15);
+            // Subtle lateral grinding excursion during closed phase of chewing!
+            mandiblePivot.rotation.y = state.isChewing ? Math.cos(elapsed * 4.2) * 0.025 : lerp(mandiblePivot.rotation.y, 0, 0.15);
+        }
+
+        // 2. Smooth Anatomical Extraction / Socket Re-Implantation Animation (Revealing Full Multi-Rooted Tooth!)
+        toothRecords.forEach(rec => {
+            const goal = rec.extracted ? 1.0 : (rec.idx === state.selectedToothIdx ? 0.12 : 0.0);
+            rec.extractAnim = lerp(rec.extractAnim, goal, 0.14);
+            // Lift straight out of alveolar socket along occlusal axis so student can inspect roots!
+            rec.holder.position.copy(rec.restPos).addScaledVector(rec.occlusalDir, rec.extractAnim * 1.48);
+        });
+    } else {
+        updateCariesProgression(state.cariesPct, elapsed);
+    }
+
+    if (camGliding) {
+        camera.position.lerp(camGoalPos, 0.085);
+        controls.target.lerp(camGoalTarget, 0.085);
+        if (camera.position.distanceTo(camGoalPos) < 0.06) camGliding = false;
+    }
+    controls.update();
+
+    updateSectionPins();
+    renderer.render(scene, camera);
+}
+
+window.onload = function () {
+    initThreeScene();
+    bindUIControls();
+    updateCariesProgression(0, 0);
+    animate();
+};
+</script>
 </body>
 </html>
